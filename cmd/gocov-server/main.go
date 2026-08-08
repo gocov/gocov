@@ -25,6 +25,10 @@
 // GOCOV_MODE=hosted switches to self-service mode: any forge account may
 // sign in and register its own workspaces from the UI. The default
 // (private) keeps sign-in limited to members of tracked workspaces.
+// GOCOV_GITHUB_APP_ID and GOCOV_GITHUB_APP_PRIVATE_KEY (PEM content, or
+// a path to a PEM file) enable the GitHub App integration: workspaces
+// connect with one click and statuses, PR comments and check runs are
+// posted as the app's bot identity, no tokens required.
 package main
 
 import (
@@ -148,6 +152,11 @@ func serve() error {
 		log.Info("global github credentials configured")
 	}
 
+	githubApp, err := githubAppFromEnv(log)
+	if err != nil {
+		return err
+	}
+
 	// Configuring an OAuth consumer/app is the switch that turns sign-in
 	// on; without one the UI stays open and shows a banner saying so.
 	var authProviders []auth.Provider
@@ -191,7 +200,7 @@ func serve() error {
 		}
 	}
 
-	srv := server.New(server.Config{
+	cfg := server.Config{
 		Store: st,
 		Blobs: blobpg.New(st.Pool()),
 		Parsers: map[string]profile.Parser{
@@ -212,7 +221,13 @@ func serve() error {
 		Auths:                   authProviders,
 		AllowedWorkspaces:       allowedWorkspaces,
 		Hosted:                  hosted,
-	})
+	}
+	// Assigned conditionally: a typed-nil *github.App in the interface
+	// field would read as "configured".
+	if githubApp != nil {
+		cfg.GitHubApp = githubApp
+	}
+	srv := server.New(cfg)
 
 	httpSrv := &http.Server{
 		Addr:              addr,
@@ -240,6 +255,36 @@ func serve() error {
 		}
 		return nil
 	}
+}
+
+// githubAppFromEnv builds the deployment's GitHub App identity from
+// GOCOV_GITHUB_APP_ID and GOCOV_GITHUB_APP_PRIVATE_KEY. The key variable
+// holds either the PEM itself or a path to a PEM file — key files are how
+// GitHub hands the secret out, but container setups often prefer the
+// content in the environment.
+func githubAppFromEnv(log *slog.Logger) (*github.App, error) {
+	appID, appKey := os.Getenv("GOCOV_GITHUB_APP_ID"), os.Getenv("GOCOV_GITHUB_APP_PRIVATE_KEY")
+	switch {
+	case appID == "" && appKey == "":
+		return nil, nil
+	case appID == "" || appKey == "":
+		log.Warn("GOCOV_GITHUB_APP_ID and GOCOV_GITHUB_APP_PRIVATE_KEY must both be set; ignoring")
+		return nil, nil
+	}
+	pemData := []byte(appKey)
+	if !strings.Contains(appKey, "-----BEGIN") {
+		data, err := os.ReadFile(appKey)
+		if err != nil {
+			return nil, fmt.Errorf("reading GOCOV_GITHUB_APP_PRIVATE_KEY file: %w", err)
+		}
+		pemData = data
+	}
+	app, err := github.NewApp(appID, pemData)
+	if err != nil {
+		return nil, fmt.Errorf("GOCOV_GITHUB_APP_PRIVATE_KEY: %w", err)
+	}
+	log.Info("github app configured", "app_id", appID)
+	return app, nil
 }
 
 func envOr(key, fallback string) string {

@@ -200,7 +200,8 @@ func marshalCreds(creds map[string]string) ([]byte, error) {
 }
 
 const workspaceCols = `id, forge, prefix, token, default_branch, COALESCE(forge_credentials, 'null'::jsonb),
-	min_coverage, min_diff_coverage, max_coverage_drop, created_at`
+	min_coverage, min_diff_coverage, max_coverage_drop,
+	github_installation_id, github_app_broken, created_at`
 
 func (s *Store) CreateWorkspace(ctx context.Context, w *store.Workspace) error {
 	return s.createWorkspace(ctx, s.pool, w)
@@ -218,11 +219,13 @@ func (s *Store) createWorkspace(ctx context.Context, db execer, w *store.Workspa
 	}
 	return db.QueryRow(ctx, `
 		INSERT INTO workspaces (forge, prefix, token, default_branch, forge_credentials,
-			min_coverage, min_diff_coverage, max_coverage_drop)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			min_coverage, min_diff_coverage, max_coverage_drop,
+			github_installation_id, github_app_broken)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id, created_at`,
 		w.Forge, w.Prefix, w.Token, w.DefaultBranch, creds,
 		w.Gate.MinCoverage, w.Gate.MinDiffCoverage, w.Gate.MaxCoverageDrop,
+		w.GitHubInstallationID, w.GitHubAppBroken,
 	).Scan(&w.ID, &w.CreatedAt)
 }
 
@@ -252,10 +255,12 @@ func (s *Store) UpdateWorkspace(ctx context.Context, w *store.Workspace) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE workspaces SET forge = $2, prefix = $3, token = $4, default_branch = $5,
 			forge_credentials = $6,
-			min_coverage = $7, min_diff_coverage = $8, max_coverage_drop = $9
+			min_coverage = $7, min_diff_coverage = $8, max_coverage_drop = $9,
+			github_installation_id = $10, github_app_broken = $11
 		WHERE id = $1`,
 		w.ID, w.Forge, w.Prefix, w.Token, w.DefaultBranch, creds,
-		w.Gate.MinCoverage, w.Gate.MinDiffCoverage, w.Gate.MaxCoverageDrop)
+		w.Gate.MinCoverage, w.Gate.MinDiffCoverage, w.Gate.MaxCoverageDrop,
+		w.GitHubInstallationID, w.GitHubAppBroken)
 	if err != nil {
 		return err
 	}
@@ -307,7 +312,8 @@ func (s *Store) scanWorkspace(row rowScanner) (*store.Workspace, error) {
 	var w store.Workspace
 	var creds []byte
 	err := row.Scan(&w.ID, &w.Forge, &w.Prefix, &w.Token, &w.DefaultBranch, &creds,
-		&w.Gate.MinCoverage, &w.Gate.MinDiffCoverage, &w.Gate.MaxCoverageDrop, &w.CreatedAt)
+		&w.Gate.MinCoverage, &w.Gate.MinDiffCoverage, &w.Gate.MaxCoverageDrop,
+		&w.GitHubInstallationID, &w.GitHubAppBroken, &w.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -352,7 +358,8 @@ func (s *Store) ListWorkspacesForUser(ctx context.Context, userID int64) ([]*sto
 	rows, err := s.pool.Query(ctx, `
 		SELECT w.id, w.forge, w.prefix, w.token, w.default_branch,
 			COALESCE(w.forge_credentials, 'null'::jsonb),
-			w.min_coverage, w.min_diff_coverage, w.max_coverage_drop, w.created_at
+			w.min_coverage, w.min_diff_coverage, w.max_coverage_drop,
+			w.github_installation_id, w.github_app_broken, w.created_at
 		FROM workspaces w
 		JOIN workspace_members m ON m.workspace_id = w.id
 		WHERE m.user_id = $1

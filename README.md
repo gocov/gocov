@@ -243,6 +243,50 @@ remove them and it disappears. A single-team self-host where everyone
 belongs to the same workspace is unaffected, as is an instance with
 sign-in left open — both stay exactly as before.
 
+### GitHub App (one-click connect)
+
+Instead of manufacturing a token, GitHub workspaces can install a
+GitHub App: one click on GitHub and statuses, PR comments and check
+runs work with zero credential entry, authored by the app's bot
+identity (e.g. `gocov[bot]`). The App is also the first-class Checks
+API citizen, so check runs stop being permission-fragile.
+
+To run one on your own deployment:
+
+1. Register a GitHub App (**Settings → Developer settings → GitHub
+   Apps → New GitHub App**) with
+   - **Setup URL**: `https://your-gocov-host/github/setup`, with
+     *Redirect on update* enabled
+   - **Webhook**: disabled (gocov's model is upload-driven; installs
+     are linked through the setup redirect and uninstalls are detected
+     lazily)
+   - **Repository permissions**: *Checks: Read & write*, *Commit
+     statuses: Read & write*, *Pull requests: Read & write*,
+     *Contents: Read-only*, *Metadata: Read-only*
+   - **Organization permissions**: *Members: Read-only* (org
+     membership for sign-in sync)
+2. Generate a private key on the app page and set both variables on
+   the server:
+
+```sh
+GOCOV_GITHUB_APP_ID=...
+GOCOV_GITHUB_APP_PRIVATE_KEY=/path/to/gocov.private-key.pem  # or the PEM content itself
+```
+
+Members then connect from the workspace settings or setup page
+("Install the gocov app"); after GitHub's install screen they land back
+on gocov with the workspace connected. In hosted mode the install can
+even come first — an install on an account with no workspace yet
+registers it on the spot (same claim rules as **/register**).
+
+A connected installation sits at the top of the credential chain: it
+outranks per-repo and workspace credentials for every forge surface.
+Uninstalling the app on GitHub is detected on the next upload — the
+affected surfaces degrade to the stored credentials, or to `skipped`,
+never to a failed upload — and the settings page offers a reconnect.
+The token paths below keep working untouched; the App is an addition,
+not a migration.
+
 ### Coverage gate
 
 ```sh
@@ -371,6 +415,8 @@ delta_pct, build_status}`. Uploads carrying a `pr_id` additionally get
 | `GOCOV_BITBUCKET_USERNAME`     | —                       | global Bitbucket bot account (with an API token, the account email) |
 | `GOCOV_BITBUCKET_APP_PASSWORD` | —                       | the bot's app password or scoped API token |
 | `GOCOV_GITHUB_TOKEN`           | —                       | global GitHub token for repos without their own credentials |
+| `GOCOV_GITHUB_APP_ID`          | —                       | GitHub App id; with the key, enables one-click workspace connect |
+| `GOCOV_GITHUB_APP_PRIVATE_KEY` | —                       | the App's private key: PEM content, or a path to the PEM file |
 | `GOCOV_OAUTH_BITBUCKET_KEY`    | —                       | Bitbucket OAuth consumer key; with the secret, turns on web UI sign-in |
 | `GOCOV_OAUTH_BITBUCKET_SECRET` | —                       | Bitbucket OAuth consumer secret |
 | `GOCOV_OAUTH_GITHUB_KEY`       | —                       | GitHub OAuth app client id; with the secret, turns on web UI sign-in |
@@ -378,10 +424,11 @@ delta_pct, build_status}`. Uploads carrying a `pr_id` additionally get
 | `GOCOV_ALLOWED_WORKSPACES`     | derived from tracked repos | comma-separated workspace/org slugs allowed to sign in |
 | `GOCOV_MODE`                   | `private`               | `hosted` opens sign-in to any forge account with self-service workspace registration |
 
-Forge credentials resolve per repo along a precedence chain: per-repo
-credentials (`repo update -bb-username ...` / `-gh-token ...`) beat
-workspace credentials (set on the workspace settings page in the UI)
-beat the global bot credentials above. Whichever wins is used for build
+Forge credentials resolve per repo along a precedence chain: a
+connected GitHub App installation beats per-repo credentials
+(`repo update -bb-username ...` / `-gh-token ...`) beats workspace
+credentials (set on the workspace settings page in the UI) beats the
+global bot credentials above. Whichever wins is used for build
 statuses, PR comments, diff coverage and default branch detection.
 
 ### Bitbucket token permissions
@@ -403,6 +450,10 @@ The OAuth consumer used for web UI sign-in is separate and needs the
 **Account: Read** and **Email** permissions on the consumer itself.
 
 ### GitHub token permissions
+
+Workspaces connected through the GitHub App need none of this — the
+App's own permissions cover every surface, check runs included. The
+token path remains for repos outside a connected workspace:
 
 The GitHub credential (`GOCOV_GITHUB_TOKEN` or `repo add/update
 -gh-token`) is a personal access token of a user or bot account with

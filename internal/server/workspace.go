@@ -46,8 +46,8 @@ func (s *Server) memberWorkspace(w http.ResponseWriter, r *http.Request) *store.
 // Stored secrets never leave the server: credentials render as a
 // configured/not-configured state only (D4), and the upload token is
 // only ever shown as newToken right after a rotation.
-func settingsData(ws *store.Workspace, newToken, notice, errMsg string) map[string]any {
-	return map[string]any{
+func (s *Server) settingsData(r *http.Request, ws *store.Workspace, newToken, notice, errMsg string) map[string]any {
+	data := map[string]any{
 		"Workspace":       ws,
 		"ForgeLabel":      providerLabel(ws.Forge),
 		"CredsConfigured": len(ws.ForgeCredentials) > 0,
@@ -55,6 +55,22 @@ func settingsData(ws *store.Workspace, newToken, notice, errMsg string) map[stri
 		"Notice":          notice,
 		"Error":           errMsg,
 	}
+	s.addGitHubAppData(r, ws, data)
+	return data
+}
+
+// addGitHubAppData fills the GitHub App connection state shared by the
+// settings and setup pages (One-Click Connect P1). Absent when the
+// deployment has no App or the workspace is not on GitHub — the pages
+// then render exactly as before.
+func (s *Server) addGitHubAppData(r *http.Request, ws *store.Workspace, data map[string]any) {
+	if s.githubApp == nil || ws.Forge != "github" {
+		return
+	}
+	data["GitHubApp"] = true
+	data["GitHubAppConnected"] = ws.GitHubInstallationID != 0
+	data["GitHubAppBroken"] = ws.GitHubAppBroken
+	data["GitHubInstallURL"] = s.githubInstallURL(r.Context())
 }
 
 // handleWorkspacePage implements GET /workspaces/{prefix}.
@@ -67,7 +83,10 @@ func (s *Server) handleWorkspacePage(w http.ResponseWriter, r *http.Request) {
 	if r.FormValue("saved") == "1" {
 		notice = "Saved."
 	}
-	s.render(w, r, "workspace.html", settingsData(ws, "", notice, ""))
+	if r.FormValue("connected") == "1" {
+		notice = "GitHub App connected — statuses, PR comments and check runs now post as gocov[bot]."
+	}
+	s.render(w, r, "workspace.html", s.settingsData(r, ws, "", notice, ""))
 }
 
 // handleWorkspaceRotate implements POST /workspaces/{prefix}/rotate-token.
@@ -89,7 +108,7 @@ func (s *Server) handleWorkspaceRotate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("workspace token rotated", "prefix", ws.Prefix, "user", currentUser(r).DisplayName)
-	s.render(w, r, "workspace.html", settingsData(ws, token,
+	s.render(w, r, "workspace.html", s.settingsData(r, ws, token,
 		"Token rotated — the previous token no longer works. Update your CI variable.", ""))
 }
 
@@ -185,7 +204,7 @@ func credentialsFromForm(forgeName string, r *http.Request) (map[string]string, 
 // settingsError re-renders the settings page with a validation message.
 func (s *Server) settingsError(w http.ResponseWriter, r *http.Request, ws *store.Workspace, msg string) {
 	w.WriteHeader(http.StatusBadRequest)
-	s.render(w, r, "workspace.html", settingsData(ws, "", "", msg))
+	s.render(w, r, "workspace.html", s.settingsData(r, ws, "", "", msg))
 }
 
 // handleWorkspaceSetup implements GET /workspaces/{prefix}/setup (M3/R4):
@@ -201,12 +220,14 @@ func (s *Server) handleWorkspaceSetup(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "listing workspace repos", err)
 		return
 	}
-	s.render(w, r, "setup.html", map[string]any{
+	data := map[string]any{
 		"Workspace":  ws,
 		"ForgeLabel": providerLabel(ws.Forge),
 		"BaseURL":    strings.TrimSuffix(s.baseURL, "/"),
 		"Repos":      repos,
-	})
+	}
+	s.addGitHubAppData(r, ws, data)
+	s.render(w, r, "setup.html", data)
 }
 
 // handleWorkspaceSetupStatus implements GET /workspaces/{prefix}/setup/status,

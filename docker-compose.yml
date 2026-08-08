@@ -25,6 +25,8 @@ services:
       GOCOV_BITBUCKET_USERNAME: ${GOCOV_BITBUCKET_USERNAME:-}
       GOCOV_BITBUCKET_APP_PASSWORD: ${GOCOV_BITBUCKET_APP_PASSWORD:-}
       GOCOV_GITHUB_TOKEN: ${GOCOV_GITHUB_TOKEN:-}
+      GOCOV_GITHUB_APP_ID: ${GOCOV_GITHUB_APP_ID:-}
+      GOCOV_GITHUB_APP_PRIVATE_KEY: ${GOCOV_GITHUB_APP_PRIVATE_KEY:-}
       # Optional OAuth credentials; setting a pair turns on (and from
       # then on requires) web UI sign-in with that forge. See "Enable
       # sign-in" in the README.
