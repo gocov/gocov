@@ -142,8 +142,10 @@ func TestBitbucketConnectFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := loc.Query().Get("redirect_uri"); got != "https://gocov.example/oauth/bitbucket/callback/connect" {
-		t.Errorf("redirect_uri = %q, must extend the sign-in callback path", got)
+	// Live Bitbucket enforces an exact match on the consumer's configured
+	// callback, so the connect consent must reuse the sign-in callback.
+	if got := loc.Query().Get("redirect_uri"); got != "https://gocov.example/oauth/bitbucket/callback" {
+		t.Errorf("redirect_uri = %q, must equal the sign-in callback exactly", got)
 	}
 	stateCk := cookieNamed(t, start, connectStateCookie)
 	state, prefix, _ := strings.Cut(stateCk.Value, "|")
@@ -151,7 +153,7 @@ func TestBitbucketConnectFlow(t *testing.T) {
 		t.Errorf("cookie prefix = %q", prefix)
 	}
 
-	cb := get(f.fixture, "/oauth/bitbucket/callback/connect?code=thecode&state="+url.QueryEscape(state), stateCk, sess)
+	cb := get(f.fixture, "/oauth/bitbucket/callback?code=thecode&state="+url.QueryEscape(state), stateCk, sess)
 	if cb.Code != http.StatusSeeOther {
 		t.Fatalf("callback: status = %d, body = %s", cb.Code, cb.Body)
 	}
@@ -179,12 +181,15 @@ func TestBitbucketConnectCallbackRejects(t *testing.T) {
 		return &http.Cookie{Name: connectStateCookie, Value: value}
 	}
 
-	// State mismatch.
-	if rec := get(f.fixture, "/oauth/bitbucket/callback/connect?code=x&state=other", mk("state|acme"), sess); rec.Code != http.StatusBadRequest {
-		t.Errorf("state mismatch: status = %d, want 400", rec.Code)
+	// State mismatch: not recognizably a connect return — falls through
+	// to the sign-in callback flow, which rejects it its own way. The
+	// connect must not run.
+	if rec := get(f.fixture, "/oauth/bitbucket/callback?code=x&state=other", mk("state|acme"), sess); rec.Code != http.StatusFound ||
+		rec.Header().Get("Location") != "/login?error=1" {
+		t.Errorf("state mismatch: %d -> %q, want the sign-in flow's failure redirect", rec.Code, rec.Header().Get("Location"))
 	}
 	// No session.
-	if rec := get(f.fixture, "/oauth/bitbucket/callback/connect?code=x&state=s", mk("s|acme")); rec.Code != http.StatusForbidden {
+	if rec := get(f.fixture, "/oauth/bitbucket/callback?code=x&state=s", mk("s|acme")); rec.Code != http.StatusForbidden {
 		t.Errorf("no session: status = %d, want 403", rec.Code)
 	}
 	// A workspace the user is no member of.
@@ -192,24 +197,26 @@ func TestBitbucketConnectCallbackRejects(t *testing.T) {
 		&store.Workspace{Forge: "bitbucket", Prefix: "beta", Token: "beta-tok", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
-	if rec := get(f.fixture, "/oauth/bitbucket/callback/connect?code=x&state=s", mk("s|beta"), sess); rec.Code != http.StatusNotFound {
+	if rec := get(f.fixture, "/oauth/bitbucket/callback?code=x&state=s", mk("s|beta"), sess); rec.Code != http.StatusNotFound {
 		t.Errorf("non-member workspace: status = %d, want 404", rec.Code)
 	}
 	if len(f.bb.exchanged) != 0 {
 		t.Errorf("rejected callbacks must not exchange codes; exchanged %v", f.bb.exchanged)
 	}
-	// The connect start 404s for non-bitbucket deployments' surface is
-	// covered by TestBitbucketConnectRequiresFeature.
 }
 
 func TestBitbucketConnectRequiresFeature(t *testing.T) {
-	// No BitbucketConnect configured: none of the routes exist.
+	// No BitbucketConnect configured: the connect start does not exist,
+	// and a stray connect cookie on the sign-in callback changes nothing.
 	f, sess := newWorkspaceFixture(t, nil, false)
 	if rec := get(f, "/workspaces/acme/bitbucket/connect", sess); rec.Code != http.StatusNotFound {
 		t.Errorf("connect without feature: status = %d, want 404", rec.Code)
 	}
-	if rec := get(f, "/oauth/bitbucket/callback/connect?code=x&state=s"); rec.Code != http.StatusNotFound {
-		t.Errorf("callback without feature: status = %d, want 404", rec.Code)
+	stray := &http.Cookie{Name: connectStateCookie, Value: "s|acme"}
+	if rec := get(f, "/oauth/bitbucket/callback?code=x&state=s", stray); rec.Code != http.StatusFound ||
+		rec.Header().Get("Location") != "/login?error=1" {
+		t.Errorf("callback without feature: %d -> %q, want the sign-in flow's failure redirect",
+			rec.Code, rec.Header().Get("Location"))
 	}
 }
 

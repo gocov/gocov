@@ -209,7 +209,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /workspaces/{prefix}/setup", s.handleWorkspaceSetup)
 	s.mux.HandleFunc("GET /workspaces/{prefix}/setup/status", s.handleWorkspaceSetupStatus)
 	s.mux.HandleFunc("GET /github/setup", s.handleGitHubSetup)
-	s.mux.HandleFunc("GET /oauth/bitbucket/callback/connect", s.handleBitbucketConnectCallback)
 	s.mux.HandleFunc("GET /{$}", s.handleIndex)
 	s.mux.HandleFunc("GET /repos/{slug...}", s.handleRepo)
 	s.mux.HandleFunc("GET /uploads/{id}", s.handleUploadPage)

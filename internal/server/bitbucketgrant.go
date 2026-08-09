@@ -113,80 +113,79 @@ func (s *Server) handleBitbucketConnect(w http.ResponseWriter, r *http.Request) 
 		Secure:   s.secureCookies,
 		SameSite: http.SameSiteLaxMode,
 	})
-	http.Redirect(w, r, s.bbConnect.AuthorizeURL(state, s.bbConnectRedirectURI()), http.StatusFound)
+	http.Redirect(w, r, s.bbConnect.AuthorizeURL(state, s.redirectURI("bitbucket")), http.StatusFound)
 }
 
-// bbConnectRedirectURI nests under the sign-in callback: Bitbucket only
-// accepts per-request redirect URIs that extend the consumer's
-// configured callback URL, which is <base>/oauth/bitbucket/callback.
-func (s *Server) bbConnectRedirectURI() string {
-	return strings.TrimSuffix(s.baseURL, "/") + "/oauth/bitbucket/callback/connect"
-}
-
-// handleBitbucketConnectCallback implements GET /oauth/bitbucket/callback/connect.
-// The path is public (under /oauth/), so the session is resolved by
-// hand; the state cookie names the workspace and the usual membership
-// rules decide whether this user may connect it.
-func (s *Server) handleBitbucketConnectCallback(w http.ResponseWriter, r *http.Request) {
+// bitbucketConnectCallback reports whether the sign-in callback request
+// is really a returning connect consent, and handles it when so. Live
+// Bitbucket requires the redirect URI to match the consumer's configured
+// callback exactly (the documented allow-extensions rule is gone), so
+// the connect grant shares the sign-in callback and the connect state
+// cookie is what tells the two flows apart.
+func (s *Server) bitbucketConnectCallback(w http.ResponseWriter, r *http.Request) bool {
 	if s.bbConnect == nil {
-		http.NotFound(w, r)
-		return
+		return false
 	}
 	c, err := r.Cookie(connectStateCookie)
-	clearCookie(w, connectStateCookie, s.secureCookies)
-	state, prefix := "", ""
-	if err == nil {
-		state, prefix, _ = strings.Cut(c.Value, "|")
+	if err != nil {
+		return false
 	}
+	state, prefix, _ := strings.Cut(c.Value, "|")
+	if state == "" || r.FormValue("state") != state {
+		// Not this flow's redirect (a plain sign-in, or garbage); the
+		// stale cookie stays until it expires or a connect finishes.
+		return false
+	}
+	clearCookie(w, connectStateCookie, s.secureCookies)
 	code := r.FormValue("code")
-	if r.FormValue("error") != "" || code == "" || state == "" || r.FormValue("state") != state || prefix == "" {
-		s.log.Warn("bitbucket connect callback rejected", "bb_error", r.FormValue("error"),
-			"state_ok", state != "" && r.FormValue("state") == state)
+	if r.FormValue("error") != "" || code == "" || prefix == "" {
+		s.log.Warn("bitbucket connect callback rejected", "bb_error", r.FormValue("error"))
 		s.renderConnect(w, r, http.StatusBadRequest, "Connect failed",
 			"The consent redirect could not be validated. Start again from the workspace settings page.", "")
-		return
+		return true
 	}
 	u := s.sessionUser(r)
 	if u == nil {
 		s.renderConnect(w, r, http.StatusForbidden, "Sign in first",
 			"Your gocov session expired during the consent. Sign in and start the connect again "+
 				"from the workspace settings page.", "")
-		return
+		return true
 	}
 	ws, err := s.store.WorkspaceByPrefix(r.Context(), prefix)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.NotFound(w, r)
-			return
+			return true
 		}
 		s.internalError(w, "looking up workspace", err)
-		return
+		return true
 	}
 	member, err := s.isMember(r.Context(), u, ws)
 	if err != nil {
 		s.internalError(w, "listing memberships", err)
-		return
+		return true
 	}
 	if ws.Forge != "bitbucket" || !member {
 		http.NotFound(w, r)
-		return
+		return true
 	}
 
-	grant, err := s.bbConnect.Exchange(r.Context(), code, s.bbConnectRedirectURI())
+	grant, err := s.bbConnect.Exchange(r.Context(), code, s.redirectURI("bitbucket"))
 	if err != nil {
 		s.log.Error("bitbucket connect exchange", "workspace", ws.Prefix, "err", err)
 		s.renderConnect(w, r, http.StatusBadGateway, "Bitbucket did not confirm the grant",
 			"The authorization could not be completed with Bitbucket. Start again from the "+
 				"workspace settings page.", "")
-		return
+		return true
 	}
 	if err := s.store.SetWorkspaceBitbucketGrant(r.Context(), ws.ID, grant.Account, grant.RefreshToken, false); err != nil {
 		s.internalError(w, "storing workspace grant", err)
-		return
+		return true
 	}
 	s.bbTokens.put(ws.ID, grant.AccessToken, grant.TTL)
 	s.log.Info("bitbucket workspace connected", "workspace", ws.Prefix, "account", grant.Account, "user", u.DisplayName)
 	http.Redirect(w, r, "/workspaces/"+ws.Prefix+"?connected=1", http.StatusSeeOther)
+	return true
 }
 
 // handleBitbucketDisconnect implements POST /workspaces/{prefix}/bitbucket/disconnect:
