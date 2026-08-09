@@ -29,9 +29,11 @@
 // a path to a PEM file) enable the GitHub App integration: workspaces
 // connect with one click and statuses, PR comments and check runs are
 // posted as the app's bot identity, no tokens required.
-// GOCOV_SECRET_KEY (any secret string) enables the Bitbucket workspace
-// connect on top of the Bitbucket OAuth consumer: one consent and the
-// workspace acts through that grant, its refresh token stored encrypted.
+// GOCOV_SECRET_KEY (a long random secret, e.g. `openssl rand -hex 32`;
+// the AES key is a plain SHA-256 of it, so its entropy is the
+// protection) enables the Bitbucket workspace connect on top of the
+// Bitbucket OAuth consumer: one consent and the workspace acts through
+// that grant, its refresh token stored encrypted.
 package main
 
 import (

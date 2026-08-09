@@ -296,8 +296,12 @@ work with zero manual credentials from then on. To enable it, the
 deployment needs the sign-in OAuth consumer plus an encryption key:
 
 ```sh
-GOCOV_SECRET_KEY=...   # any secret string; encrypts the stored grant at rest
+GOCOV_SECRET_KEY=...   # long random secret (e.g. `openssl rand -hex 32`); encrypts the stored grant at rest
 ```
+
+The AES key is derived from this value with a plain SHA-256 — there is
+no slow KDF to compensate for a guessable passphrase — so generate it
+randomly rather than inventing one.
 
 and the consumer's permissions extended beyond sign-in: **Account:
 Read**, **Email**, **Repositories: Write**, **Pull requests: Write**.
@@ -449,7 +453,7 @@ delta_pct, build_status}`. Uploads carrying a `pr_id` additionally get
 | `GOCOV_GITHUB_TOKEN`           | —                       | global GitHub token for repos without their own credentials |
 | `GOCOV_GITHUB_APP_ID`          | —                       | GitHub App id; with the key, enables one-click workspace connect |
 | `GOCOV_GITHUB_APP_PRIVATE_KEY` | —                       | the App's private key: PEM content, or a path to the PEM file |
-| `GOCOV_SECRET_KEY`             | —                       | at-rest encryption key; with the Bitbucket OAuth consumer, enables one-click workspace connect |
+| `GOCOV_SECRET_KEY`             | —                       | at-rest encryption key (long random value, e.g. `openssl rand -hex 32`); with the Bitbucket OAuth consumer, enables one-click workspace connect |
 | `GOCOV_OAUTH_BITBUCKET_KEY`    | —                       | Bitbucket OAuth consumer key; with the secret, turns on web UI sign-in |
 | `GOCOV_OAUTH_BITBUCKET_SECRET` | —                       | Bitbucket OAuth consumer secret |
 | `GOCOV_OAUTH_GITHUB_KEY`       | —                       | GitHub OAuth app client id; with the secret, turns on web UI sign-in |
