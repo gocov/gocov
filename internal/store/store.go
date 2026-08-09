@@ -48,8 +48,17 @@ type Workspace struct {
 	// global defaults. Nil or empty when not configured.
 	ForgeCredentials map[string]string
 	// Gate is copied to auto-created repos at registration time.
-	Gate      Gate
-	CreatedAt time.Time
+	Gate Gate
+	// GitHubInstallationID links the workspace to a GitHub App
+	// installation (One-Click Connect D3); 0 when not connected. When
+	// set, installation tokens outrank every stored credential (D4).
+	GitHubInstallationID int64
+	// GitHubAppBroken marks a connection whose installation token was
+	// refused — the app was uninstalled or suspended on GitHub. Set
+	// lazily on the first failing mint, cleared on reconnect or when a
+	// mint succeeds again; the settings page renders it as "reconnect".
+	GitHubAppBroken bool
+	CreatedAt       time.Time
 }
 
 // Repo is a tracked repository. Slug is namespaced ("workspace/repo").

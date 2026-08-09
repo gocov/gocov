@@ -16,6 +16,13 @@ var ErrNotImplemented = errors.New("forge: not implemented")
 // does not exist (e.g. a 404 while asking for its default branch).
 var ErrRepoNotFound = errors.New("forge: repository not found")
 
+// ErrCredentialsRevoked is returned when the forge rejects the stored
+// connection itself — an uninstalled GitHub App, a revoked OAuth grant —
+// rather than a single call. The connection is gone, not misconfigured:
+// callers degrade like missing credentials and surface a reconnect
+// prompt instead of retrying.
+var ErrCredentialsRevoked = errors.New("forge: credentials revoked")
+
 // Build status states, mapped by each implementation to its native values.
 const (
 	StateSuccessful = "successful"

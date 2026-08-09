@@ -29,17 +29,34 @@ import (
 // settings pages are previewable without a real OAuth consumer. Enable
 // with GOCOV_PREVIEW_AUTH=1 (hosted mode; sign-in lands a member of the
 // seeded acme workspace with the unregistered "personal" also on offer).
-type devAuth struct{}
+// The "github" instance signs in a member of the gh-* workspaces, which
+// are seeded in the three GitHub App connection states.
+type devAuth struct {
+	forge      string
+	workspaces []string
+}
 
-func (devAuth) Name() string { return "bitbucket" }
-func (devAuth) AuthorizeURL(state, redirectURI string) string {
+func (a devAuth) Name() string { return a.forge }
+func (a devAuth) AuthorizeURL(state, redirectURI string) string {
 	return redirectURI + "?state=" + url.QueryEscape(state) + "&code=dev"
 }
-func (devAuth) Identity(context.Context, string, string) (*auth.Identity, error) {
+func (a devAuth) Identity(context.Context, string, string) (*auth.Identity, error) {
 	return &auth.Identity{
-		ForgeUUID: "{dev}", DisplayName: "Dev User", Email: "dev@example.com",
-		Workspaces: []string{"acme", "personal"},
+		ForgeUUID: "{dev-" + a.forge + "}", DisplayName: "Dev User", Email: "dev@example.com",
+		Workspaces: a.workspaces,
 	}, nil
+}
+
+// devGitHubApp stubs server.GitHubApp so the settings/setup pages render
+// the App cards; the connect flow itself needs no live GitHub either.
+type devGitHubApp struct{ fg forge.Forge }
+
+func (d devGitHubApp) ForgeClient(context.Context, int64) (forge.Forge, error) { return d.fg, nil }
+func (devGitHubApp) InstallationAccount(context.Context, int64) (string, error) {
+	return "gh-new", nil
+}
+func (devGitHubApp) InstallURL(context.Context) (string, error) {
+	return "https://github.com/apps/gocov/installations/new", nil
 }
 
 func main() {
@@ -84,20 +101,41 @@ func main() {
 		}
 	}
 
+	// GitHub workspaces in the three App connection states, for the
+	// settings/setup page cards.
+	for _, ws := range []*store.Workspace{
+		{Forge: "github", Prefix: "gh-new", Token: "gh-new-token", DefaultBranch: "main"},
+		{Forge: "github", Prefix: "gh-connected", Token: "gh-conn-token", DefaultBranch: "main",
+			GitHubInstallationID: 4242},
+		{Forge: "github", Prefix: "gh-broken", Token: "gh-broken-token", DefaultBranch: "main",
+			GitHubInstallationID: 4243, GitHubAppBroken: true},
+	} {
+		if err := st.CreateWorkspace(ctx, ws); err != nil {
+			log.Fatal(err)
+		}
+	}
+
 	var auths []auth.Provider
 	hosted := false
 	if os.Getenv("GOCOV_PREVIEW_AUTH") == "1" {
-		auths = []auth.Provider{devAuth{}}
+		auths = []auth.Provider{
+			devAuth{forge: "bitbucket", workspaces: []string{"acme", "personal"}},
+			devAuth{forge: "github", workspaces: []string{"gh-new", "gh-connected", "gh-broken"}},
+		}
 		hosted = true
-		log.Println("preview auth on: any sign-in click lands as Dev User (member of acme)")
+		log.Println("preview auth on: sign-in via bitbucket lands in acme, via github in the gh-* workspaces")
 	}
 	srv := server.New(server.Config{
 		Store: st, Blobs: blobmem.New(),
 		Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
-		Forges:  map[string]forge.Factory{"bitbucket": forgefake.New().Factory()},
-		BaseURL: "http://localhost:8099",
-		Auths:   auths,
-		Hosted:  hosted,
+		Forges: map[string]forge.Factory{
+			"bitbucket": forgefake.New().Factory(),
+			"github":    forgefake.New().Factory(),
+		},
+		BaseURL:   "http://localhost:8099",
+		Auths:     auths,
+		Hosted:    hosted,
+		GitHubApp: devGitHubApp{fg: forgefake.New()},
 	})
 	log.Println("preview on :8099")
 	log.Fatal(http.ListenAndServe(":8099", srv))

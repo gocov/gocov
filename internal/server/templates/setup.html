@@ -4,6 +4,16 @@
 <p class="sub">Workspace <code>{{.Workspace.Prefix}}</code> on {{.ForgeLabel}} &middot;
 <a href="/workspaces/{{.Workspace.Prefix}}">Settings</a></p>
 
+{{if and .GitHubApp (not .GitHubAppConnected)}}
+<div class="card pad">
+  <h2>Recommended: install the GitHub App</h2>
+  <p class="sub">One click on GitHub and statuses, PR comments and check runs work with
+  zero tokens, posted as <code>gocov[bot]</code>. The upload steps below are still needed —
+  the app covers the reporting side.</p>
+  {{if .GitHubInstallURL}}<p><a class="btn primary" href="{{.GitHubInstallURL}}">Install the gocov app</a></p>{{end}}
+</div>
+{{end}}
+
 <div class="card pad">
   <h2>1. Set the CI variables</h2>
   {{if eq .Workspace.Forge "github"}}

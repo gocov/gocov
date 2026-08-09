@@ -46,6 +46,39 @@
   </form>
 </div>
 
+{{if .GitHubApp}}
+<div class="card pad">
+  <h2>GitHub App</h2>
+  {{if .GitHubAppBroken}}
+  <p class="sub">The gocov app no longer has access — it was probably uninstalled on GitHub.
+  Statuses, PR comments and check runs fall back to configured tokens, or are skipped.
+  <span class="chip fail">reconnect needed</span></p>
+  {{else if .GitHubAppConnected}}
+  <p class="sub">Statuses, PR comments and check runs are posted as <code>gocov[bot]</code>
+  through the app — no tokens needed, and they outrank any credentials below.
+  <span class="chip pass">connected &#10003;</span></p>
+  {{else}}
+  <p class="sub">Install the gocov app on <code>{{.Workspace.Prefix}}</code> and statuses,
+  PR comments and check runs work with zero tokens, posted as <code>gocov[bot]</code>.
+  <span class="chip plain">not connected</span></p>
+  {{end}}
+  {{if .GitHubInstallURL}}
+  {{if and .GitHubAppConnected (not .GitHubAppBroken)}}
+  <p><a class="btn" href="{{.GitHubInstallURL}}">Manage on GitHub</a></p>
+  {{else}}
+  <p><a class="btn primary" href="{{.GitHubInstallURL}}">
+    {{if .GitHubAppBroken}}Reinstall the gocov app{{else}}Install the gocov app{{end}}</a></p>
+  {{end}}
+  {{end}}
+  {{if .GitHubAppConnected}}
+  <form method="post" action="/workspaces/{{.Workspace.Prefix}}/github/disconnect"
+        data-confirm="Disconnect the GitHub App? Statuses and comments fall back to configured tokens, or are skipped.">
+    <button class="btn" type="submit">Disconnect</button>
+  </form>
+  {{end}}
+</div>
+{{end}}
+
 <div class="card pad">
   <h2>Forge credentials</h2>
   <p class="sub">A {{.ForgeLabel}} bot credential used for build statuses, PR comments and

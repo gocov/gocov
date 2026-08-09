@@ -56,6 +56,26 @@ type Config struct {
 	// membership are routed to the registration page instead of being
 	// denied. False keeps today's private behavior exactly.
 	Hosted bool
+	// GitHubApp is the deployment's GitHub App identity (One-Click
+	// Connect P1), implemented by forge/github.App. Nil when the
+	// deployment has none; the credential chain then starts at repo
+	// credentials exactly as before.
+	GitHubApp GitHubApp
+}
+
+// GitHubApp mints installation-scoped forge clients and answers the two
+// questions the connect flow needs. Errors wrapping
+// forge.ErrCredentialsRevoked mean the installation (or the app's own
+// credentials) no longer exists on GitHub.
+type GitHubApp interface {
+	// ForgeClient returns a forge client authenticated as the given
+	// installation.
+	ForgeClient(ctx context.Context, installationID int64) (forge.Forge, error)
+	// InstallationAccount returns the login of the org or user account
+	// the installation lives on.
+	InstallationAccount(ctx context.Context, installationID int64) (string, error)
+	// InstallURL is the app's public install page on GitHub.
+	InstallURL(ctx context.Context) (string, error)
 }
 
 // Server is the gocov HTTP server.
@@ -71,6 +91,7 @@ type Server struct {
 	handler      http.Handler // mux wrapped in the auth middleware
 	health       func(ctx context.Context) error
 	defaultCreds map[string]map[string]string
+	githubApp    GitHubApp
 
 	// auths holds the sign-in providers by forge name; authOrder keeps
 	// the configured order for the login-page buttons.
@@ -109,7 +130,7 @@ func New(cfg Config) *Server {
 	// so pages can define "content" without colliding.
 	pages := map[string]*template.Template{}
 	for _, name := range []string{"index.html", "repo.html", "upload.html", "source.html", "login.html",
-		"register.html", "workspace.html", "setup.html"} {
+		"register.html", "workspace.html", "setup.html", "connect.html"} {
 		pages[name] = template.Must(template.New(name).Funcs(funcs).ParseFS(templatesFS,
 			"templates/layout.html", "templates/partials.html", "templates/"+name))
 	}
@@ -125,6 +146,7 @@ func New(cfg Config) *Server {
 		mux:          http.NewServeMux(),
 		health:       cfg.Health,
 		defaultCreds: cfg.DefaultForgeCredentials,
+		githubApp:    cfg.GitHubApp,
 
 		auths:             map[string]auth.Provider{},
 		authOrder:         cfg.Auths,
@@ -155,8 +177,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /workspaces/{prefix}/rotate-token", s.handleWorkspaceRotate)
 	s.mux.HandleFunc("POST /workspaces/{prefix}/settings", s.handleWorkspaceSettings)
 	s.mux.HandleFunc("POST /workspaces/{prefix}/credentials", s.handleWorkspaceCredentials)
+	s.mux.HandleFunc("POST /workspaces/{prefix}/github/disconnect", s.handleGitHubDisconnect)
 	s.mux.HandleFunc("GET /workspaces/{prefix}/setup", s.handleWorkspaceSetup)
 	s.mux.HandleFunc("GET /workspaces/{prefix}/setup/status", s.handleWorkspaceSetupStatus)
+	s.mux.HandleFunc("GET /github/setup", s.handleGitHubSetup)
 	s.mux.HandleFunc("GET /{$}", s.handleIndex)
 	s.mux.HandleFunc("GET /repos/{slug...}", s.handleRepo)
 	s.mux.HandleFunc("GET /uploads/{id}", s.handleUploadPage)

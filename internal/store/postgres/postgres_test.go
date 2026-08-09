@@ -130,8 +130,9 @@ func TestWorkspaceLifecycle(t *testing.T) {
 	minDiff := 70.0
 	w := &store.Workspace{
 		Forge: "bitbucket", Prefix: "acme", Token: "ws-tok", DefaultBranch: "development",
-		ForgeCredentials: map[string]string{"username": "bot", "app_password": "pw"},
-		Gate:             store.Gate{MinDiffCoverage: &minDiff},
+		ForgeCredentials:     map[string]string{"username": "bot", "app_password": "pw"},
+		Gate:                 store.Gate{MinDiffCoverage: &minDiff},
+		GitHubInstallationID: 42,
 	}
 	if err := st.CreateWorkspace(ctx, w); err != nil {
 		t.Fatal(err)
@@ -154,6 +155,9 @@ func TestWorkspaceLifecycle(t *testing.T) {
 		}
 		if got.Gate.MinDiffCoverage == nil || *got.Gate.MinDiffCoverage != 70 {
 			t.Errorf("%s gate: %+v", name, got.Gate)
+		}
+		if got.GitHubInstallationID != 42 || got.GitHubAppBroken {
+			t.Errorf("%s github app link: id = %d, broken = %v", name, got.GitHubInstallationID, got.GitHubAppBroken)
 		}
 	}
 
@@ -178,6 +182,7 @@ func TestWorkspaceLifecycle(t *testing.T) {
 	w.Token = "ws-tok-2"
 	w.DefaultBranch = "trunk"
 	w.ForgeCredentials = nil
+	w.GitHubAppBroken = true
 	if err := st.UpdateWorkspace(ctx, w); err != nil {
 		t.Fatal(err)
 	}
@@ -190,6 +195,9 @@ func TestWorkspaceLifecycle(t *testing.T) {
 	}
 	if got.ForgeCredentials != nil {
 		t.Errorf("credentials not cleared: %v", got.ForgeCredentials)
+	}
+	if !got.GitHubAppBroken {
+		t.Error("broken flag not persisted")
 	}
 
 	// Delete; missing rows yield ErrNotFound.

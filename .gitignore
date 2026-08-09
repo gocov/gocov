@@ -4,3 +4,4 @@ coverage.out
 *.test
 .env
 .claude/
+docker-compose.override.yml

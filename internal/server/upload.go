@@ -285,12 +285,29 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 // forgeFor builds a forge client for the repo, resolving credentials
-// along the precedence chain repo > workspace (M3/D4) > server-wide
-// defaults. Returns (nil, nil) when none are configured.
+// along the precedence chain installation token (One-Click Connect D4)
+// > repo > workspace (M3/D4) > server-wide defaults. Returns (nil, nil)
+// when none are configured.
 func (s *Server) forgeFor(ctx context.Context, repo *store.Repo) (forge.Forge, error) {
+	// The workspace is looked up lazily: only when an App could apply or
+	// the repo has no credentials of its own — anything else would tax
+	// every PAT-configured upload with a query it never needed.
+	var ws *store.Workspace
+	wsLoaded := false
+	if s.githubApp != nil && repo.Forge == "github" {
+		ws, wsLoaded = s.repoWorkspace(ctx, repo.Slug, repo.Forge), true
+		if fg := s.installationForge(ctx, ws, repo.Forge); fg != nil {
+			return fg, nil
+		}
+	}
 	creds := repo.ForgeCredentials
 	if len(creds) == 0 {
-		creds = s.workspaceCreds(ctx, repo)
+		if !wsLoaded {
+			ws = s.repoWorkspace(ctx, repo.Slug, repo.Forge)
+		}
+		if ws != nil {
+			creds = ws.ForgeCredentials
+		}
 	}
 	if len(creds) == 0 {
 		creds = s.defaultCreds[repo.Forge]
@@ -298,28 +315,27 @@ func (s *Server) forgeFor(ctx context.Context, repo *store.Repo) (forge.Forge, e
 	return s.forgeFromCreds(repo.Forge, creds)
 }
 
-// workspaceCreds returns the credentials of the workspace owning the
-// repo's slug prefix, nil when there are none. A lookup failure only
-// degrades to the global defaults — forge surfaces are best-effort
-// everywhere else too. The forge must match: prefixes are globally
-// unique, and a same-named workspace on another forge must not lend
-// its secrets.
-func (s *Server) workspaceCreds(ctx context.Context, repo *store.Repo) map[string]string {
-	prefix, _, ok := strings.Cut(repo.Slug, "/")
+// repoWorkspace returns the workspace owning the slug's prefix, nil when
+// there is none. A lookup failure only degrades down the credential
+// chain — forge surfaces are best-effort everywhere else too. The forge
+// must match: prefixes are globally unique, and a same-named workspace
+// on another forge must not lend its secrets or its installation.
+func (s *Server) repoWorkspace(ctx context.Context, slug, forgeName string) *store.Workspace {
+	prefix, _, ok := strings.Cut(slug, "/")
 	if !ok {
 		return nil
 	}
 	ws, err := s.store.WorkspaceByPrefix(ctx, prefix)
 	if err != nil {
 		if !errors.Is(err, store.ErrNotFound) {
-			s.log.Error("workspace credentials lookup", "repo", repo.Slug, "err", err)
+			s.log.Error("workspace lookup", "repo", slug, "err", err)
 		}
 		return nil
 	}
-	if ws.Forge != repo.Forge {
+	if ws.Forge != forgeName {
 		return nil
 	}
-	return ws.ForgeCredentials
+	return ws
 }
 
 // forgeFromCreds builds a forge client for the named forge with the given
@@ -474,17 +490,24 @@ func (s *Server) resolveUploadRepo(w http.ResponseWriter, r *http.Request, repo 
 
 // autoCreateRepo registers a repo first seen through a workspace token.
 // The default branch is asked from the forge when a client can be built
-// (repo-less, so workspace credentials, then global), then falls back to the
-// workspace default and finally to "main". A forge that positively says
-// the repo does not exist aborts the registration (ErrRepoNotFound), so a
-// leaked workspace token cannot fill the dashboard with invented repos.
+// (repo-less, so installation, then workspace credentials, then global),
+// then falls back to the workspace default and finally to "main". A forge
+// that positively says the repo does not exist aborts the registration
+// (ErrRepoNotFound), so a leaked workspace token cannot fill the
+// dashboard with invented repos.
 func (s *Server) autoCreateRepo(ctx context.Context, ws *store.Workspace, slug string) (*store.Repo, error) {
 	branch := ""
 	creds := ws.ForgeCredentials
 	if len(creds) == 0 {
 		creds = s.defaultCreds[ws.Forge]
 	}
-	if fg, err := s.forgeFromCreds(ws.Forge, creds); err == nil && fg != nil {
+	fg := s.installationForge(ctx, ws, ws.Forge)
+	if fg == nil {
+		if f, err := s.forgeFromCreds(ws.Forge, creds); err == nil {
+			fg = f
+		}
+	}
+	if fg != nil {
 		b, err := fg.GetDefaultBranch(ctx, slug)
 		switch {
 		case err == nil && b != "":
