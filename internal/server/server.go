@@ -17,6 +17,7 @@ import (
 	"github.com/bykclk/gocov/internal/blobstore"
 	"github.com/bykclk/gocov/internal/diffcov"
 	"github.com/bykclk/gocov/internal/forge"
+	"github.com/bykclk/gocov/internal/forge/bitbucket"
 	"github.com/bykclk/gocov/internal/profile"
 	"github.com/bykclk/gocov/internal/store"
 )
@@ -61,6 +62,27 @@ type Config struct {
 	// deployment has none; the credential chain then starts at repo
 	// credentials exactly as before.
 	GitHubApp GitHubApp
+	// BitbucketConnect is the OAuth consumer powering the Bitbucket
+	// workspace-connect grant (One-Click Connect P2), implemented by
+	// forge/bitbucket.Consumer. Nil disables the feature; requires
+	// GOCOV_SECRET_KEY at the store for the at-rest token encryption.
+	BitbucketConnect BitbucketConnect
+}
+
+// BitbucketConnect runs the Bitbucket OAuth grants for workspace
+// connect. Errors wrapping forge.ErrCredentialsRevoked mean the grant
+// is gone (revoked, or the refresh token aged out unused).
+type BitbucketConnect interface {
+	// AuthorizeURL is the consent page for the connect grant.
+	AuthorizeURL(state, redirectURI string) string
+	// Exchange trades the consent code for the grant, including the
+	// granting account's username.
+	Exchange(ctx context.Context, code, redirectURI string) (*bitbucket.Grant, error)
+	// Refresh trades a refresh token for a fresh access token and — the
+	// tokens rotate — a new refresh token to persist.
+	Refresh(ctx context.Context, refreshToken string) (*bitbucket.Grant, error)
+	// ForgeClient returns a forge client acting through the access token.
+	ForgeClient(accessToken string) forge.Forge
 }
 
 // GitHubApp mints installation-scoped forge clients and answers the two
@@ -92,6 +114,8 @@ type Server struct {
 	health       func(ctx context.Context) error
 	defaultCreds map[string]map[string]string
 	githubApp    GitHubApp
+	bbConnect    BitbucketConnect
+	bbTokens     *bbTokenCache
 
 	// auths holds the sign-in providers by forge name; authOrder keeps
 	// the configured order for the login-page buttons.
@@ -147,6 +171,8 @@ func New(cfg Config) *Server {
 		health:       cfg.Health,
 		defaultCreds: cfg.DefaultForgeCredentials,
 		githubApp:    cfg.GitHubApp,
+		bbConnect:    cfg.BitbucketConnect,
+		bbTokens:     newBBTokenCache(),
 
 		auths:             map[string]auth.Provider{},
 		authOrder:         cfg.Auths,
@@ -178,6 +204,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /workspaces/{prefix}/settings", s.handleWorkspaceSettings)
 	s.mux.HandleFunc("POST /workspaces/{prefix}/credentials", s.handleWorkspaceCredentials)
 	s.mux.HandleFunc("POST /workspaces/{prefix}/github/disconnect", s.handleGitHubDisconnect)
+	s.mux.HandleFunc("GET /workspaces/{prefix}/bitbucket/connect", s.handleBitbucketConnect)
+	s.mux.HandleFunc("POST /workspaces/{prefix}/bitbucket/disconnect", s.handleBitbucketDisconnect)
 	s.mux.HandleFunc("GET /workspaces/{prefix}/setup", s.handleWorkspaceSetup)
 	s.mux.HandleFunc("GET /workspaces/{prefix}/setup/status", s.handleWorkspaceSetupStatus)
 	s.mux.HandleFunc("GET /github/setup", s.handleGitHubSetup)

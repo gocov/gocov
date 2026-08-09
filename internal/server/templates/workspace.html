@@ -79,6 +79,36 @@
 </div>
 {{end}}
 
+{{if .BitbucketConnect}}
+<div class="card pad">
+  <h2>Bitbucket connection</h2>
+  {{if .BBGrantBroken}}
+  <p class="sub">The connection stopped working — the grant was revoked on Bitbucket, or the
+  account that connected it left. Statuses, PR comments and reports fall back to configured
+  credentials, or are skipped. <span class="chip fail">reconnect needed</span></p>
+  {{else if .BBGrantAccount}}
+  <p class="sub">Statuses, PR comments, reports, diffs and source fetch act through the
+  connected grant — no app passwords or API tokens needed. Posts appear as
+  <code>@{{.BBGrantAccount}}</code>. <span class="chip pass">connected &#10003;</span></p>
+  {{else}}
+  <p class="sub">Connect the workspace with one Bitbucket consent and statuses, PR comments
+  and reports work with zero manual credentials. Posts will appear as the account that
+  clicks Connect &mdash; teams with a bot account should connect with it.
+  <span class="chip plain">not connected</span></p>
+  {{end}}
+  {{if or (not .BBGrantAccount) .BBGrantBroken}}
+  <p><a class="btn primary" href="/workspaces/{{.Workspace.Prefix}}/bitbucket/connect">
+    {{if .BBGrantBroken}}Reconnect workspace{{else}}Connect workspace{{end}}</a></p>
+  {{end}}
+  {{if .BBGrantAccount}}
+  <form method="post" action="/workspaces/{{.Workspace.Prefix}}/bitbucket/disconnect"
+        data-confirm="Disconnect the workspace? Statuses and comments fall back to configured credentials, or are skipped.">
+    <button class="btn" type="submit">Disconnect</button>
+  </form>
+  {{end}}
+</div>
+{{end}}
+
 <div class="card pad">
   <h2>Forge credentials</h2>
   <p class="sub">A {{.ForgeLabel}} bot credential used for build statuses, PR comments and

@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/bykclk/gocov/internal/diffcov"
 	"github.com/bykclk/gocov/internal/profile"
+	"github.com/bykclk/gocov/internal/secretbox"
 	"github.com/bykclk/gocov/internal/store"
 	"github.com/bykclk/gocov/internal/store/postgres"
 	"github.com/bykclk/gocov/internal/testpg"
@@ -583,5 +585,86 @@ func TestRegisterWorkspace(t *testing.T) {
 	}
 	if got, err := st.WorkspaceByPrefix(ctx, "startup"); err != nil || got.Token != "reg-tok" {
 		t.Errorf("winner's workspace disturbed: %+v (err %v)", got, err)
+	}
+}
+
+func TestBitbucketGrantEncryptedAtRest(t *testing.T) {
+	st := newTestStore(t)
+	box, err := secretbox.New("test-secret-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SetCipher(box)
+	ctx := context.Background()
+
+	w := &store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "ws-tok", DefaultBranch: "main"}
+	if err := st.CreateWorkspace(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetWorkspaceBitbucketGrant(ctx, w.ID, "covbot", "rt-secret-1", false); err != nil {
+		t.Fatal(err)
+	}
+
+	// The column never sees the plaintext.
+	var raw string
+	if err := st.Pool().QueryRow(ctx,
+		`SELECT bitbucket_refresh_token FROM workspaces WHERE id = $1`, w.ID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(raw, "v1:") || strings.Contains(raw, "rt-secret-1") {
+		t.Errorf("stored column = %q, want sealed v1: value", raw)
+	}
+
+	got, err := st.WorkspaceByPrefix(ctx, "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.BitbucketRefreshToken != "rt-secret-1" || got.BitbucketGrantAccount != "covbot" || got.BitbucketGrantBroken {
+		t.Errorf("loaded grant = %q/%q/%v", got.BitbucketGrantAccount, got.BitbucketRefreshToken, got.BitbucketGrantBroken)
+	}
+
+	// Rotation: the swap replaces the stored token.
+	if err := st.SetWorkspaceBitbucketGrant(ctx, w.ID, "covbot", "rt-secret-2", false); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.WorkspaceByPrefix(ctx, "acme"); got.BitbucketRefreshToken != "rt-secret-2" {
+		t.Errorf("after rotation: %q, want rt-secret-2", got.BitbucketRefreshToken)
+	}
+
+	// UpdateWorkspace must not touch the grant columns — a full-row
+	// write from an earlier read would resurrect a rotated-away token.
+	stale := *got
+	stale.BitbucketRefreshToken = "rt-secret-1"
+	stale.DefaultBranch = "trunk"
+	if err := st.UpdateWorkspace(ctx, &stale); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = st.WorkspaceByPrefix(ctx, "acme")
+	if got.DefaultBranch != "trunk" || got.BitbucketRefreshToken != "rt-secret-2" {
+		t.Errorf("after full-row update: branch %q token %q, want trunk + untouched rt-secret-2",
+			got.DefaultBranch, got.BitbucketRefreshToken)
+	}
+
+	// A different (rotated-away) key cannot brick reads: the token comes
+	// back empty and the connection reads as broken -> reconnect.
+	otherBox, _ := secretbox.New("some-other-key")
+	st2 := postgres.New(st.Pool())
+	st2.SetCipher(otherBox)
+	got, err = st2.WorkspaceByPrefix(ctx, "acme")
+	if err != nil {
+		t.Fatalf("wrong key must degrade, not error: %v", err)
+	}
+	if got.BitbucketRefreshToken != "" || !got.BitbucketGrantBroken {
+		t.Errorf("wrong key: token %q broken %v, want empty + broken", got.BitbucketRefreshToken, got.BitbucketGrantBroken)
+	}
+
+	// Writing a grant without a cipher fails loudly.
+	st3 := postgres.New(st.Pool())
+	if err := st3.SetWorkspaceBitbucketGrant(ctx, w.ID, "covbot", "rt-plain", false); err == nil {
+		t.Error("storing a grant without GOCOV_SECRET_KEY must fail")
+	}
+	// Clearing the grant needs no cipher (empty token).
+	if err := st3.SetWorkspaceBitbucketGrant(ctx, w.ID, "", "", false); err != nil {
+		t.Errorf("clearing without cipher: %v", err)
 	}
 }

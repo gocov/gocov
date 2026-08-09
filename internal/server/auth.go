@@ -211,6 +211,12 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	if provider == nil {
 		return
 	}
+	// A returning workspace-connect consent shares this callback URL —
+	// Bitbucket enforces an exact redirect-URI match on the consumer's
+	// configured callback — and is told apart by its own state cookie.
+	if provider.Name() == "bitbucket" && s.bitbucketConnectCallback(w, r) {
+		return
+	}
 	failed := func() { http.Redirect(w, r, "/login?error=1", http.StatusFound) }
 
 	state, next := readStateCookie(r)

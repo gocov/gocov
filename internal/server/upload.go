@@ -289,14 +289,15 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 // > repo > workspace (M3/D4) > server-wide defaults. Returns (nil, nil)
 // when none are configured.
 func (s *Server) forgeFor(ctx context.Context, repo *store.Repo) (forge.Forge, error) {
-	// The workspace is looked up lazily: only when an App could apply or
-	// the repo has no credentials of its own — anything else would tax
-	// every PAT-configured upload with a query it never needed.
+	// The workspace is looked up lazily: only when a connection could
+	// apply or the repo has no credentials of its own — anything else
+	// would tax every token-configured upload with a query it never
+	// needed.
 	var ws *store.Workspace
 	wsLoaded := false
-	if s.githubApp != nil && repo.Forge == "github" {
+	if s.oneClickCapable(repo.Forge) {
 		ws, wsLoaded = s.repoWorkspace(ctx, repo.Slug, repo.Forge), true
-		if fg := s.installationForge(ctx, ws, repo.Forge); fg != nil {
+		if fg := s.connectedForge(ctx, ws, repo.Forge); fg != nil {
 			return fg, nil
 		}
 	}
@@ -313,6 +314,23 @@ func (s *Server) forgeFor(ctx context.Context, repo *store.Repo) (forge.Forge, e
 		creds = s.defaultCreds[repo.Forge]
 	}
 	return s.forgeFromCreds(repo.Forge, creds)
+}
+
+// oneClickCapable reports whether a one-click connection could supply
+// credentials for the forge — the gate for the extra workspace lookup.
+func (s *Server) oneClickCapable(forgeName string) bool {
+	return (s.githubApp != nil && forgeName == "github") ||
+		(s.bbConnect != nil && forgeName == "bitbucket")
+}
+
+// connectedForge returns the workspace's one-click-connected client —
+// GitHub App installation or Bitbucket grant — or nil, the top link of
+// the credential chain (D4/D7).
+func (s *Server) connectedForge(ctx context.Context, ws *store.Workspace, forgeName string) forge.Forge {
+	if fg := s.installationForge(ctx, ws, forgeName); fg != nil {
+		return fg
+	}
+	return s.grantForge(ctx, ws, forgeName)
 }
 
 // repoWorkspace returns the workspace owning the slug's prefix, nil when
@@ -501,7 +519,7 @@ func (s *Server) autoCreateRepo(ctx context.Context, ws *store.Workspace, slug s
 	if len(creds) == 0 {
 		creds = s.defaultCreds[ws.Forge]
 	}
-	fg := s.installationForge(ctx, ws, ws.Forge)
+	fg := s.connectedForge(ctx, ws, ws.Forge)
 	if fg == nil {
 		if f, err := s.forgeFromCreds(ws.Forge, creds); err == nil {
 			fg = f

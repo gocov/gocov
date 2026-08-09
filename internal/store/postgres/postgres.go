@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/bykclk/gocov/internal/secretbox"
 	"github.com/bykclk/gocov/internal/store"
 )
 
@@ -21,11 +22,48 @@ var migrationsFS embed.FS
 // Store implements store.Store on a pgx connection pool.
 type Store struct {
 	pool *pgxpool.Pool
+	// cipher seals the Bitbucket grant refresh token at rest (One-Click
+	// Connect D6). Nil when GOCOV_SECRET_KEY is not configured — storing
+	// a grant then fails loudly, but everything else works.
+	cipher *secretbox.Box
 }
 
 // New wraps an existing pool. The caller owns the pool's lifecycle.
 func New(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool}
+}
+
+// SetCipher installs the at-rest cipher for grant refresh tokens.
+func (s *Store) SetCipher(box *secretbox.Box) { s.cipher = box }
+
+// sealToken encrypts a refresh token for storage; empty stays empty.
+func (s *Store) sealToken(token string) (string, error) {
+	if token == "" {
+		return "", nil
+	}
+	if s.cipher == nil {
+		return "", fmt.Errorf("postgres: storing a grant token requires GOCOV_SECRET_KEY")
+	}
+	return s.cipher.Seal(token)
+}
+
+// openToken decrypts a stored refresh token. Failures (missing or rotated
+// GOCOV_SECRET_KEY, tampering) must not brick every workspace read that
+// happens to include the row — the token comes back empty with ok=false,
+// and the caller marks the loaded struct broken so the UI asks for a
+// reconnect, which re-seals under the current key.
+func (s *Store) openToken(sealed string) (token string, ok bool) {
+	if sealed == "" {
+		return "", true
+	}
+	if s.cipher == nil {
+		return "", false
+	}
+	plain, err := s.cipher.Open(sealed)
+	if err != nil {
+		return "", false
+	}
+	return plain, true
 }
 
 // Pool exposes the underlying pool so other Postgres-backed components
@@ -201,7 +239,8 @@ func marshalCreds(creds map[string]string) ([]byte, error) {
 
 const workspaceCols = `id, forge, prefix, token, default_branch, COALESCE(forge_credentials, 'null'::jsonb),
 	min_coverage, min_diff_coverage, max_coverage_drop,
-	github_installation_id, github_app_broken, created_at`
+	github_installation_id, github_app_broken,
+	bitbucket_grant_account, bitbucket_refresh_token, bitbucket_grant_broken, created_at`
 
 func (s *Store) CreateWorkspace(ctx context.Context, w *store.Workspace) error {
 	return s.createWorkspace(ctx, s.pool, w)
@@ -217,15 +256,21 @@ func (s *Store) createWorkspace(ctx context.Context, db execer, w *store.Workspa
 	if err != nil {
 		return err
 	}
+	sealed, err := s.sealToken(w.BitbucketRefreshToken)
+	if err != nil {
+		return err
+	}
 	return db.QueryRow(ctx, `
 		INSERT INTO workspaces (forge, prefix, token, default_branch, forge_credentials,
 			min_coverage, min_diff_coverage, max_coverage_drop,
-			github_installation_id, github_app_broken)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			github_installation_id, github_app_broken,
+			bitbucket_grant_account, bitbucket_refresh_token, bitbucket_grant_broken)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		RETURNING id, created_at`,
 		w.Forge, w.Prefix, w.Token, w.DefaultBranch, creds,
 		w.Gate.MinCoverage, w.Gate.MinDiffCoverage, w.Gate.MaxCoverageDrop,
 		w.GitHubInstallationID, w.GitHubAppBroken,
+		w.BitbucketGrantAccount, sealed, w.BitbucketGrantBroken,
 	).Scan(&w.ID, &w.CreatedAt)
 }
 
@@ -247,6 +292,10 @@ func (s *Store) RegisterWorkspace(ctx context.Context, w *store.Workspace, userI
 	return tx.Commit(ctx)
 }
 
+// UpdateWorkspace replaces the stored row with w's fields — except the
+// Bitbucket grant columns, which only SetWorkspaceBitbucketGrant touches:
+// the refresh token rotates on every use, so a full-row write from an
+// earlier read would resurrect an already-invalidated token.
 func (s *Store) UpdateWorkspace(ctx context.Context, w *store.Workspace) error {
 	creds, err := marshalCreds(w.ForgeCredentials)
 	if err != nil {
@@ -261,6 +310,25 @@ func (s *Store) UpdateWorkspace(ctx context.Context, w *store.Workspace) error {
 		w.ID, w.Forge, w.Prefix, w.Token, w.DefaultBranch, creds,
 		w.Gate.MinCoverage, w.Gate.MinDiffCoverage, w.Gate.MaxCoverageDrop,
 		w.GitHubInstallationID, w.GitHubAppBroken)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) SetWorkspaceBitbucketGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
+	sealed, err := s.sealToken(refreshToken)
+	if err != nil {
+		return err
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE workspaces SET bitbucket_grant_account = $2,
+			bitbucket_refresh_token = $3, bitbucket_grant_broken = $4
+		WHERE id = $1`,
+		workspaceID, account, sealed, broken)
 	if err != nil {
 		return err
 	}
@@ -311,14 +379,23 @@ func (s *Store) ListWorkspaces(ctx context.Context) ([]*store.Workspace, error) 
 func (s *Store) scanWorkspace(row rowScanner) (*store.Workspace, error) {
 	var w store.Workspace
 	var creds []byte
+	var sealedRefresh string
 	err := row.Scan(&w.ID, &w.Forge, &w.Prefix, &w.Token, &w.DefaultBranch, &creds,
 		&w.Gate.MinCoverage, &w.Gate.MinDiffCoverage, &w.Gate.MaxCoverageDrop,
-		&w.GitHubInstallationID, &w.GitHubAppBroken, &w.CreatedAt)
+		&w.GitHubInstallationID, &w.GitHubAppBroken,
+		&w.BitbucketGrantAccount, &sealedRefresh, &w.BitbucketGrantBroken, &w.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
+	}
+	if token, ok := s.openToken(sealedRefresh); ok {
+		w.BitbucketRefreshToken = token
+	} else {
+		// Undecryptable (key rotated away, or missing): surface as a
+		// broken connection instead of failing every workspace read.
+		w.BitbucketGrantBroken = true
 	}
 	if len(creds) > 0 && string(creds) != "null" {
 		if err := json.Unmarshal(creds, &w.ForgeCredentials); err != nil {
@@ -359,7 +436,8 @@ func (s *Store) ListWorkspacesForUser(ctx context.Context, userID int64) ([]*sto
 		SELECT w.id, w.forge, w.prefix, w.token, w.default_branch,
 			COALESCE(w.forge_credentials, 'null'::jsonb),
 			w.min_coverage, w.min_diff_coverage, w.max_coverage_drop,
-			w.github_installation_id, w.github_app_broken, w.created_at
+			w.github_installation_id, w.github_app_broken,
+			w.bitbucket_grant_account, w.bitbucket_refresh_token, w.bitbucket_grant_broken, w.created_at
 		FROM workspaces w
 		JOIN workspace_members m ON m.workspace_id = w.id
 		WHERE m.user_id = $1
