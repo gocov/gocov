@@ -21,12 +21,27 @@ import (
 const DefaultBaseURL = "https://api.bitbucket.org/2.0"
 
 // Client implements forge.Forge against the Bitbucket Cloud API using an
-// app password for authentication.
+// app password (or scoped API token) for authentication — or, when
+// AccessToken is set, an OAuth access token from the workspace's
+// connect grant (One-Click Connect P2).
 type Client struct {
 	BaseURL     string
 	Username    string
 	AppPassword string
+	// AccessToken switches authentication to OAuth Bearer; Username and
+	// AppPassword are then ignored.
+	AccessToken string
 	HTTPClient  *http.Client
+}
+
+// authorize sets the request's auth: the grant's Bearer token when
+// connected, HTTP Basic with the stored credential otherwise.
+func (c *Client) authorize(req *http.Request) {
+	if c.AccessToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.AccessToken)
+		return
+	}
+	req.SetBasicAuth(c.Username, c.AppPassword)
 }
 
 // Factory builds a Client from repo credentials. Required keys:
@@ -103,7 +118,7 @@ func (c *Client) currentUser(ctx context.Context) (bitbucketUser, error) {
 	if err != nil {
 		return bitbucketUser{}, err
 	}
-	req.SetBasicAuth(c.Username, c.AppPassword)
+	c.authorize(req)
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return bitbucketUser{}, fmt.Errorf("bitbucket: %w", err)
@@ -140,7 +155,7 @@ func (c *Client) FindPRComment(ctx context.Context, repoSlug, prID, prefix strin
 		if err != nil {
 			return "", err
 		}
-		req.SetBasicAuth(c.Username, c.AppPassword)
+		c.authorize(req)
 		resp, err := c.HTTPClient.Do(req)
 		if err != nil {
 			return "", fmt.Errorf("bitbucket: %w", err)
@@ -206,7 +221,7 @@ func (c *Client) GetPRDiff(ctx context.Context, repoSlug, prID string) (string, 
 	if err != nil {
 		return "", err
 	}
-	req.SetBasicAuth(c.Username, c.AppPassword)
+	c.authorize(req)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -237,7 +252,7 @@ func (c *Client) GetDefaultBranch(ctx context.Context, repoSlug string) (string,
 	if err != nil {
 		return "", err
 	}
-	req.SetBasicAuth(c.Username, c.AppPassword)
+	c.authorize(req)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -281,7 +296,7 @@ func (c *Client) GetFileContent(ctx context.Context, repoSlug, commitSHA, path s
 	if err != nil {
 		return nil, err
 	}
-	req.SetBasicAuth(c.Username, c.AppPassword)
+	c.authorize(req)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -406,7 +421,7 @@ func (c *Client) deleteReport(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	req.SetBasicAuth(c.Username, c.AppPassword)
+	c.authorize(req)
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("bitbucket: %w", err)
@@ -436,7 +451,7 @@ func (c *Client) send(ctx context.Context, method, path string, payload any) err
 	if err != nil {
 		return err
 	}
-	req.SetBasicAuth(c.Username, c.AppPassword)
+	c.authorize(req)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.HTTPClient.Do(req)

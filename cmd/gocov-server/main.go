@@ -29,6 +29,9 @@
 // a path to a PEM file) enable the GitHub App integration: workspaces
 // connect with one click and statuses, PR comments and check runs are
 // posted as the app's bot identity, no tokens required.
+// GOCOV_SECRET_KEY (any secret string) enables the Bitbucket workspace
+// connect on top of the Bitbucket OAuth consumer: one consent and the
+// workspace acts through that grant, its refresh token stored encrypted.
 package main
 
 import (
@@ -53,6 +56,7 @@ import (
 	"github.com/bykclk/gocov/internal/forge/bitbucket"
 	"github.com/bykclk/gocov/internal/forge/github"
 	"github.com/bykclk/gocov/internal/profile"
+	"github.com/bykclk/gocov/internal/secretbox"
 	"github.com/bykclk/gocov/internal/server"
 	storepg "github.com/bykclk/gocov/internal/store/postgres"
 )
@@ -118,6 +122,15 @@ func connect(ctx context.Context) (*storepg.Store, error) {
 		return nil, fmt.Errorf("connecting to postgres: %w", err)
 	}
 	st := storepg.New(pool)
+	// The at-rest cipher for Bitbucket grant tokens (One-Click Connect
+	// D6); set here so the CLI subcommands share it with serve.
+	if key := os.Getenv("GOCOV_SECRET_KEY"); key != "" {
+		box, err := secretbox.New(key)
+		if err != nil {
+			return nil, fmt.Errorf("GOCOV_SECRET_KEY: %w", err)
+		}
+		st.SetCipher(box)
+	}
 	if err := st.Migrate(ctx); err != nil {
 		return nil, fmt.Errorf("applying migrations: %w", err)
 	}
@@ -226,6 +239,16 @@ func serve() error {
 	// field would read as "configured".
 	if githubApp != nil {
 		cfg.GitHubApp = githubApp
+	}
+	// Bitbucket workspace connect (One-Click Connect P2) rides the
+	// sign-in consumer, and needs the at-rest cipher for the stored
+	// refresh token.
+	switch {
+	case oauthKey != "" && oauthSecret != "" && os.Getenv("GOCOV_SECRET_KEY") != "":
+		cfg.BitbucketConnect = &bitbucket.Consumer{Key: oauthKey, Secret: oauthSecret}
+		log.Info("bitbucket workspace connect enabled")
+	case oauthKey != "" && oauthSecret != "":
+		log.Info("GOCOV_SECRET_KEY not set; Bitbucket workspace connect stays disabled")
 	}
 	srv := server.New(cfg)
 

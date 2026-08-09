@@ -4,6 +4,17 @@
 <p class="sub">Workspace <code>{{.Workspace.Prefix}}</code> on {{.ForgeLabel}} &middot;
 <a href="/workspaces/{{.Workspace.Prefix}}">Settings</a></p>
 
+{{if and .BitbucketConnect (not .BBGrantAccount)}}
+<div class="card pad">
+  <h2>Recommended: connect the workspace</h2>
+  <p class="sub">One Bitbucket consent and statuses, PR comments and reports work with zero
+  manual credentials. Posts appear as the connecting account &mdash; use a bot account if you
+  have one. The upload steps below are still needed &mdash; the connection covers the
+  reporting side.</p>
+  <p><a class="btn primary" href="/workspaces/{{.Workspace.Prefix}}/bitbucket/connect">Connect workspace</a></p>
+</div>
+{{end}}
+
 {{if and .GitHubApp (not .GitHubAppConnected)}}
 <div class="card pad">
   <h2>Recommended: install the GitHub App</h2>

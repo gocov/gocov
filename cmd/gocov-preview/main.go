@@ -17,6 +17,7 @@ import (
 	"github.com/bykclk/gocov/internal/auth"
 	blobmem "github.com/bykclk/gocov/internal/blobstore/memory"
 	"github.com/bykclk/gocov/internal/forge"
+	"github.com/bykclk/gocov/internal/forge/bitbucket"
 	forgefake "github.com/bykclk/gocov/internal/forge/fake"
 	"github.com/bykclk/gocov/internal/profile"
 	"github.com/bykclk/gocov/internal/server"
@@ -58,6 +59,22 @@ func (devGitHubApp) InstallationAccount(context.Context, int64) (string, error) 
 func (devGitHubApp) InstallURL(context.Context) (string, error) {
 	return "https://github.com/apps/gocov/installations/new", nil
 }
+
+// devBBConnect stubs server.BitbucketConnect: the consent bounce goes
+// straight back to the local callback, so the whole connect loop is
+// previewable without Bitbucket.
+type devBBConnect struct{ fg forge.Forge }
+
+func (devBBConnect) AuthorizeURL(state, redirectURI string) string {
+	return redirectURI + "?state=" + url.QueryEscape(state) + "&code=dev"
+}
+func (devBBConnect) Exchange(context.Context, string, string) (*bitbucket.Grant, error) {
+	return &bitbucket.Grant{Account: "gocov-bot", AccessToken: "at", RefreshToken: "rt", TTL: 2 * time.Hour}, nil
+}
+func (devBBConnect) Refresh(context.Context, string) (*bitbucket.Grant, error) {
+	return &bitbucket.Grant{AccessToken: "at", RefreshToken: "rt", TTL: 2 * time.Hour}, nil
+}
+func (d devBBConnect) ForgeClient(string) forge.Forge { return d.fg }
 
 func main() {
 	ctx := context.Background()
@@ -101,14 +118,19 @@ func main() {
 		}
 	}
 
-	// GitHub workspaces in the three App connection states, for the
-	// settings/setup page cards.
+	// GitHub and Bitbucket workspaces in the connection states One-Click
+	// Connect adds, for the settings/setup page cards. The default acme
+	// workspace stays unconnected — that is the Connect-button state.
 	for _, ws := range []*store.Workspace{
 		{Forge: "github", Prefix: "gh-new", Token: "gh-new-token", DefaultBranch: "main"},
 		{Forge: "github", Prefix: "gh-connected", Token: "gh-conn-token", DefaultBranch: "main",
 			GitHubInstallationID: 4242},
 		{Forge: "github", Prefix: "gh-broken", Token: "gh-broken-token", DefaultBranch: "main",
 			GitHubInstallationID: 4243, GitHubAppBroken: true},
+		{Forge: "bitbucket", Prefix: "bb-connected", Token: "bb-conn-token", DefaultBranch: "main",
+			BitbucketGrantAccount: "gocov-bot", BitbucketRefreshToken: "rt"},
+		{Forge: "bitbucket", Prefix: "bb-broken", Token: "bb-broken-token", DefaultBranch: "main",
+			BitbucketGrantAccount: "gocov-bot", BitbucketRefreshToken: "rt", BitbucketGrantBroken: true},
 	} {
 		if err := st.CreateWorkspace(ctx, ws); err != nil {
 			log.Fatal(err)
@@ -119,7 +141,7 @@ func main() {
 	hosted := false
 	if os.Getenv("GOCOV_PREVIEW_AUTH") == "1" {
 		auths = []auth.Provider{
-			devAuth{forge: "bitbucket", workspaces: []string{"acme", "personal"}},
+			devAuth{forge: "bitbucket", workspaces: []string{"acme", "personal", "bb-connected", "bb-broken"}},
 			devAuth{forge: "github", workspaces: []string{"gh-new", "gh-connected", "gh-broken"}},
 		}
 		hosted = true
@@ -132,10 +154,11 @@ func main() {
 			"bitbucket": forgefake.New().Factory(),
 			"github":    forgefake.New().Factory(),
 		},
-		BaseURL:   "http://localhost:8099",
-		Auths:     auths,
-		Hosted:    hosted,
-		GitHubApp: devGitHubApp{fg: forgefake.New()},
+		BaseURL:          "http://localhost:8099",
+		Auths:            auths,
+		Hosted:           hosted,
+		GitHubApp:        devGitHubApp{fg: forgefake.New()},
+		BitbucketConnect: devBBConnect{fg: forgefake.New()},
 	})
 	log.Println("preview on :8099")
 	log.Fatal(http.ListenAndServe(":8099", srv))

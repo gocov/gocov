@@ -287,6 +287,38 @@ never to a failed upload — and the settings page offers a reconnect.
 The token paths below keep working untouched; the App is an addition,
 not a migration.
 
+### Bitbucket workspace connect (one-click)
+
+Bitbucket workspaces get the same effortless path: a member clicks
+**Connect workspace** on the settings (or setup) page, consents once on
+Bitbucket, and statuses, PR comments, reports, diffs and source fetch
+work with zero manual credentials from then on. To enable it, the
+deployment needs the sign-in OAuth consumer plus an encryption key:
+
+```sh
+GOCOV_SECRET_KEY=...   # any secret string; encrypts the stored grant at rest
+```
+
+and the consumer's permissions extended beyond sign-in: **Account:
+Read**, **Email**, **Repositories: Write**, **Pull requests: Write**.
+(Bitbucket scopes live on the consumer, not the consent request, so the
+sign-in consent lists them too — sign-in itself still stores no forge
+tokens.)
+
+Honest caveat, stated in the UI at connect time: Bitbucket has no app
+identity, so posts appear as the account that clicked Connect. Teams
+with a bot account should sign the bot in and connect with it.
+
+The grant's refresh token is stored on the workspace, AES-GCM-encrypted
+under `GOCOV_SECRET_KEY`; access tokens live only in memory. Bitbucket
+rotates refresh tokens on every use — gocov persists each rotation
+atomically. If the grant dies (the connecting account leaves the
+workspace, the consent is revoked under *Personal settings → Authorized
+applications*, or the token ages out after three unused months), the
+next upload degrades to the stored credentials or to `skipped`, never
+to a failure, and the settings page offers a reconnect. The app-password
+/ API-token paths keep working untouched.
+
 ### Coverage gate
 
 ```sh
@@ -417,6 +449,7 @@ delta_pct, build_status}`. Uploads carrying a `pr_id` additionally get
 | `GOCOV_GITHUB_TOKEN`           | —                       | global GitHub token for repos without their own credentials |
 | `GOCOV_GITHUB_APP_ID`          | —                       | GitHub App id; with the key, enables one-click workspace connect |
 | `GOCOV_GITHUB_APP_PRIVATE_KEY` | —                       | the App's private key: PEM content, or a path to the PEM file |
+| `GOCOV_SECRET_KEY`             | —                       | at-rest encryption key; with the Bitbucket OAuth consumer, enables one-click workspace connect |
 | `GOCOV_OAUTH_BITBUCKET_KEY`    | —                       | Bitbucket OAuth consumer key; with the secret, turns on web UI sign-in |
 | `GOCOV_OAUTH_BITBUCKET_SECRET` | —                       | Bitbucket OAuth consumer secret |
 | `GOCOV_OAUTH_GITHUB_KEY`       | —                       | GitHub OAuth app client id; with the secret, turns on web UI sign-in |
@@ -425,15 +458,18 @@ delta_pct, build_status}`. Uploads carrying a `pr_id` additionally get
 | `GOCOV_MODE`                   | `private`               | `hosted` opens sign-in to any forge account with self-service workspace registration |
 
 Forge credentials resolve per repo along a precedence chain: a
-connected GitHub App installation beats per-repo credentials
-(`repo update -bb-username ...` / `-gh-token ...`) beats workspace
-credentials (set on the workspace settings page in the UI) beats the
-global bot credentials above. Whichever wins is used for build
-statuses, PR comments, diff coverage and default branch detection.
+one-click connection (GitHub App installation, or Bitbucket workspace
+grant) beats per-repo credentials (`repo update -bb-username ...` /
+`-gh-token ...`) beats workspace credentials (set on the workspace
+settings page in the UI) beats the global bot credentials above.
+Whichever wins is used for build statuses, PR comments, diff coverage
+and default branch detection.
 
 ### Bitbucket token permissions
 
-The bot credential (a scoped API token, or a legacy app password) needs:
+Workspaces connected through the one-click grant need none of this.
+The manual bot credential (a scoped API token; Bitbucket removed app
+passwords in July 2026) needs:
 
 | capability | API token scopes | app password checkboxes |
 |---|---|---|

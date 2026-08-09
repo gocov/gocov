@@ -58,7 +58,20 @@ type Workspace struct {
 	// lazily on the first failing mint, cleared on reconnect or when a
 	// mint succeeds again; the settings page renders it as "reconnect".
 	GitHubAppBroken bool
-	CreatedAt       time.Time
+	// BitbucketGrantAccount is the username of the Bitbucket account
+	// that granted the workspace connect (One-Click Connect D6); posts
+	// visibly carry this identity (D8). Empty when not connected.
+	BitbucketGrantAccount string
+	// BitbucketRefreshToken is the grant's rotating refresh token,
+	// encrypted at rest by the postgres store (AES-GCM under
+	// GOCOV_SECRET_KEY). Empty when not connected — or when decryption
+	// failed, in which case BitbucketGrantBroken is set on the loaded
+	// struct so the UI asks for a reconnect instead of erroring.
+	BitbucketRefreshToken string
+	// BitbucketGrantBroken mirrors GitHubAppBroken for the Bitbucket
+	// grant: set lazily when a refresh comes back invalid_grant.
+	BitbucketGrantBroken bool
+	CreatedAt            time.Time
 }
 
 // Repo is a tracked repository. Slug is namespaced ("workspace/repo").
@@ -167,6 +180,11 @@ type Store interface {
 	// member atomically — self-service registration (M3) must never leave
 	// a workspace nobody can see.
 	RegisterWorkspace(ctx context.Context, w *Workspace, userID int64) error
+	// SetWorkspaceBitbucketGrant updates only the Bitbucket grant fields.
+	// Bitbucket rotates refresh tokens on every use, so the swap must be
+	// a single narrow UPDATE that cannot clobber (or be clobbered by) a
+	// concurrent full-row settings save.
+	SetWorkspaceBitbucketGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error
 
 	// SetUserWorkspaces replaces a user's workspace memberships with the
 	// given set: memberships not listed are removed and listed ones are
