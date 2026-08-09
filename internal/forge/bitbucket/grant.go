@@ -145,13 +145,26 @@ func (c *Consumer) token(ctx context.Context, form url.Values) (*Grant, error) {
 		return nil, fmt.Errorf("bitbucket: token grant: %w", err)
 	}
 	if resp.StatusCode >= 300 {
-		// error names per RFC 6749; invalid_grant is the revoked/expired
-		// refresh token answer the lazy-detection path keys off.
+		// Dead-grant answers the lazy-detection path keys off. RFC 6749
+		// says invalid_grant, but live Bitbucket (probed 2026-08-09)
+		// answers a rotated-away refresh token with unauthorized_client
+		// ("Invalid OAuth client credentials") — and briefly answers the
+		// same for VALID tokens right after such a failure (a short
+		// client lockout; the valid token worked again minutes later,
+		// so there is no grant-family revocation). Treating refresh-time
+		// unauthorized_client as revocation is still the right call: a
+		// lockout-flagged workspace degrades identically either way and
+		// the broken flag self-heals on the next successful refresh,
+		// while the alternative would leave truly dead grants without a
+		// reconnect prompt forever. On a code exchange the same answer
+		// far more likely means misconfigured consumer credentials,
+		// which must not read as a revoked workspace.
 		var oauthErr struct {
 			Error string `json:"error"`
 		}
 		_ = json.Unmarshal(data, &oauthErr)
-		if oauthErr.Error == "invalid_grant" {
+		refreshing := form.Get("grant_type") == "refresh_token"
+		if oauthErr.Error == "invalid_grant" || (refreshing && oauthErr.Error == "unauthorized_client") {
 			return nil, fmt.Errorf("%w: bitbucket grant: %s", forge.ErrCredentialsRevoked, data)
 		}
 		return nil, fmt.Errorf("bitbucket: token grant: status %d: %s", resp.StatusCode, data)

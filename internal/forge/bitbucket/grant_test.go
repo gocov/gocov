@@ -108,13 +108,35 @@ func TestRefreshRotates(t *testing.T) {
 }
 
 func TestRefreshRevoked(t *testing.T) {
+	// invalid_grant per RFC — and unauthorized_client, which is what
+	// live Bitbucket actually answers for a revoked refresh token
+	// (probed 2026-08-09; its reuse detection kills the grant family
+	// with the same answer).
+	for _, body := range []string{
+		`{"error":"invalid_grant","error_description":"Invalid refresh_token"}`,
+		`{"error":"unauthorized_client","error_description":"Invalid OAuth client credentials"}`,
+	} {
+		c := testConsumer(t, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(body))
+		})
+		_, err := c.Refresh(context.Background(), "rt-dead")
+		if !errors.Is(err, forge.ErrCredentialsRevoked) {
+			t.Errorf("%s: err = %v, want ErrCredentialsRevoked", body, err)
+		}
+	}
+}
+
+func TestExchangeUnauthorizedClientIsNotRevocation(t *testing.T) {
+	// On a code exchange the same answer means misconfigured consumer
+	// credentials — an operator problem, not a revoked workspace.
 	c := testConsumer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"Invalid refresh_token"}`))
+		_, _ = w.Write([]byte(`{"error":"unauthorized_client"}`))
 	})
-	_, err := c.Refresh(context.Background(), "rt-dead")
-	if !errors.Is(err, forge.ErrCredentialsRevoked) {
-		t.Errorf("err = %v, want ErrCredentialsRevoked", err)
+	_, err := c.Exchange(context.Background(), "code", "https://cb")
+	if err == nil || errors.Is(err, forge.ErrCredentialsRevoked) {
+		t.Errorf("err = %v, want a plain error", err)
 	}
 }
 
