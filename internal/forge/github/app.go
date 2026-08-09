@@ -121,52 +121,53 @@ func (a *App) appJWT(now time.Time) (string, error) {
 const tokenLeeway = 5 * time.Minute
 
 // installationToken returns a valid token for the installation, minting a
-// fresh one when the cache is empty or near expiry. A 401/404 from the
-// mint means the installation is gone (uninstalled, or the app
-// credentials were rotated away) and maps to ErrCredentialsRevoked —
-// lazy uninstall detection (D3) keys off exactly this.
-func (a *App) installationToken(ctx context.Context, installationID int64) (string, error) {
+// fresh one when the cache is empty or near expiry; fresh reports which
+// of the two happened. A 401/404 from the mint means the installation is
+// gone (uninstalled, or the app credentials were rotated away) and maps
+// to ErrCredentialsRevoked — lazy uninstall detection (D3) keys off
+// exactly this.
+func (a *App) installationToken(ctx context.Context, installationID int64) (token string, fresh bool, err error) {
 	a.mu.Lock()
 	t, ok := a.tokens[installationID]
 	a.mu.Unlock()
 	if ok && time.Now().Before(t.expiresAt.Add(-tokenLeeway)) {
-		return t.value, nil
+		return t.value, false, nil
 	}
 
 	jwt, err := a.appJWT(time.Now())
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	path := fmt.Sprintf("/app/installations/%d/access_tokens", installationID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL()+path, nil)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	req.Header.Set("Authorization", "Bearer "+jwt)
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	resp, err := a.client().Do(req)
 	if err != nil {
-		return "", fmt.Errorf("github app: %w", err)
+		return "", false, fmt.Errorf("github app: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusNotFound {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("%w: github app installation %d: %d: %s",
+		return "", false, fmt.Errorf("%w: github app installation %d: %d: %s",
 			forge.ErrCredentialsRevoked, installationID, resp.StatusCode, msg)
 	}
 	if resp.StatusCode >= 300 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("github app: %s returned %d: %s", path, resp.StatusCode, msg)
+		return "", false, fmt.Errorf("github app: %s returned %d: %s", path, resp.StatusCode, msg)
 	}
 	var body struct {
 		Token     string    `json:"token"`
 		ExpiresAt time.Time `json:"expires_at"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body); err != nil {
-		return "", fmt.Errorf("github app: decoding installation token: %w", err)
+		return "", false, fmt.Errorf("github app: decoding installation token: %w", err)
 	}
 	if body.Token == "" {
-		return "", fmt.Errorf("github app: %s returned no token", path)
+		return "", false, fmt.Errorf("github app: %s returned no token", path)
 	}
 	a.mu.Lock()
 	if a.tokens == nil {
@@ -174,18 +175,54 @@ func (a *App) installationToken(ctx context.Context, installationID int64) (stri
 	}
 	a.tokens[installationID] = instToken{value: body.Token, expiresAt: body.ExpiresAt}
 	a.mu.Unlock()
-	return body.Token, nil
+	return body.Token, true, nil
+}
+
+// invalidate drops the cached token for the installation.
+func (a *App) invalidate(installationID int64) {
+	a.mu.Lock()
+	delete(a.tokens, installationID)
+	a.mu.Unlock()
+}
+
+// tokenValid probes a cached token against GET /rate_limit — the one
+// endpoint that answers cheaply, does not count against the limit, and
+// 401s for a token GitHub has revoked server-side. Fail-open on
+// transport errors: a network blip must not take the forge surface down
+// here when the actual calls would surface it anyway.
+func (a *App) tokenValid(ctx context.Context, token string) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.baseURL()+"/rate_limit", nil)
+	if err != nil {
+		return true
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	resp, err := a.client().Do(req)
+	if err != nil {
+		return true
+	}
+	resp.Body.Close()
+	return resp.StatusCode != http.StatusUnauthorized
 }
 
 // ForgeClient returns a Client authenticated as the installation — the
 // server's top credential-precedence link (D4). The token is minted (or
 // reused) here rather than per request: an upload's handful of API calls
 // completes well inside the token's hour, and a mint failure then
-// surfaces before any call is attempted.
+// surfaces before any call is attempted. A cache hit is probed first:
+// uninstalling revokes tokens immediately, which clock-based expiry
+// cannot see — without the probe, the first post-uninstall upload would
+// report auth errors instead of degrading like missing credentials.
 func (a *App) ForgeClient(ctx context.Context, installationID int64) (forge.Forge, error) {
-	token, err := a.installationToken(ctx, installationID)
+	token, fresh, err := a.installationToken(ctx, installationID)
 	if err != nil {
 		return nil, err
+	}
+	if !fresh && !a.tokenValid(ctx, token) {
+		a.invalidate(installationID)
+		if token, _, err = a.installationToken(ctx, installationID); err != nil {
+			return nil, err
+		}
 	}
 	return &Client{BaseURL: a.baseURL(), Token: token, HTTPClient: a.client()}, nil
 }

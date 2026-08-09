@@ -151,7 +151,7 @@ func TestInstallationTokenCached(t *testing.T) {
 	app := testApp(t, mintHandler(t, time.Hour, &mints))
 
 	for range 3 {
-		tok, err := app.installationToken(context.Background(), 42)
+		tok, _, err := app.installationToken(context.Background(), 42)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -170,7 +170,7 @@ func TestInstallationTokenRefreshesNearExpiry(t *testing.T) {
 	app := testApp(t, mintHandler(t, time.Minute, &mints))
 
 	for range 2 {
-		if _, err := app.installationToken(context.Background(), 42); err != nil {
+		if _, _, err := app.installationToken(context.Background(), 42); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -184,7 +184,7 @@ func TestInstallationTokenRevoked(t *testing.T) {
 		app := testApp(t, func(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"message":"Not Found"}`, status)
 		})
-		_, err := app.installationToken(context.Background(), 42)
+		_, _, err := app.installationToken(context.Background(), 42)
 		if !errors.Is(err, forge.ErrCredentialsRevoked) {
 			t.Errorf("status %d: err = %v, want ErrCredentialsRevoked", status, err)
 		}
@@ -195,7 +195,7 @@ func TestInstallationTokenServerError(t *testing.T) {
 	app := testApp(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	})
-	_, err := app.installationToken(context.Background(), 42)
+	_, _, err := app.installationToken(context.Background(), 42)
 	if err == nil || errors.Is(err, forge.ErrCredentialsRevoked) {
 		t.Errorf("err = %v, want a plain (transient) error", err)
 	}
@@ -278,5 +278,68 @@ func TestInstallURLCached(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("GET /app ran %d times, want 1 (cached)", calls)
+	}
+}
+
+func TestForgeClientProbesCachedToken(t *testing.T) {
+	// Uninstall revokes tokens immediately; clock-based expiry cannot
+	// see that. A cache hit must be probed, and a revoked probe must
+	// surface as ErrCredentialsRevoked via a fresh mint attempt — not as
+	// 401s from the actual API calls later.
+	mints, probes := 0, 0
+	app := testApp(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			mints++
+			if mints > 1 { // the re-mint after the failed probe: gone
+				http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"token": "itok-1", "expires_at": time.Now().Add(time.Hour),
+			})
+		case r.URL.Path == "/rate_limit":
+			probes++
+			http.Error(w, `{"message":"Bad credentials"}`, http.StatusUnauthorized)
+		default:
+			t.Errorf("unexpected call %s", r.URL.Path)
+		}
+	})
+
+	// First client: fresh mint, no probe.
+	if _, err := app.ForgeClient(context.Background(), 42); err != nil {
+		t.Fatal(err)
+	}
+	if probes != 0 {
+		t.Errorf("fresh mint was probed %d times, want 0", probes)
+	}
+	// Second client: cache hit -> failed probe -> re-mint -> revoked.
+	_, err := app.ForgeClient(context.Background(), 42)
+	if !errors.Is(err, forge.ErrCredentialsRevoked) {
+		t.Fatalf("err = %v, want ErrCredentialsRevoked", err)
+	}
+	if probes != 1 || mints != 2 {
+		t.Errorf("probes = %d, mints = %d; want 1 probe and a re-mint", probes, mints)
+	}
+}
+
+func TestForgeClientValidCachedToken(t *testing.T) {
+	mints, probes := 0, 0
+	app := testApp(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			mintHandler(t, time.Hour, &mints)(w, r)
+		case r.URL.Path == "/rate_limit":
+			probes++
+			_, _ = w.Write([]byte(`{}`))
+		}
+	})
+	for range 2 {
+		if _, err := app.ForgeClient(context.Background(), 42); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if mints != 1 || probes != 1 {
+		t.Errorf("mints = %d, probes = %d; want one mint and one cache-hit probe", mints, probes)
 	}
 }
