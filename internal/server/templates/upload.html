@@ -23,7 +23,7 @@
 <tbody>
 {{range .Files}}
 <tr>
-<td><code>{{.Path}}</code></td>
+<td class="path"><code>{{.Path}}</code></td>
 <td class="num muted small">{{.CoveredLines}}/{{.TotalLines}}</td>
 <td>{{with .UncoveredLines}}<span class="uncov">{{ranges .}}</span>{{else}}<span class="muted small">&mdash;</span>{{end}}</td>
 </tr>
@@ -47,7 +47,7 @@
 {{$upload := .Upload}}
 {{range .Files}}
 <tr>
-<td><a class="mono" href="/uploads/{{$upload.ID}}/files/{{.Path}}">{{.Path}}</a></td>
+<td class="path"><a class="mono" href="/uploads/{{$upload.ID}}/files/{{.Path}}">{{.Path}}</a></td>
 <td>{{template "covbar" .Pct}}</td>
 <td class="num muted small">{{.CoveredStmts}}/{{.TotalStmts}}</td>
 <td>{{with .Uncovered}}<span class="uncov">{{.}}</span>{{else}}<span class="muted small">&mdash;</span>{{end}}</td>
