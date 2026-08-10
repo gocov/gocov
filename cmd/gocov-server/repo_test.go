@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bykclk/gocov/internal/blobstore"
-	blobmem "github.com/bykclk/gocov/internal/blobstore/memory"
-	"github.com/bykclk/gocov/internal/store"
-	storemem "github.com/bykclk/gocov/internal/store/memory"
+	"github.com/gocov/gocov/internal/blobstore"
+	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
+	"github.com/gocov/gocov/internal/store"
+	storemem "github.com/gocov/gocov/internal/store/memory"
 )
 
 var tokenRe = regexp.MustCompile(`upload token: ([0-9a-f]{48})`)

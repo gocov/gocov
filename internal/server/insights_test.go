@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bykclk/gocov/internal/diffcov"
-	"github.com/bykclk/gocov/internal/forge"
-	"github.com/bykclk/gocov/internal/store"
+	"github.com/gocov/gocov/internal/diffcov"
+	"github.com/gocov/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/store"
 )
 
 // coveredPRDiff touches only a.go lines 2-3, which the profile covers, so

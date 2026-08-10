@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/bykclk/gocov/internal/profile"
-	"github.com/bykclk/gocov/internal/store"
+	"github.com/gocov/gocov/internal/profile"
+	"github.com/gocov/gocov/internal/store"
 )
 
 const uploadsPageSize = 25

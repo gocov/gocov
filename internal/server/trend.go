@@ -5,7 +5,7 @@ import (
 	"math"
 	"strings"
 
-	"github.com/bykclk/gocov/internal/store"
+	"github.com/gocov/gocov/internal/store"
 )
 
 // The trend chart plots total coverage over the branch's recent uploads

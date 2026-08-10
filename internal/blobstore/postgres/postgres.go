@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/bykclk/gocov/internal/blobstore"
+	"github.com/gocov/gocov/internal/blobstore"
 )
 
 // Store implements blobstore.Store on the blobs table (see store/postgres

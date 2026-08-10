@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bykclk/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/forge"
 )
 
 // DefaultBaseURL is the GitHub REST API root. Kept a field on Client so

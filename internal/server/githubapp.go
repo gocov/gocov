@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/bykclk/gocov/internal/forge"
-	"github.com/bykclk/gocov/internal/store"
+	"github.com/gocov/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/store"
 )
 
 // GitHub App connect flow (One-Click Connect P1/D3). The app's Setup URL

@@ -5,7 +5,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/bykclk/gocov/internal/blobstore"
+	"github.com/gocov/gocov/internal/blobstore"
 )
 
 // Store is an in-memory blobstore. Safe for concurrent use.

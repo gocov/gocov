@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/bykclk/gocov/internal/store"
+	"github.com/gocov/gocov/internal/store"
 )
 
 // Workspace settings page (M3/R3) — CLI parity in the UI: token rotation,

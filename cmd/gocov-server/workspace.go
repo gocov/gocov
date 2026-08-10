@@ -6,7 +6,7 @@ import (
 	"io"
 	"text/tabwriter"
 
-	"github.com/bykclk/gocov/internal/store"
+	"github.com/gocov/gocov/internal/store"
 )
 
 const workspaceUsage = `usage: gocov-server workspace <command>

@@ -14,10 +14,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/bykclk/gocov/internal/diffcov"
-	"github.com/bykclk/gocov/internal/forge"
-	"github.com/bykclk/gocov/internal/profile"
-	"github.com/bykclk/gocov/internal/store"
+	"github.com/gocov/gocov/internal/diffcov"
+	"github.com/gocov/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/profile"
+	"github.com/gocov/gocov/internal/store"
 )
 
 // maxUploadBytes bounds the whole multipart request body.

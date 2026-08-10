@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"sort"
 
-	"github.com/bykclk/gocov/internal/store"
+	"github.com/gocov/gocov/internal/store"
 )
 
 // Workspace registration (M3/R2): a hosted-mode user claims a workspace

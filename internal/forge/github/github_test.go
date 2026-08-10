@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bykclk/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/forge"
 )
 
 func testClient(t *testing.T, handler http.HandlerFunc) *Client {

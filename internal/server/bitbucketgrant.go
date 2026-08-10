@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bykclk/gocov/internal/forge"
-	"github.com/bykclk/gocov/internal/store"
+	"github.com/gocov/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/store"
 )
 
 // Bitbucket workspace-connect flow (One-Click Connect P2/D6/D7). A

@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bykclk/gocov/internal/store"
+	"github.com/gocov/gocov/internal/store"
 )
 
 // Store is an in-memory implementation of store.Store. Safe for concurrent use.

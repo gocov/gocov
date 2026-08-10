@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bykclk/gocov/internal/profile"
+	"github.com/gocov/gocov/internal/profile"
 )
 
 // aGoSource has 9 lines; testProfile marks lines 1-5 covered (count 1)

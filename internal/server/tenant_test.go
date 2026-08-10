@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bykclk/gocov/internal/auth"
-	"github.com/bykclk/gocov/internal/profile"
-	"github.com/bykclk/gocov/internal/store"
+	"github.com/gocov/gocov/internal/auth"
+	"github.com/gocov/gocov/internal/profile"
+	"github.com/gocov/gocov/internal/store"
 )
 
 // seedRepoUpload registers a repo and one upload with a single file, so the

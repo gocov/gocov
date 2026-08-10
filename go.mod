@@ -1,4 +1,4 @@
-module github.com/bykclk/gocov
+module github.com/gocov/gocov
 
 go 1.26.4
 

@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bykclk/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/forge"
 )
 
 // testKey is generated once; RSA key generation dominates test time

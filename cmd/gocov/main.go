@@ -13,7 +13,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/bykclk/gocov/internal/profile"
+	"github.com/gocov/gocov/internal/profile"
 )
 
 // version is stamped by the release build via -ldflags "-X main.version=...".

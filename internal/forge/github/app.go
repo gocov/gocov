@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bykclk/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/forge"
 )
 
 // App is a GitHub App identity (One-Click Connect D1/D2): the hosted

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bykclk/gocov/internal/auth"
+	"github.com/gocov/gocov/internal/auth"
 )
 
 // Default endpoints. The OAuth pages live on the website host, the

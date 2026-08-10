@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/bykclk/gocov/internal/profile"
+	"github.com/gocov/gocov/internal/profile"
 )
 
 // FileBlocks is the per-file coverage input, decoupled from the store.

@@ -13,8 +13,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/bykclk/gocov/internal/blobstore"
-	"github.com/bykclk/gocov/internal/store"
+	"github.com/gocov/gocov/internal/blobstore"
+	"github.com/gocov/gocov/internal/store"
 )
 
 // errPrinted signals that the error text was already written to the command

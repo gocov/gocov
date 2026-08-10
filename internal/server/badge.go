@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/bykclk/gocov/internal/store"
+	"github.com/gocov/gocov/internal/store"
 )
 
 // Badge color thresholds: <50 red, 50–75 yellow, >75 green.

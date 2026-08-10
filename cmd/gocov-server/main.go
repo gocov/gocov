@@ -50,17 +50,17 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/bykclk/gocov/internal/auth"
-	authbb "github.com/bykclk/gocov/internal/auth/bitbucket"
-	authgh "github.com/bykclk/gocov/internal/auth/github"
-	blobpg "github.com/bykclk/gocov/internal/blobstore/postgres"
-	"github.com/bykclk/gocov/internal/forge"
-	"github.com/bykclk/gocov/internal/forge/bitbucket"
-	"github.com/bykclk/gocov/internal/forge/github"
-	"github.com/bykclk/gocov/internal/profile"
-	"github.com/bykclk/gocov/internal/secretbox"
-	"github.com/bykclk/gocov/internal/server"
-	storepg "github.com/bykclk/gocov/internal/store/postgres"
+	"github.com/gocov/gocov/internal/auth"
+	authbb "github.com/gocov/gocov/internal/auth/bitbucket"
+	authgh "github.com/gocov/gocov/internal/auth/github"
+	blobpg "github.com/gocov/gocov/internal/blobstore/postgres"
+	"github.com/gocov/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/forge/bitbucket"
+	"github.com/gocov/gocov/internal/forge/github"
+	"github.com/gocov/gocov/internal/profile"
+	"github.com/gocov/gocov/internal/secretbox"
+	"github.com/gocov/gocov/internal/server"
+	storepg "github.com/gocov/gocov/internal/store/postgres"
 )
 
 // version is stamped by the release build via -ldflags "-X main.version=...".

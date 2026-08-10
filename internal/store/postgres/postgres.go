@@ -12,8 +12,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/bykclk/gocov/internal/secretbox"
-	"github.com/bykclk/gocov/internal/store"
+	"github.com/gocov/gocov/internal/secretbox"
+	"github.com/gocov/gocov/internal/store"
 )
 
 //go:embed migrations/*.sql
