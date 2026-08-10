@@ -9,9 +9,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/bykclk/gocov/internal/forge"
-	"github.com/bykclk/gocov/internal/profile"
-	"github.com/bykclk/gocov/internal/store"
+	"github.com/gocov/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/profile"
+	"github.com/gocov/gocov/internal/store"
 )
 
 // maxSourceBytes bounds source files rendered by the source view.

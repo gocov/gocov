@@ -14,15 +14,15 @@ import (
 	"os"
 	"time"
 
-	"github.com/bykclk/gocov/internal/auth"
-	blobmem "github.com/bykclk/gocov/internal/blobstore/memory"
-	"github.com/bykclk/gocov/internal/forge"
-	"github.com/bykclk/gocov/internal/forge/bitbucket"
-	forgefake "github.com/bykclk/gocov/internal/forge/fake"
-	"github.com/bykclk/gocov/internal/profile"
-	"github.com/bykclk/gocov/internal/server"
-	"github.com/bykclk/gocov/internal/store"
-	storemem "github.com/bykclk/gocov/internal/store/memory"
+	"github.com/gocov/gocov/internal/auth"
+	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
+	"github.com/gocov/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/forge/bitbucket"
+	forgefake "github.com/gocov/gocov/internal/forge/fake"
+	"github.com/gocov/gocov/internal/profile"
+	"github.com/gocov/gocov/internal/server"
+	"github.com/gocov/gocov/internal/store"
+	storemem "github.com/gocov/gocov/internal/store/memory"
 )
 
 // devAuth is a sign-in provider that "authorizes" by bouncing straight

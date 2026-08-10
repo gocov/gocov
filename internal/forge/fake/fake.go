@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/bykclk/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/forge"
 )
 
 // StatusCall records one PostBuildStatus invocation.

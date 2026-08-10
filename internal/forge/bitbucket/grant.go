@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bykclk/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/forge"
 )
 
 // Workspace-connect OAuth grant (One-Click Connect P2/D6). Consumer is

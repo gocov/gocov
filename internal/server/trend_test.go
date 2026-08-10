@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bykclk/gocov/internal/store"
+	"github.com/gocov/gocov/internal/store"
 )
 
 // trendUpload builds an upload for newTrendView tests. Callers pass

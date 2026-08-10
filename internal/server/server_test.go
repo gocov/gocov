@@ -12,12 +12,12 @@ import (
 	"strings"
 	"testing"
 
-	blobmem "github.com/bykclk/gocov/internal/blobstore/memory"
-	"github.com/bykclk/gocov/internal/forge"
-	forgefake "github.com/bykclk/gocov/internal/forge/fake"
-	"github.com/bykclk/gocov/internal/profile"
-	"github.com/bykclk/gocov/internal/store"
-	storemem "github.com/bykclk/gocov/internal/store/memory"
+	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
+	"github.com/gocov/gocov/internal/forge"
+	forgefake "github.com/gocov/gocov/internal/forge/fake"
+	"github.com/gocov/gocov/internal/profile"
+	"github.com/gocov/gocov/internal/store"
+	storemem "github.com/gocov/gocov/internal/store/memory"
 )
 
 const testProfile = `mode: set

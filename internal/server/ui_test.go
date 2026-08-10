@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bykclk/gocov/internal/profile"
-	"github.com/bykclk/gocov/internal/store"
+	"github.com/gocov/gocov/internal/profile"
+	"github.com/gocov/gocov/internal/store"
 )
 
 func doGet(t *testing.T, f *fixture, path string) *httptest.ResponseRecorder {

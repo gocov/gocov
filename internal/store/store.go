@@ -7,8 +7,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/bykclk/gocov/internal/diffcov"
-	"github.com/bykclk/gocov/internal/profile"
+	"github.com/gocov/gocov/internal/diffcov"
+	"github.com/gocov/gocov/internal/profile"
 )
 
 // ErrNotFound is returned when a requested record does not exist.

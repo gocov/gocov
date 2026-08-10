@@ -6,10 +6,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/bykclk/gocov/internal/blobstore"
-	blobpg "github.com/bykclk/gocov/internal/blobstore/postgres"
-	storepg "github.com/bykclk/gocov/internal/store/postgres"
-	"github.com/bykclk/gocov/internal/testpg"
+	"github.com/gocov/gocov/internal/blobstore"
+	blobpg "github.com/gocov/gocov/internal/blobstore/postgres"
+	storepg "github.com/gocov/gocov/internal/store/postgres"
+	"github.com/gocov/gocov/internal/testpg"
 )
 
 func TestBlobstore(t *testing.T) {

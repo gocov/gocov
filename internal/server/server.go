@@ -13,13 +13,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bykclk/gocov/internal/auth"
-	"github.com/bykclk/gocov/internal/blobstore"
-	"github.com/bykclk/gocov/internal/diffcov"
-	"github.com/bykclk/gocov/internal/forge"
-	"github.com/bykclk/gocov/internal/forge/bitbucket"
-	"github.com/bykclk/gocov/internal/profile"
-	"github.com/bykclk/gocov/internal/store"
+	"github.com/gocov/gocov/internal/auth"
+	"github.com/gocov/gocov/internal/blobstore"
+	"github.com/gocov/gocov/internal/diffcov"
+	"github.com/gocov/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/forge/bitbucket"
+	"github.com/gocov/gocov/internal/profile"
+	"github.com/gocov/gocov/internal/store"
 )
 
 //go:embed templates/*.html

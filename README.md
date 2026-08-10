@@ -352,7 +352,7 @@ In Bitbucket Pipelines (commit, branch, repo and PR id are auto-detected):
 - step:
     script:
       - go test ./... -covermode=atomic -coverprofile=coverage.out
-      - go run github.com/bykclk/gocov/cmd/gocov@latest upload coverage.out
+      - go run github.com/gocov/gocov/cmd/gocov@latest upload coverage.out
 ```
 
 with `GOCOV_SERVER` and `GOCOV_TOKEN` set as repository variables.
@@ -362,14 +362,14 @@ including the PR head SHA on `pull_request` runs):
 
 ```yaml
 - run: go test ./... -covermode=atomic -coverprofile=coverage.out
-- run: go run github.com/bykclk/gocov/cmd/gocov@latest upload coverage.out
+- run: go run github.com/gocov/gocov/cmd/gocov@latest upload coverage.out
   env:
     GOCOV_SERVER: ${{ vars.GOCOV_SERVER }}
     GOCOV_TOKEN: ${{ secrets.GOCOV_TOKEN }}
 ```
 
 On runners without a Go toolchain, use the prebuilt binaries from
-[GitHub Releases](https://github.com/bykclk/gocov/releases) instead
+[GitHub Releases](https://github.com/gocov/gocov/releases) instead
 (linux/darwin/windows, amd64 + arm64, checksums included). Pin a version
 and cache the download on self-hosted runners:
 
@@ -379,7 +379,7 @@ arch=$(uname -m); case "$arch" in x86_64) arch=amd64;; aarch64|arm64) arch=arm64
 bin="$HOME/.cache/gocov/gocov-$ver-linux-$arch"
 if [ ! -x "$bin" ]; then
   mkdir -p "$(dirname "$bin")"
-  curl -fsSL "https://github.com/bykclk/gocov/releases/download/$ver/gocov-linux-$arch" -o "$bin"
+  curl -fsSL "https://github.com/gocov/gocov/releases/download/$ver/gocov-linux-$arch" -o "$bin"
   chmod +x "$bin"
 fi
 "$bin" upload coverage.out

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bykclk/gocov/internal/profile"
+	"github.com/gocov/gocov/internal/profile"
 )
 
 func TestParseUnifiedDiff(t *testing.T) {

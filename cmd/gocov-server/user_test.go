@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bykclk/gocov/internal/store"
-	storemem "github.com/bykclk/gocov/internal/store/memory"
+	"github.com/gocov/gocov/internal/store"
+	storemem "github.com/gocov/gocov/internal/store/memory"
 )
 
 func runUserCmd(t *testing.T, st store.Store, args ...string) (string, error) {

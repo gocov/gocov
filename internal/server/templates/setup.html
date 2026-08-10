@@ -45,7 +45,7 @@ GOCOV_TOKEN={{.Workspace.Token}}</code></pre>
   {{if eq .Workspace.Forge "github"}}
   <p class="sub">In your GitHub Actions workflow, after the tests:</p>
   <pre><code id="setup-snippet">- run: go test ./... -covermode=atomic -coverprofile=coverage.out
-- run: go run github.com/bykclk/gocov/cmd/gocov@latest upload coverage.out
+- run: go run github.com/gocov/gocov/cmd/gocov@latest upload coverage.out
   env:
     GOCOV_SERVER: ${{"{{"}} vars.GOCOV_SERVER {{"}}"}}
     GOCOV_TOKEN: ${{"{{"}} secrets.GOCOV_TOKEN {{"}}"}}</code></pre>
@@ -54,7 +54,7 @@ GOCOV_TOKEN={{.Workspace.Token}}</code></pre>
   <pre><code id="setup-snippet">- step:
     script:
       - go test ./... -covermode=atomic -coverprofile=coverage.out
-      - go run github.com/bykclk/gocov/cmd/gocov@latest upload coverage.out</code></pre>
+      - go run github.com/gocov/gocov/cmd/gocov@latest upload coverage.out</code></pre>
   {{end}}
   <p><button class="btn" type="button" data-copy="#setup-snippet">Copy</button>
   <span class="muted small">Commit, branch, repo and PR are auto-detected; other languages

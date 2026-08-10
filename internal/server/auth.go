@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bykclk/gocov/internal/auth"
-	"github.com/bykclk/gocov/internal/store"
+	"github.com/gocov/gocov/internal/auth"
+	"github.com/gocov/gocov/internal/store"
 )
 
 // Session lifetime is fixed (no sliding renewal in M1); logout and
