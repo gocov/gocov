@@ -18,7 +18,10 @@ services:
     environment:
       DATABASE_URL: postgres://gocov:gocov@db:5432/gocov
       GOCOV_ADDR: ":8080"
-      GOCOV_BASE_URL: "http://localhost:8080"
+      # Public URL of this instance — used for links in PR comments,
+      # build statuses and the web UI. Override in a .env file next to
+      # this compose file, e.g. GOCOV_BASE_URL=http://192.168.18.174:8080
+      GOCOV_BASE_URL: ${GOCOV_BASE_URL:-http://localhost:8080}
       # Optional global bot credentials (e.g. from a .env file next to
       # this compose file). Repos without credentials of their own use
       # them for build statuses, PR comments and diff coverage.
