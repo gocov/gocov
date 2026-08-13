@@ -462,9 +462,14 @@ func (s *Server) redirectURI(forge string) string {
 }
 
 // sanitizeNext confines the post-login redirect to in-site paths, so the
-// login URL can never be turned into an open redirect.
+// login URL can never be turned into an open redirect. A safe target is a
+// single leading slash whose second character is neither '/' nor '\\' —
+// browsers treat "//host" and "/\host" as scheme-relative external URLs.
 func sanitizeNext(next string) string {
-	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.Contains(next, "\\") {
+	if len(next) == 0 || next[0] != '/' {
+		return "/"
+	}
+	if len(next) > 1 && (next[1] == '/' || next[1] == '\\') {
 		return "/"
 	}
 	return next
