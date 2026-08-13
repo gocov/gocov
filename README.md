@@ -543,7 +543,7 @@ otherwise). Each test creates and drops its own scratch database:
 ```sh
 docker run --rm -d --name gocov-test-db -p 5433:5432 \
   -e POSTGRES_USER=gocov -e POSTGRES_PASSWORD=gocov -e POSTGRES_DB=gocov \
-  postgres:16-alpine
+  postgres:18-alpine
 GOCOV_TEST_DATABASE_URL=postgres://gocov:gocov@localhost:5433/gocov go test ./...
 docker stop gocov-test-db
 ```

@@ -1,0 +1,13 @@
+app.gocov.dev {
+	tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin.key
+	request_body {
+		max_size 100MB
+	}
+	reverse_proxy server:8080
+	encode gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+	}
+}

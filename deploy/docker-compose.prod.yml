@@ -1,0 +1,56 @@
+# Production compose for the hosted gocov instance: the app plus a Caddy
+# TLS terminator. Postgres is external (RDS) — set DATABASE_URL in .env.
+# Run from this directory:  docker compose -f docker-compose.prod.yml up -d --build
+services:
+  server:
+    build: ..
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      GOCOV_ADDR: ":8080"
+      GOCOV_BASE_URL: ${GOCOV_BASE_URL}
+      GOCOV_MODE: ${GOCOV_MODE:-hosted}
+      GOCOV_SECRET_KEY: ${GOCOV_SECRET_KEY}
+      GOCOV_GITHUB_APP_ID: ${GOCOV_GITHUB_APP_ID:-}
+      GOCOV_GITHUB_APP_PRIVATE_KEY: ${GOCOV_GITHUB_APP_PRIVATE_KEY:-/run/gocov-app-key.pem}
+      GOCOV_OAUTH_BITBUCKET_KEY: ${GOCOV_OAUTH_BITBUCKET_KEY:-}
+      GOCOV_OAUTH_BITBUCKET_SECRET: ${GOCOV_OAUTH_BITBUCKET_SECRET:-}
+      GOCOV_OAUTH_GITHUB_KEY: ${GOCOV_OAUTH_GITHUB_KEY:-}
+      GOCOV_OAUTH_GITHUB_SECRET: ${GOCOV_OAUTH_GITHUB_SECRET:-}
+    volumes:
+      - ./github-app.pem:/run/gocov-app-key.pem:ro
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/etc/caddy/certs:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - server
+
+volumes:
+  caddy_data:
+  caddy_config:
