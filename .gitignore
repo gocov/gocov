@@ -5,3 +5,7 @@ coverage.out
 .env
 .claude/
 docker-compose.override.yml
+deploy/.env
+deploy/github-app.pem
+deploy/certs/
+session-manager-plugin.pkg

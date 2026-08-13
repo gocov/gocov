@@ -1,4 +1,5 @@
 app.gocov.dev {
+	tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin.key
 	request_body {
 		max_size 100MB
 	}
