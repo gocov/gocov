@@ -47,7 +47,8 @@ func withUser(ctx context.Context, u *store.User) context.Context {
 // surface (upload API, badges, health), embedded assets and the login
 // flow itself. Everything else is a protected page.
 func publicPath(p string) bool {
-	if p == "/api/v1/upload" || p == "/healthz" || p == "/login" {
+	if p == "/api/v1/upload" || p == "/healthz" || p == "/login" ||
+		p == "/github/webhook" {
 		return true
 	}
 	return strings.HasPrefix(p, "/badge/") ||

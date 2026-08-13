@@ -67,6 +67,10 @@ type Config struct {
 	// forge/bitbucket.Consumer. Nil disables the feature; requires
 	// GOCOV_SECRET_KEY at the store for the at-rest token encryption.
 	BitbucketConnect BitbucketConnect
+	// GitHubWebhookSecret enables the GitHub App / Marketplace webhook
+	// (POST /github/webhook) and is the HMAC secret its signatures are
+	// verified against. Empty leaves the route unregistered.
+	GitHubWebhookSecret string
 }
 
 // BitbucketConnect runs the Bitbucket OAuth grants for workspace
@@ -102,20 +106,21 @@ type GitHubApp interface {
 
 // Server is the gocov HTTP server.
 type Server struct {
-	store        store.Store
-	blobs        blobstore.Store
-	parsers      map[string]profile.Parser
-	forges       map[string]forge.Factory
-	baseURL      string
-	log          *slog.Logger
-	pages        map[string]*template.Template
-	mux          *http.ServeMux
-	handler      http.Handler // mux wrapped in the auth middleware
-	health       func(ctx context.Context) error
-	defaultCreds map[string]map[string]string
-	githubApp    GitHubApp
-	bbConnect    BitbucketConnect
-	bbTokens     *bbTokenCache
+	store         store.Store
+	blobs         blobstore.Store
+	parsers       map[string]profile.Parser
+	forges        map[string]forge.Factory
+	baseURL       string
+	log           *slog.Logger
+	pages         map[string]*template.Template
+	mux           *http.ServeMux
+	handler       http.Handler // mux wrapped in the auth middleware
+	health        func(ctx context.Context) error
+	defaultCreds  map[string]map[string]string
+	githubApp     GitHubApp
+	bbConnect     BitbucketConnect
+	bbTokens      *bbTokenCache
+	webhookSecret string
 
 	// auths holds the sign-in providers by forge name; authOrder keeps
 	// the configured order for the login-page buttons.
@@ -160,19 +165,20 @@ func New(cfg Config) *Server {
 	}
 
 	s := &Server{
-		store:        cfg.Store,
-		blobs:        cfg.Blobs,
-		parsers:      cfg.Parsers,
-		forges:       cfg.Forges,
-		baseURL:      cfg.BaseURL,
-		log:          log,
-		pages:        pages,
-		mux:          http.NewServeMux(),
-		health:       cfg.Health,
-		defaultCreds: cfg.DefaultForgeCredentials,
-		githubApp:    cfg.GitHubApp,
-		bbConnect:    cfg.BitbucketConnect,
-		bbTokens:     newBBTokenCache(),
+		store:         cfg.Store,
+		blobs:         cfg.Blobs,
+		parsers:       cfg.Parsers,
+		forges:        cfg.Forges,
+		baseURL:       cfg.BaseURL,
+		log:           log,
+		pages:         pages,
+		mux:           http.NewServeMux(),
+		health:        cfg.Health,
+		defaultCreds:  cfg.DefaultForgeCredentials,
+		githubApp:     cfg.GitHubApp,
+		bbConnect:     cfg.BitbucketConnect,
+		bbTokens:      newBBTokenCache(),
+		webhookSecret: cfg.GitHubWebhookSecret,
 
 		auths:             map[string]auth.Provider{},
 		authOrder:         cfg.Auths,
@@ -209,6 +215,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /workspaces/{prefix}/setup", s.handleWorkspaceSetup)
 	s.mux.HandleFunc("GET /workspaces/{prefix}/setup/status", s.handleWorkspaceSetupStatus)
 	s.mux.HandleFunc("GET /github/setup", s.handleGitHubSetup)
+	if s.webhookSecret != "" {
+		s.mux.HandleFunc("POST /github/webhook", s.handleGitHubWebhook)
+	}
 	s.mux.HandleFunc("GET /{$}", s.handleIndex)
 	s.mux.HandleFunc("GET /repos/{slug...}", s.handleRepo)
 	s.mux.HandleFunc("GET /uploads/{id}", s.handleUploadPage)
