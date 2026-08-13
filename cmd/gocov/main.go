@@ -4,7 +4,9 @@
 //
 // Repo, commit, branch and PR id are auto-detected from Bitbucket Pipelines
 // or GitHub Actions environment variables, falling back to git. Server and
-// token come from GOCOV_SERVER / GOCOV_TOKEN or flags.
+// token come from GOCOV_SERVER / GOCOV_TOKEN or flags; released binaries
+// default the server to the hosted service (see defaultServer), so hosted
+// users only need a token.
 package main
 
 import (
@@ -18,6 +20,13 @@ import (
 
 // version is stamped by the release build via -ldflags "-X main.version=...".
 var version = "dev"
+
+// defaultServer is stamped by the release build via
+// -ldflags "-X main.defaultServer=https://app.gocov.dev" so distributed
+// binaries target the hosted service when neither -server nor
+// $GOCOV_SERVER is given. Plain `go build` leaves it empty, so the URL
+// stays required for source builds and self-hosters.
+var defaultServer = ""
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -36,7 +45,11 @@ func run(args []string) error {
 	}
 
 	fs := flag.NewFlagSet("upload", flag.ExitOnError)
-	server := fs.String("server", os.Getenv("GOCOV_SERVER"), "gocov server URL (or $GOCOV_SERVER)")
+	serverDefault := os.Getenv("GOCOV_SERVER")
+	if serverDefault == "" {
+		serverDefault = defaultServer
+	}
+	server := fs.String("server", serverDefault, "gocov server URL (or $GOCOV_SERVER)")
 	token := fs.String("token", os.Getenv("GOCOV_TOKEN"), "per-repo upload token (or $GOCOV_TOKEN)")
 	repo := fs.String("repo", "", "repo slug workspace/repo (default: auto-detect)")
 	commit := fs.String("commit", "", "commit SHA (default: auto-detect)")
