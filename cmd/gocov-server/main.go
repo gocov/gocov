@@ -29,11 +29,12 @@
 // a path to a PEM file) enable the GitHub App integration: workspaces
 // connect with one click and statuses, PR comments and check runs are
 // posted as the app's bot identity, no tokens required.
-// GOCOV_SECRET_KEY (a long random secret, e.g. `openssl rand -hex 32`;
-// the AES key is a plain SHA-256 of it, so its entropy is the
-// protection) enables the Bitbucket workspace connect on top of the
-// Bitbucket OAuth consumer: one consent and the workspace acts through
-// that grant, its refresh token stored encrypted.
+// GOCOV_SECRET_KEY (exactly 64 hex characters, e.g. `openssl rand -hex
+// 32`; the AES key is a plain SHA-256 of it, so the value must carry a
+// full 256 bits of entropy and boot fails on anything else) enables the
+// Bitbucket workspace connect on top of the Bitbucket OAuth consumer:
+// one consent and the workspace acts through that grant, its refresh
+// token stored encrypted.
 // GOCOV_GITHUB_WEBHOOK_SECRET enables the GitHub App / Marketplace
 // webhook at POST /github/webhook, verifying delivery signatures against
 // this secret (required for a Marketplace listing).
@@ -47,6 +48,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -117,6 +119,30 @@ func run(args []string) error {
 	}
 }
 
+// secretKeyPattern is the required shape of GOCOV_SECRET_KEY: exactly 64
+// hex characters (256 bits), either case.
+var secretKeyPattern = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
+
+// secretKey validates GOCOV_SECRET_KEY and returns the usable key, or ""
+// when unset. The at-rest AES key is a plain SHA-256 of this value
+// (secretbox.New), with no salt or work factor, so the value itself must
+// carry the full 256 bits of entropy — a guessable passphrase would be
+// brute-forceable offline against a leaked database. We therefore refuse
+// anything that isn't 64 hex characters at boot rather than sealing
+// tokens under a weak key. Derivation is left untouched, so an existing
+// 64-hex key keeps producing the same cipher. An unset or blank value is
+// not an error: it just leaves Bitbucket workspace connect disabled.
+func secretKey(raw string) (string, error) {
+	key := strings.TrimSpace(raw)
+	if key == "" {
+		return "", nil
+	}
+	if !secretKeyPattern.MatchString(key) {
+		return "", errors.New("GOCOV_SECRET_KEY must be 64 hex characters.\nGenerate one with: openssl rand -hex 32")
+	}
+	return key, nil
+}
+
 func connect(ctx context.Context) (*storepg.Store, error) {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
@@ -129,7 +155,11 @@ func connect(ctx context.Context) (*storepg.Store, error) {
 	st := storepg.New(pool)
 	// The at-rest cipher for Bitbucket grant tokens (One-Click Connect
 	// D6); set here so the CLI subcommands share it with serve.
-	if key := os.Getenv("GOCOV_SECRET_KEY"); key != "" {
+	key, err := secretKey(os.Getenv("GOCOV_SECRET_KEY"))
+	if err != nil {
+		return nil, err
+	}
+	if key != "" {
 		box, err := secretbox.New(key)
 		if err != nil {
 			return nil, fmt.Errorf("GOCOV_SECRET_KEY: %w", err)
@@ -253,7 +283,7 @@ func serve() error {
 	// sign-in consumer, and needs the at-rest cipher for the stored
 	// refresh token.
 	switch {
-	case oauthKey != "" && oauthSecret != "" && os.Getenv("GOCOV_SECRET_KEY") != "":
+	case oauthKey != "" && oauthSecret != "" && strings.TrimSpace(os.Getenv("GOCOV_SECRET_KEY")) != "":
 		cfg.BitbucketConnect = &bitbucket.Consumer{Key: oauthKey, Secret: oauthSecret}
 		log.Info("bitbucket workspace connect enabled")
 	case oauthKey != "" && oauthSecret != "":
