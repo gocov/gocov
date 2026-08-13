@@ -7,7 +7,7 @@ Management via SSM Session Manager — the instance has no SSH port open.
 Infra (eu-central-1, account 773658094601):
 - Security groups: `gocov-web` (80/443 open), `gocov-db` (5432 from gocov-web)
 - IAM role + instance profile `gocov-ec2` (AmazonSSMManagedInstanceCore)
-- RDS `gocov-db`: db.t4g.micro, Postgres 16.14, 20GB gp3, encrypted,
+- RDS `gocov-db`: db.t4g.micro, Postgres 18, 20GB gp3, encrypted,
   7-day backups, not public
 - EC2 `gocov-server`: t4g.small, AL2023 arm64, 30GB gp3 + Elastic IP
 
