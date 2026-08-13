@@ -148,6 +148,32 @@ type Session struct {
 	ExpiresAt time.Time
 }
 
+// CommitReport is the merged coverage of a commit, derived from the latest
+// upload of each part and recomputed on every upload. It is the source of
+// truth for status, gate, PR comment, insights, badge and trend, so a
+// commit whose parts arrive in separate CI jobs reports their combined
+// total rather than whichever part uploaded last. A commit with a single
+// upload has a single-part report equal to that upload.
+type CommitReport struct {
+	ID           int64
+	RepoID       int64
+	CommitSHA    string
+	Branch       string
+	PRID         string // empty when not a PR build
+	TotalPct     float64
+	CoveredStmts int64
+	TotalStmts   int64
+	// GateFailed marks reports that violated the coverage gate; they are
+	// excluded from comparison baselines, the same rule uploads carried.
+	GateFailed bool
+	// DiffCoverage is the merged diff coverage for PR commits; nil otherwise.
+	DiffCoverage *diffcov.Result
+	// PartCount is how many parts (distinct upload parts) fed the report.
+	PartCount int
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 // UploadFile is per-file coverage within an upload. Blocks keep the full
 // normalized block data so diff coverage can be computed later.
 type UploadFile struct {
@@ -230,4 +256,25 @@ type Store interface {
 	// LatestPassedUpload returns the most recent upload for a branch that
 	// did not fail the coverage gate; used as a comparison baseline.
 	LatestPassedUpload(ctx context.Context, repoID int64, branch string) (*Upload, error)
+
+	// LatestUploadsPerPart returns the most recent upload for each distinct
+	// part of a commit — the set the merged report is computed from. A
+	// re-uploaded part supersedes its earlier uploads here.
+	LatestUploadsPerPart(ctx context.Context, repoID int64, commitSHA string) ([]*Upload, error)
+	// UpsertCommitReport creates or replaces the merged report for
+	// (repo, commit), setting cr.ID, cr.CreatedAt and cr.UpdatedAt. The
+	// first-seen creation time is preserved across recomputes.
+	UpsertCommitReport(ctx context.Context, cr *CommitReport) error
+	// CommitReport returns the merged report for a commit, or ErrNotFound.
+	CommitReport(ctx context.Context, repoID int64, commitSHA string) (*CommitReport, error)
+	// LatestCommitReport returns the most recent merged report on a branch.
+	LatestCommitReport(ctx context.Context, repoID int64, branch string) (*CommitReport, error)
+	// LatestPassedCommitReport returns the most recent gate-passing merged
+	// report on a branch, skipping excludeCommit (the commit being uploaded,
+	// whose own in-progress report must not serve as its baseline). Used as
+	// the delta and gate-drop baseline.
+	LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*CommitReport, error)
+	// ListBranchCommitReports returns merged reports on a branch newest
+	// first; limit <= 0 means all. Feeds the coverage trend.
+	ListBranchCommitReports(ctx context.Context, repoID int64, branch string, limit int) ([]*CommitReport, error)
 }

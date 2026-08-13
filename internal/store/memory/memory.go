@@ -18,9 +18,11 @@ type Store struct {
 	upSeq      int64
 	wsSeq      int64
 	userSeq    int64
+	crSeq      int64
 	repos      map[int64]*store.Repo
 	uploads    map[int64]*store.Upload
 	files      map[int64][]*store.UploadFile // keyed by upload ID
+	reports    map[int64]*store.CommitReport // merged reports, keyed by report ID
 	workspaces map[int64]*store.Workspace
 	users      map[int64]*store.User
 	sessions   map[string]*store.Session // keyed by token hash
@@ -33,6 +35,7 @@ func New() *Store {
 		repos:      map[int64]*store.Repo{},
 		uploads:    map[int64]*store.Upload{},
 		files:      map[int64][]*store.UploadFile{},
+		reports:    map[int64]*store.CommitReport{},
 		workspaces: map[int64]*store.Workspace{},
 		users:      map[int64]*store.User{},
 		sessions:   map[string]*store.Session{},
@@ -506,4 +509,115 @@ func (s *Store) latestUpload(repoID int64, branch string, passedOnly bool) (*sto
 		return nil, store.ErrNotFound
 	}
 	return copyUpload(latest), nil
+}
+
+func (s *Store) LatestUploadsPerPart(_ context.Context, repoID int64, commitSHA string) ([]*store.Upload, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	latest := map[string]*store.Upload{}
+	for _, u := range s.uploads {
+		if u.RepoID != repoID || u.CommitSHA != commitSHA {
+			continue
+		}
+		if cur, ok := latest[u.Part]; !ok || u.ID > cur.ID {
+			latest[u.Part] = u
+		}
+	}
+	out := make([]*store.Upload, 0, len(latest))
+	for _, u := range latest {
+		out = append(out, copyUpload(u))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+func (s *Store) UpsertCommitReport(_ context.Context, cr *store.CommitReport) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	for _, existing := range s.reports {
+		if existing.RepoID == cr.RepoID && existing.CommitSHA == cr.CommitSHA {
+			// Preserve id and first-seen created_at across recomputes.
+			cr.ID = existing.ID
+			cr.CreatedAt = existing.CreatedAt
+			cr.UpdatedAt = now
+			s.reports[cr.ID] = copyCommitReport(cr)
+			return nil
+		}
+	}
+	s.crSeq++
+	cr.ID = s.crSeq
+	if cr.CreatedAt.IsZero() {
+		cr.CreatedAt = now
+	}
+	cr.UpdatedAt = now
+	s.reports[cr.ID] = copyCommitReport(cr)
+	return nil
+}
+
+func (s *Store) CommitReport(_ context.Context, repoID int64, commitSHA string) (*store.CommitReport, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, cr := range s.reports {
+		if cr.RepoID == repoID && cr.CommitSHA == commitSHA {
+			return copyCommitReport(cr), nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+func (s *Store) LatestCommitReport(_ context.Context, repoID int64, branch string) (*store.CommitReport, error) {
+	return s.latestCommitReport(repoID, branch, "", false)
+}
+
+func (s *Store) LatestPassedCommitReport(_ context.Context, repoID int64, branch, excludeCommit string) (*store.CommitReport, error) {
+	return s.latestCommitReport(repoID, branch, excludeCommit, true)
+}
+
+func (s *Store) latestCommitReport(repoID int64, branch, excludeCommit string, passedOnly bool) (*store.CommitReport, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var latest *store.CommitReport
+	for _, cr := range s.reports {
+		if cr.RepoID != repoID || cr.Branch != branch {
+			continue
+		}
+		if passedOnly && cr.GateFailed {
+			continue
+		}
+		if excludeCommit != "" && cr.CommitSHA == excludeCommit {
+			continue
+		}
+		if latest == nil || cr.ID > latest.ID {
+			latest = cr
+		}
+	}
+	if latest == nil {
+		return nil, store.ErrNotFound
+	}
+	return copyCommitReport(latest), nil
+}
+
+func (s *Store) ListBranchCommitReports(_ context.Context, repoID int64, branch string, limit int) ([]*store.CommitReport, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []*store.CommitReport
+	for _, cr := range s.reports {
+		if cr.RepoID == repoID && cr.Branch == branch {
+			out = append(out, copyCommitReport(cr))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// copyCommitReport deep-copies a report so callers never alias the stored
+// DiffCoverage, matching the Postgres JSON round-trip.
+func copyCommitReport(cr *store.CommitReport) *store.CommitReport {
+	cp := *cr
+	cp.DiffCoverage = cr.DiffCoverage.Clone()
+	return &cp
 }

@@ -114,9 +114,11 @@ func TestCodeInsightsPRUpload(t *testing.T) {
 		t.Errorf("line annotation = %+v", a)
 	}
 
-	// Re-upload for the same commit publishes again under the same
-	// commit key (the forge replaces in place) and now carries a delta
-	// against the first, gate-passing upload.
+	// Re-upload for the same commit recomputes its merged report and
+	// publishes again under the same commit key (the forge replaces in
+	// place). It carries no "Change vs base": the merged delta compares
+	// against the previous *distinct* commit, and a commit is never its own
+	// baseline, so re-running CI on one commit shows no phantom delta.
 	resp = insightsUpload(t, f, fields)
 	if resp.CodeInsights != "posted" || len(f.forge.ReportCalls) != 2 {
 		t.Fatalf("re-upload: code_insights = %q, %d report calls", resp.CodeInsights, len(f.forge.ReportCalls))
@@ -125,9 +127,10 @@ func TestCodeInsightsPRUpload(t *testing.T) {
 	if second.CommitSHA != "prcommit1" {
 		t.Errorf("re-upload commit = %q", second.CommitSHA)
 	}
-	if len(second.Report.Data) < 2 || second.Report.Data[1].Title != "Change vs base" ||
-		second.Report.Data[1].Value != "+0.0%" {
-		t.Errorf("re-upload delta field = %+v", second.Report.Data)
+	for _, d := range second.Report.Data {
+		if d.Title == "Change vs base" {
+			t.Errorf("re-upload of the same commit should carry no delta, got %+v", d)
+		}
 	}
 }
 

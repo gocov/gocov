@@ -740,5 +740,126 @@ func (s *Store) UploadFiles(ctx context.Context, uploadID int64) ([]*store.Uploa
 	return out, nil
 }
 
+// LatestUploadsPerPart returns the newest upload of each distinct part for a
+// commit — the inputs to the merged report. DISTINCT ON keeps only the
+// highest id per part, so a re-uploaded part supersedes its predecessors.
+func (s *Store) LatestUploadsPerPart(ctx context.Context, repoID int64, commitSHA string) ([]*store.Upload, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT DISTINCT ON (part) `+uploadCols+` FROM uploads
+		 WHERE repo_id = $1 AND commit_sha = $2
+		 ORDER BY part, id DESC`,
+		repoID, commitSHA)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.Upload
+	for rows.Next() {
+		u, err := s.scanUpload(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+const commitReportCols = `id, repo_id, commit_sha, branch, pr_id, total_pct,
+	covered_stmts, total_stmts, gate_failed, diff_coverage, part_count, created_at, updated_at`
+
+func (s *Store) UpsertCommitReport(ctx context.Context, cr *store.CommitReport) error {
+	var diffCov []byte
+	if cr.DiffCoverage != nil {
+		var err error
+		if diffCov, err = json.Marshal(cr.DiffCoverage); err != nil {
+			return err
+		}
+	}
+	// The first-seen created_at survives the conflict update; only the
+	// derived fields and updated_at move.
+	return s.pool.QueryRow(ctx, `
+		INSERT INTO commit_reports (repo_id, commit_sha, branch, pr_id, total_pct,
+			covered_stmts, total_stmts, gate_failed, diff_coverage, part_count)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (repo_id, commit_sha) DO UPDATE SET
+			branch = EXCLUDED.branch,
+			pr_id = EXCLUDED.pr_id,
+			total_pct = EXCLUDED.total_pct,
+			covered_stmts = EXCLUDED.covered_stmts,
+			total_stmts = EXCLUDED.total_stmts,
+			gate_failed = EXCLUDED.gate_failed,
+			diff_coverage = EXCLUDED.diff_coverage,
+			part_count = EXCLUDED.part_count,
+			updated_at = now()
+		RETURNING id, created_at, updated_at`,
+		cr.RepoID, cr.CommitSHA, cr.Branch, cr.PRID, cr.TotalPct,
+		cr.CoveredStmts, cr.TotalStmts, cr.GateFailed, diffCov, cr.PartCount,
+	).Scan(&cr.ID, &cr.CreatedAt, &cr.UpdatedAt)
+}
+
+func (s *Store) CommitReport(ctx context.Context, repoID int64, commitSHA string) (*store.CommitReport, error) {
+	return s.scanCommitReport(s.pool.QueryRow(ctx,
+		`SELECT `+commitReportCols+` FROM commit_reports WHERE repo_id = $1 AND commit_sha = $2`,
+		repoID, commitSHA))
+}
+
+func (s *Store) LatestCommitReport(ctx context.Context, repoID int64, branch string) (*store.CommitReport, error) {
+	return s.scanCommitReport(s.pool.QueryRow(ctx,
+		`SELECT `+commitReportCols+` FROM commit_reports
+		 WHERE repo_id = $1 AND branch = $2 ORDER BY id DESC LIMIT 1`,
+		repoID, branch))
+}
+
+func (s *Store) LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*store.CommitReport, error) {
+	return s.scanCommitReport(s.pool.QueryRow(ctx,
+		`SELECT `+commitReportCols+` FROM commit_reports
+		 WHERE repo_id = $1 AND branch = $2 AND commit_sha <> $3 AND NOT gate_failed
+		 ORDER BY id DESC LIMIT 1`,
+		repoID, branch, excludeCommit))
+}
+
+func (s *Store) ListBranchCommitReports(ctx context.Context, repoID int64, branch string, limit int) ([]*store.CommitReport, error) {
+	var lim any
+	if limit > 0 {
+		lim = limit
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+commitReportCols+` FROM commit_reports
+		 WHERE repo_id = $1 AND branch = $2 ORDER BY id DESC LIMIT $3`,
+		repoID, branch, lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.CommitReport
+	for rows.Next() {
+		cr, err := s.scanCommitReport(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, cr)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) scanCommitReport(row rowScanner) (*store.CommitReport, error) {
+	var cr store.CommitReport
+	var diffCov []byte
+	err := row.Scan(&cr.ID, &cr.RepoID, &cr.CommitSHA, &cr.Branch, &cr.PRID, &cr.TotalPct,
+		&cr.CoveredStmts, &cr.TotalStmts, &cr.GateFailed, &diffCov, &cr.PartCount, &cr.CreatedAt, &cr.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(diffCov) > 0 {
+		if err := json.Unmarshal(diffCov, &cr.DiffCoverage); err != nil {
+			return nil, fmt.Errorf("commit report %d: bad diff_coverage: %w", cr.ID, err)
+		}
+	}
+	return &cr, nil
+}
+
 // ensure interface compliance
 var _ store.Store = (*Store)(nil)

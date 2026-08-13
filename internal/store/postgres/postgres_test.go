@@ -341,6 +341,107 @@ func TestUploadLifecycle(t *testing.T) {
 	}
 }
 
+func TestCommitReportLifecycle(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+
+	mkUpload := func(commit, part string, count int) *store.Upload {
+		t.Helper()
+		u := &store.Upload{RepoID: repo.ID, CommitSHA: commit, Branch: "main", Format: "go", Part: part}
+		files := []*store.UploadFile{{Path: "a.go", Blocks: []profile.Block{
+			{StartLine: 1, EndLine: 2, NumStmts: 1, Count: count},
+		}}}
+		if err := st.CreateUpload(ctx, u, files); err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+
+	// Two parts, plus a re-upload of one part that must supersede its
+	// predecessor in LatestUploadsPerPart.
+	mkUpload("c1", "backend", 0)
+	be2 := mkUpload("c1", "backend", 1)
+	fe := mkUpload("c1", "frontend", 1)
+	parts, err := st.LatestUploadsPerPart(ctx, repo.ID, "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 2 {
+		t.Fatalf("latest per part = %d uploads, want 2 (backend superseded)", len(parts))
+	}
+	got := map[string]int64{}
+	for _, p := range parts {
+		got[p.Part] = p.ID
+	}
+	if got["backend"] != be2.ID || got["frontend"] != fe.ID {
+		t.Errorf("latest per part = %v, want newest backend %d and frontend %d", got, be2.ID, fe.ID)
+	}
+
+	// Upsert creates, then replaces in place preserving id and created_at.
+	dc := &diffcov.Result{Files: []diffcov.FileCoverage{{Path: "a.go", CoveredLines: 1, TotalLines: 2, UncoveredLines: []int{9}}}, CoveredLines: 1, TotalLines: 2}
+	cr := &store.CommitReport{RepoID: repo.ID, CommitSHA: "c1", Branch: "main", PRID: "7",
+		TotalPct: 50, CoveredStmts: 1, TotalStmts: 2, DiffCoverage: dc, PartCount: 2}
+	if err := st.UpsertCommitReport(ctx, cr); err != nil {
+		t.Fatal(err)
+	}
+	if cr.ID == 0 || cr.CreatedAt.IsZero() {
+		t.Fatalf("upsert did not fill ID/CreatedAt: %+v", cr)
+	}
+	firstID, firstCreated := cr.ID, cr.CreatedAt
+	cr2 := &store.CommitReport{RepoID: repo.ID, CommitSHA: "c1", Branch: "main",
+		TotalPct: 80, CoveredStmts: 8, TotalStmts: 10, PartCount: 2}
+	if err := st.UpsertCommitReport(ctx, cr2); err != nil {
+		t.Fatal(err)
+	}
+	if cr2.ID != firstID || !cr2.CreatedAt.Equal(firstCreated) {
+		t.Errorf("upsert changed id/created_at: id %d→%d", firstID, cr2.ID)
+	}
+
+	// Round trip: latest values win, diff_coverage cleared to nil.
+	round, err := st.CommitReport(ctx, repo.ID, "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if round.TotalPct != 80 || round.CoveredStmts != 8 || round.DiffCoverage != nil {
+		t.Errorf("round trip = %+v, want 80%% 8/10 nil diff", round)
+	}
+
+	// Baseline selection: a passing report on another commit, skipping the
+	// excluded commit and gate-failing reports.
+	if err := st.UpsertCommitReport(ctx, &store.CommitReport{RepoID: repo.ID, CommitSHA: "c2", Branch: "main", TotalPct: 90, PartCount: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertCommitReport(ctx, &store.CommitReport{RepoID: repo.ID, CommitSHA: "c3", Branch: "main", TotalPct: 10, GateFailed: true, PartCount: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if latest, err := st.LatestCommitReport(ctx, repo.ID, "main"); err != nil || latest.CommitSHA != "c3" {
+		t.Errorf("latest report = %v, %v (want c3, the newest)", latest, err)
+	}
+	// Excluding c2 and skipping the failed c3 leaves c1 as the baseline.
+	base, err := st.LatestPassedCommitReport(ctx, repo.ID, "main", "c2")
+	if err != nil || base.CommitSHA != "c1" {
+		t.Errorf("passed baseline excluding c2 = %v, %v (want c1)", base, err)
+	}
+	// The trend lists reports newest first.
+	list, err := st.ListBranchCommitReports(ctx, repo.ID, "main", 0)
+	if err != nil || len(list) != 3 || list[0].CommitSHA != "c3" {
+		t.Errorf("branch reports = %+v (err %v)", list, err)
+	}
+
+	// DeleteRepo cascades to commit reports.
+	if err := st.DeleteRepo(ctx, repo.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CommitReport(ctx, repo.ID, "c1"); !errors.Is(err, store.ErrNotFound) {
+		t.Error("commit report survived repo deletion")
+	}
+}
+
 func TestUserLifecycle(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()

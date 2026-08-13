@@ -183,28 +183,15 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	covered, total := prof.Coverage()
 	totalPct := profile.Percent(covered, total)
 
-	// Delta vs the previous gate-passing upload on the same branch,
-	// falling back to the default branch for first-time feature branches.
-	// Gate-failing uploads never serve as a baseline.
-	var deltaPct *float64
-	prev, err := s.store.LatestPassedUpload(r.Context(), repo.ID, branch)
-	if errors.Is(err, store.ErrNotFound) && branch != repo.DefaultBranch {
-		prev, err = s.store.LatestPassedUpload(r.Context(), repo.ID, repo.DefaultBranch)
-	}
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		s.internalError(w, "loading previous upload", err)
-		return
-	}
-	if prev != nil {
-		d := totalPct - prev.TotalPct
-		deltaPct = &d
-	}
-
-	// The gate's drop rule always compares against the default branch, so
-	// a PR cannot lower coverage step by step within tolerance.
+	// The upload row keeps its own single-part gate result (its gate_failed
+	// column still feeds the per-upload web views); the response, forge
+	// status, gate and PR comment are driven by the merged report computed
+	// after the row is stored. The drop rule always compares against the
+	// default branch, so a PR cannot lower coverage step by step within
+	// tolerance.
 	var dropDelta *float64
 	if repo.Gate.MaxCoverageDrop != nil {
-		base, err := s.store.LatestPassedUpload(r.Context(), repo.ID, repo.DefaultBranch)
+		base, err := s.store.LatestPassedCommitReport(r.Context(), repo.ID, repo.DefaultBranch, commit)
 		if err != nil && !errors.Is(err, store.ErrNotFound) {
 			s.internalError(w, "loading gate baseline", err)
 			return
@@ -270,30 +257,142 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Recompute the commit's merged report from every part's latest upload
+	// and drive all outward-facing surfaces from it, so a commit uploaded
+	// in several parts reports its combined total, not the last part in.
+	merged, mergedDelta, mergedGate, err := s.recomputeCommitReport(r.Context(), repo, upload)
+	if err != nil {
+		s.internalError(w, "computing merged report", err)
+		return
+	}
+
 	resp := uploadResponse{
 		ID:           upload.ID,
-		TotalPct:     totalPct,
-		CoveredStmts: covered,
-		TotalStmts:   total,
-		DeltaPct:     deltaPct,
-		BuildStatus:  s.pushBuildStatus(r.Context(), fg, fgErr, repo, upload, deltaPct, gate),
-		CodeInsights: s.pushCodeInsights(r.Context(), fg, fgErr, repo, upload, deltaPct, gate),
+		TotalPct:     merged.TotalPct,
+		CoveredStmts: merged.CoveredStmts,
+		TotalStmts:   merged.TotalStmts,
+		DeltaPct:     mergedDelta,
+		BuildStatus:  s.pushBuildStatus(r.Context(), fg, fgErr, repo, merged, mergedDelta, mergedGate),
+		CodeInsights: s.pushCodeInsights(r.Context(), fg, fgErr, repo, merged, mergedDelta, mergedGate),
 		RepoCreated:  repoCreated,
 		DiffStatus:   diffStatus,
-		PRComment:    s.pushPRComment(r.Context(), fg, fgErr, repo, upload, deltaPct, gate),
+		PRComment:    s.pushPRComment(r.Context(), fg, fgErr, repo, merged, mergedDelta, mergedGate),
 	}
-	if gate.configured {
-		resp.Gate = gate.String()
+	if mergedGate.configured {
+		resp.Gate = mergedGate.String()
 	}
-	if diffResult != nil {
-		pct := diffResult.Percent()
+	if md := merged.DiffCoverage; md != nil {
+		pct := md.Percent()
 		resp.DiffPct = &pct
-		resp.DiffCoveredLines = &diffResult.CoveredLines
-		resp.DiffTotalLines = &diffResult.TotalLines
+		resp.DiffCoveredLines = &md.CoveredLines
+		resp.DiffTotalLines = &md.TotalLines
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// recomputeCommitReport rebuilds the merged report for the upload's commit
+// from the latest upload of every part, persists it, and returns the merged
+// view that drives the response and the forge side effects. It is
+// self-healing: because every upload recomputes the whole commit, a partial
+// early state (only the backend part in, say) is corrected in place as the
+// remaining parts arrive. The trade-off is a window in which the merged
+// numbers are incomplete — see the README's note on merged reports.
+//
+// The returned *store.Upload is synthetic: it carries the merged totals and
+// diff coverage to the existing push helpers, with the triggering upload's
+// id so the report card and PR comment link back to it.
+func (s *Server) recomputeCommitReport(ctx context.Context, repo *store.Repo, u *store.Upload) (*store.Upload, *float64, gateResult, error) {
+	parts, err := s.store.LatestUploadsPerPart(ctx, repo.ID, u.CommitSHA)
+	if err != nil {
+		return nil, nil, gateResult{}, fmt.Errorf("loading commit parts: %w", err)
+	}
+
+	profiles := make([]*profile.Profile, 0, len(parts))
+	diffs := make([]*diffcov.Result, 0, len(parts))
+	for _, p := range parts {
+		files, err := s.store.UploadFiles(ctx, p.ID)
+		if err != nil {
+			return nil, nil, gateResult{}, fmt.Errorf("loading part files: %w", err)
+		}
+		prof := &profile.Profile{Files: make([]profile.File, 0, len(files))}
+		for _, f := range files {
+			prof.Files = append(prof.Files, profile.File{Path: f.Path, Blocks: f.Blocks})
+		}
+		profiles = append(profiles, prof)
+		if p.DiffCoverage != nil {
+			diffs = append(diffs, p.DiffCoverage)
+		}
+	}
+
+	merged := profile.Merge(profiles...)
+	covered, total := merged.Coverage()
+	totalPct := profile.Percent(covered, total)
+	mergedDiff := diffcov.Merge(diffs...)
+
+	// Delta vs the previous gate-passing merged report on the branch,
+	// falling back to the default branch for first-time feature branches.
+	// The commit's own report is skipped so an earlier part is never its
+	// own baseline.
+	var deltaPct *float64
+	prev, err := s.store.LatestPassedCommitReport(ctx, repo.ID, u.Branch, u.CommitSHA)
+	if errors.Is(err, store.ErrNotFound) && u.Branch != repo.DefaultBranch {
+		prev, err = s.store.LatestPassedCommitReport(ctx, repo.ID, repo.DefaultBranch, u.CommitSHA)
+	}
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return nil, nil, gateResult{}, fmt.Errorf("loading baseline report: %w", err)
+	}
+	if prev != nil {
+		d := totalPct - prev.TotalPct
+		deltaPct = &d
+	}
+
+	// The gate drop rule always compares against the default branch's latest
+	// passing merged report, so a PR cannot ratchet coverage down part by
+	// part within tolerance.
+	var dropDelta *float64
+	if repo.Gate.MaxCoverageDrop != nil {
+		base, err := s.store.LatestPassedCommitReport(ctx, repo.ID, repo.DefaultBranch, u.CommitSHA)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return nil, nil, gateResult{}, fmt.Errorf("loading gate baseline report: %w", err)
+		}
+		if base != nil {
+			d := totalPct - base.TotalPct
+			dropDelta = &d
+		}
+	}
+
+	gate := evaluateGate(repo.Gate, totalPct, dropDelta, mergedDiff)
+
+	cr := &store.CommitReport{
+		RepoID:       repo.ID,
+		CommitSHA:    u.CommitSHA,
+		Branch:       u.Branch,
+		PRID:         u.PRID,
+		TotalPct:     totalPct,
+		CoveredStmts: covered,
+		TotalStmts:   total,
+		GateFailed:   gate.failed(),
+		DiffCoverage: mergedDiff,
+		PartCount:    len(parts),
+	}
+	if err := s.store.UpsertCommitReport(ctx, cr); err != nil {
+		return nil, nil, gateResult{}, fmt.Errorf("saving merged report: %w", err)
+	}
+
+	mergedUpload := &store.Upload{
+		ID:           u.ID,
+		RepoID:       repo.ID,
+		CommitSHA:    u.CommitSHA,
+		Branch:       u.Branch,
+		PRID:         u.PRID,
+		TotalPct:     totalPct,
+		CoveredStmts: covered,
+		TotalStmts:   total,
+		DiffCoverage: mergedDiff,
+	}
+	return mergedUpload, deltaPct, gate, nil
 }
 
 // forgeFor builds a forge client for the repo, resolving credentials
