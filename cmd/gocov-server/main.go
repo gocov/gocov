@@ -34,6 +34,9 @@
 // protection) enables the Bitbucket workspace connect on top of the
 // Bitbucket OAuth consumer: one consent and the workspace acts through
 // that grant, its refresh token stored encrypted.
+// GOCOV_GITHUB_WEBHOOK_SECRET enables the GitHub App / Marketplace
+// webhook at POST /github/webhook, verifying delivery signatures against
+// this secret (required for a Marketplace listing).
 package main
 
 import (
@@ -241,6 +244,10 @@ func serve() error {
 	// field would read as "configured".
 	if githubApp != nil {
 		cfg.GitHubApp = githubApp
+	}
+	if secret := os.Getenv("GOCOV_GITHUB_WEBHOOK_SECRET"); secret != "" {
+		cfg.GitHubWebhookSecret = secret
+		log.Info("github webhook endpoint enabled")
 	}
 	// Bitbucket workspace connect (One-Click Connect P2) rides the
 	// sign-in consumer, and needs the at-rest cipher for the stored

@@ -257,9 +257,15 @@ To run one on your own deployment:
    Apps → New GitHub App**) with
    - **Setup URL**: `https://your-gocov-host/github/setup`, with
      *Redirect on update* enabled
-   - **Webhook**: disabled (gocov's model is upload-driven; installs
-     are linked through the setup redirect and uninstalls are detected
-     lazily)
+   - **Webhook**: optional. gocov's model is upload-driven, so a
+     self-hosted app can leave it disabled — installs are linked
+     through the setup redirect and uninstalls are detected lazily. A
+     **Marketplace listing requires it**: set the webhook URL to
+     `https://your-gocov-host/github/webhook`, a webhook secret, and
+     `GOCOV_GITHUB_WEBHOOK_SECRET` to the same value on the server. The
+     endpoint verifies each delivery's signature; it logs
+     `marketplace_purchase` events and flips a workspace's app-broken
+     flag on `installation` deleted/suspend/unsuspend
    - **Repository permissions**: *Checks: Read & write*, *Commit
      statuses: Read & write*, *Pull requests: Read & write*,
      *Contents: Read-only*, *Metadata: Read-only*
