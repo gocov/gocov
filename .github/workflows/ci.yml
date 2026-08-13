@@ -34,7 +34,6 @@ jobs:
         run: go test ./... -covermode=atomic -coverprofile=coverage.out
       - name: Upload coverage to gocov
         env:
-          GOCOV_SERVER: https://app.gocov.dev
           GOCOV_TOKEN: ${{ secrets.GOCOV_TOKEN }}
         run: |
           if [ -z "$GOCOV_TOKEN" ]; then
