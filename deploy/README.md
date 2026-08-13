@@ -4,7 +4,7 @@ Single EC2 instance (docker compose: gocov-server + Caddy) in front of an
 RDS Postgres. TLS via Caddy/Let's Encrypt, DNS on Cloudflare (DNS-only).
 Management via SSM Session Manager — the instance has no SSH port open.
 
-Infra (eu-central-1, account 773658094601):
+Infra (eu-central-1):
 - Security groups: `gocov-web` (80/443 open), `gocov-db` (5432 from gocov-web)
 - IAM role + instance profile `gocov-ec2` (AmazonSSMManagedInstanceCore)
 - RDS `gocov-db`: db.t4g.micro, Postgres 18, 20GB gp3, encrypted,
@@ -12,7 +12,7 @@ Infra (eu-central-1, account 773658094601):
 - EC2 `gocov-server`: t4g.small, AL2023 arm64, 30GB gp3 + Elastic IP
 
 Server layout: repo cloned at `/opt/gocov`, secrets in `/opt/gocov/deploy/.env`
-(never committed), run with:
+(never committed, `chmod 600`), run with:
 
 ```sh
 cd /opt/gocov/deploy && docker compose -f docker-compose.prod.yml up -d --build

@@ -1,4 +1,7 @@
 app.gocov.dev {
+	request_body {
+		max_size 100MB
+	}
 	reverse_proxy server:8080
 	encode gzip
 

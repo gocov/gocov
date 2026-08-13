@@ -5,6 +5,11 @@ services:
   server:
     build: ..
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     environment:
       DATABASE_URL: ${DATABASE_URL}
       GOCOV_ADDR: ":8080"
@@ -28,6 +33,11 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     ports:
       - "80:80"
       - "443:443"
