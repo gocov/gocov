@@ -32,3 +32,13 @@ jobs:
         env:
           GOCOV_TEST_DATABASE_URL: postgres://gocov:gocov@localhost:5432/gocov
         run: go test ./... -covermode=atomic -coverprofile=coverage.out
+      - name: Upload coverage to gocov
+        env:
+          GOCOV_SERVER: https://app.gocov.dev
+          GOCOV_TOKEN: ${{ secrets.GOCOV_TOKEN }}
+        run: |
+          if [ -z "$GOCOV_TOKEN" ]; then
+            echo "GOCOV_TOKEN not set (e.g. fork PR); skipping upload."
+            exit 0
+          fi
+          go run ./cmd/gocov upload coverage.out
