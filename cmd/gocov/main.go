@@ -15,6 +15,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/gocov/gocov/internal/hosted"
 	"github.com/gocov/gocov/internal/profile"
 )
 
@@ -24,7 +25,7 @@ var version = "dev"
 // defaultServer is the server used when neither -server nor $GOCOV_SERVER
 // is given, so hosted users only supply a token. Self-hosters point at
 // their own instance via -server or $GOCOV_SERVER.
-var defaultServer = "https://app.gocov.dev"
+var defaultServer = hosted.DefaultServer
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {

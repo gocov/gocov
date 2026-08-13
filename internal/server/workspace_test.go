@@ -13,6 +13,7 @@ import (
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
 	"github.com/gocov/gocov/internal/forge"
 	forgefake "github.com/gocov/gocov/internal/forge/fake"
+	"github.com/gocov/gocov/internal/hosted"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
@@ -384,5 +385,49 @@ func TestSetupPageGitHubSnippet(t *testing.T) {
 	}
 	if strings.Contains(body, "bitbucket-pipelines.yml") {
 		t.Error("github workspace got the Bitbucket snippet")
+	}
+}
+
+// On the hosted instance the CLI already defaults to it, so onboarding
+// drops GOCOV_SERVER entirely and installs the release binary rather than
+// `go run @latest` (which needs a matching Go toolchain).
+func TestSetupPageHostedOmitsServer(t *testing.T) {
+	st := storemem.New()
+	if err := st.CreateWorkspace(context.Background(),
+		&store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "ws-secret", DefaultBranch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	bb := &fakeProvider{name: "bitbucket", identity: &auth.Identity{
+		ForgeUUID: "1", DisplayName: "Dev", Workspaces: []string{"acme"},
+	}}
+	f := &fixture{
+		srv: New(Config{
+			Store:   st,
+			Blobs:   blobmem.New(),
+			Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
+			Forges:  map[string]forge.Factory{"bitbucket": forgefake.New().Factory()},
+			BaseURL: hosted.DefaultServer,
+			Auths:   []auth.Provider{bb},
+		}),
+		store: st,
+	}
+	start := get(f, "/oauth/bitbucket/start")
+	stateCk := cookieNamed(t, start, stateCookie)
+	state, _, _ := strings.Cut(stateCk.Value, "|")
+	cb := get(f, "/oauth/bitbucket/callback?code=x&state="+url.QueryEscape(state), stateCk)
+	sess := cookieNamed(t, cb, sessionCookie)
+
+	body := get(f, "/workspaces/acme/setup", sess).Body.String()
+	if strings.Contains(body, "GOCOV_SERVER") {
+		t.Errorf("hosted onboarding should omit GOCOV_SERVER:\n%s", body)
+	}
+	if !strings.Contains(body, "GOCOV_TOKEN=ws-secret") {
+		t.Errorf("hosted onboarding still needs the token:\n%s", body)
+	}
+	if !strings.Contains(body, "releases/latest/download/gocov-linux-amd64") {
+		t.Errorf("onboarding should install the release binary, not go run @latest:\n%s", body)
+	}
+	if strings.Contains(body, "go run github.com/gocov/gocov") {
+		t.Errorf("onboarding should not use go run @latest:\n%s", body)
 	}
 }
