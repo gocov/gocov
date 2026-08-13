@@ -26,17 +26,18 @@
 {{end}}
 
 <div class="card pad">
-  <h2>1. Set the CI variables</h2>
+  <h2>1. Set the CI token</h2>
   {{if eq .Workspace.Forge "github"}}
   <p class="sub">In your GitHub org or repo: <em>Settings &rarr; Secrets and variables &rarr;
-  Actions</em>. Add <code>GOCOV_SERVER</code> as a variable and <code>GOCOV_TOKEN</code>
-  as a secret:</p>
+  Actions</em>. Add <code>GOCOV_TOKEN</code> as a secret{{if not .ServerImplicit}}
+  and <code>GOCOV_SERVER</code> as a variable{{end}}:</p>
   {{else}}
   <p class="sub">In Bitbucket: <em>Workspace settings &rarr; Workspace variables</em>.
-  Add both, marking <code>GOCOV_TOKEN</code> as secured:</p>
+  Add <code>GOCOV_TOKEN</code>, marked secured{{if not .ServerImplicit}}, and
+  <code>GOCOV_SERVER</code>{{end}}:</p>
   {{end}}
-  <pre><code id="setup-vars">GOCOV_SERVER={{.BaseURL}}
-GOCOV_TOKEN={{.Workspace.Token}}</code></pre>
+  <pre><code id="setup-vars">GOCOV_TOKEN={{.Workspace.Token}}{{if not .ServerImplicit}}
+GOCOV_SERVER={{.BaseURL}}{{end}}</code></pre>
   <p><button class="btn" type="button" data-copy="#setup-vars">Copy</button></p>
 </div>
 
@@ -45,16 +46,36 @@ GOCOV_TOKEN={{.Workspace.Token}}</code></pre>
   {{if eq .Workspace.Forge "github"}}
   <p class="sub">In your GitHub Actions workflow, after the tests:</p>
   <pre><code id="setup-snippet">- run: go test ./... -covermode=atomic -coverprofile=coverage.out
-- run: go run github.com/gocov/gocov/cmd/gocov@latest upload coverage.out
+- name: Upload coverage
+  run: |
+    curl -fsSL https://github.com/gocov/gocov/releases/latest/download/gocov-linux-amd64 -o /usr/local/bin/gocov
+    chmod +x /usr/local/bin/gocov
+    gocov upload coverage.out
   env:
-    GOCOV_SERVER: ${{"{{"}} vars.GOCOV_SERVER {{"}}"}}
-    GOCOV_TOKEN: ${{"{{"}} secrets.GOCOV_TOKEN {{"}}"}}</code></pre>
+    GOCOV_TOKEN: ${{"{{"}} secrets.GOCOV_TOKEN {{"}}"}}{{if not .ServerImplicit}}
+    GOCOV_SERVER: ${{"{{"}} vars.GOCOV_SERVER {{"}}"}}{{end}}</code></pre>
   {{else}}
-  <p class="sub">In <code>bitbucket-pipelines.yml</code>, after the tests:</p>
-  <pre><code id="setup-snippet">- step:
-    script:
-      - go test ./... -covermode=atomic -coverprofile=coverage.out
-      - go run github.com/gocov/gocov/cmd/gocov@latest upload coverage.out</code></pre>
+  <p class="sub">The full <code>bitbucket-pipelines.yml</code> — <code>branches</code> and
+  <code>pull-requests</code> share one step so a PR build runs once, not twice:</p>
+  <pre><code id="setup-snippet">image: golang:1.23
+
+definitions:
+  steps:
+    - step: &amp;coverage
+        name: Test + upload coverage
+        script:
+          - go test ./... -covermode=atomic -coverprofile=coverage.out
+          - curl -fsSL https://github.com/gocov/gocov/releases/latest/download/gocov-linux-amd64 -o /usr/local/bin/gocov
+          - chmod +x /usr/local/bin/gocov
+          - gocov upload coverage.out
+
+pipelines:
+  branches:
+    main:
+      - step: *coverage
+  pull-requests:
+    '**':
+      - step: *coverage</code></pre>
   {{end}}
   <p><button class="btn" type="button" data-copy="#setup-snippet">Copy</button>
   <span class="muted small">Commit, branch, repo and PR are auto-detected; other languages

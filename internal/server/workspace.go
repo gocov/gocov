@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gocov/gocov/internal/hosted"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -226,11 +227,16 @@ func (s *Server) handleWorkspaceSetup(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "listing workspace repos", err)
 		return
 	}
+	baseURL := strings.TrimSuffix(s.baseURL, "/")
 	data := map[string]any{
 		"Workspace":  ws,
 		"ForgeLabel": providerLabel(ws.Forge),
-		"BaseURL":    strings.TrimSuffix(s.baseURL, "/"),
-		"Repos":      repos,
+		"BaseURL":    baseURL,
+		// When this instance is the public hosted service, the CLI already
+		// defaults to it, so onboarding can drop GOCOV_SERVER and ask only
+		// for a token. Self-hosters (any other base URL) still set it.
+		"ServerImplicit": baseURL == hosted.DefaultServer,
+		"Repos":          repos,
 	}
 	s.addGitHubAppData(r, ws, data)
 	s.addBitbucketGrantData(ws, data)
