@@ -302,12 +302,14 @@ work with zero manual credentials from then on. To enable it, the
 deployment needs the sign-in OAuth consumer plus an encryption key:
 
 ```sh
-GOCOV_SECRET_KEY=...   # long random secret (e.g. `openssl rand -hex 32`); encrypts the stored grant at rest
+GOCOV_SECRET_KEY=...   # 64 hex characters (`openssl rand -hex 32`); encrypts the stored grant at rest
 ```
 
-The AES key is derived from this value with a plain SHA-256 — there is
-no slow KDF to compensate for a guessable passphrase — so generate it
-randomly rather than inventing one.
+The AES key is derived from this value with a plain SHA-256, so the
+value itself must carry the full 256 bits of entropy. The server
+requires exactly 64 hex characters and refuses to boot on anything
+else — generate it with `openssl rand -hex 32` rather than inventing a
+passphrase.
 
 and the consumer's permissions extended beyond sign-in: **Account:
 Read**, **Email**, **Repositories: Write**, **Pull requests: Write**.
