@@ -135,6 +135,17 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	prID := r.FormValue("pr_id")
 
+	// A part names one slice of the commit's coverage (backend, frontend,
+	// e2e, ...) uploaded from a separate CI job. Omitting it keeps the
+	// historical single-upload behaviour: everything lands in "default".
+	part := r.FormValue("part")
+	if part == "" {
+		part = "default"
+	} else if !partRe.MatchString(part) {
+		httpError(w, http.StatusBadRequest, "invalid part %q: want up to 64 lowercase alphanumeric, dash or underscore characters starting with a letter or digit", part)
+		return
+	}
+
 	file, _, err := r.FormFile("profile")
 	if err != nil {
 		httpError(w, http.StatusBadRequest, "missing file field: profile")
@@ -236,6 +247,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		DiffCoverage: diffResult,
 		GateFailed:   gate.failed(),
 		PathPrefix:   pathPrefix,
+		Part:         part,
 	}
 	files := make([]*store.UploadFile, 0, len(prof.Files))
 	for i := range prof.Files {
@@ -457,6 +469,10 @@ var repoNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}$`)
 // commitRe bounds commit identifiers: they appear in forge API paths and
 // in blobstore cache keys, so separators are not welcome.
 var commitRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+
+// partRe bounds a part name: a canonical lowercase slug, so "Backend" and
+// "backend" can't split one commit into two parts. It will key flags later.
+var partRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 
 // resolveUploadRepo maps the authenticated token to the target repo,
 // writing the error response itself on failure. Workspace tokens require

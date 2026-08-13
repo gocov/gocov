@@ -136,6 +136,9 @@ func TestUploadHappyPath(t *testing.T) {
 	if u.CommitSHA != "abc123def456" || u.Branch != "main" || u.Format != "go" {
 		t.Errorf("stored upload = %+v", u)
 	}
+	if u.Part != "default" {
+		t.Errorf("part = %q, want default (no explicit part)", u.Part)
+	}
 	files, err := f.store.UploadFiles(context.Background(), resp.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -211,6 +214,45 @@ func TestUploadFeatureBranchDeltaAgainstDefault(t *testing.T) {
 	}
 }
 
+func TestUploadPartStored(t *testing.T) {
+	f := newFixture(t, nil)
+	rec := doUpload(t, f, "secret-token", map[string]string{
+		"commit": "c1",
+		"part":   "frontend",
+	}, testProfile)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	var resp uploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	u, err := f.store.Upload(context.Background(), resp.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Part != "frontend" {
+		t.Errorf("part = %q, want frontend", u.Part)
+	}
+
+	// Re-uploading the same part appends a fresh immutable row (uploads stay
+	// append-only); the merge feature reads the latest row per part.
+	rec = doUpload(t, f, "secret-token", map[string]string{
+		"commit": "c1",
+		"part":   "frontend",
+	}, testProfile)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("re-upload status = %d, body = %s", rec.Code, rec.Body)
+	}
+	var resp2 uploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp2); err != nil {
+		t.Fatal(err)
+	}
+	if resp2.ID == resp.ID {
+		t.Errorf("re-upload reused id %d; uploads must stay append-only", resp.ID)
+	}
+}
+
 func TestUploadAuth(t *testing.T) {
 	f := newFixture(t, nil)
 	tests := []struct {
@@ -257,6 +299,9 @@ func TestUploadValidation(t *testing.T) {
 		{"missing profile file", map[string]string{"commit": "c"}, "", http.StatusBadRequest},
 		{"unknown format", map[string]string{"commit": "c", "format": "clover"}, testProfile, http.StatusBadRequest},
 		{"malformed profile", map[string]string{"commit": "c"}, "not a profile", http.StatusUnprocessableEntity},
+		{"uppercase part", map[string]string{"commit": "c", "part": "Backend"}, testProfile, http.StatusBadRequest},
+		{"part with slash", map[string]string{"commit": "c", "part": "back/end"}, testProfile, http.StatusBadRequest},
+		{"part leading dash", map[string]string{"commit": "c", "part": "-backend"}, testProfile, http.StatusBadRequest},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

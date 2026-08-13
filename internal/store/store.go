@@ -111,7 +111,12 @@ type Upload struct {
 	// PathPrefix maps profile paths to repo-relative paths (e.g. the Go
 	// module path), as sent with the upload.
 	PathPrefix string
-	CreatedAt  time.Time
+	// Part names the slice of the commit this upload covers (e.g. "backend",
+	// "frontend"). Uploads with no explicit part carry "default". The merged
+	// report reads the latest upload per (commit, part), so re-uploading a
+	// part replaces it rather than accumulating.
+	Part      string
+	CreatedAt time.Time
 }
 
 // User is a web UI account, identified by the forge account it signed in

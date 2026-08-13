@@ -443,6 +443,7 @@ the repo's default branch.
 | `pr_id`   | optional pull request id                       |
 | `format`  | `go`, `lcov`, `jacoco` or `cobertura`; omitted → detected from content |
 | `path_prefix` | maps profile paths to repo paths for diff coverage, e.g. the Go module path (the CLI fills it from go.mod) |
+| `part`    | optional; names one slice of the commit's coverage (`backend`, `frontend`, `e2e`, …) uploaded from a separate CI job. Lowercase slug; omitted → `default`. Re-uploading a part replaces it. |
 
 Returns `201` with `{id, total_pct, covered_stmts, total_stmts,
 delta_pct, build_status}`. Uploads carrying a `pr_id` additionally get
