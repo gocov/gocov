@@ -48,9 +48,9 @@ func (s *Server) handleBadge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	value, color := "unknown", badgeGray
-	latest, err := s.store.LatestUpload(r.Context(), repo.ID, repo.DefaultBranch)
+	latest, err := s.store.LatestCommitReport(r.Context(), repo.ID, repo.DefaultBranch)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		s.internalError(w, "loading latest upload for badge", err)
+		s.internalError(w, "loading latest report for badge", err)
 		return
 	}
 	if latest != nil {

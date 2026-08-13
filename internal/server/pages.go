@@ -32,20 +32,20 @@ func newDeltaView(d float64) *deltaView {
 	}
 }
 
-// branchDelta compares the newest upload on a branch against the most
-// recent gate-passing upload before it — the same baseline rule the
-// upload API uses, so the UI never shows a delta measured against an
-// upload that failed the gate. Lookback is bounded; a branch whose last
-// 50 uploads all failed shows no delta.
+// branchDelta compares the newest merged report on a branch against the
+// most recent gate-passing report before it — the same baseline rule the
+// upload API uses, so the UI never shows a delta measured against a report
+// that failed the gate. Lookback is bounded; a branch whose last 50 reports
+// all failed shows no delta.
 func (s *Server) branchDelta(r *http.Request, repoID int64, branch string) *deltaView {
-	ups, err := s.store.ListBranchUploads(r.Context(), repoID, branch, 50)
-	if err != nil || len(ups) < 2 {
+	reports, err := s.store.ListBranchCommitReports(r.Context(), repoID, branch, 50)
+	if err != nil || len(reports) < 2 {
 		return nil
 	}
-	current := ups[0]
-	for _, u := range ups[1:] {
-		if !u.GateFailed {
-			return newDeltaView(current.TotalPct - u.TotalPct)
+	current := reports[0]
+	for _, cr := range reports[1:] {
+		if !cr.GateFailed {
+			return newDeltaView(current.TotalPct - cr.TotalPct)
 		}
 	}
 	return nil
@@ -53,7 +53,7 @@ func (s *Server) branchDelta(r *http.Request, repoID int64, branch string) *delt
 
 type indexRow struct {
 	Repo   *store.Repo
-	Latest *store.Upload // nil when the default branch has no uploads
+	Latest *store.CommitReport // nil when the default branch has no reports
 	Delta  *deltaView
 	Gate   string // "pass", "fail" or ""
 }
@@ -96,9 +96,9 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		row := indexRow{Repo: repo}
-		latest, err := s.store.LatestUpload(r.Context(), repo.ID, repo.DefaultBranch)
+		latest, err := s.store.LatestCommitReport(r.Context(), repo.ID, repo.DefaultBranch)
 		if err != nil && !errors.Is(err, store.ErrNotFound) {
-			s.internalError(w, "loading latest upload", err)
+			s.internalError(w, "loading latest report", err)
 			return
 		}
 		if latest != nil {
@@ -199,17 +199,30 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	if trendBranch == "" {
 		trendBranch = repo.DefaultBranch
 	}
-	trendUps, err := s.store.ListBranchUploads(r.Context(), repo.ID, trendBranch, trendUploadLimit)
+	trendReports, err := s.store.ListBranchCommitReports(r.Context(), repo.ID, trendBranch, trendUploadLimit)
 	if err != nil {
-		s.internalError(w, "listing uploads for trend", err)
+		s.internalError(w, "listing reports for trend", err)
 		return
 	}
+	// The trend plots merged reports but its points still link to an upload
+	// detail page; map each commit to its latest upload id for the links.
+	trendUps, err := s.store.ListBranchUploads(r.Context(), repo.ID, trendBranch, trendUploadLimit)
+	if err != nil {
+		s.internalError(w, "listing uploads for trend links", err)
+		return
+	}
+	uploadIDByCommit := make(map[string]int64, len(trendUps))
+	for _, u := range trendUps {
+		if id, ok := uploadIDByCommit[u.CommitSHA]; !ok || u.ID > id {
+			uploadIDByCommit[u.CommitSHA] = u.ID
+		}
+	}
 
-	var latest *store.Upload
-	if l, err := s.store.LatestUpload(r.Context(), repo.ID, repo.DefaultBranch); err == nil {
+	var latest *store.CommitReport
+	if l, err := s.store.LatestCommitReport(r.Context(), repo.ID, repo.DefaultBranch); err == nil {
 		latest = l
 	} else if !errors.Is(err, store.ErrNotFound) {
-		s.internalError(w, "loading latest upload", err)
+		s.internalError(w, "loading latest report", err)
 		return
 	}
 	gate := ""
@@ -228,7 +241,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		"GateSummary": gateSummary(repo.Gate),
 		"Branches":    branches,
 		"Branch":      branch,
-		"Trend":       newTrendView(trendBranch, trendUps),
+		"Trend":       newTrendView(trendBranch, trendReports, uploadIDByCommit),
 		"Uploads":     uploads,
 		"Page":        page,
 		"PrevPage":    page - 1,

@@ -51,15 +51,17 @@ type trendView struct {
 // deterministic.
 func round1(v float64) float64 { return math.Round(v*10) / 10 }
 
-// newTrendView builds the chart for a branch from its uploads, given
-// newest-first as ListBranchUploads returns them. PR uploads are excluded:
-// the branch trend reflects the branch's own uploads. Returns nil when
-// fewer than two points remain — the page then omits the section.
-func newTrendView(branch string, ups []*store.Upload) *trendView {
-	var series []*store.Upload // chronological
-	for i := len(ups) - 1; i >= 0; i-- {
-		if ups[i].PRID == "" {
-			series = append(series, ups[i])
+// newTrendView builds the chart for a branch from its merged commit
+// reports, given newest-first as ListBranchCommitReports returns them. PR
+// reports are excluded: the branch trend reflects the branch's own commits.
+// uploadIDByCommit maps each commit to its latest upload id so a point can
+// still link to an upload detail page. Returns nil when fewer than two
+// points remain — the page then omits the section.
+func newTrendView(branch string, reports []*store.CommitReport, uploadIDByCommit map[string]int64) *trendView {
+	var series []*store.CommitReport // chronological
+	for i := len(reports) - 1; i >= 0; i-- {
+		if reports[i].PRID == "" {
+			series = append(series, reports[i])
 		}
 	}
 	if len(series) < 2 {
@@ -109,7 +111,7 @@ func newTrendView(branch string, ups []*store.Upload) *trendView {
 			sha = sha[:12]
 		}
 		v.Points = append(v.Points, trendPoint{
-			X: px, Y: py, ID: u.ID, GateFailed: u.GateFailed,
+			X: px, Y: py, ID: uploadIDByCommit[u.CommitSHA], GateFailed: u.GateFailed,
 			Title: fmt.Sprintf("%s · %.1f%% · %s", u.CreatedAt.Format("2006-01-02"), u.TotalPct, sha),
 		})
 	}

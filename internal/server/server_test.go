@@ -1376,6 +1376,28 @@ func TestBadgeUsesDefaultBranchOnly(t *testing.T) {
 	}
 }
 
+func TestBadgeAndDashboardShowMergedTotal(t *testing.T) {
+	f := newFixture(t, nil)
+	// Backend part (8/8) then frontend part (0/2) on the default branch: the
+	// merged total is 80%. The badge and dashboard must show 80%, not the 0%
+	// of the last part uploaded.
+	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main", "part": "backend"}, backendPart)
+	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main", "part": "frontend"}, frontendPart)
+
+	req := httptest.NewRequest(http.MethodGet, "/badge/acme/widgets.svg", nil)
+	rec := httptest.NewRecorder()
+	f.srv.ServeHTTP(rec, req)
+	if svg := rec.Body.String(); !strings.Contains(svg, ">80.0%<") {
+		t.Errorf("badge should show merged 80.0%%, got: %s", svg)
+	}
+
+	// The dashboard coverage bar shows the merged 80.0%. (The badge check
+	// above already proves the last part's 0% is not what surfaces.)
+	if body := doGet(t, f, "/").Body.String(); !strings.Contains(body, "80.0%") {
+		t.Errorf("dashboard should show merged 80.0%%: %s", body)
+	}
+}
+
 func TestPages(t *testing.T) {
 	f := newFixture(t, nil)
 	rec := doUpload(t, f, "secret-token", map[string]string{"commit": "abc123def456789", "branch": "main"}, testProfile)
