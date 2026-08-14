@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -442,7 +443,7 @@ func TestCommitReportLifecycle(t *testing.T) {
 	}
 }
 
-func TestLockCommitReport(t *testing.T) {
+func TestWithCommitReportTx(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 
@@ -451,55 +452,143 @@ func TestLockCommitReport(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A different commit's lock is independent — no deadlock while the first
-	// is held (proves the advisory keys don't collide across commits).
-	rel1, err := st.LockCommitReport(ctx, repo.ID, "c1")
-	if err != nil {
-		t.Fatal(err)
+	// Concurrency stress: far more simultaneous recomputes of one commit than
+	// the pool has connections, each issuing a read and a write *inside* the
+	// lock. The previous design held one pooled connection for the advisory
+	// lock and reached for a second to run these queries, which deadlocked
+	// the pool here; routing the queries through the locked transaction's own
+	// connection must not.
+	const n = 32
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			defer cancel()
+			errs[i] = st.WithCommitReportTx(cctx, repo.ID, "c1", func(ctx context.Context, tx store.CommitTx) error {
+				if _, err := tx.LatestUploadsPerPart(ctx, repo.ID, "c1"); err != nil {
+					return err
+				}
+				return tx.UpsertCommitReport(ctx, &store.CommitReport{
+					RepoID: repo.ID, CommitSHA: "c1", Branch: "main", TotalPct: float64(i), PartCount: 1,
+				})
+			})
+		}(i)
 	}
-	rel2, err := st.LockCommitReport(ctx, repo.ID, "c2")
-	if err != nil {
-		t.Fatalf("locking a different commit blocked or failed: %v", err)
-	}
-	rel2()
-	rel1()
-
-	// The same commit's lock is re-acquirable once released — the release
-	// really frees the advisory lock rather than leaking the connection.
-	for i := 0; i < 3; i++ {
-		rel, err := st.LockCommitReport(ctx, repo.ID, "c1")
+	wg.Wait()
+	for i, err := range errs {
 		if err != nil {
-			t.Fatalf("re-acquire %d: %v", i, err)
+			t.Fatalf("tx %d failed (a pool deadlock would surface here as a timeout): %v", i, err)
 		}
-		rel()
+	}
+	if cr, err := st.CommitReport(ctx, repo.ID, "c1"); err != nil || cr.PartCount != 1 {
+		t.Fatalf("commit report after %d concurrent txs = %+v, %v (want one serialized row)", n, cr, err)
 	}
 
-	// While one holder has the lock, a second acquisition on the same commit
-	// blocks until release — the serialization recompute relies on.
-	rel, err := st.LockCommitReport(ctx, repo.ID, "c1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	acquired := make(chan struct{})
+	// Serialization: a second recompute of the same commit waits for the
+	// first to finish.
+	release := make(chan struct{})
+	entered := make(chan struct{})
 	go func() {
-		rel2, err := st.LockCommitReport(ctx, repo.ID, "c1")
-		if err == nil {
-			rel2()
-		}
-		close(acquired)
+		_ = st.WithCommitReportTx(ctx, repo.ID, "c1", func(context.Context, store.CommitTx) error {
+			close(entered)
+			<-release
+			return nil
+		})
+	}()
+	<-entered
+	second := make(chan struct{})
+	go func() {
+		_ = st.WithCommitReportTx(ctx, repo.ID, "c1", func(context.Context, store.CommitTx) error { return nil })
+		close(second)
 	}()
 	select {
-	case <-acquired:
-		t.Error("second lock on the same commit acquired while the first was held")
+	case <-second:
+		t.Error("second recompute ran while the first held the commit lock")
 	case <-time.After(150 * time.Millisecond):
-		// Still blocked, as it must be.
 	}
-	rel()
+	close(release)
 	select {
-	case <-acquired:
-		// Unblocked after release.
-	case <-time.After(2 * time.Second):
-		t.Error("second lock never acquired after release")
+	case <-second:
+	case <-time.After(3 * time.Second):
+		t.Error("second recompute never ran after the first released")
+	}
+
+	// A different commit never blocks behind a held one.
+	done := make(chan error, 1)
+	blocker := make(chan struct{})
+	go func() {
+		done <- st.WithCommitReportTx(ctx, repo.ID, "c1", func(context.Context, store.CommitTx) error {
+			<-blocker
+			return nil
+		})
+	}()
+	if err := st.WithCommitReportTx(ctx, repo.ID, "c2", func(context.Context, store.CommitTx) error { return nil }); err != nil {
+		t.Errorf("a different commit blocked behind a held lock: %v", err)
+	}
+	close(blocker)
+	if err := <-done; err != nil {
+		t.Errorf("c1 tx: %v", err)
+	}
+}
+
+// backfillCommitReportsSQL mirrors the backfill statement in
+// 0012_commit_reports.sql. store.CreateUpload never writes commit_reports
+// (only the server's recompute does), so inserting uploads and running this
+// reproduces the migration's effect on a repo that predates the feature.
+const backfillCommitReportsSQL = `
+INSERT INTO commit_reports (repo_id, commit_sha, branch, pr_id, total_pct,
+    covered_stmts, total_stmts, gate_failed, diff_coverage, part_count, created_at, updated_at)
+SELECT repo_id, commit_sha, branch, pr_id, total_pct, covered_stmts, total_stmts,
+       gate_failed, diff_coverage, 1, created_at, created_at
+FROM (SELECT DISTINCT ON (repo_id, commit_sha) * FROM uploads
+      ORDER BY repo_id, commit_sha, id DESC) latest
+ORDER BY latest.id`
+
+func TestCommitReportBackfill(t *testing.T) {
+	pool := testpg.Pool(t)
+	st := postgres.New(pool)
+	ctx := context.Background()
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	mk := func(commit, branch string, pct float64) *store.Upload {
+		u := &store.Upload{RepoID: repo.ID, CommitSHA: commit, Branch: branch, Format: "go", TotalPct: pct, CoveredStmts: 1, TotalStmts: 2}
+		if err := st.CreateUpload(ctx, u, nil); err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+	// c1 uploaded twice (the later, higher-coverage row must win); c2 once.
+	mk("c1", "main", 50)
+	mk("c1", "main", 80)
+	mk("c2", "main", 90)
+
+	if _, err := pool.Exec(ctx, backfillCommitReportsSQL); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+
+	cr1, err := st.CommitReport(ctx, repo.ID, "c1")
+	if err != nil || cr1.TotalPct != 80 || cr1.PartCount != 1 {
+		t.Fatalf("c1 report = %+v, %v (want latest 80%%, one part)", cr1, err)
+	}
+	cr2, err := st.CommitReport(ctx, repo.ID, "c2")
+	if err != nil || cr2.TotalPct != 90 {
+		t.Fatalf("c2 report = %+v, %v", cr2, err)
+	}
+	// id ascends with commit order (c1's latest upload precedes c2's), so the
+	// branch's newest report is c2 — what badge/trend read.
+	if cr2.ID <= cr1.ID {
+		t.Errorf("backfill ids out of order: c1=%d c2=%d", cr1.ID, cr2.ID)
+	}
+	if latest, err := st.LatestCommitReport(ctx, repo.ID, "main"); err != nil || latest.CommitSHA != "c2" {
+		t.Errorf("latest report = %v, %v (want c2)", latest, err)
 	}
 }
 

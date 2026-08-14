@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gocov/gocov/internal/diffcov"
 	"github.com/gocov/gocov/internal/forge"
@@ -321,111 +322,121 @@ type mergedRecompute struct {
 	warnings []string // surfaced to the uploader, e.g. conservative diff merges
 }
 
+// recomputeTimeout bounds a single recompute so a saturated connection pool
+// fails the upload fast instead of hanging a CI client indefinitely.
+const recomputeTimeout = 30 * time.Second
+
 func (s *Server) recomputeCommitReport(ctx context.Context, repo *store.Repo, u *store.Upload) (*mergedRecompute, error) {
-	// Serialize against concurrent uploads of the same commit — parallel CI
-	// jobs are the whole point — so reading the parts and upserting the
-	// result cannot interleave and drop a part.
-	unlock, err := s.store.LockCommitReport(ctx, repo.ID, u.CommitSHA)
-	if err != nil {
-		return nil, fmt.Errorf("locking commit for recompute: %w", err)
-	}
-	defer unlock()
+	ctx, cancel := context.WithTimeout(ctx, recomputeTimeout)
+	defer cancel()
 
-	parts, err := s.store.LatestUploadsPerPart(ctx, repo.ID, u.CommitSHA)
-	if err != nil {
-		return nil, fmt.Errorf("loading commit parts: %w", err)
-	}
-
-	profiles := make([]*profile.Profile, 0, len(parts))
-	diffs := make([]*diffcov.Result, 0, len(parts))
-	for _, p := range parts {
-		files, err := s.store.UploadFiles(ctx, p.ID)
+	// The whole recompute — read every part, merge, upsert — runs inside one
+	// locked transaction, serialized per commit against concurrent uploads
+	// (parallel CI jobs are the point) so it cannot interleave with or
+	// clobber a newer recompute and drop a part.
+	var result *mergedRecompute
+	err := s.store.WithCommitReportTx(ctx, repo.ID, u.CommitSHA, func(ctx context.Context, tx store.CommitTx) error {
+		parts, err := tx.LatestUploadsPerPart(ctx, repo.ID, u.CommitSHA)
 		if err != nil {
-			return nil, fmt.Errorf("loading part files: %w", err)
+			return fmt.Errorf("loading commit parts: %w", err)
 		}
-		prof := &profile.Profile{Files: make([]profile.File, 0, len(files))}
-		for _, f := range files {
-			prof.Files = append(prof.Files, profile.File{Path: f.Path, Blocks: f.Blocks})
+
+		profiles := make([]*profile.Profile, 0, len(parts))
+		diffs := make([]*diffcov.Result, 0, len(parts))
+		for _, p := range parts {
+			files, err := tx.UploadFiles(ctx, p.ID)
+			if err != nil {
+				return fmt.Errorf("loading part files: %w", err)
+			}
+			prof := &profile.Profile{Files: make([]profile.File, 0, len(files))}
+			for _, f := range files {
+				prof.Files = append(prof.Files, profile.File{Path: f.Path, Blocks: f.Blocks})
+			}
+			profiles = append(profiles, prof)
+			if p.DiffCoverage != nil {
+				diffs = append(diffs, p.DiffCoverage)
+			}
 		}
-		profiles = append(profiles, prof)
-		if p.DiffCoverage != nil {
-			diffs = append(diffs, p.DiffCoverage)
+
+		merged := profile.Merge(profiles...)
+		covered, total := merged.Coverage()
+		totalPct := profile.Percent(covered, total)
+		mergedDiff, diffConflicts := diffcov.Merge(diffs...)
+		var warnings []string
+		if len(diffConflicts) > 0 {
+			warnings = append(warnings, fmt.Sprintf(
+				"diff coverage merged conservatively for %d changed file(s) whose parts disagree on their changed lines (%s); merged coverage is a safe lower bound",
+				len(diffConflicts), strings.Join(diffConflicts, ", ")))
 		}
-	}
 
-	merged := profile.Merge(profiles...)
-	covered, total := merged.Coverage()
-	totalPct := profile.Percent(covered, total)
-	mergedDiff, diffConflicts := diffcov.Merge(diffs...)
-	var warnings []string
-	if len(diffConflicts) > 0 {
-		warnings = append(warnings, fmt.Sprintf(
-			"diff coverage merged conservatively for %d changed file(s) whose parts disagree on their changed lines (%s); merged coverage is a safe lower bound",
-			len(diffConflicts), strings.Join(diffConflicts, ", ")))
-	}
-
-	// Delta vs the previous gate-passing merged report on the branch,
-	// falling back to the default branch for first-time feature branches.
-	// The commit's own report is skipped so an earlier part is never its
-	// own baseline.
-	var deltaPct *float64
-	prev, err := s.store.LatestPassedCommitReport(ctx, repo.ID, u.Branch, u.CommitSHA)
-	if errors.Is(err, store.ErrNotFound) && u.Branch != repo.DefaultBranch {
-		prev, err = s.store.LatestPassedCommitReport(ctx, repo.ID, repo.DefaultBranch, u.CommitSHA)
-	}
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return nil, fmt.Errorf("loading baseline report: %w", err)
-	}
-	if prev != nil {
-		d := totalPct - prev.TotalPct
-		deltaPct = &d
-	}
-
-	// The gate drop rule always compares against the default branch's latest
-	// passing merged report, so a PR cannot ratchet coverage down part by
-	// part within tolerance.
-	var dropDelta *float64
-	if repo.Gate.MaxCoverageDrop != nil {
-		base, err := s.store.LatestPassedCommitReport(ctx, repo.ID, repo.DefaultBranch, u.CommitSHA)
+		// Delta vs the previous gate-passing merged report on the branch,
+		// falling back to the default branch for first-time feature branches.
+		// The commit's own report is skipped so an earlier part is never its
+		// own baseline.
+		var deltaPct *float64
+		prev, err := tx.LatestPassedCommitReport(ctx, repo.ID, u.Branch, u.CommitSHA)
+		if errors.Is(err, store.ErrNotFound) && u.Branch != repo.DefaultBranch {
+			prev, err = tx.LatestPassedCommitReport(ctx, repo.ID, repo.DefaultBranch, u.CommitSHA)
+		}
 		if err != nil && !errors.Is(err, store.ErrNotFound) {
-			return nil, fmt.Errorf("loading gate baseline report: %w", err)
+			return fmt.Errorf("loading baseline report: %w", err)
 		}
-		if base != nil {
-			d := totalPct - base.TotalPct
-			dropDelta = &d
+		if prev != nil {
+			d := totalPct - prev.TotalPct
+			deltaPct = &d
 		}
-	}
 
-	gate := evaluateGate(repo.Gate, totalPct, dropDelta, mergedDiff)
+		// The gate drop rule always compares against the default branch's
+		// latest passing merged report, so a PR cannot ratchet coverage down
+		// part by part within tolerance.
+		var dropDelta *float64
+		if repo.Gate.MaxCoverageDrop != nil {
+			base, err := tx.LatestPassedCommitReport(ctx, repo.ID, repo.DefaultBranch, u.CommitSHA)
+			if err != nil && !errors.Is(err, store.ErrNotFound) {
+				return fmt.Errorf("loading gate baseline report: %w", err)
+			}
+			if base != nil {
+				d := totalPct - base.TotalPct
+				dropDelta = &d
+			}
+		}
 
-	cr := &store.CommitReport{
-		RepoID:       repo.ID,
-		CommitSHA:    u.CommitSHA,
-		Branch:       u.Branch,
-		PRID:         u.PRID,
-		TotalPct:     totalPct,
-		CoveredStmts: covered,
-		TotalStmts:   total,
-		GateFailed:   gate.failed(),
-		DiffCoverage: mergedDiff,
-		PartCount:    len(parts),
-	}
-	if err := s.store.UpsertCommitReport(ctx, cr); err != nil {
-		return nil, fmt.Errorf("saving merged report: %w", err)
-	}
+		gate := evaluateGate(repo.Gate, totalPct, dropDelta, mergedDiff)
 
-	mergedUpload := &store.Upload{
-		ID:           u.ID,
-		RepoID:       repo.ID,
-		CommitSHA:    u.CommitSHA,
-		Branch:       u.Branch,
-		PRID:         u.PRID,
-		TotalPct:     totalPct,
-		CoveredStmts: covered,
-		TotalStmts:   total,
-		DiffCoverage: mergedDiff,
+		cr := &store.CommitReport{
+			RepoID:       repo.ID,
+			CommitSHA:    u.CommitSHA,
+			Branch:       u.Branch,
+			PRID:         u.PRID,
+			TotalPct:     totalPct,
+			CoveredStmts: covered,
+			TotalStmts:   total,
+			GateFailed:   gate.failed(),
+			DiffCoverage: mergedDiff,
+			PartCount:    len(parts),
+		}
+		if err := tx.UpsertCommitReport(ctx, cr); err != nil {
+			return fmt.Errorf("saving merged report: %w", err)
+		}
+
+		mergedUpload := &store.Upload{
+			ID:           u.ID,
+			RepoID:       repo.ID,
+			CommitSHA:    u.CommitSHA,
+			Branch:       u.Branch,
+			PRID:         u.PRID,
+			TotalPct:     totalPct,
+			CoveredStmts: covered,
+			TotalStmts:   total,
+			DiffCoverage: mergedDiff,
+		}
+		result = &mergedRecompute{upload: mergedUpload, delta: deltaPct, gate: gate, warnings: warnings}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	return &mergedRecompute{upload: mergedUpload, delta: deltaPct, gate: gate, warnings: warnings}, nil
+	return result, nil
 }
 
 // forgeFor builds a forge client for the repo, resolving credentials

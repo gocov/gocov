@@ -533,7 +533,7 @@ func (s *Store) LatestUploadsPerPart(_ context.Context, repoID int64, commitSHA 
 	return out, nil
 }
 
-func (s *Store) LockCommitReport(_ context.Context, repoID int64, commitSHA string) (func(), error) {
+func (s *Store) WithCommitReportTx(ctx context.Context, repoID int64, commitSHA string, fn func(context.Context, store.CommitTx) error) error {
 	key := fmt.Sprintf("%d:%s", repoID, commitSHA)
 	s.mu.Lock()
 	m := s.crLocks[key]
@@ -543,7 +543,10 @@ func (s *Store) LockCommitReport(_ context.Context, repoID int64, commitSHA stri
 	}
 	s.mu.Unlock()
 	m.Lock()
-	return m.Unlock, nil
+	defer m.Unlock()
+	// The store's own methods satisfy store.CommitTx; the per-commit mutex
+	// gives the same serialization the Postgres advisory lock does.
+	return fn(ctx, s)
 }
 
 func (s *Store) UpsertCommitReport(_ context.Context, cr *store.CommitReport) error {

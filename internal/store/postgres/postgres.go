@@ -11,6 +11,7 @@ import (
 	"sort"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/gocov/gocov/internal/secretbox"
@@ -210,6 +211,15 @@ func (s *Store) ListRepos(ctx context.Context) ([]*store.Repo, error) {
 
 type rowScanner interface {
 	Scan(dest ...any) error
+}
+
+// querier is the subset of pgx shared by *pgxpool.Pool and pgx.Tx, so the
+// commit-report queries can run either directly on the pool or inside the
+// locked transaction that WithCommitReportTx opens.
+type querier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
 func (s *Store) scanRepo(row rowScanner) (*store.Repo, error) {
@@ -711,7 +721,11 @@ func (s *Store) scanUpload(row rowScanner) (*store.Upload, error) {
 }
 
 func (s *Store) UploadFiles(ctx context.Context, uploadID int64) ([]*store.UploadFile, error) {
-	rows, err := s.pool.Query(ctx, `
+	return uploadFiles(ctx, s.pool, uploadID)
+}
+
+func uploadFiles(ctx context.Context, q querier, uploadID int64) ([]*store.UploadFile, error) {
+	rows, err := q.Query(ctx, `
 		SELECT upload_id, path, pct, covered_stmts, total_stmts, blocks
 		FROM upload_files WHERE upload_id = $1 ORDER BY path`, uploadID)
 	if err != nil {
@@ -745,7 +759,11 @@ func (s *Store) UploadFiles(ctx context.Context, uploadID int64) ([]*store.Uploa
 // commit — the inputs to the merged report. DISTINCT ON keeps only the
 // highest id per part, so a re-uploaded part supersedes its predecessors.
 func (s *Store) LatestUploadsPerPart(ctx context.Context, repoID int64, commitSHA string) ([]*store.Upload, error) {
-	rows, err := s.pool.Query(ctx,
+	return s.latestUploadsPerPart(ctx, s.pool, repoID, commitSHA)
+}
+
+func (s *Store) latestUploadsPerPart(ctx context.Context, q querier, repoID int64, commitSHA string) ([]*store.Upload, error) {
+	rows, err := q.Query(ctx,
 		`SELECT DISTINCT ON (part) `+uploadCols+` FROM uploads
 		 WHERE repo_id = $1 AND commit_sha = $2
 		 ORDER BY part, id DESC`,
@@ -765,28 +783,53 @@ func (s *Store) LatestUploadsPerPart(ctx context.Context, repoID int64, commitSH
 	return out, rows.Err()
 }
 
-// LockCommitReport takes a session-scoped Postgres advisory lock keyed by
-// the commit, so the recompute of one commit's merged report serializes
-// across all server instances sharing the database. The lock is held on a
-// dedicated pooled connection until release returns it. Other commits hash
-// to other keys and never contend (a hash collision only costs an
-// occasional extra wait, never correctness).
-func (s *Store) LockCommitReport(ctx context.Context, repoID int64, commitSHA string) (func(), error) {
-	conn, err := s.pool.Acquire(ctx)
+// WithCommitReportTx runs fn inside a transaction that holds a
+// transaction-scoped Postgres advisory lock keyed by the commit, so the
+// recompute of one commit's merged report serializes across all server
+// instances sharing the database. Every query fn issues through the passed
+// CommitTx runs on that same transaction's single connection — critically,
+// the lock does not tie up one pooled connection while the reads reach for a
+// second, which would deadlock the pool under enough concurrent uploads of
+// one commit. pg_advisory_xact_lock releases automatically when the
+// transaction ends, on commit or rollback. Different commits hash to
+// different keys and never contend (a collision only costs an occasional
+// extra wait, never correctness).
+func (s *Store) WithCommitReportTx(ctx context.Context, repoID int64, commitSHA string, fn func(context.Context, store.CommitTx) error) error {
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	key := advisoryKey(repoID, commitSHA)
-	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", key); err != nil {
-		conn.Release()
-		return nil, err
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", advisoryKey(repoID, commitSHA)); err != nil {
+		return err
 	}
-	return func() {
-		// Release the lock on the same connection, then return it to the
-		// pool. Best effort: a failed unlock is freed when the session ends.
-		_, _ = conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", key)
-		conn.Release()
-	}, nil
+	if err := fn(ctx, &commitReportTx{s: s, tx: tx}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// commitReportTx binds the recompute's reads and upsert to one locked
+// transaction. It satisfies store.CommitTx.
+type commitReportTx struct {
+	s  *Store
+	tx pgx.Tx
+}
+
+func (c *commitReportTx) LatestUploadsPerPart(ctx context.Context, repoID int64, commitSHA string) ([]*store.Upload, error) {
+	return c.s.latestUploadsPerPart(ctx, c.tx, repoID, commitSHA)
+}
+
+func (c *commitReportTx) UploadFiles(ctx context.Context, uploadID int64) ([]*store.UploadFile, error) {
+	return uploadFiles(ctx, c.tx, uploadID)
+}
+
+func (c *commitReportTx) LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*store.CommitReport, error) {
+	return c.s.latestPassedCommitReport(ctx, c.tx, repoID, branch, excludeCommit)
+}
+
+func (c *commitReportTx) UpsertCommitReport(ctx context.Context, cr *store.CommitReport) error {
+	return c.s.upsertCommitReport(ctx, c.tx, cr)
 }
 
 // advisoryKey hashes (repo, commit) into the signed 64-bit space Postgres
@@ -801,6 +844,10 @@ const commitReportCols = `id, repo_id, commit_sha, branch, pr_id, total_pct,
 	covered_stmts, total_stmts, gate_failed, diff_coverage, part_count, created_at, updated_at`
 
 func (s *Store) UpsertCommitReport(ctx context.Context, cr *store.CommitReport) error {
+	return s.upsertCommitReport(ctx, s.pool, cr)
+}
+
+func (s *Store) upsertCommitReport(ctx context.Context, q querier, cr *store.CommitReport) error {
 	var diffCov []byte
 	if cr.DiffCoverage != nil {
 		var err error
@@ -810,7 +857,7 @@ func (s *Store) UpsertCommitReport(ctx context.Context, cr *store.CommitReport) 
 	}
 	// The first-seen created_at survives the conflict update; only the
 	// derived fields and updated_at move.
-	return s.pool.QueryRow(ctx, `
+	return q.QueryRow(ctx, `
 		INSERT INTO commit_reports (repo_id, commit_sha, branch, pr_id, total_pct,
 			covered_stmts, total_stmts, gate_failed, diff_coverage, part_count)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -844,7 +891,11 @@ func (s *Store) LatestCommitReport(ctx context.Context, repoID int64, branch str
 }
 
 func (s *Store) LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*store.CommitReport, error) {
-	return s.scanCommitReport(s.pool.QueryRow(ctx,
+	return s.latestPassedCommitReport(ctx, s.pool, repoID, branch, excludeCommit)
+}
+
+func (s *Store) latestPassedCommitReport(ctx context.Context, q querier, repoID int64, branch, excludeCommit string) (*store.CommitReport, error) {
+	return s.scanCommitReport(q.QueryRow(ctx,
 		`SELECT `+commitReportCols+` FROM commit_reports
 		 WHERE repo_id = $1 AND branch = $2 AND commit_sha <> $3 AND NOT gate_failed
 		 ORDER BY id DESC LIMIT 1`,

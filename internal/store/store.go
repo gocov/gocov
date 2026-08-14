@@ -261,13 +261,13 @@ type Store interface {
 	// part of a commit — the set the merged report is computed from. A
 	// re-uploaded part supersedes its earlier uploads here.
 	LatestUploadsPerPart(ctx context.Context, repoID int64, commitSHA string) ([]*Upload, error)
-	// LockCommitReport serializes the recompute of one commit's merged
-	// report against concurrent uploads of the same commit — the read of the
-	// parts and the upsert of the result must not interleave, or a slow
-	// recompute could clobber a newer one and drop a part. It blocks until
-	// the lock is held and returns a release function the caller must always
-	// call (typically deferred). Locks on different commits never contend.
-	LockCommitReport(ctx context.Context, repoID int64, commitSHA string) (release func(), err error)
+	// WithCommitReportTx serializes the recompute of one commit's merged
+	// report against concurrent uploads of the same commit and runs fn's
+	// reads and upsert as one atomic, locked unit — so a slow recompute can
+	// neither interleave with nor clobber a newer one and drop a part. fn
+	// must route all its store access through the passed CommitTx. Locks on
+	// different commits never contend.
+	WithCommitReportTx(ctx context.Context, repoID int64, commitSHA string, fn func(ctx context.Context, tx CommitTx) error) error
 	// UpsertCommitReport creates or replaces the merged report for
 	// (repo, commit), setting cr.ID, cr.CreatedAt and cr.UpdatedAt. The
 	// first-seen creation time is preserved across recomputes.
@@ -284,4 +284,15 @@ type Store interface {
 	// ListBranchCommitReports returns merged reports on a branch newest
 	// first; limit <= 0 means all. Feeds the coverage trend.
 	ListBranchCommitReports(ctx context.Context, repoID int64, branch string, limit int) ([]*CommitReport, error)
+}
+
+// CommitTx is the store access available inside WithCommitReportTx. On
+// Postgres every call runs on the one locked transaction, so the recompute's
+// reads and its upsert are consistent and cannot deadlock on a second pooled
+// connection.
+type CommitTx interface {
+	LatestUploadsPerPart(ctx context.Context, repoID int64, commitSHA string) ([]*Upload, error)
+	UploadFiles(ctx context.Context, uploadID int64) ([]*UploadFile, error)
+	LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*CommitReport, error)
+	UpsertCommitReport(ctx context.Context, cr *CommitReport) error
 }

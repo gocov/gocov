@@ -25,3 +25,22 @@ CREATE TABLE commit_reports (
 -- and, later, the badge and trend. id ascends with first-seen commit order,
 -- which is the ordering those reads want.
 CREATE INDEX commit_reports_repo_branch_idx ON commit_reports (repo_id, branch, id DESC);
+
+-- Backfill from existing uploads so badge, dashboard, trend, delta and the
+-- gate's drop baseline all keep working the moment this deploys, instead of
+-- reading an empty table until every repo re-uploads. Pre-feature history is
+-- one upload per commit, which is exactly a one-part merged report; take the
+-- latest upload per (repo, commit) — 0011 already stamped legacy rows
+-- part='default'. Ordering the insert by the source upload id makes
+-- commit_reports.id ascend with commit order, which every read's
+-- "ORDER BY id DESC" assumes.
+INSERT INTO commit_reports (repo_id, commit_sha, branch, pr_id, total_pct,
+    covered_stmts, total_stmts, gate_failed, diff_coverage, part_count, created_at, updated_at)
+SELECT repo_id, commit_sha, branch, pr_id, total_pct, covered_stmts, total_stmts,
+       gate_failed, diff_coverage, 1, created_at, created_at
+FROM (
+    SELECT DISTINCT ON (repo_id, commit_sha) *
+    FROM uploads
+    ORDER BY repo_id, commit_sha, id DESC
+) latest
+ORDER BY latest.id;
