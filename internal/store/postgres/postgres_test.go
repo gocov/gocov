@@ -592,6 +592,39 @@ func TestCommitReportBackfill(t *testing.T) {
 	}
 }
 
+func TestClaimStatusPush(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+
+	// Nothing to claim before the report exists.
+	if ok, err := st.ClaimStatusPush(ctx, repo.ID, "c1", 5); err != nil || ok {
+		t.Fatalf("claim on missing report = %v, %v (want false)", ok, err)
+	}
+	if err := st.UpsertCommitReport(ctx, &store.CommitReport{RepoID: repo.ID, CommitSHA: "c1", Branch: "main", PartCount: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A version only claims if strictly greater than the last claimed.
+	steps := []struct {
+		version int64
+		want    bool
+	}{
+		{5, true},  // first claim
+		{5, false}, // equal — already pushed
+		{3, false}, // older push arriving late — must lose
+		{7, true},  // newer recompute wins
+	}
+	for _, s := range steps {
+		if ok, err := st.ClaimStatusPush(ctx, repo.ID, "c1", s.version); err != nil || ok != s.want {
+			t.Errorf("claim v%d = %v (want %v), err %v", s.version, ok, s.want, err)
+		}
+	}
+}
+
 func TestUserLifecycle(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()

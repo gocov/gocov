@@ -283,15 +283,35 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		CoveredStmts: merged.CoveredStmts,
 		TotalStmts:   merged.TotalStmts,
 		DeltaPct:     mergedDelta,
-		BuildStatus:  s.pushBuildStatus(r.Context(), fg, fgErr, repo, merged, mergedDelta, mergedGate),
-		CodeInsights: s.pushCodeInsights(r.Context(), fg, fgErr, repo, merged, mergedDelta, mergedGate),
 		RepoCreated:  repoCreated,
 		DiffStatus:   diffStatus,
-		PRComment:    s.pushPRComment(r.Context(), fg, fgErr, repo, merged, mergedDelta, mergedGate),
 		Warnings:     rc.warnings,
 	}
 	if mergedGate.configured {
 		resp.Gate = mergedGate.String()
+	}
+
+	// Forge status/insights/comment push after the locked recompute, so a
+	// slow push from an older concurrent part could otherwise land after and
+	// leave the commit reflecting a stale merged state. Claim the push for
+	// this upload's version (its id, which rises with the most-complete
+	// state); only the winner pushes. On a claim error, fall open to pushing
+	// rather than silently dropping the status.
+	claimed, err := s.store.ClaimStatusPush(r.Context(), repo.ID, upload.CommitSHA, upload.ID)
+	if err != nil {
+		s.log.Warn("claiming status push", "repo", repo.Slug, "commit", upload.CommitSHA, "err", err)
+		claimed = true
+	}
+	if claimed {
+		resp.BuildStatus = s.pushBuildStatus(r.Context(), fg, fgErr, repo, merged, mergedDelta, mergedGate)
+		resp.CodeInsights = s.pushCodeInsights(r.Context(), fg, fgErr, repo, merged, mergedDelta, mergedGate)
+		resp.PRComment = s.pushPRComment(r.Context(), fg, fgErr, repo, merged, mergedDelta, mergedGate)
+	} else {
+		resp.BuildStatus = "skipped: superseded"
+		resp.CodeInsights = "skipped: superseded"
+		if merged.PRID != "" {
+			resp.PRComment = "skipped: superseded"
+		}
 	}
 	if md := merged.DiffCoverage; md != nil {
 		pct := md.Percent()
@@ -414,6 +434,7 @@ func (s *Server) recomputeCommitReport(ctx context.Context, repo *store.Repo, u 
 			GateFailed:   gate.failed(),
 			DiffCoverage: mergedDiff,
 			PartCount:    len(parts),
+			UploadID:     u.ID,
 		}
 		if err := tx.UpsertCommitReport(ctx, cr); err != nil {
 			return fmt.Errorf("saving merged report: %w", err)

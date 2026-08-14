@@ -402,6 +402,41 @@ func TestMergedReportConcurrentParts(t *testing.T) {
 	}
 }
 
+func TestUploadStatusPushSuperseded(t *testing.T) {
+	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+	ctx := context.Background()
+
+	// First upload creates the report and pushes its status.
+	doUpload(t, f, "secret-token", map[string]string{"commit": "c1"}, testProfile)
+	if len(f.forge.StatusCalls) != 1 {
+		t.Fatalf("first upload: %d status calls, want 1", len(f.forge.StatusCalls))
+	}
+
+	// Simulate a newer concurrent recompute having already claimed a higher
+	// push version. A subsequent upload (lower version) must not overwrite
+	// the forge status with its now-stale view.
+	if ok, err := f.store.ClaimStatusPush(ctx, f.repo.ID, "c1", 1<<30); err != nil || !ok {
+		t.Fatalf("setup claim = %v, %v", ok, err)
+	}
+
+	better := "mode: set\nexample.com/m/a.go:1.1,5.2 10 3\n" // 100%
+	rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c1"}, better)
+	var resp uploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.BuildStatus != "skipped: superseded" {
+		t.Errorf("build_status = %q, want skipped: superseded", resp.BuildStatus)
+	}
+	if len(f.forge.StatusCalls) != 1 {
+		t.Errorf("forge pushed a superseded status: %d calls, want still 1", len(f.forge.StatusCalls))
+	}
+	// The merged report itself still updated — only the forge push was held.
+	if cr, err := f.store.CommitReport(ctx, f.repo.ID, "c1"); err != nil || cr.TotalPct != 100 {
+		t.Errorf("report = %+v, %v (want recompute persisted 100%%)", cr, err)
+	}
+}
+
 func TestMergedGateSelfHeals(t *testing.T) {
 	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
 	ctx := context.Background()

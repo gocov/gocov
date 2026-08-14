@@ -204,19 +204,6 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "listing reports for trend", err)
 		return
 	}
-	// The trend plots merged reports but its points still link to an upload
-	// detail page; map each commit to its latest upload id for the links.
-	trendUps, err := s.store.ListBranchUploads(r.Context(), repo.ID, trendBranch, trendUploadLimit)
-	if err != nil {
-		s.internalError(w, "listing uploads for trend links", err)
-		return
-	}
-	uploadIDByCommit := make(map[string]int64, len(trendUps))
-	for _, u := range trendUps {
-		if id, ok := uploadIDByCommit[u.CommitSHA]; !ok || u.ID > id {
-			uploadIDByCommit[u.CommitSHA] = u.ID
-		}
-	}
 
 	var latest *store.CommitReport
 	if l, err := s.store.LatestCommitReport(r.Context(), repo.ID, repo.DefaultBranch); err == nil {
@@ -241,7 +228,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		"GateSummary": gateSummary(repo.Gate),
 		"Branches":    branches,
 		"Branch":      branch,
-		"Trend":       newTrendView(trendBranch, trendReports, uploadIDByCommit),
+		"Trend":       newTrendView(trendBranch, trendReports),
 		"Uploads":     uploads,
 		"Page":        page,
 		"PrevPage":    page - 1,

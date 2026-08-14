@@ -40,7 +40,7 @@
   {{range .Grid}}<line class="grid" x1="{{$.Trend.X0}}" y1="{{.Y}}" x2="{{$.Trend.X1}}" y2="{{.Y}}"></line>
   <text class="lbl" x="{{$.Trend.X0}}" dx="-6" y="{{.Y}}" text-anchor="end" dominant-baseline="middle">{{.Label}}</text>
   {{end}}<path class="line" d="{{.Path}}"></path>
-  {{range .Points}}<a href="/uploads/{{.ID}}"><circle class="pt{{if .GateFailed}} fail{{end}}" cx="{{.X}}" cy="{{.Y}}" r="3.5"><title>{{.Title}}</title></circle></a>
+  {{range .Points}}{{if .ID}}<a href="/uploads/{{.ID}}"><circle class="pt{{if .GateFailed}} fail{{end}}" cx="{{.X}}" cy="{{.Y}}" r="3.5"><title>{{.Title}}</title></circle></a>{{else}}<circle class="pt{{if .GateFailed}} fail{{end}}" cx="{{.X}}" cy="{{.Y}}" r="3.5"><title>{{.Title}}</title></circle>{{end}}
   {{end}}<text class="lbl cur" x="{{.CurX}}" y="{{.CurY}}" text-anchor="end">{{.CurLabel}}</text>
   <text class="lbl" x="{{.X0}}" y="{{.H}}" dy="-6">{{.FirstDate}}</text>
   <text class="lbl" x="{{.X1}}" y="{{.H}}" dy="-6" text-anchor="end">{{.LastDate}}</text>

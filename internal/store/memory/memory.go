@@ -24,6 +24,7 @@ type Store struct {
 	files      map[int64][]*store.UploadFile // keyed by upload ID
 	reports    map[int64]*store.CommitReport // merged reports, keyed by report ID
 	crLocks    map[string]*sync.Mutex        // per-commit recompute locks
+	crStatus   map[string]int64              // last claimed status-push version, keyed repoID:sha
 	workspaces map[int64]*store.Workspace
 	users      map[int64]*store.User
 	sessions   map[string]*store.Session // keyed by token hash
@@ -38,6 +39,7 @@ func New() *Store {
 		files:      map[int64][]*store.UploadFile{},
 		reports:    map[int64]*store.CommitReport{},
 		crLocks:    map[string]*sync.Mutex{},
+		crStatus:   map[string]int64{},
 		workspaces: map[int64]*store.Workspace{},
 		users:      map[int64]*store.User{},
 		sessions:   map[string]*store.Session{},
@@ -614,6 +616,29 @@ func (s *Store) latestCommitReport(repoID int64, branch, excludeCommit string, p
 		return nil, store.ErrNotFound
 	}
 	return copyCommitReport(latest), nil
+}
+
+func (s *Store) ClaimStatusPush(_ context.Context, repoID int64, commitSHA string, version int64) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Mirror the Postgres UPDATE, which claims nothing when the report row
+	// does not exist yet.
+	exists := false
+	for _, cr := range s.reports {
+		if cr.RepoID == repoID && cr.CommitSHA == commitSHA {
+			exists = true
+			break
+		}
+	}
+	if !exists {
+		return false, nil
+	}
+	key := fmt.Sprintf("%d:%s", repoID, commitSHA)
+	if s.crStatus[key] < version {
+		s.crStatus[key] = version
+		return true, nil
+	}
+	return false, nil
 }
 
 func (s *Store) ListBranchCommitReports(_ context.Context, repoID int64, branch string, limit int) ([]*store.CommitReport, error) {

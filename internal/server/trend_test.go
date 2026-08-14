@@ -10,36 +10,26 @@ import (
 
 // trendReport builds a merged commit report for newTrendView tests. Callers
 // pass reports newest-first, as ListBranchCommitReports returns them. Each
-// report gets a distinct commit so the upload-id link map is unambiguous.
+// report carries the upload id its point links to (here equal to its id).
 func trendReport(id int64, pct float64, prID string, gateFailed bool) *store.CommitReport {
 	return &store.CommitReport{
 		ID: id, CommitSHA: fmt.Sprintf("c%d", id), Branch: "main",
-		PRID: prID, TotalPct: pct, GateFailed: gateFailed,
+		PRID: prID, TotalPct: pct, GateFailed: gateFailed, UploadID: id,
 		CreatedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(id) * time.Hour),
 	}
 }
 
-// trendIDs maps each report's commit to an upload id equal to its report id,
-// so point.ID assertions read the same as when the trend ran off uploads.
-func trendIDs(reports ...*store.CommitReport) map[string]int64 {
-	m := make(map[string]int64, len(reports))
-	for _, cr := range reports {
-		m[cr.CommitSHA] = cr.ID
-	}
-	return m
-}
-
 func TestTrendViewTooFewUploads(t *testing.T) {
-	if v := newTrendView("main", nil, nil); v != nil {
+	if v := newTrendView("main", nil); v != nil {
 		t.Errorf("no reports: got %+v, want nil", v)
 	}
 	one := []*store.CommitReport{trendReport(1, 80, "", false)}
-	if v := newTrendView("main", one, trendIDs(one...)); v != nil {
+	if v := newTrendView("main", one); v != nil {
 		t.Errorf("one report: got %+v, want nil", v)
 	}
 	// Two reports but one is a PR build: one point left, still no chart.
 	reports := []*store.CommitReport{trendReport(2, 90, "7", false), trendReport(1, 80, "", false)}
-	if v := newTrendView("main", reports, trendIDs(reports...)); v != nil {
+	if v := newTrendView("main", reports); v != nil {
 		t.Errorf("one non-PR report: got %+v, want nil", v)
 	}
 }
@@ -50,7 +40,7 @@ func TestTrendViewExcludesPRUploads(t *testing.T) {
 		trendReport(2, 50, "7", false), // PR build, must not appear
 		trendReport(1, 80, "", false),
 	}
-	v := newTrendView("main", reports, trendIDs(reports...))
+	v := newTrendView("main", reports)
 	if v == nil {
 		t.Fatal("nil view")
 	}
@@ -70,7 +60,7 @@ func TestTrendViewPointPlacement(t *testing.T) {
 		trendReport(2, 75, "", false),
 		trendReport(1, 70, "", false),
 	}
-	v := newTrendView("main", reports, trendIDs(reports...))
+	v := newTrendView("main", reports)
 	if v == nil {
 		t.Fatal("nil view")
 	}
@@ -112,7 +102,7 @@ func TestTrendViewPointPlacement(t *testing.T) {
 
 func TestTrendViewFlatSeries(t *testing.T) {
 	reports := []*store.CommitReport{trendReport(2, 75, "", false), trendReport(1, 75, "", false)}
-	v := newTrendView("main", reports, trendIDs(reports...))
+	v := newTrendView("main", reports)
 	if v == nil {
 		t.Fatal("nil view")
 	}
@@ -130,7 +120,7 @@ func TestTrendViewGateMarkers(t *testing.T) {
 		trendReport(2, 60, "", true),
 		trendReport(1, 80, "", false),
 	}
-	v := newTrendView("main", reports, trendIDs(reports...))
+	v := newTrendView("main", reports)
 	if v == nil {
 		t.Fatal("nil view")
 	}
@@ -141,7 +131,7 @@ func TestTrendViewGateMarkers(t *testing.T) {
 
 func TestTrendViewScaleClampsAt100(t *testing.T) {
 	reports := []*store.CommitReport{trendReport(2, 100, "", false), trendReport(1, 99, "", false)}
-	v := newTrendView("main", reports, trendIDs(reports...))
+	v := newTrendView("main", reports)
 	if v == nil {
 		t.Fatal("nil view")
 	}

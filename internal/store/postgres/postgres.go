@@ -841,7 +841,7 @@ func advisoryKey(repoID int64, commitSHA string) int64 {
 }
 
 const commitReportCols = `id, repo_id, commit_sha, branch, pr_id, total_pct,
-	covered_stmts, total_stmts, gate_failed, diff_coverage, part_count, created_at, updated_at`
+	covered_stmts, total_stmts, gate_failed, diff_coverage, part_count, upload_id, created_at, updated_at`
 
 func (s *Store) UpsertCommitReport(ctx context.Context, cr *store.CommitReport) error {
 	return s.upsertCommitReport(ctx, s.pool, cr)
@@ -859,8 +859,8 @@ func (s *Store) upsertCommitReport(ctx context.Context, q querier, cr *store.Com
 	// derived fields and updated_at move.
 	return q.QueryRow(ctx, `
 		INSERT INTO commit_reports (repo_id, commit_sha, branch, pr_id, total_pct,
-			covered_stmts, total_stmts, gate_failed, diff_coverage, part_count)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			covered_stmts, total_stmts, gate_failed, diff_coverage, part_count, upload_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		ON CONFLICT (repo_id, commit_sha) DO UPDATE SET
 			branch = EXCLUDED.branch,
 			pr_id = EXCLUDED.pr_id,
@@ -870,10 +870,11 @@ func (s *Store) upsertCommitReport(ctx context.Context, q querier, cr *store.Com
 			gate_failed = EXCLUDED.gate_failed,
 			diff_coverage = EXCLUDED.diff_coverage,
 			part_count = EXCLUDED.part_count,
+			upload_id = EXCLUDED.upload_id,
 			updated_at = now()
 		RETURNING id, created_at, updated_at`,
 		cr.RepoID, cr.CommitSHA, cr.Branch, cr.PRID, cr.TotalPct,
-		cr.CoveredStmts, cr.TotalStmts, cr.GateFailed, diffCov, cr.PartCount,
+		cr.CoveredStmts, cr.TotalStmts, cr.GateFailed, diffCov, cr.PartCount, cr.UploadID,
 	).Scan(&cr.ID, &cr.CreatedAt, &cr.UpdatedAt)
 }
 
@@ -900,6 +901,22 @@ func (s *Store) latestPassedCommitReport(ctx context.Context, q querier, repoID 
 		 WHERE repo_id = $1 AND branch = $2 AND commit_sha <> $3 AND NOT gate_failed
 		 ORDER BY id DESC LIMIT 1`,
 		repoID, branch, excludeCommit))
+}
+
+// ClaimStatusPush advances the report's status_pushed_version to version
+// only if it is strictly greater, in one atomic UPDATE. The winner (the
+// recompute triggered by the newest upload, whose id is the version) pushes;
+// losers skip, so forge status can't be left reflecting a stale recompute
+// that happened to push last.
+func (s *Store) ClaimStatusPush(ctx context.Context, repoID int64, commitSHA string, version int64) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE commit_reports SET status_pushed_version = $3
+		 WHERE repo_id = $1 AND commit_sha = $2 AND status_pushed_version < $3`,
+		repoID, commitSHA, version)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 func (s *Store) ListBranchCommitReports(ctx context.Context, repoID int64, branch string, limit int) ([]*store.CommitReport, error) {
@@ -929,13 +946,17 @@ func (s *Store) ListBranchCommitReports(ctx context.Context, repoID int64, branc
 func (s *Store) scanCommitReport(row rowScanner) (*store.CommitReport, error) {
 	var cr store.CommitReport
 	var diffCov []byte
+	var uploadID *int64
 	err := row.Scan(&cr.ID, &cr.RepoID, &cr.CommitSHA, &cr.Branch, &cr.PRID, &cr.TotalPct,
-		&cr.CoveredStmts, &cr.TotalStmts, &cr.GateFailed, &diffCov, &cr.PartCount, &cr.CreatedAt, &cr.UpdatedAt)
+		&cr.CoveredStmts, &cr.TotalStmts, &cr.GateFailed, &diffCov, &cr.PartCount, &uploadID, &cr.CreatedAt, &cr.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
+	}
+	if uploadID != nil {
+		cr.UploadID = *uploadID
 	}
 	if len(diffCov) > 0 {
 		if err := json.Unmarshal(diffCov, &cr.DiffCoverage); err != nil {

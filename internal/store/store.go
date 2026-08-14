@@ -170,6 +170,9 @@ type CommitReport struct {
 	DiffCoverage *diffcov.Result
 	// PartCount is how many parts (distinct upload parts) fed the report.
 	PartCount int
+	// UploadID is the latest upload that fed this report; the trend links a
+	// point to its upload detail page through it.
+	UploadID  int64
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -284,6 +287,13 @@ type Store interface {
 	// ListBranchCommitReports returns merged reports on a branch newest
 	// first; limit <= 0 means all. Feeds the coverage trend.
 	ListBranchCommitReports(ctx context.Context, repoID int64, branch string, limit int) ([]*CommitReport, error)
+	// ClaimStatusPush records that a forge status/PR-comment push for the
+	// commit at the given version is about to happen, returning true only if
+	// version is newer than any previously claimed. Forge pushes run after
+	// the locked recompute, so this stops a slow push from an older
+	// concurrent recompute overwriting a newer one; the caller pushes only
+	// when it claims.
+	ClaimStatusPush(ctx context.Context, repoID int64, commitSHA string, version int64) (claimed bool, err error)
 }
 
 // CommitTx is the store access available inside WithCommitReportTx. On
