@@ -287,17 +287,6 @@ func TestUploadLifecycle(t *testing.T) {
 		t.Errorf("diff coverage round trip:\n got %+v\nwant %+v", got3.DiffCoverage, dc)
 	}
 
-	// LatestUpload is per branch.
-	if latest, err := st.LatestUpload(ctx, repo.ID, "main"); err != nil || latest.ID != u2.ID {
-		t.Errorf("latest main = %v, %v (want u2)", latest, err)
-	}
-	if latest, err := st.LatestUpload(ctx, repo.ID, "feature/x"); err != nil || latest.ID != u3.ID {
-		t.Errorf("latest feature = %v, %v (want u3)", latest, err)
-	}
-	if _, err := st.LatestUpload(ctx, repo.ID, "nope"); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("latest missing branch = %v", err)
-	}
-
 	// ListUploads: newest first, limited and unlimited.
 	ups, err := st.ListUploads(ctx, repo.ID, 2)
 	if err != nil || len(ups) != 2 || ups[0].ID != u3.ID || ups[1].ID != u2.ID {
@@ -308,8 +297,7 @@ func TestUploadLifecycle(t *testing.T) {
 		t.Errorf("unlimited list = %d uploads (err %v)", len(ups), err)
 	}
 
-	// Gate-failing uploads round-trip and are excluded from the passing
-	// baseline while still being the branch's latest upload.
+	// The gate_failed flag round-trips (the per-upload web views read it).
 	failed := &store.Upload{
 		RepoID: repo.ID, CommitSHA: "c4", Branch: "main", Format: "go",
 		TotalPct: 10, CoveredStmts: 1, TotalStmts: 10, GateFailed: true,
@@ -319,12 +307,6 @@ func TestUploadLifecycle(t *testing.T) {
 	}
 	if got, err := st.Upload(ctx, failed.ID); err != nil || !got.GateFailed {
 		t.Errorf("gate_failed round trip: %+v (err %v)", got, err)
-	}
-	if latest, err := st.LatestUpload(ctx, repo.ID, "main"); err != nil || latest.ID != failed.ID {
-		t.Errorf("LatestUpload = %v, %v (want the failed c4)", latest, err)
-	}
-	if passed, err := st.LatestPassedUpload(ctx, repo.ID, "main"); err != nil || passed.ID != u2.ID {
-		t.Errorf("LatestPassedUpload = %v, %v (want u2, skipping failed c4)", passed, err)
 	}
 
 	// DeleteRepo cascades to uploads and files.

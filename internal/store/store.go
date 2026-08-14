@@ -254,12 +254,6 @@ type Store interface {
 	// ListBranchUploads is ListUploads restricted to one branch.
 	ListBranchUploads(ctx context.Context, repoID int64, branch string, limit int) ([]*Upload, error)
 	UploadFiles(ctx context.Context, uploadID int64) ([]*UploadFile, error)
-	// LatestUpload returns the most recent upload for a branch.
-	LatestUpload(ctx context.Context, repoID int64, branch string) (*Upload, error)
-	// LatestPassedUpload returns the most recent upload for a branch that
-	// did not fail the coverage gate; used as a comparison baseline.
-	LatestPassedUpload(ctx context.Context, repoID int64, branch string) (*Upload, error)
-
 	// LatestUploadsPerPart returns the most recent upload for each distinct
 	// part of a commit — the set the merged report is computed from. A
 	// re-uploaded part supersedes its earlier uploads here.

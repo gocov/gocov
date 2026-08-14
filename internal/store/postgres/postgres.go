@@ -686,21 +686,6 @@ func (s *Store) ListBranchUploads(ctx context.Context, repoID int64, branch stri
 	return out, rows.Err()
 }
 
-func (s *Store) LatestUpload(ctx context.Context, repoID int64, branch string) (*store.Upload, error) {
-	return s.scanUpload(s.pool.QueryRow(ctx,
-		`SELECT `+uploadCols+` FROM uploads
-		 WHERE repo_id = $1 AND branch = $2 ORDER BY id DESC LIMIT 1`,
-		repoID, branch))
-}
-
-func (s *Store) LatestPassedUpload(ctx context.Context, repoID int64, branch string) (*store.Upload, error) {
-	return s.scanUpload(s.pool.QueryRow(ctx,
-		`SELECT `+uploadCols+` FROM uploads
-		 WHERE repo_id = $1 AND branch = $2 AND NOT gate_failed
-		 ORDER BY id DESC LIMIT 1`,
-		repoID, branch))
-}
-
 func (s *Store) scanUpload(row rowScanner) (*store.Upload, error) {
 	var u store.Upload
 	var diffCov []byte

@@ -24,6 +24,13 @@ import (
 // maxUploadBytes bounds the whole multipart request body.
 const maxUploadBytes = 64 << 20
 
+// maxPartsPerCommit caps how many distinct parts one commit's merged report
+// is built from. It bounds recompute cost (every upload re-reads and
+// re-merges every part under the lock) and catches the -part $CI_JOB_ID
+// mistake, where a varying part name accumulates parts without end. Well
+// above any real matrix.
+const maxPartsPerCommit = 50
+
 type uploadResponse struct {
 	ID           int64    `json:"id"`
 	TotalPct     float64  `json:"total_pct"`
@@ -154,6 +161,26 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	} else if !partRe.MatchString(part) {
 		httpError(w, http.StatusBadRequest, "invalid part %q: want up to 64 alphanumeric, dot, dash or underscore characters starting with a letter or digit", part)
 		return
+	}
+
+	// Cap the distinct parts per commit before doing any work, so a runaway
+	// part name (e.g. -part $CI_JOB_ID) can't accumulate parts unbounded.
+	// Re-uploading an existing part is always allowed — it replaces.
+	if existing, err := s.store.LatestUploadsPerPart(r.Context(), repo.ID, commit); err != nil {
+		s.internalError(w, "counting commit parts", err)
+		return
+	} else if len(existing) >= maxPartsPerCommit {
+		isNew := true
+		for _, p := range existing {
+			if p.Part == part {
+				isNew = false
+				break
+			}
+		}
+		if isNew {
+			httpError(w, http.StatusBadRequest, "commit %s already has %d coverage parts (the maximum); check that the upload's part name is stable across CI jobs", commit, len(existing))
+			return
+		}
 	}
 
 	file, _, err := r.FormFile("profile")

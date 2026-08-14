@@ -402,6 +402,33 @@ func TestMergedReportConcurrentParts(t *testing.T) {
 	}
 }
 
+func TestUploadPartsCap(t *testing.T) {
+	f := newFixture(t, nil)
+	for i := 0; i < maxPartsPerCommit; i++ {
+		rec := doUpload(t, f, "secret-token", map[string]string{
+			"commit": "c1", "part": fmt.Sprintf("p%d", i),
+		}, testProfile)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("part %d: status %d, body %s", i, rec.Code, rec.Body)
+		}
+	}
+	// A new part beyond the cap is rejected before any work.
+	rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "part": "overflow"}, testProfile)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("part past the cap = %d, want 400", rec.Code)
+	}
+	// Re-uploading an existing part is still allowed — it replaces.
+	rec = doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "part": "p0"}, testProfile)
+	if rec.Code != http.StatusCreated {
+		t.Errorf("re-upload of an existing part = %d, want 201", rec.Code)
+	}
+	// A different commit is unaffected by another commit's part count.
+	rec = doUpload(t, f, "secret-token", map[string]string{"commit": "c2", "part": "fresh"}, testProfile)
+	if rec.Code != http.StatusCreated {
+		t.Errorf("new commit part = %d, want 201", rec.Code)
+	}
+}
+
 func TestUploadStatusPushSuperseded(t *testing.T) {
 	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
 	ctx := context.Background()
