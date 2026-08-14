@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"sort"
 
 	"github.com/jackc/pgx/v5"
@@ -762,6 +763,38 @@ func (s *Store) LatestUploadsPerPart(ctx context.Context, repoID int64, commitSH
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// LockCommitReport takes a session-scoped Postgres advisory lock keyed by
+// the commit, so the recompute of one commit's merged report serializes
+// across all server instances sharing the database. The lock is held on a
+// dedicated pooled connection until release returns it. Other commits hash
+// to other keys and never contend (a hash collision only costs an
+// occasional extra wait, never correctness).
+func (s *Store) LockCommitReport(ctx context.Context, repoID int64, commitSHA string) (func(), error) {
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	key := advisoryKey(repoID, commitSHA)
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", key); err != nil {
+		conn.Release()
+		return nil, err
+	}
+	return func() {
+		// Release the lock on the same connection, then return it to the
+		// pool. Best effort: a failed unlock is freed when the session ends.
+		_, _ = conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", key)
+		conn.Release()
+	}, nil
+}
+
+// advisoryKey hashes (repo, commit) into the signed 64-bit space Postgres
+// advisory locks use.
+func advisoryKey(repoID int64, commitSHA string) int64 {
+	h := fnv.New64a()
+	fmt.Fprintf(h, "%d:%s", repoID, commitSHA)
+	return int64(h.Sum64()) //nolint:gosec // intentional bit reinterpretation into the advisory key space
 }
 
 const commitReportCols = `id, repo_id, commit_sha, branch, pr_id, total_pct,

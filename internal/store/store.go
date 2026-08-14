@@ -261,6 +261,13 @@ type Store interface {
 	// part of a commit — the set the merged report is computed from. A
 	// re-uploaded part supersedes its earlier uploads here.
 	LatestUploadsPerPart(ctx context.Context, repoID int64, commitSHA string) ([]*Upload, error)
+	// LockCommitReport serializes the recompute of one commit's merged
+	// report against concurrent uploads of the same commit — the read of the
+	// parts and the upsert of the result must not interleave, or a slow
+	// recompute could clobber a newer one and drop a part. It blocks until
+	// the lock is held and returns a release function the caller must always
+	// call (typically deferred). Locks on different commits never contend.
+	LockCommitReport(ctx context.Context, repoID int64, commitSHA string) (release func(), err error)
 	// UpsertCommitReport creates or replaces the merged report for
 	// (repo, commit), setting cr.ID, cr.CreatedAt and cr.UpdatedAt. The
 	// first-seen creation time is preserved across recomputes.

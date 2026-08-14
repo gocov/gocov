@@ -442,6 +442,67 @@ func TestCommitReportLifecycle(t *testing.T) {
 	}
 }
 
+func TestLockCommitReport(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+
+	// A different commit's lock is independent — no deadlock while the first
+	// is held (proves the advisory keys don't collide across commits).
+	rel1, err := st.LockCommitReport(ctx, repo.ID, "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel2, err := st.LockCommitReport(ctx, repo.ID, "c2")
+	if err != nil {
+		t.Fatalf("locking a different commit blocked or failed: %v", err)
+	}
+	rel2()
+	rel1()
+
+	// The same commit's lock is re-acquirable once released — the release
+	// really frees the advisory lock rather than leaking the connection.
+	for i := 0; i < 3; i++ {
+		rel, err := st.LockCommitReport(ctx, repo.ID, "c1")
+		if err != nil {
+			t.Fatalf("re-acquire %d: %v", i, err)
+		}
+		rel()
+	}
+
+	// While one holder has the lock, a second acquisition on the same commit
+	// blocks until release — the serialization recompute relies on.
+	rel, err := st.LockCommitReport(ctx, repo.ID, "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	acquired := make(chan struct{})
+	go func() {
+		rel2, err := st.LockCommitReport(ctx, repo.ID, "c1")
+		if err == nil {
+			rel2()
+		}
+		close(acquired)
+	}()
+	select {
+	case <-acquired:
+		t.Error("second lock on the same commit acquired while the first was held")
+	case <-time.After(150 * time.Millisecond):
+		// Still blocked, as it must be.
+	}
+	rel()
+	select {
+	case <-acquired:
+		// Unblocked after release.
+	case <-time.After(2 * time.Second):
+		t.Error("second lock never acquired after release")
+	}
+}
+
 func TestUserLifecycle(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()

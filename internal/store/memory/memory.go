@@ -23,6 +23,7 @@ type Store struct {
 	uploads    map[int64]*store.Upload
 	files      map[int64][]*store.UploadFile // keyed by upload ID
 	reports    map[int64]*store.CommitReport // merged reports, keyed by report ID
+	crLocks    map[string]*sync.Mutex        // per-commit recompute locks
 	workspaces map[int64]*store.Workspace
 	users      map[int64]*store.User
 	sessions   map[string]*store.Session // keyed by token hash
@@ -36,6 +37,7 @@ func New() *Store {
 		uploads:    map[int64]*store.Upload{},
 		files:      map[int64][]*store.UploadFile{},
 		reports:    map[int64]*store.CommitReport{},
+		crLocks:    map[string]*sync.Mutex{},
 		workspaces: map[int64]*store.Workspace{},
 		users:      map[int64]*store.User{},
 		sessions:   map[string]*store.Session{},
@@ -529,6 +531,19 @@ func (s *Store) LatestUploadsPerPart(_ context.Context, repoID int64, commitSHA 
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
+}
+
+func (s *Store) LockCommitReport(_ context.Context, repoID int64, commitSHA string) (func(), error) {
+	key := fmt.Sprintf("%d:%s", repoID, commitSHA)
+	s.mu.Lock()
+	m := s.crLocks[key]
+	if m == nil {
+		m = &sync.Mutex{}
+		s.crLocks[key] = m
+	}
+	s.mu.Unlock()
+	m.Lock()
+	return m.Unlock, nil
 }
 
 func (s *Store) UpsertCommitReport(_ context.Context, cr *store.CommitReport) error {

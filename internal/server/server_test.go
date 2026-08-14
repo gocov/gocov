@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
@@ -330,6 +332,57 @@ func TestMergedReportReplaceNoDoubleCount(t *testing.T) {
 	}
 	if cr.PartCount != 1 || cr.TotalStmts != 8 || cr.CoveredStmts != 8 {
 		t.Errorf("after retry merged report = %+v, want 1 part 8/8 (no double count)", cr)
+	}
+}
+
+func TestMergedReportConcurrentParts(t *testing.T) {
+	// Parallel CI jobs upload distinct parts of one commit at the same time.
+	// Without serialized recompute a slow recompute could clobber a newer
+	// one and drop a part; the merged report must end with every part.
+	f := newFixture(t, nil) // no forge creds: keep the test to the store/recompute path
+	const n = 8
+
+	type req struct {
+		body *bytes.Buffer
+		ct   string
+	}
+	reqs := make([]req, n)
+	for i := 0; i < n; i++ {
+		// Each part covers its own file, 1/1, so the merged commit is n/n.
+		prof := fmt.Sprintf("mode: set\nexample.com/m/f%d.go:1.1,2.2 1 1\n", i)
+		body, ct := multipartUpload(t, map[string]string{
+			"commit": "c1", "branch": "main", "part": fmt.Sprintf("p%d", i),
+		}, prof)
+		reqs[i] = req{body, ct}
+	}
+
+	codes := make([]int, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			r := httptest.NewRequest(http.MethodPost, "/api/v1/upload", reqs[i].body)
+			r.Header.Set("Content-Type", reqs[i].ct)
+			r.Header.Set("Authorization", "Bearer secret-token")
+			rec := httptest.NewRecorder()
+			f.srv.ServeHTTP(rec, r)
+			codes[i] = rec.Code
+		}(i)
+	}
+	wg.Wait()
+
+	for i, c := range codes {
+		if c != http.StatusCreated {
+			t.Fatalf("concurrent upload %d: status %d", i, c)
+		}
+	}
+	cr, err := f.store.CommitReport(context.Background(), f.repo.ID, "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cr.PartCount != n || cr.CoveredStmts != n || cr.TotalStmts != n || cr.TotalPct != 100 {
+		t.Errorf("merged report = %+v, want %d parts and %d/%d = 100%% (no part dropped)", cr, n, n, n)
 	}
 }
 

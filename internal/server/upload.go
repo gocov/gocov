@@ -304,6 +304,15 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 // diff coverage to the existing push helpers, with the triggering upload's
 // id so the report card and PR comment link back to it.
 func (s *Server) recomputeCommitReport(ctx context.Context, repo *store.Repo, u *store.Upload) (*store.Upload, *float64, gateResult, error) {
+	// Serialize against concurrent uploads of the same commit — parallel CI
+	// jobs are the whole point — so reading the parts and upserting the
+	// result cannot interleave and drop a part.
+	unlock, err := s.store.LockCommitReport(ctx, repo.ID, u.CommitSHA)
+	if err != nil {
+		return nil, nil, gateResult{}, fmt.Errorf("locking commit for recompute: %w", err)
+	}
+	defer unlock()
+
 	parts, err := s.store.LatestUploadsPerPart(ctx, repo.ID, u.CommitSHA)
 	if err != nil {
 		return nil, nil, gateResult{}, fmt.Errorf("loading commit parts: %w", err)
