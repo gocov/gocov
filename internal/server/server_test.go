@@ -237,6 +237,22 @@ func TestUploadPartStored(t *testing.T) {
 		t.Errorf("part = %q, want frontend", u.Part)
 	}
 
+	// The server normalizes the part: "  Frontend  " trims and lowercases to
+	// the same "frontend" bucket, so mixed-case callers don't split a commit.
+	norm := doUpload(t, f, "secret-token", map[string]string{
+		"commit": "c1",
+		"part":   "  Frontend  ",
+	}, testProfile)
+	var nr uploadResponse
+	if err := json.Unmarshal(norm.Body.Bytes(), &nr); err != nil {
+		t.Fatal(err)
+	}
+	if nu, err := f.store.Upload(context.Background(), nr.ID); err != nil {
+		t.Fatal(err)
+	} else if nu.Part != "frontend" {
+		t.Errorf("normalized part = %q, want frontend", nu.Part)
+	}
+
 	// Re-uploading the same part appends a fresh immutable row (uploads stay
 	// append-only); the merge feature reads the latest row per part.
 	rec = doUpload(t, f, "secret-token", map[string]string{
@@ -475,9 +491,9 @@ func TestUploadValidation(t *testing.T) {
 		{"missing profile file", map[string]string{"commit": "c"}, "", http.StatusBadRequest},
 		{"unknown format", map[string]string{"commit": "c", "format": "clover"}, testProfile, http.StatusBadRequest},
 		{"malformed profile", map[string]string{"commit": "c"}, "not a profile", http.StatusUnprocessableEntity},
-		{"uppercase part", map[string]string{"commit": "c", "part": "Backend"}, testProfile, http.StatusBadRequest},
 		{"part with slash", map[string]string{"commit": "c", "part": "back/end"}, testProfile, http.StatusBadRequest},
 		{"part leading dash", map[string]string{"commit": "c", "part": "-backend"}, testProfile, http.StatusBadRequest},
+		{"part with space inside", map[string]string{"commit": "c", "part": "back end"}, testProfile, http.StatusBadRequest},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

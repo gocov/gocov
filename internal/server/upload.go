@@ -39,6 +39,11 @@ type uploadResponse struct {
 	// "failed: <reasons>". Omitted when the repo has no gate configured.
 	Gate string `json:"gate,omitempty"`
 
+	// Warnings carries non-fatal notices about how the merged report was
+	// built — e.g. a diff-coverage file merged conservatively because its
+	// parts disagreed. Omitted when there are none.
+	Warnings []string `json:"warnings,omitempty"`
+
 	// PR-only fields, set when pr_id was part of the upload.
 	DiffPct          *float64 `json:"diff_pct,omitempty"`
 	DiffCoveredLines *int64   `json:"diff_covered_lines,omitempty"`
@@ -136,13 +141,17 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	prID := r.FormValue("pr_id")
 
 	// A part names one slice of the commit's coverage (backend, frontend,
-	// e2e, ...) uploaded from a separate CI job. Omitting it keeps the
-	// historical single-upload behaviour: everything lands in "default".
-	part := r.FormValue("part")
+	// e2e, ...) uploaded from a separate CI job. It is normalized (trimmed
+	// and lowercased) before validation so the same logical part from
+	// different callers keys the same bucket; the API is called directly,
+	// not only through the CLI, so normalization lives here on the server.
+	// Omitting it keeps the historical single-upload behaviour: everything
+	// lands in "default".
+	part := strings.ToLower(strings.TrimSpace(r.FormValue("part")))
 	if part == "" {
 		part = "default"
 	} else if !partRe.MatchString(part) {
-		httpError(w, http.StatusBadRequest, "invalid part %q: want up to 64 lowercase alphanumeric, dash or underscore characters starting with a letter or digit", part)
+		httpError(w, http.StatusBadRequest, "invalid part %q: want up to 64 alphanumeric, dot, dash or underscore characters starting with a letter or digit", part)
 		return
 	}
 
@@ -260,11 +269,12 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// Recompute the commit's merged report from every part's latest upload
 	// and drive all outward-facing surfaces from it, so a commit uploaded
 	// in several parts reports its combined total, not the last part in.
-	merged, mergedDelta, mergedGate, err := s.recomputeCommitReport(r.Context(), repo, upload)
+	rc, err := s.recomputeCommitReport(r.Context(), repo, upload)
 	if err != nil {
 		s.internalError(w, "computing merged report", err)
 		return
 	}
+	merged, mergedDelta, mergedGate := rc.upload, rc.delta, rc.gate
 
 	resp := uploadResponse{
 		ID:           upload.ID,
@@ -277,6 +287,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		RepoCreated:  repoCreated,
 		DiffStatus:   diffStatus,
 		PRComment:    s.pushPRComment(r.Context(), fg, fgErr, repo, merged, mergedDelta, mergedGate),
+		Warnings:     rc.warnings,
 	}
 	if mergedGate.configured {
 		resp.Gate = mergedGate.String()
@@ -300,22 +311,29 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 // remaining parts arrive. The trade-off is a window in which the merged
 // numbers are incomplete — see the README's note on merged reports.
 //
-// The returned *store.Upload is synthetic: it carries the merged totals and
-// diff coverage to the existing push helpers, with the triggering upload's
-// id so the report card and PR comment link back to it.
-func (s *Server) recomputeCommitReport(ctx context.Context, repo *store.Repo, u *store.Upload) (*store.Upload, *float64, gateResult, error) {
+// The returned upload is synthetic: it carries the merged totals and diff
+// coverage to the existing push helpers, with the triggering upload's id so
+// the report card and PR comment link back to it.
+type mergedRecompute struct {
+	upload   *store.Upload
+	delta    *float64
+	gate     gateResult
+	warnings []string // surfaced to the uploader, e.g. conservative diff merges
+}
+
+func (s *Server) recomputeCommitReport(ctx context.Context, repo *store.Repo, u *store.Upload) (*mergedRecompute, error) {
 	// Serialize against concurrent uploads of the same commit — parallel CI
 	// jobs are the whole point — so reading the parts and upserting the
 	// result cannot interleave and drop a part.
 	unlock, err := s.store.LockCommitReport(ctx, repo.ID, u.CommitSHA)
 	if err != nil {
-		return nil, nil, gateResult{}, fmt.Errorf("locking commit for recompute: %w", err)
+		return nil, fmt.Errorf("locking commit for recompute: %w", err)
 	}
 	defer unlock()
 
 	parts, err := s.store.LatestUploadsPerPart(ctx, repo.ID, u.CommitSHA)
 	if err != nil {
-		return nil, nil, gateResult{}, fmt.Errorf("loading commit parts: %w", err)
+		return nil, fmt.Errorf("loading commit parts: %w", err)
 	}
 
 	profiles := make([]*profile.Profile, 0, len(parts))
@@ -323,7 +341,7 @@ func (s *Server) recomputeCommitReport(ctx context.Context, repo *store.Repo, u 
 	for _, p := range parts {
 		files, err := s.store.UploadFiles(ctx, p.ID)
 		if err != nil {
-			return nil, nil, gateResult{}, fmt.Errorf("loading part files: %w", err)
+			return nil, fmt.Errorf("loading part files: %w", err)
 		}
 		prof := &profile.Profile{Files: make([]profile.File, 0, len(files))}
 		for _, f := range files {
@@ -338,7 +356,13 @@ func (s *Server) recomputeCommitReport(ctx context.Context, repo *store.Repo, u 
 	merged := profile.Merge(profiles...)
 	covered, total := merged.Coverage()
 	totalPct := profile.Percent(covered, total)
-	mergedDiff := diffcov.Merge(diffs...)
+	mergedDiff, diffConflicts := diffcov.Merge(diffs...)
+	var warnings []string
+	if len(diffConflicts) > 0 {
+		warnings = append(warnings, fmt.Sprintf(
+			"diff coverage merged conservatively for %d changed file(s) whose parts disagree on their changed lines (%s); merged coverage is a safe lower bound",
+			len(diffConflicts), strings.Join(diffConflicts, ", ")))
+	}
 
 	// Delta vs the previous gate-passing merged report on the branch,
 	// falling back to the default branch for first-time feature branches.
@@ -350,7 +374,7 @@ func (s *Server) recomputeCommitReport(ctx context.Context, repo *store.Repo, u 
 		prev, err = s.store.LatestPassedCommitReport(ctx, repo.ID, repo.DefaultBranch, u.CommitSHA)
 	}
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return nil, nil, gateResult{}, fmt.Errorf("loading baseline report: %w", err)
+		return nil, fmt.Errorf("loading baseline report: %w", err)
 	}
 	if prev != nil {
 		d := totalPct - prev.TotalPct
@@ -364,7 +388,7 @@ func (s *Server) recomputeCommitReport(ctx context.Context, repo *store.Repo, u 
 	if repo.Gate.MaxCoverageDrop != nil {
 		base, err := s.store.LatestPassedCommitReport(ctx, repo.ID, repo.DefaultBranch, u.CommitSHA)
 		if err != nil && !errors.Is(err, store.ErrNotFound) {
-			return nil, nil, gateResult{}, fmt.Errorf("loading gate baseline report: %w", err)
+			return nil, fmt.Errorf("loading gate baseline report: %w", err)
 		}
 		if base != nil {
 			d := totalPct - base.TotalPct
@@ -387,7 +411,7 @@ func (s *Server) recomputeCommitReport(ctx context.Context, repo *store.Repo, u 
 		PartCount:    len(parts),
 	}
 	if err := s.store.UpsertCommitReport(ctx, cr); err != nil {
-		return nil, nil, gateResult{}, fmt.Errorf("saving merged report: %w", err)
+		return nil, fmt.Errorf("saving merged report: %w", err)
 	}
 
 	mergedUpload := &store.Upload{
@@ -401,7 +425,7 @@ func (s *Server) recomputeCommitReport(ctx context.Context, repo *store.Repo, u 
 		TotalStmts:   total,
 		DiffCoverage: mergedDiff,
 	}
-	return mergedUpload, deltaPct, gate, nil
+	return &mergedRecompute{upload: mergedUpload, delta: deltaPct, gate: gate, warnings: warnings}, nil
 }
 
 // forgeFor builds a forge client for the repo, resolving credentials
@@ -578,9 +602,12 @@ var repoNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}$`)
 // in blobstore cache keys, so separators are not welcome.
 var commitRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
-// partRe bounds a part name: a canonical lowercase slug, so "Backend" and
-// "backend" can't split one commit into two parts. It will key flags later.
-var partRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+// partRe bounds a normalized part name — a canonical lowercase slug that
+// starts alphanumeric. It becomes a storage key (and later a flag key), so
+// the charset is conservative and the length is bounded. Names are trimmed
+// and lowercased before this check, so "Backend" and " backend " reduce to
+// the same "backend" and can't split one commit into two parts.
+var partRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 // resolveUploadRepo maps the authenticated token to the target repo,
 // writing the error response itself on failure. Workspace tokens require

@@ -4,17 +4,16 @@ import "sort"
 
 // Merge combines the diff-coverage results of the separate parts of one
 // commit into a single result, so a changed line counted as covered by any
-// part is covered overall. Every part is evaluated against the same pull
-// request diff, so the changed-line set of a given file is the same across
-// parts; a line is uncovered in the merge only when every part that has
-// data for the file left it uncovered.
+// part is covered overall. Combining the parts' already-computed results
+// (rather than recomputing from a merged profile) sidesteps the parts'
+// differing path prefixes and per-format path matching: each part already
+// mapped its own profile paths to the repo-relative FileCoverage.Path.
 //
-// Combining the parts' already-computed results (rather than recomputing
-// from a merged profile) sidesteps the parts' differing path prefixes:
-// each part mapped its own profile paths to repo-relative paths when it
-// ran, and FileCoverage.Path is already repo-relative. Nil inputs are
-// ignored; Merge returns nil when nothing has diff data.
-func Merge(results ...*Result) *Result {
+// The second return value lists repo-relative paths whose parts disagreed
+// on the file's changed-line count and so were merged conservatively (see
+// mergeFile); the caller can surface it. Nil inputs are ignored; Merge
+// returns (nil, nil) when nothing has diff data.
+func Merge(results ...*Result) (*Result, []string) {
 	var present []*Result
 	for _, r := range results {
 		if r != nil {
@@ -22,7 +21,7 @@ func Merge(results ...*Result) *Result {
 		}
 	}
 	if len(present) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// Group each changed file's per-part coverage by its repo-relative path.
@@ -38,8 +37,13 @@ func Merge(results ...*Result) *Result {
 	}
 
 	out := &Result{}
+	var conflicts []string
 	for _, path := range order {
-		out.Files = append(out.Files, mergeFile(path, byPath[path]))
+		fc, conflicted := mergeFile(path, byPath[path])
+		out.Files = append(out.Files, fc)
+		if conflicted {
+			conflicts = append(conflicts, path)
+		}
 	}
 	sort.Slice(out.Files, func(i, j int) bool { return out.Files[i].Path < out.Files[j].Path })
 	for i := range out.Files {
@@ -60,31 +64,51 @@ func Merge(results ...*Result) *Result {
 		}
 	}
 	sort.Strings(out.UnmatchedFiles)
-	return out
+	sort.Strings(conflicts)
+	return out, conflicts
 }
 
-// mergeFile intersects the uncovered lines of one changed file across the
-// parts that have data for it. The parts share the file's changed-line set
-// (same diff), so a line survives as uncovered only when every part left it
-// uncovered; covered follows from the total.
-func mergeFile(path string, parts []FileCoverage) FileCoverage {
-	// Count how many parts leave each line uncovered; a line is uncovered
-	// in the merge only when all of them do.
+// mergeFile merges one changed file's coverage across the parts that have
+// data for it, returning the merged coverage and whether the parts had to
+// be reconciled conservatively.
+//
+// When the parts agree on the file's changed-line count they are measuring
+// the same set of executable changed lines (the same tool over the same
+// diff — e.g. matrix shards of one suite). A line is then covered when any
+// part covered it, i.e. uncovered only when every part left it uncovered.
+//
+// When the parts disagree on the count, their changed-line sets differ
+// (typically two different coverage tools reporting the same file), and a
+// line absent from a part's uncovered list cannot be assumed covered by
+// that part — it may simply not be in that part's set. The counts alone
+// can't align covered lines across differing sets, so we fall back to the
+// pessimistic union: a line is uncovered if any part left it uncovered.
+// That never overstates coverage, and the conflict is reported so it is not
+// silent. (Attributing coverage exactly across differing sets needs the
+// covered-line numbers, not just counts — tracked as a follow-up.)
+func mergeFile(path string, parts []FileCoverage) (FileCoverage, bool) {
+	total := parts[0].TotalLines
+	agree := true
+	for _, f := range parts[1:] {
+		if f.TotalLines != total {
+			agree = false
+		}
+		if f.TotalLines > total {
+			total = f.TotalLines
+		}
+	}
+
 	uncoveredCount := make(map[int]int)
 	for _, f := range parts {
 		for _, ln := range f.UncoveredLines {
 			uncoveredCount[ln]++
 		}
 	}
-	var total int64
-	for _, f := range parts {
-		if f.TotalLines > total {
-			total = f.TotalLines
-		}
-	}
 	var uncovered []int
 	for ln, n := range uncoveredCount {
-		if n == len(parts) {
+		// Agree: uncovered only when all parts left it uncovered (optimistic).
+		// Disagree: uncovered when any part did (pessimistic union).
+		if (agree && n == len(parts)) || !agree {
 			uncovered = append(uncovered, ln)
 		}
 	}
@@ -94,5 +118,5 @@ func mergeFile(path string, parts []FileCoverage) FileCoverage {
 		TotalLines:     total,
 		CoveredLines:   total - int64(len(uncovered)),
 		UncoveredLines: uncovered,
-	}
+	}, !agree
 }

@@ -56,7 +56,7 @@ func run(args []string) error {
 	pr := fs.String("pr", "", "pull request id (default: auto-detect)")
 	format := fs.String("format", "", "coverage profile format: go or lcov (default: detect from content)")
 	pathPrefix := fs.String("path-prefix", "", "prefix mapping profile paths to repo paths, e.g. the Go module path (default: from go.mod)")
-	part := fs.String("part", "", "name this slice of the commit's coverage (e.g. backend, frontend) when uploading from separate CI jobs")
+	part := fs.String("part", os.Getenv("GOCOV_PART"), "name this slice of the commit's coverage (e.g. backend, frontend) when uploading from separate CI jobs (or $GOCOV_PART)")
 	failOnGate := fs.Bool("fail-on-gate", false, "exit with a non-zero code when the server reports a failed coverage gate")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err

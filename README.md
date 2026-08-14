@@ -433,14 +433,21 @@ gocov upload -part frontend coverage/lcov.info
 gocov upload -part e2e      e2e-lcov.info
 ```
 
+The part name can also come from `$GOCOV_PART`, which is handy for matrix
+jobs that already expose the variant in the environment.
+
 gocov keeps every upload but derives a **merged report** per commit from
 the latest upload of each part, and drives the status, gate, PR comment,
 Code Insights, badge and trend from that merged report. Re-uploading a
 part (a CI retry) replaces it rather than double-counting. When two parts
 report the same file, their line hit counts are summed, so a line covered
-by any part counts as covered. Uploads without a `part` use `default`, so
-single-job setups are unchanged — a one-part merged report equals the
-upload.
+by any part counts as covered.
+
+Part names are normalized (trimmed and lowercased) server-side, so
+`Backend` and `backend` are the same part. Uploads without a `part` use the
+reserved name `default`; passing `-part default` explicitly lands in that
+same bucket, so single-job setups are unchanged — a one-part merged report
+equals the upload.
 
 Parts are merged as they arrive, in place. gocov does **not** wait for a
 fixed set of parts: while the jobs are still uploading, the merged report
@@ -473,7 +480,7 @@ the repo's default branch.
 | `pr_id`   | optional pull request id                       |
 | `format`  | `go`, `lcov`, `jacoco` or `cobertura`; omitted → detected from content |
 | `path_prefix` | maps profile paths to repo paths for diff coverage, e.g. the Go module path (the CLI fills it from go.mod) |
-| `part`    | optional; names one slice of the commit's coverage (`backend`, `frontend`, `e2e`, …) uploaded from a separate CI job. Lowercase slug; omitted → `default`. Re-uploading a part replaces it. |
+| `part`    | optional; names one slice of the commit's coverage (`backend`, `frontend`, `e2e`, …) uploaded from a separate CI job. Normalized to a lowercase slug (`[a-z0-9._-]`, ≤64); omitted or blank → `default`. Re-uploading a part replaces it. |
 
 Returns `201` with `{id, total_pct, covered_stmts, total_stmts,
 delta_pct, build_status}`. Uploads carrying a `pr_id` additionally get
