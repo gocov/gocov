@@ -358,7 +358,23 @@ gate when run with `-fail-on-gate`.
 
 ## Uploading coverage from CI
 
-In Bitbucket Pipelines (commit, branch, repo and PR id are auto-detected):
+In Bitbucket Pipelines, use the
+[gocov pipe](https://bitbucket.org/gocov/upload-pipe) (commit, branch,
+repo and PR id are auto-detected):
+
+```yaml
+- step:
+    script:
+      - go test ./... -covermode=atomic -coverprofile=coverage.out
+      - pipe: docker://gocov/upload-pipe:0
+        variables:
+          FILES: coverage.out
+          TOKEN: $GOCOV_TOKEN
+```
+
+with `GOCOV_TOKEN` set as a secured repository variable (add
+`SERVER: $GOCOV_SERVER` when self-hosting). On runners without Docker,
+run the CLI directly instead:
 
 ```yaml
 - step:
