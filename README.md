@@ -6,15 +6,17 @@ Self-hostable coverage tracking — an open-source Coveralls/Codecov
 alternative. Single binary + Postgres. Supported forges: Bitbucket Cloud
 and GitHub. Supported formats: Go cover profiles, LCOV tracefiles
 (JavaScript/TypeScript — Jest, Vitest, nyc, c8), JaCoCo XML
-(Java/Kotlin — Maven, Gradle, Android) and Cobertura XML
-(Python — coverage.py/pytest-cov; also PHPUnit, coverlet, gcovr); the
-format is detected from the uploaded content.
+(Java/Kotlin — Maven, Gradle, Android), Cobertura XML
+(Python — coverage.py/pytest-cov; also coverlet, gcovr), Clover XML
+(PHPUnit, Istanbul) and SimpleCov resultsets (Ruby); the format is
+detected from the uploaded content.
 
 ## Features (MVP)
 
 - Parses Go cover profiles (`go test -coverprofile`), LCOV tracefiles
-  (Jest/Vitest/nyc `lcov.info`), JaCoCo XML (`jacoco.xml`) and Cobertura
-  XML (`coverage.xml`) into total and per-file coverage
+  (Jest/Vitest/nyc `lcov.info`), JaCoCo XML (`jacoco.xml`), Cobertura
+  XML (`coverage.xml`), Clover XML (PHPUnit `clover.xml`) and SimpleCov
+  resultsets (`.resultset.json`) into total and per-file coverage
 - `POST /api/v1/upload` API with per-repo Bearer tokens
 - SVG coverage badge per repo (`/badge/{workspace}/{repo}.svg`)
 - Web UI: repo list → upload list → per-file coverage table
@@ -417,6 +419,12 @@ gocov upload build/reports/jacoco/test/jacocoTestReport.xml
 
 pytest --cov --cov-report=xml   # coverage.py / pytest-cov
 gocov upload coverage.xml
+
+phpunit --coverage-clover clover.xml
+gocov upload clover.xml
+
+bundle exec rspec               # with simplecov enabled
+gocov upload coverage/.resultset.json
 ```
 
 JaCoCo paths are package-qualified (`com/example/Foo.java`); diff

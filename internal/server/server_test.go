@@ -59,6 +59,8 @@ func newFixture(t *testing.T, creds map[string]string) *fixture {
 			"lcov":      profile.LCOVParser{},
 			"jacoco":    profile.JaCoCoParser{},
 			"cobertura": profile.CoberturaParser{},
+			"clover":    profile.CloverParser{},
+			"simplecov": profile.SimpleCovParser{},
 		},
 		Forges:  map[string]forge.Factory{"bitbucket": ff.Factory()},
 		BaseURL: "https://gocov.example",
@@ -255,7 +257,7 @@ func TestUploadValidation(t *testing.T) {
 		{"repo mismatch", map[string]string{"repo": "other/repo", "commit": "c"}, testProfile, http.StatusForbidden},
 		{"missing commit", map[string]string{}, testProfile, http.StatusBadRequest},
 		{"missing profile file", map[string]string{"commit": "c"}, "", http.StatusBadRequest},
-		{"unknown format", map[string]string{"commit": "c", "format": "clover"}, testProfile, http.StatusBadRequest},
+		{"unknown format", map[string]string{"commit": "c", "format": "opencover"}, testProfile, http.StatusBadRequest},
 		{"malformed profile", map[string]string{"commit": "c"}, "not a profile", http.StatusUnprocessableEntity},
 	}
 	for _, tt := range tests {
@@ -435,6 +437,117 @@ func TestUploadCobertura(t *testing.T) {
 	}
 	if u.Format != "cobertura" {
 		t.Errorf("stored format = %q, want cobertura (sniffed)", u.Format)
+	}
+}
+
+func TestUploadClover(t *testing.T) {
+	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+	// PR touches src/Greeter.php: line 11 covered, line 14 not.
+	f.forge.DiffText = `diff --git a/src/Greeter.php b/src/Greeter.php
+--- a/src/Greeter.php
++++ b/src/Greeter.php
+@@ -10,5 +10,5 @@
+ ctx
+-old
++added 11
+ ctx
+ ctx
+-old
++added 14
+`
+	// PHPUnit-style clover: no clover attribute, so detection must key off
+	// the <project> element under the ambiguous <coverage> root.
+	clover := `<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1700000000">
+  <project timestamp="1700000000">
+    <file name="src/Greeter.php">
+      <line num="8" type="method" name="greet" count="3"/>
+      <line num="10" type="stmt" count="3"/>
+      <line num="11" type="stmt" count="3"/>
+      <line num="14" type="stmt" count="0"/>
+    </file>
+  </project>
+</coverage>
+`
+	rec := doUpload(t, f, "secret-token", map[string]string{
+		"commit": "phpc1", "branch": "main", "pr_id": "7",
+	}, clover)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	var resp uploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	// Method line 8 does not count: 2 of 3 statements covered.
+	if resp.CoveredStmts != 2 || resp.TotalStmts != 3 {
+		t.Errorf("totals = %d/%d, want 2/3", resp.CoveredStmts, resp.TotalStmts)
+	}
+	if resp.DiffStatus != "computed" || resp.DiffTotalLines == nil || *resp.DiffTotalLines != 2 ||
+		*resp.DiffCoveredLines != 1 {
+		t.Errorf("diff = %v/%v (%s), want 1/2 computed; body = %s",
+			resp.DiffCoveredLines, resp.DiffTotalLines, resp.DiffStatus, rec.Body)
+	}
+	u, err := f.store.Upload(context.Background(), resp.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Format != "clover" {
+		t.Errorf("stored format = %q, want clover (sniffed)", u.Format)
+	}
+}
+
+func TestUploadSimpleCov(t *testing.T) {
+	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+	// PR touches lib/greeter.rb: line 2 covered, line 5 not.
+	f.forge.DiffText = `diff --git a/lib/greeter.rb b/lib/greeter.rb
+--- a/lib/greeter.rb
++++ b/lib/greeter.rb
+@@ -1,5 +1,5 @@
+ ctx
+-old
++added 2
+ ctx
+ ctx
+-old
++added 5
+`
+	simplecov := `{
+  "RSpec": {
+    "coverage": {
+      "lib/greeter.rb": {
+        "lines": [1, 5, 5, null, 0]
+      }
+    },
+    "timestamp": 1700000000
+  }
+}
+`
+	rec := doUpload(t, f, "secret-token", map[string]string{
+		"commit": "rbc1", "branch": "main", "pr_id": "8",
+	}, simplecov)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	var resp uploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	// Null line 4 is not executable: 3 of 4 lines covered.
+	if resp.TotalPct != 75 || resp.CoveredStmts != 3 || resp.TotalStmts != 4 {
+		t.Errorf("totals = %v%% %d/%d, want 75%% 3/4", resp.TotalPct, resp.CoveredStmts, resp.TotalStmts)
+	}
+	if resp.DiffStatus != "computed" || resp.DiffTotalLines == nil || *resp.DiffTotalLines != 2 ||
+		*resp.DiffCoveredLines != 1 {
+		t.Errorf("diff = %v/%v (%s), want 1/2 computed; body = %s",
+			resp.DiffCoveredLines, resp.DiffTotalLines, resp.DiffStatus, rec.Body)
+	}
+	u, err := f.store.Upload(context.Background(), resp.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Format != "simplecov" {
+		t.Errorf("stored format = %q, want simplecov (sniffed)", u.Format)
 	}
 }
 

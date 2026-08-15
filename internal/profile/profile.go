@@ -70,14 +70,19 @@ type Parser interface {
 }
 
 // Detect guesses the profile format from its content, so uploads do not
-// have to name it explicitly. Returns "go", "lcov", "jacoco", "cobertura"
-// or "" when unknown. Go cover profiles start with a "mode:" line; LCOV
-// tracefiles consist of TN:/SF:/DA: records; JaCoCo XML reports have a
-// <report> root (usually preceded by a JACOCO doctype); Cobertura XML
-// reports have a <coverage> root.
+// have to name it explicitly. Returns "go", "lcov", "jacoco", "cobertura",
+// "clover", "simplecov" or "" when unknown. Go cover profiles start with a
+// "mode:" line; LCOV tracefiles consist of TN:/SF:/DA: records; JaCoCo XML
+// reports have a <report> root (usually preceded by a JACOCO doctype);
+// SimpleCov resultsets are JSON with a "coverage" key. Clover and
+// Cobertura both use a <coverage> root: Clover names itself in a clover
+// attribute or wraps its data in <project>, Cobertura in a doctype or in
+// <packages>/<sources>, and a bare <coverage> root with neither falls back
+// to Cobertura.
 func Detect(data []byte) string {
 	sc := bufio.NewScanner(bytes.NewReader(data))
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	sawCoverageRoot := false
 	for seen := 0; sc.Scan() && seen < 10; {
 		line := strings.TrimSpace(strings.TrimRight(sc.Text(), "\r"))
 		if line == "" {
@@ -91,11 +96,20 @@ func Detect(data []byte) string {
 			return "lcov"
 		case strings.Contains(line, "JACOCO"), strings.Contains(line, "<report"):
 			return "jacoco"
-		case strings.Contains(line, "cobertura"), strings.Contains(line, "<coverage"):
+		case strings.Contains(line, `"coverage":`):
+			return "simplecov"
+		case strings.Contains(line, "clover="), strings.Contains(line, "<project"):
+			return "clover"
+		case strings.Contains(line, "cobertura"), strings.Contains(line, "<packages"), strings.Contains(line, "<sources"):
 			return "cobertura"
+		case strings.Contains(line, "<coverage"):
+			sawCoverageRoot = true
 		case strings.HasPrefix(line, "<?xml"), strings.HasPrefix(line, "<!DOCTYPE"):
 			// XML prolog: keep scanning for the root element.
 		}
+	}
+	if sawCoverageRoot {
+		return "cobertura"
 	}
 	return ""
 }

@@ -54,7 +54,7 @@ func run(args []string) error {
 	commit := fs.String("commit", "", "commit SHA (default: auto-detect)")
 	branch := fs.String("branch", "", "branch name (default: auto-detect)")
 	pr := fs.String("pr", "", "pull request id (default: auto-detect)")
-	format := fs.String("format", "", "coverage profile format: go or lcov (default: detect from content)")
+	format := fs.String("format", "", "coverage profile format: go, lcov, jacoco, cobertura, clover or simplecov (default: detect from content)")
 	pathPrefix := fs.String("path-prefix", "", "prefix mapping profile paths to repo paths, e.g. the Go module path (default: from go.mod)")
 	failOnGate := fs.Bool("fail-on-gate", false, "exit with a non-zero code when the server reports a failed coverage gate")
 	if err := fs.Parse(args[1:]); err != nil {
@@ -86,7 +86,7 @@ func run(args []string) error {
 	if resolvedFormat == "" {
 		resolvedFormat = profile.Detect(profileData)
 		if resolvedFormat == "" {
-			return fmt.Errorf("could not detect the coverage format of %s: pass -format go|lcov", profilePath)
+			return fmt.Errorf("could not detect the coverage format of %s: pass -format go|lcov|jacoco|cobertura|clover|simplecov", profilePath)
 		}
 	}
 	prefix := *pathPrefix

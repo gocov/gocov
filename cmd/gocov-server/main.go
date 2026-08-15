@@ -256,6 +256,8 @@ func serve() error {
 			"lcov":      profile.LCOVParser{},
 			"jacoco":    profile.JaCoCoParser{},
 			"cobertura": profile.CoberturaParser{},
+			"clover":    profile.CloverParser{},
+			"simplecov": profile.SimpleCovParser{},
 		},
 		Forges: map[string]forge.Factory{
 			"bitbucket": bitbucket.Factory,
