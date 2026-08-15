@@ -424,8 +424,8 @@ func TestSetupPageHostedOmitsServer(t *testing.T) {
 	if !strings.Contains(body, "GOCOV_TOKEN=ws-secret") {
 		t.Errorf("hosted onboarding still needs the token:\n%s", body)
 	}
-	if !strings.Contains(body, "releases/latest/download/gocov-linux-amd64") {
-		t.Errorf("onboarding should install the release binary, not go run @latest:\n%s", body)
+	if !strings.Contains(body, "pipe: docker://gocov/upload-pipe:") {
+		t.Errorf("bitbucket onboarding should upload with the gocov pipe:\n%s", body)
 	}
 	if strings.Contains(body, "go run github.com/gocov/gocov") {
 		t.Errorf("onboarding should not use go run @latest:\n%s", body)

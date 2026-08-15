@@ -65,9 +65,11 @@ definitions:
         name: Test + upload coverage
         script:
           - go test ./... -covermode=atomic -coverprofile=coverage.out
-          - curl -fsSL https://github.com/gocov/gocov/releases/latest/download/gocov-linux-amd64 -o /usr/local/bin/gocov
-          - chmod +x /usr/local/bin/gocov
-          - gocov upload coverage.out
+          - pipe: docker://gocov/upload-pipe:0
+            variables:
+              FILES: coverage.out
+              TOKEN: $GOCOV_TOKEN{{if not .ServerImplicit}}
+              SERVER: $GOCOV_SERVER{{end}}
 
 pipelines:
   branches:
