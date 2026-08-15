@@ -281,13 +281,17 @@ type Store interface {
 	// ListBranchCommitReports returns merged reports on a branch newest
 	// first; limit <= 0 means all. Feeds the coverage trend.
 	ListBranchCommitReports(ctx context.Context, repoID int64, branch string, limit int) ([]*CommitReport, error)
-	// ClaimStatusPush records that a forge status/PR-comment push for the
-	// commit at the given version is about to happen, returning true only if
-	// version is newer than any previously claimed. Forge pushes run after
-	// the locked recompute, so this stops a slow push from an older
-	// concurrent recompute overwriting a newer one; the caller pushes only
-	// when it claims.
-	ClaimStatusPush(ctx context.Context, repoID int64, commitSHA string, version int64) (claimed bool, err error)
+	// TryPushStatus serializes forge status/PR-comment pushes for one commit
+	// and runs push only if version is at least the last successfully pushed
+	// version, recording version only after push returns nil. It closes the
+	// window where a slow older push lands after a newer one, and a failed
+	// push leaves the version untouched so a later part retries. push runs
+	// with the per-commit lock held and does the forge HTTP itself, bounded
+	// by ctx. Returns whether push ran.
+	TryPushStatus(ctx context.Context, repoID int64, commitSHA string, version int64, push func(context.Context) error) (pushed bool, err error)
+	// CommitParts returns the distinct part names uploaded for a commit —
+	// a cheap read (no blocks/diff) for the per-commit parts cap.
+	CommitParts(ctx context.Context, repoID int64, commitSHA string) ([]string, error)
 }
 
 // CommitTx is the store access available inside WithCommitReportTx. On

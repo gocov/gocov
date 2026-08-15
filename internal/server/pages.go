@@ -199,7 +199,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	if trendBranch == "" {
 		trendBranch = repo.DefaultBranch
 	}
-	trendReports, err := s.store.ListBranchCommitReports(r.Context(), repo.ID, trendBranch, trendUploadLimit)
+	trendReports, err := s.store.ListBranchCommitReports(r.Context(), repo.ID, trendBranch, trendReportLimit)
 	if err != nil {
 		s.internalError(w, "listing reports for trend", err)
 		return

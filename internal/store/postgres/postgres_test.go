@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -516,19 +517,6 @@ func TestWithCommitReportTx(t *testing.T) {
 	}
 }
 
-// backfillCommitReportsSQL mirrors the backfill statement in
-// 0012_commit_reports.sql. store.CreateUpload never writes commit_reports
-// (only the server's recompute does), so inserting uploads and running this
-// reproduces the migration's effect on a repo that predates the feature.
-const backfillCommitReportsSQL = `
-INSERT INTO commit_reports (repo_id, commit_sha, branch, pr_id, total_pct,
-    covered_stmts, total_stmts, gate_failed, diff_coverage, part_count, created_at, updated_at)
-SELECT repo_id, commit_sha, branch, pr_id, total_pct, covered_stmts, total_stmts,
-       gate_failed, diff_coverage, 1, created_at, created_at
-FROM (SELECT DISTINCT ON (repo_id, commit_sha) * FROM uploads
-      ORDER BY repo_id, commit_sha, id DESC) latest
-ORDER BY latest.id`
-
 func TestCommitReportBackfill(t *testing.T) {
 	pool := testpg.Pool(t)
 	st := postgres.New(pool)
@@ -548,11 +536,20 @@ func TestCommitReportBackfill(t *testing.T) {
 		return u
 	}
 	// c1 uploaded twice (the later, higher-coverage row must win); c2 once.
+	// store.CreateUpload never writes commit_reports (only the recompute
+	// does), so these stand in for a repo that predates the feature.
 	mk("c1", "main", 50)
-	mk("c1", "main", 80)
-	mk("c2", "main", 90)
+	c1Latest := mk("c1", "main", 80)
+	c2 := mk("c2", "main", 90)
 
-	if _, err := pool.Exec(ctx, backfillCommitReportsSQL); err != nil {
+	// Run the real backfill migration file, not a copy that could drift from
+	// it — this is what a deploy executes. It is ON CONFLICT DO NOTHING, so
+	// re-running after Migrate already applied it on the empty table is safe.
+	sql, err := os.ReadFile("migrations/0013_backfill_commit_reports.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(sql)); err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
 
@@ -560,8 +557,13 @@ func TestCommitReportBackfill(t *testing.T) {
 	if err != nil || cr1.TotalPct != 80 || cr1.PartCount != 1 {
 		t.Fatalf("c1 report = %+v, %v (want latest 80%%, one part)", cr1, err)
 	}
+	// upload_id must be backfilled (the trend links through it) — the exact
+	// column an out-of-date hand-copied statement would have missed.
+	if cr1.UploadID != c1Latest.ID {
+		t.Errorf("c1 upload_id = %d, want %d (latest upload)", cr1.UploadID, c1Latest.ID)
+	}
 	cr2, err := st.CommitReport(ctx, repo.ID, "c2")
-	if err != nil || cr2.TotalPct != 90 {
+	if err != nil || cr2.TotalPct != 90 || cr2.UploadID != c2.ID {
 		t.Fatalf("c2 report = %+v, %v", cr2, err)
 	}
 	// id ascends with commit order (c1's latest upload precedes c2's), so the
@@ -574,36 +576,81 @@ func TestCommitReportBackfill(t *testing.T) {
 	}
 }
 
-func TestClaimStatusPush(t *testing.T) {
+func TestTryPushStatus(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
 	if err := st.CreateRepo(ctx, repo); err != nil {
 		t.Fatal(err)
 	}
+	noop := func(context.Context) error { return nil }
 
-	// Nothing to claim before the report exists.
-	if ok, err := st.ClaimStatusPush(ctx, repo.ID, "c1", 5); err != nil || ok {
-		t.Fatalf("claim on missing report = %v, %v (want false)", ok, err)
+	// Nothing to push before the report exists.
+	if pushed, err := st.TryPushStatus(ctx, repo.ID, "c1", 5, noop); err != nil || pushed {
+		t.Fatalf("push on missing report = %v, %v (want false)", pushed, err)
 	}
 	if err := st.UpsertCommitReport(ctx, &store.CommitReport{RepoID: repo.ID, CommitSHA: "c1", Branch: "main", PartCount: 1}); err != nil {
 		t.Fatal(err)
 	}
 
-	// A version only claims if strictly greater than the last claimed.
+	// A version pushes only if it is at least the last successful one.
 	steps := []struct {
 		version int64
 		want    bool
 	}{
-		{5, true},  // first claim
-		{5, false}, // equal — already pushed
-		{3, false}, // older push arriving late — must lose
-		{7, true},  // newer recompute wins
+		{5, true},  // first push
+		{5, true},  // equal — a re-upload of the same part may re-push
+		{3, false}, // older push arriving late — must be skipped
+		{7, true},  // newer recompute pushes
 	}
 	for _, s := range steps {
-		if ok, err := st.ClaimStatusPush(ctx, repo.ID, "c1", s.version); err != nil || ok != s.want {
-			t.Errorf("claim v%d = %v (want %v), err %v", s.version, ok, s.want, err)
+		if pushed, err := st.TryPushStatus(ctx, repo.ID, "c1", s.version, noop); err != nil || pushed != s.want {
+			t.Errorf("push v%d = %v (want %v), err %v", s.version, pushed, s.want, err)
 		}
+	}
+
+	// A failed push does not advance the version — a later part can retry.
+	boom := errors.New("forge down")
+	if _, err := st.TryPushStatus(ctx, repo.ID, "c1", 9, func(context.Context) error { return boom }); !errors.Is(err, boom) {
+		t.Fatalf("failed push err = %v, want boom", err)
+	}
+	// Version is still 7 (not 9): a push at 8 must still succeed.
+	if pushed, err := st.TryPushStatus(ctx, repo.ID, "c1", 8, noop); err != nil || !pushed {
+		t.Errorf("push v8 after failed v9 = %v, %v (want true; failed push must not burn the version)", pushed, err)
+	}
+
+	// Concurrent pushes serialize, so the forge never sees an older push land
+	// after a newer one: whatever pushes last is the highest version that ran.
+	if err := st.UpsertCommitReport(ctx, &store.CommitReport{RepoID: repo.ID, CommitSHA: "c2", Branch: "main", PartCount: 1}); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var order []int64
+	var wg sync.WaitGroup
+	for _, v := range []int64{100, 101, 102, 103, 104} {
+		wg.Add(1)
+		go func(v int64) {
+			defer wg.Done()
+			_, _ = st.TryPushStatus(ctx, repo.ID, "c2", v, func(context.Context) error {
+				mu.Lock()
+				order = append(order, v)
+				mu.Unlock()
+				return nil
+			})
+		}(v)
+	}
+	wg.Wait()
+	if len(order) == 0 {
+		t.Fatal("no push ran")
+	}
+	last, maxV := order[len(order)-1], int64(0)
+	for _, v := range order {
+		if v > maxV {
+			maxV = v
+		}
+	}
+	if last != maxV {
+		t.Errorf("last push was v%d but v%d pushed earlier — a stale status won: %v", last, maxV, order)
 	}
 }
 

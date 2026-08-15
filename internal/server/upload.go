@@ -166,19 +166,19 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// Cap the distinct parts per commit before doing any work, so a runaway
 	// part name (e.g. -part $CI_JOB_ID) can't accumulate parts unbounded.
 	// Re-uploading an existing part is always allowed — it replaces.
-	if existing, err := s.store.LatestUploadsPerPart(r.Context(), repo.ID, commit); err != nil {
+	if parts, err := s.store.CommitParts(r.Context(), repo.ID, commit); err != nil {
 		s.internalError(w, "counting commit parts", err)
 		return
-	} else if len(existing) >= maxPartsPerCommit {
+	} else if len(parts) >= maxPartsPerCommit {
 		isNew := true
-		for _, p := range existing {
-			if p.Part == part {
+		for _, p := range parts {
+			if p == part {
 				isNew = false
 				break
 			}
 		}
 		if isNew {
-			httpError(w, http.StatusBadRequest, "commit %s already has %d coverage parts (the maximum); check that the upload's part name is stable across CI jobs", commit, len(existing))
+			httpError(w, http.StatusBadRequest, "commit %s already has %d coverage parts (the maximum); check that the upload's part name is stable across CI jobs", commit, len(parts))
 			return
 		}
 	}
@@ -299,6 +299,10 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// in several parts reports its combined total, not the last part in.
 	rc, err := s.recomputeCommitReport(r.Context(), repo, upload)
 	if err != nil {
+		// The upload row is already committed; a recompute failure (including
+		// the bounded-timeout case) returns 500 deliberately so the CI client
+		// sees the upload didn't fully land. It self-heals: the next part's
+		// upload — or a retry of this one — recomputes the commit again.
 		s.internalError(w, "computing merged report", err)
 		return
 	}
@@ -318,22 +322,40 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		resp.Gate = mergedGate.String()
 	}
 
-	// Forge status/insights/comment push after the locked recompute, so a
-	// slow push from an older concurrent part could otherwise land after and
-	// leave the commit reflecting a stale merged state. Claim the push for
-	// this upload's version (its id, which rises with the most-complete
-	// state); only the winner pushes. On a claim error, fall open to pushing
-	// rather than silently dropping the status.
-	claimed, err := s.store.ClaimStatusPush(r.Context(), repo.ID, upload.CommitSHA, upload.ID)
-	if err != nil {
-		s.log.Warn("claiming status push", "repo", repo.Slug, "commit", upload.CommitSHA, "err", err)
-		claimed = true
-	}
-	if claimed {
-		resp.BuildStatus = s.pushBuildStatus(r.Context(), fg, fgErr, repo, merged, mergedDelta, mergedGate)
-		resp.CodeInsights = s.pushCodeInsights(r.Context(), fg, fgErr, repo, merged, mergedDelta, mergedGate)
-		resp.PRComment = s.pushPRComment(r.Context(), fg, fgErr, repo, merged, mergedDelta, mergedGate)
-	} else {
+	// Forge status/insights/comment push after the locked recompute. Two
+	// parts of one commit can push concurrently, and forge latency could let
+	// an older push land last and pin the commit to a stale status. Serialize
+	// the push per commit and gate it on this upload's version (its id, which
+	// rises with the most-complete merged state): TryPushStatus runs the push
+	// only if it is not older than the last successful one, and records the
+	// version only after the push succeeds — so a failed push doesn't burn the
+	// version and a later part retries.
+	pushCtx, cancel := context.WithTimeout(r.Context(), statusPushTimeout)
+	defer cancel()
+	pushed, err := s.store.TryPushStatus(pushCtx, repo.ID, upload.CommitSHA, upload.ID, func(ctx context.Context) error {
+		resp.BuildStatus = s.pushBuildStatus(ctx, fg, fgErr, repo, merged, mergedDelta, mergedGate)
+		resp.CodeInsights = s.pushCodeInsights(ctx, fg, fgErr, repo, merged, mergedDelta, mergedGate)
+		resp.PRComment = s.pushPRComment(ctx, fg, fgErr, repo, merged, mergedDelta, mergedGate)
+		// The build status gates merges; if it didn't post, signal failure so
+		// the version isn't advanced and a later part retries. Insights and
+		// PR comment are best effort and don't hold back the version.
+		if strings.HasPrefix(resp.BuildStatus, "error") {
+			return errStatusPushFailed
+		}
+		return nil
+	})
+	switch {
+	case errors.Is(err, errStatusPushFailed):
+		// resp fields already carry the per-surface outcome; nothing to do.
+	case err != nil:
+		// Lock/tx failure: the push may not have run. Report it rather than
+		// leaving the fields blank.
+		s.log.Warn("status push lock", "repo", repo.Slug, "commit", upload.CommitSHA, "err", err)
+		if resp.BuildStatus == "" {
+			resp.BuildStatus = "error: " + err.Error()
+			resp.CodeInsights = "error: " + err.Error()
+		}
+	case !pushed:
 		resp.BuildStatus = "skipped: superseded"
 		resp.CodeInsights = "skipped: superseded"
 		if merged.PRID != "" {
@@ -372,6 +394,17 @@ type mergedRecompute struct {
 // recomputeTimeout bounds a single recompute so a saturated connection pool
 // fails the upload fast instead of hanging a CI client indefinitely.
 const recomputeTimeout = 30 * time.Second
+
+// statusPushTimeout bounds the serialized forge push: TryPushStatus holds a
+// per-commit lock (and its connection) across the forge HTTP calls, so a
+// hung forge must not pin them.
+const statusPushTimeout = 20 * time.Second
+
+// errStatusPushFailed signals TryPushStatus that the build-status push did
+// not post, so the status version must not advance and a later part retries.
+// It never surfaces as an upload error — the response carries the per-surface
+// outcome.
+var errStatusPushFailed = errors.New("build status push failed")
 
 func (s *Server) recomputeCommitReport(ctx context.Context, repo *store.Repo, u *store.Upload) (*mergedRecompute, error) {
 	ctx, cancel := context.WithTimeout(ctx, recomputeTimeout)

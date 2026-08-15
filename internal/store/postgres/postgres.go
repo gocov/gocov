@@ -747,6 +747,28 @@ func (s *Store) LatestUploadsPerPart(ctx context.Context, repoID int64, commitSH
 	return s.latestUploadsPerPart(ctx, s.pool, repoID, commitSHA)
 }
 
+// CommitParts returns the distinct part names for a commit, reading only the
+// part column — the parts cap needs a count and a membership test, not the
+// full upload rows (which carry blocks and diff-coverage JSON).
+func (s *Store) CommitParts(ctx context.Context, repoID int64, commitSHA string) ([]string, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT DISTINCT part FROM uploads WHERE repo_id = $1 AND commit_sha = $2`,
+		repoID, commitSHA)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) latestUploadsPerPart(ctx context.Context, q querier, repoID int64, commitSHA string) ([]*store.Upload, error) {
 	rows, err := q.Query(ctx,
 		`SELECT DISTINCT ON (part) `+uploadCols+` FROM uploads
@@ -785,7 +807,7 @@ func (s *Store) WithCommitReportTx(ctx context.Context, repoID int64, commitSHA 
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
-	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", advisoryKey(repoID, commitSHA)); err != nil {
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", advisoryKey("recompute", repoID, commitSHA)); err != nil {
 		return err
 	}
 	if err := fn(ctx, &commitReportTx{s: s, tx: tx}); err != nil {
@@ -817,11 +839,13 @@ func (c *commitReportTx) UpsertCommitReport(ctx context.Context, cr *store.Commi
 	return c.s.upsertCommitReport(ctx, c.tx, cr)
 }
 
-// advisoryKey hashes (repo, commit) into the signed 64-bit space Postgres
-// advisory locks use.
-func advisoryKey(repoID int64, commitSHA string) int64 {
+// advisoryKey hashes a namespace and (repo, commit) into the signed 64-bit
+// space Postgres advisory locks use. The namespace keeps the recompute lock
+// and the status-push lock in separate spaces so they never block each other
+// for the same commit.
+func advisoryKey(namespace string, repoID int64, commitSHA string) int64 {
 	h := fnv.New64a()
-	fmt.Fprintf(h, "%d:%s", repoID, commitSHA)
+	fmt.Fprintf(h, "%s:%d:%s", namespace, repoID, commitSHA)
 	return int64(h.Sum64()) //nolint:gosec // intentional bit reinterpretation into the advisory key space
 }
 
@@ -888,20 +912,49 @@ func (s *Store) latestPassedCommitReport(ctx context.Context, q querier, repoID 
 		repoID, branch, excludeCommit))
 }
 
-// ClaimStatusPush advances the report's status_pushed_version to version
-// only if it is strictly greater, in one atomic UPDATE. The winner (the
-// recompute triggered by the newest upload, whose id is the version) pushes;
-// losers skip, so forge status can't be left reflecting a stale recompute
-// that happened to push last.
-func (s *Store) ClaimStatusPush(ctx context.Context, repoID int64, commitSHA string, version int64) (bool, error) {
-	tag, err := s.pool.Exec(ctx,
-		`UPDATE commit_reports SET status_pushed_version = $3
-		 WHERE repo_id = $1 AND commit_sha = $2 AND status_pushed_version < $3`,
-		repoID, commitSHA, version)
+// TryPushStatus serializes the forge status/PR-comment push for one commit
+// under a per-commit advisory lock and runs push only when version is at
+// least the last successfully pushed version, advancing the stored version
+// only after push returns nil. Serializing the whole check-push-advance —
+// rather than just claiming a version before an unordered push — means the
+// forge can't be left on a stale status by a slow older push landing last,
+// and a failed push (push returns an error) leaves the version untouched so
+// a later part retries. Returns whether push ran.
+//
+// push runs while the lock's transaction is held, so it must be bounded by
+// ctx; it performs the forge HTTP itself. When no report row exists yet
+// there is nothing to attach a status to and push does not run.
+func (s *Store) TryPushStatus(ctx context.Context, repoID int64, commitSHA string, version int64, push func(context.Context) error) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return false, err
 	}
-	return tag.RowsAffected() > 0, nil
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", advisoryKey("status", repoID, commitSHA)); err != nil {
+		return false, err
+	}
+	var cur int64
+	err = tx.QueryRow(ctx,
+		"SELECT status_pushed_version FROM commit_reports WHERE repo_id = $1 AND commit_sha = $2",
+		repoID, commitSHA).Scan(&cur)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil // no report to attach a status to
+	}
+	if err != nil {
+		return false, err
+	}
+	if version < cur {
+		return false, nil // a newer push already owns the status
+	}
+	if err := push(ctx); err != nil {
+		return false, err // rolled back: version not advanced, so a retry can push
+	}
+	if _, err := tx.Exec(ctx,
+		"UPDATE commit_reports SET status_pushed_version = $3 WHERE repo_id = $1 AND commit_sha = $2",
+		repoID, commitSHA, version); err != nil {
+		return false, err
+	}
+	return true, tx.Commit(ctx)
 }
 
 func (s *Store) ListBranchCommitReports(ctx context.Context, repoID int64, branch string, limit int) ([]*store.CommitReport, error) {

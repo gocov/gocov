@@ -12,7 +12,7 @@ import (
 // as server-rendered inline SVG. Geometry lives here so the template only
 // places precomputed coordinates.
 const (
-	trendUploadLimit = 60
+	trendReportLimit = 60
 
 	trendW, trendH       = 800, 160
 	trendPadL, trendPadR = 46, 14

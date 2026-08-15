@@ -24,7 +24,8 @@ type Store struct {
 	files      map[int64][]*store.UploadFile // keyed by upload ID
 	reports    map[int64]*store.CommitReport // merged reports, keyed by report ID
 	crLocks    map[string]*sync.Mutex        // per-commit recompute locks
-	crStatus   map[string]int64              // last claimed status-push version, keyed repoID:sha
+	crPush     map[string]*sync.Mutex        // per-commit status-push locks
+	crStatus   map[string]int64              // last pushed status version, keyed repoID:sha
 	workspaces map[int64]*store.Workspace
 	users      map[int64]*store.User
 	sessions   map[string]*store.Session // keyed by token hash
@@ -39,6 +40,7 @@ func New() *Store {
 		files:      map[int64][]*store.UploadFile{},
 		reports:    map[int64]*store.CommitReport{},
 		crLocks:    map[string]*sync.Mutex{},
+		crPush:     map[string]*sync.Mutex{},
 		crStatus:   map[string]int64{},
 		workspaces: map[int64]*store.Workspace{},
 		users:      map[int64]*store.User{},
@@ -589,11 +591,21 @@ func (s *Store) latestCommitReport(repoID int64, branch, excludeCommit string, p
 	return copyCommitReport(latest), nil
 }
 
-func (s *Store) ClaimStatusPush(_ context.Context, repoID int64, commitSHA string, version int64) (bool, error) {
+func (s *Store) TryPushStatus(ctx context.Context, repoID int64, commitSHA string, version int64, push func(context.Context) error) (bool, error) {
+	key := fmt.Sprintf("%d:%s", repoID, commitSHA)
+	// Serialize the whole check-push-advance per commit, mirroring the
+	// Postgres advisory lock.
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	// Mirror the Postgres UPDATE, which claims nothing when the report row
-	// does not exist yet.
+	m := s.crPush[key]
+	if m == nil {
+		m = &sync.Mutex{}
+		s.crPush[key] = m
+	}
+	s.mu.Unlock()
+	m.Lock()
+	defer m.Unlock()
+
+	s.mu.Lock()
 	exists := false
 	for _, cr := range s.reports {
 		if cr.RepoID == repoID && cr.CommitSHA == commitSHA {
@@ -601,15 +613,35 @@ func (s *Store) ClaimStatusPush(_ context.Context, repoID int64, commitSHA strin
 			break
 		}
 	}
+	cur := s.crStatus[key]
+	s.mu.Unlock()
 	if !exists {
-		return false, nil
+		return false, nil // no report to attach a status to
 	}
-	key := fmt.Sprintf("%d:%s", repoID, commitSHA)
-	if s.crStatus[key] < version {
-		s.crStatus[key] = version
-		return true, nil
+	if version < cur {
+		return false, nil // a newer push already owns the status
 	}
-	return false, nil
+	if err := push(ctx); err != nil {
+		return false, err // version not advanced, so a retry can push
+	}
+	s.mu.Lock()
+	s.crStatus[key] = version
+	s.mu.Unlock()
+	return true, nil
+}
+
+func (s *Store) CommitParts(_ context.Context, repoID int64, commitSHA string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	seen := map[string]bool{}
+	var out []string
+	for _, u := range s.uploads {
+		if u.RepoID == repoID && u.CommitSHA == commitSHA && !seen[u.Part] {
+			seen[u.Part] = true
+			out = append(out, u.Part)
+		}
+	}
+	return out, nil
 }
 
 func (s *Store) ListBranchCommitReports(_ context.Context, repoID int64, branch string, limit int) ([]*store.CommitReport, error) {

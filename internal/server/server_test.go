@@ -439,11 +439,11 @@ func TestUploadStatusPushSuperseded(t *testing.T) {
 		t.Fatalf("first upload: %d status calls, want 1", len(f.forge.StatusCalls))
 	}
 
-	// Simulate a newer concurrent recompute having already claimed a higher
-	// push version. A subsequent upload (lower version) must not overwrite
-	// the forge status with its now-stale view.
-	if ok, err := f.store.ClaimStatusPush(ctx, f.repo.ID, "c1", 1<<30); err != nil || !ok {
-		t.Fatalf("setup claim = %v, %v", ok, err)
+	// Simulate a newer concurrent recompute having already pushed a higher
+	// version. A subsequent upload (lower version) must not overwrite the
+	// forge status with its now-stale view.
+	if pushed, err := f.store.TryPushStatus(ctx, f.repo.ID, "c1", 1<<30, func(context.Context) error { return nil }); err != nil || !pushed {
+		t.Fatalf("setup push = %v, %v", pushed, err)
 	}
 
 	better := "mode: set\nexample.com/m/a.go:1.1,5.2 10 3\n" // 100%
