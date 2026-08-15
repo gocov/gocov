@@ -1,5 +1,7 @@
 # gocov
 
+![coverage](https://app.gocov.dev/badge/gocov/gocov.svg)
+
 Self-hostable coverage tracking — an open-source Coveralls/Codecov
 alternative. Single binary + Postgres. Supported forges: Bitbucket Cloud
 and GitHub. Supported formats: Go cover profiles, LCOV tracefiles
