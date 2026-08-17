@@ -134,7 +134,8 @@ func TestRegisterPageStates(t *testing.T) {
 	if !strings.Contains(body, "personal") || !strings.Contains(body, "not registered yet") {
 		t.Errorf("free workspace not offered:\n%s", body)
 	}
-	if !strings.Contains(body, "name in use under another forge") {
+	// The collision row must name the forge holding the prefix.
+	if !strings.Contains(body, "name registered under GitHub") {
 		t.Errorf("cross-forge collision not surfaced:\n%s", body)
 	}
 }

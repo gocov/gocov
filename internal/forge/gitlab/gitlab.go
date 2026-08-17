@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -157,6 +158,13 @@ func (c *Client) FindPRComment(ctx context.Context, repoSlug, prID, prefix strin
 		}
 		next = nextLink(link)
 	}
+	if next != "" {
+		// Beyond the cap an existing marker note can go unseen, making
+		// every upload post a fresh comment — pathological (1000+ notes on
+		// one MR) but worth a trace when it happens.
+		slog.Warn("gitlab: MR note search stopped at page cap; an existing gocov comment may be missed",
+			"repo", repoSlug, "mr", prID, "pages", maxNotePages)
+	}
 	return found, nil
 }
 
@@ -192,6 +200,9 @@ const maxDiffBytes = 32 << 20
 // into a unified diff (the changes API returns per-file hunks without
 // ---/+++ headers). A response flagged overflow would be an incomplete
 // diff and silently wrong coverage numbers, so it errors instead.
+// GitLab has deprecated /changes in favor of the paginated /diffs
+// endpoint; it still serves API v4, and switching to /diffs (which also
+// lifts the overflow ceiling) is planned as a P1 follow-up.
 func (c *Client) GetPRDiff(ctx context.Context, repoSlug, prID string) (string, error) {
 	path := fmt.Sprintf("/projects/%s/merge_requests/%s/changes", projectID(repoSlug), url.PathEscape(prID))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
