@@ -17,7 +17,7 @@
 <td><span class="muted">registered</span></td>
 <td><form method="post" action="/register"><input type="hidden" name="prefix" value="{{.Prefix}}"><button class="btn" type="submit">Join</button></form></td>
 {{else if eq .State "taken"}}
-<td><span class="muted">name in use under another forge</span></td>
+<td><span class="muted">name registered under {{.TakenBy}} on this server &mdash; unavailable here</span></td>
 <td></td>
 {{else}}
 <td><span class="muted">not registered yet</span></td>

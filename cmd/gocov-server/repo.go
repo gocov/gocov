@@ -149,17 +149,24 @@ func gateSummary(g store.Gate) string {
 }
 
 // forgeCredFlags validates the credential flags and returns the
-// credentials map, or nil when none were set. Bitbucket's flag pair and
-// GitHub's token are mutually exclusive — a repo lives on one forge.
-func forgeCredFlags(bbUsername, bbPassword, ghToken string) (map[string]string, error) {
-	if bbUsername == "" && bbPassword == "" {
-		if ghToken == "" {
-			return nil, nil
-		}
-		return map[string]string{"token": ghToken}, nil
+// credentials map, or nil when none were set. Bitbucket's flag pair,
+// GitHub's token and GitLab's token are mutually exclusive — a repo
+// lives on one forge.
+func forgeCredFlags(bbUsername, bbPassword, ghToken, glToken string) (map[string]string, error) {
+	if ghToken != "" && glToken != "" {
+		return nil, fmt.Errorf("-gh-token cannot be combined with -gl-token")
 	}
-	if ghToken != "" {
-		return nil, fmt.Errorf("-gh-token cannot be combined with -bb-username/-bb-app-password")
+	if bbUsername == "" && bbPassword == "" {
+		if ghToken != "" {
+			return map[string]string{"token": ghToken}, nil
+		}
+		if glToken != "" {
+			return map[string]string{"token": glToken}, nil
+		}
+		return nil, nil
+	}
+	if ghToken != "" || glToken != "" {
+		return nil, fmt.Errorf("-gh-token/-gl-token cannot be combined with -bb-username/-bb-app-password")
 	}
 	if bbUsername == "" || bbPassword == "" {
 		return nil, fmt.Errorf("-bb-username and -bb-app-password must be set together")
@@ -175,6 +182,7 @@ func repoAdd(ctx context.Context, st store.Store, args []string, out io.Writer) 
 	bbUser := fs.String("bb-username", "", "Bitbucket username for build status pushes (optional)")
 	bbPassword := fs.String("bb-app-password", "", "Bitbucket app password (optional)")
 	ghToken := fs.String("gh-token", "", "GitHub access token for -forge github repos (optional)")
+	glToken := fs.String("gl-token", "", "GitLab access token for -forge gitlab repos (optional)")
 	gf := addGateFlags(fs)
 	if stop, err := parseFlags(fs, args); stop {
 		return err
@@ -182,7 +190,7 @@ func repoAdd(ctx context.Context, st store.Store, args []string, out io.Writer) 
 	if *slug == "" {
 		return fmt.Errorf("-slug is required")
 	}
-	creds, err := forgeCredFlags(*bbUser, *bbPassword, *ghToken)
+	creds, err := forgeCredFlags(*bbUser, *bbPassword, *ghToken, *glToken)
 	if err != nil {
 		return err
 	}
@@ -301,6 +309,7 @@ func repoUpdate(ctx context.Context, st store.Store, args []string, out io.Write
 	bbUser := fs.String("bb-username", "", "Bitbucket username")
 	bbPassword := fs.String("bb-app-password", "", "Bitbucket app password")
 	ghToken := fs.String("gh-token", "", "GitHub access token")
+	glToken := fs.String("gl-token", "", "GitLab access token")
 	clearCreds := fs.Bool("clear-credentials", false, "remove stored forge credentials")
 	gf := addGateFlags(fs)
 	clearGate := fs.Bool("clear-gate", false, "remove all coverage gate rules")
@@ -310,7 +319,7 @@ func repoUpdate(ctx context.Context, st store.Store, args []string, out io.Write
 	if *slug == "" {
 		return fmt.Errorf("-slug is required")
 	}
-	creds, err := forgeCredFlags(*bbUser, *bbPassword, *ghToken)
+	creds, err := forgeCredFlags(*bbUser, *bbPassword, *ghToken, *glToken)
 	if err != nil {
 		return err
 	}

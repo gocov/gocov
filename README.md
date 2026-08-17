@@ -3,8 +3,8 @@
 ![coverage](https://app.gocov.dev/badge/gocov/gocov.svg)
 
 Self-hostable coverage tracking — an open-source Coveralls/Codecov
-alternative. Single binary + Postgres. Supported forges: Bitbucket Cloud
-and GitHub. Supported formats: Go cover profiles, LCOV tracefiles
+alternative. Single binary + Postgres. Supported forges: Bitbucket Cloud,
+GitHub and GitLab. Supported formats: Go cover profiles, LCOV tracefiles
 (JavaScript/TypeScript — Jest, Vitest, nyc, c8), JaCoCo XML
 (Java/Kotlin — Maven, Gradle, Android), Cobertura XML
 (Python — coverage.py/pytest-cov; also coverlet, gcovr), Clover XML
@@ -20,10 +20,10 @@ detected from the uploaded content.
 - `POST /api/v1/upload` API with per-repo Bearer tokens
 - SVG coverage badge per repo (`/badge/{workspace}/{repo}.svg`)
 - Web UI: repo list → upload list → per-file coverage table
-- Uploader CLI that auto-detects Bitbucket Pipelines and GitHub Actions
-  environment variables and falls back to git
+- Uploader CLI that auto-detects Bitbucket Pipelines, GitHub Actions
+  and GitLab CI environment variables and falls back to git
 - Pushes a `coverage: X% (±Y%)` build status to Bitbucket commits (or a
-  commit status to GitHub) when the repo has forge credentials
+  commit status to GitHub/GitLab) when the repo has forge credentials
   configured
 - Coverage gate: per-repo minimums for total and diff coverage plus a
   drop tolerance; violations push a FAILED build status, so a Bitbucket
@@ -35,7 +35,7 @@ detected from the uploaded content.
   no `path_prefix`, recorded paths that carry an unmapped leading
   prefix (a Go module path, a CI checkout directory) are resolved by
   probing trimmed variants against the forge
-- Web UI sign-in with Bitbucket and/or GitHub: configure an OAuth
+- Web UI sign-in with Bitbucket, GitHub and/or GitLab: configure an OAuth
   consumer/app and every page requires login, allowed only for members
   of the workspaces and orgs the instance tracks (see "Enable
   sign-in"). Uploads, badges and health checks are unaffected; no
@@ -43,8 +43,10 @@ detected from the uploaded content.
 - Diff coverage for pull requests: fetches the PR diff from the forge,
   intersects changed lines with coverage blocks, and posts a PR comment
   listing uncovered changed lines — repeated uploads update the same
-  comment instead of stacking new ones. Works on Bitbucket and GitHub
-  alike
+  comment instead of stacking new ones. Works on Bitbucket, GitHub and
+  GitLab alike (on GitLab as a merge request note; GitLab has no
+  check-run/Code-Insights equivalent, so the note's diff coverage table
+  is the in-MR surface)
 - Coverage inside the PR, via Bitbucket Code Insights: every upload
   attaches a report card to its commit (total coverage, delta, diff
   coverage, gate verdict) that Bitbucket shows in the pull request's
@@ -78,8 +80,8 @@ detected from the uploaded content.
 The architecture is deliberately extensible: coverage formats sit behind
 `profile.Parser`, forges behind `forge.Forge`, raw profile storage behind
 `blobstore.Store`, and the database schema stores a format-agnostic
-normalized model — so lcov/cobertura, GitHub/GitLab, diff coverage, and
-S3 storage can be added without rewrites.
+normalized model — GitHub and GitLab were each added this way, and new
+formats or S3 storage slot in without rewrites.
 
 ## Quick start
 
@@ -124,8 +126,21 @@ docker compose exec server gocov-server repo add \
   -gh-token "$GITHUB_TOKEN"                              # optional, for statuses and PR comments
 ```
 
-A GitHub org can also be onboarded wholesale: `workspace add -prefix
-myorg -forge github` — repos then register themselves on first upload,
+For a GitLab project, the slug is the full namespace path — subgroups
+included — and the credential is a single access token with the `api`
+scope (see "GitLab token permissions"):
+
+```sh
+docker compose exec server gocov-server repo add \
+  -slug mygroup/subgroup/myproject -forge gitlab \
+  -default-branch main \
+  -gl-token "$GITLAB_TOKEN"                              # optional, for statuses and MR comments
+```
+
+A GitHub org or GitLab group can also be onboarded wholesale:
+`workspace add -prefix myorg -forge github` (or `-prefix
+mygroup/subgroup -forge gitlab` — a workspace can sit at any level of
+the namespace tree) — repos then register themselves on first upload,
 exactly like a Bitbucket workspace.
 
 Manage repos later with:
@@ -141,7 +156,7 @@ gocov-server repo remove -slug myworkspace/myrepo -force # deletes uploads and r
 gocov-server workspace list|rotate-token|update|remove   # workspace token management
 ```
 
-### Enable sign-in (Bitbucket and/or GitHub)
+### Enable sign-in (Bitbucket, GitHub and/or GitLab)
 
 Out of the box the web UI is open and shows a banner saying so — nothing
 changes on upgrade until you opt in. Configure one or both providers;
@@ -179,6 +194,24 @@ gocov requests the read-only `read:org` and `user:email` scopes at
 login. Note that org members may need to grant/request the app's access
 to the org once (GitHub's third-party application policy) for the org
 to appear in their membership.
+
+For **GitLab**:
+
+1. Create an OAuth application under **Preferences → Applications** (or
+   on a group/instance) with
+   - **Redirect URI**: `https://your-gocov-host/oauth/gitlab/callback`
+   - **Scopes**: `read_user` and `read_api` only — nothing broader is
+     needed
+2. Set the application's id and secret on the server:
+
+```sh
+GOCOV_OAUTH_GITLAB_KEY=...
+GOCOV_OAUTH_GITLAB_SECRET=...
+```
+
+Membership is derived from the account's groups — subgroups included,
+each by its full path (`group/subgroup`) — plus the username itself, so
+user-namespace projects admit their owner.
 
 From then on every UI page requires signing in. Access is decided at
 login time by membership: by default, members of any workspace/org the
@@ -242,7 +275,7 @@ the forge says it belongs to — the repo list is filtered, and a direct
 link to another workspace's repo, upload or source page returns 404.
 Memberships are synced from the forge on every sign-in, so there is no
 separate invite or member-management step: add someone to the workspace
-on Bitbucket or GitHub and they see its coverage at their next login;
+on the forge and they see its coverage at their next login;
 remove them and it disappears. A single-team self-host where everyone
 belongs to the same workspace is unaffected, as is an instance with
 sign-in left open — both stay exactly as before.
@@ -396,6 +429,31 @@ including the PR head SHA on `pull_request` runs):
     GOCOV_TOKEN: ${{ secrets.GOCOV_TOKEN }}
 ```
 
+In GitLab CI (project path, commit, branch and MR iid are auto-detected,
+including the real head SHA on merged-results pipelines):
+
+```yaml
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+coverage:
+  image: golang:1.23
+  script:
+    - go test ./... -covermode=atomic -coverprofile=coverage.out
+    - curl -fsSLO https://github.com/gocov/gocov/releases/download/v0.9.0/gocov-linux-amd64
+    - curl -fsSL https://github.com/gocov/gocov/releases/download/v0.9.0/checksums.txt
+      | grep ' gocov-linux-amd64$' | sha256sum -c -
+    - chmod +x gocov-linux-amd64
+    - ./gocov-linux-amd64 upload coverage.out
+```
+
+with `GOCOV_TOKEN` (masked) and, when self-hosting, `GOCOV_SERVER` set
+as CI/CD variables under **Settings → CI/CD → Variables** on the group
+or project. The `workflow` rules run the job on merge requests and the
+default branch without duplicate pipelines.
+
 On runners without a Go toolchain, use the prebuilt binaries from
 [GitHub Releases](https://github.com/gocov/gocov/releases) instead
 (linux/darwin/windows, amd64 + arm64, checksums included). Pin a version
@@ -523,6 +581,7 @@ delta_pct, build_status}`. Uploads carrying a `pr_id` additionally get
 | `GOCOV_BITBUCKET_USERNAME`     | —                       | global Bitbucket bot account (with an API token, the account email) |
 | `GOCOV_BITBUCKET_APP_PASSWORD` | —                       | the bot's app password or scoped API token |
 | `GOCOV_GITHUB_TOKEN`           | —                       | global GitHub token for repos without their own credentials |
+| `GOCOV_GITLAB_TOKEN`           | —                       | global GitLab token for repos without their own credentials |
 | `GOCOV_GITHUB_APP_ID`          | —                       | GitHub App id; with the key, enables one-click workspace connect |
 | `GOCOV_GITHUB_APP_PRIVATE_KEY` | —                       | the App's private key: PEM content, or a path to the PEM file |
 | `GOCOV_SECRET_KEY`             | —                       | at-rest encryption key (long random value, e.g. `openssl rand -hex 32`); with the Bitbucket OAuth consumer, enables one-click workspace connect |
@@ -530,13 +589,15 @@ delta_pct, build_status}`. Uploads carrying a `pr_id` additionally get
 | `GOCOV_OAUTH_BITBUCKET_SECRET` | —                       | Bitbucket OAuth consumer secret |
 | `GOCOV_OAUTH_GITHUB_KEY`       | —                       | GitHub OAuth app client id; with the secret, turns on web UI sign-in |
 | `GOCOV_OAUTH_GITHUB_SECRET`    | —                       | GitHub OAuth app client secret |
+| `GOCOV_OAUTH_GITLAB_KEY`       | —                       | GitLab OAuth application id; with the secret, turns on web UI sign-in |
+| `GOCOV_OAUTH_GITLAB_SECRET`    | —                       | GitLab OAuth application secret |
 | `GOCOV_ALLOWED_WORKSPACES`     | derived from tracked repos | comma-separated workspace/org slugs allowed to sign in |
 | `GOCOV_MODE`                   | `private`               | `hosted` opens sign-in to any forge account with self-service workspace registration |
 
 Forge credentials resolve per repo along a precedence chain: a
 one-click connection (GitHub App installation, or Bitbucket workspace
 grant) beats per-repo credentials (`repo update -bb-username ...` /
-`-gh-token ...`) beats workspace credentials (set on the workspace
+`-gh-token ...` / `-gl-token ...`) beats workspace credentials (set on the workspace
 settings page in the UI) beats the global bot credentials above.
 Whichever wins is used for build statuses, PR comments, diff coverage
 and default branch detection.
@@ -595,6 +656,33 @@ To make the coverage gate blocking on GitHub, add a branch protection
 rule under **Settings → Branches → Require status checks to pass** and
 pick `gocov` (the commit status — works with every credential) or
 `gocov coverage` (the check run). A failed gate then blocks the merge.
+
+### GitLab token permissions
+
+The GitLab credential (`GOCOV_GITLAB_TOKEN`, `repo add/update
+-gl-token`, or the workspace settings page) is an access token with the
+`api` scope — that single scope covers commit statuses, MR notes, MR
+diffs, file content and the default branch:
+
+- **Group access token** (Premium/self-managed, **Group → Settings →
+  Access tokens**): the natural workspace-level credential — one token
+  covers every project in the group, and notes are authored by the
+  token's bot user (`group_bot`). Give it the *Reporter* role or higher
+  (*Developer* if you want the commit status to satisfy a merge check).
+- **Project access token** (**Project → Settings → Access tokens**): the
+  per-repo equivalent, same scope and role notes.
+- **Personal access token** of a user or bot account with access to the
+  projects also works.
+
+Updating the MR note in place needs no extra scope — gocov recognizes
+its own note by its `**gocov**` marker.
+
+To make the coverage gate blocking on GitLab, add a status check or use
+**Settings → Merge requests → Status checks / Pipelines must succeed**
+policies that reference the `gocov` commit status; a failed gate then
+blocks the merge. GitLab has no check-run equivalent — the MR note's
+diff coverage table is the in-MR surface, and uploads report
+`code_insights: skipped` by design.
 
 ## Development
 

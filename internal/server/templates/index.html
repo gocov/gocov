@@ -4,7 +4,7 @@
 <p class="sub">{{len .Rows}} {{if eq (len .Rows) 1}}repo{{else}}repos{{end}}{{with .Query}} matching &ldquo;{{.}}&rdquo;{{end}}</p>
 {{if .Workspaces}}
 <p class="muted small">Your workspaces:
-{{range $i, $ws := .Workspaces}}{{if $i}} &middot; {{end}}<a class="mono" href="/workspaces/{{$ws.Prefix}}">{{$ws.Prefix}}</a>{{end}}
+{{range $i, $ws := .Workspaces}}{{if $i}} &middot; {{end}}<a class="mono" href="/workspaces/{{pathesc $ws.Prefix}}">{{$ws.Prefix}}</a>{{end}}
 &mdash; token, credentials &amp; gate settings</p>
 {{end}}
 <div class="toolbar">

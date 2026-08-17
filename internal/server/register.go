@@ -25,6 +25,10 @@ type registerRow struct {
 	//                are forge-agnostic, so the name is unavailable
 	//   "available"  free to register
 	State string
+	// TakenBy names the other forge holding the prefix when State is
+	// "taken" — with three forges the collision is no longer exotic, so
+	// the row says exactly who has the name.
+	TakenBy string
 }
 
 // registerUser gates both registration routes: hosted mode only (a private
@@ -70,6 +74,7 @@ func (s *Server) registerRows(r *http.Request, u *store.User) ([]registerRow, er
 			return nil, err
 		case ws.Forge != u.Forge:
 			row.State = "taken"
+			row.TakenBy = providerLabel(ws.Forge)
 		case member[prefix]:
 			row.State = "member"
 		default:
@@ -131,15 +136,15 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		s.log.Info("workspace registered", "prefix", created.Prefix, "forge", created.Forge, "user", u.DisplayName)
 		// The onboarding page is the activation moment (D6): CI snippet
 		// with the token pre-filled and the waiting-for-first-upload state.
-		http.Redirect(w, r, "/workspaces/"+created.Prefix+"/setup", http.StatusSeeOther)
+		http.Redirect(w, r, workspaceURL(created.Prefix, "/setup"), http.StatusSeeOther)
 		return
 	}
 
 	if existing.Forge != u.Forge {
 		// Slugs are forge-agnostic ("prefix/repo" is the only key), so the
 		// same name on two forges cannot coexist as separate tenants.
-		http.Error(w, "this workspace name is already in use under another forge on this server",
-			http.StatusConflict)
+		http.Error(w, "this workspace name is already registered under "+providerLabel(existing.Forge)+
+			" on this server, so it is unavailable here", http.StatusConflict)
 		return
 	}
 	// Someone else registered it first — a non-event by construction (D2):

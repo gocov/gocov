@@ -2,12 +2,20 @@ package server
 
 import (
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
 	"github.com/gocov/gocov/internal/hosted"
 	"github.com/gocov/gocov/internal/store"
 )
+
+// workspaceURL builds an in-site link to a workspace page. The prefix is
+// escaped into a single path segment because GitLab namespace paths nest
+// ("grp/sub" → "grp%2Fsub"); the router decodes it back via PathValue.
+func workspaceURL(prefix, suffix string) string {
+	return "/workspaces/" + url.PathEscape(prefix) + suffix
+}
 
 // Workspace settings page (M3/R3) — CLI parity in the UI: token rotation,
 // default branch, workspace-level forge credentials (D4) and gate
@@ -158,7 +166,7 @@ func (s *Server) handleWorkspaceSettings(w http.ResponseWriter, r *http.Request)
 		s.internalError(w, "updating workspace", err)
 		return
 	}
-	http.Redirect(w, r, "/workspaces/"+ws.Prefix+"?saved=1", http.StatusSeeOther)
+	http.Redirect(w, r, workspaceURL(ws.Prefix, "?saved=1"), http.StatusSeeOther)
 }
 
 // handleWorkspaceCredentials implements POST /workspaces/{prefix}/credentials
@@ -184,7 +192,7 @@ func (s *Server) handleWorkspaceCredentials(w http.ResponseWriter, r *http.Reque
 		s.internalError(w, "updating workspace credentials", err)
 		return
 	}
-	http.Redirect(w, r, "/workspaces/"+ws.Prefix+"?saved=1", http.StatusSeeOther)
+	http.Redirect(w, r, workspaceURL(ws.Prefix, "?saved=1"), http.StatusSeeOther)
 }
 
 // credentialsFromForm validates the forge-specific credential fields,
@@ -196,6 +204,12 @@ func credentialsFromForm(forgeName string, r *http.Request) (map[string]string, 
 		token := strings.TrimSpace(r.FormValue("token"))
 		if token == "" {
 			return nil, "A GitHub access token is required."
+		}
+		return map[string]string{"token": token}, ""
+	case "gitlab":
+		token := strings.TrimSpace(r.FormValue("token"))
+		if token == "" {
+			return nil, "A GitLab access token is required."
 		}
 		return map[string]string{"token": token}, ""
 	default: // bitbucket

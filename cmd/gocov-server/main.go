@@ -13,12 +13,14 @@
 //
 // Configuration via environment: DATABASE_URL (required), GOCOV_ADDR
 // (default :8080), GOCOV_BASE_URL (default http://localhost:8080), and
-// optionally GOCOV_BITBUCKET_USERNAME / GOCOV_BITBUCKET_APP_PASSWORD
-// and/or GOCOV_GITHUB_TOKEN for global bot credentials used by repos
-// without their own.
+// optionally GOCOV_BITBUCKET_USERNAME / GOCOV_BITBUCKET_APP_PASSWORD,
+// GOCOV_GITHUB_TOKEN and/or GOCOV_GITLAB_TOKEN for global bot
+// credentials used by repos without their own.
 // Setting GOCOV_OAUTH_BITBUCKET_KEY / GOCOV_OAUTH_BITBUCKET_SECRET (a
-// Bitbucket OAuth consumer) and/or GOCOV_OAUTH_GITHUB_KEY /
-// GOCOV_OAUTH_GITHUB_SECRET (a GitHub OAuth app) enables — and from then
+// Bitbucket OAuth consumer), GOCOV_OAUTH_GITHUB_KEY /
+// GOCOV_OAUTH_GITHUB_SECRET (a GitHub OAuth app) and/or
+// GOCOV_OAUTH_GITLAB_KEY / GOCOV_OAUTH_GITLAB_SECRET (a GitLab OAuth
+// application with read_user + read_api) enables — and from then
 // on requires — sign-in for the web UI, one login button per configured
 // forge; GOCOV_ALLOWED_WORKSPACES (comma-separated) optionally overrides
 // which workspace/org members may sign in.
@@ -58,10 +60,12 @@ import (
 	"github.com/gocov/gocov/internal/auth"
 	authbb "github.com/gocov/gocov/internal/auth/bitbucket"
 	authgh "github.com/gocov/gocov/internal/auth/github"
+	authgl "github.com/gocov/gocov/internal/auth/gitlab"
 	blobpg "github.com/gocov/gocov/internal/blobstore/postgres"
 	"github.com/gocov/gocov/internal/forge"
 	"github.com/gocov/gocov/internal/forge/bitbucket"
 	"github.com/gocov/gocov/internal/forge/github"
+	"github.com/gocov/gocov/internal/forge/gitlab"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/secretbox"
 	"github.com/gocov/gocov/internal/server"
@@ -199,6 +203,10 @@ func serve() error {
 		defaultCreds["github"] = map[string]string{"token": ghToken}
 		log.Info("global github credentials configured")
 	}
+	if glToken := os.Getenv("GOCOV_GITLAB_TOKEN"); glToken != "" {
+		defaultCreds["gitlab"] = map[string]string{"token": glToken}
+		log.Info("global gitlab credentials configured")
+	}
 
 	githubApp, err := githubAppFromEnv(log)
 	if err != nil {
@@ -223,6 +231,14 @@ func serve() error {
 		log.Info("github sign-in enabled", "callback", strings.TrimSuffix(baseURL, "/")+"/oauth/github/callback")
 	case ghKey != "" || ghSecret != "":
 		log.Warn("GOCOV_OAUTH_GITHUB_KEY and GOCOV_OAUTH_GITHUB_SECRET must both be set; ignoring")
+	}
+	glKey, glSecret := os.Getenv("GOCOV_OAUTH_GITLAB_KEY"), os.Getenv("GOCOV_OAUTH_GITLAB_SECRET")
+	switch {
+	case glKey != "" && glSecret != "":
+		authProviders = append(authProviders, authgl.New(glKey, glSecret))
+		log.Info("gitlab sign-in enabled", "callback", strings.TrimSuffix(baseURL, "/")+"/oauth/gitlab/callback")
+	case glKey != "" || glSecret != "":
+		log.Warn("GOCOV_OAUTH_GITLAB_KEY and GOCOV_OAUTH_GITLAB_SECRET must both be set; ignoring")
 	}
 	if len(authProviders) == 0 {
 		log.Info("no sign-in provider configured; web UI stays open")
@@ -262,6 +278,7 @@ func serve() error {
 		Forges: map[string]forge.Factory{
 			"bitbucket": bitbucket.Factory,
 			"github":    github.Factory,
+			"gitlab":    gitlab.Factory,
 		},
 		BaseURL: baseURL,
 		Logger:  log,
