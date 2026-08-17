@@ -131,7 +131,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		s.log.Info("workspace registered", "prefix", created.Prefix, "forge", created.Forge, "user", u.DisplayName)
 		// The onboarding page is the activation moment (D6): CI snippet
 		// with the token pre-filled and the waiting-for-first-upload state.
-		http.Redirect(w, r, "/workspaces/"+created.Prefix+"/setup", http.StatusSeeOther)
+		http.Redirect(w, r, workspaceURL(created.Prefix, "/setup"), http.StatusSeeOther)
 		return
 	}
 

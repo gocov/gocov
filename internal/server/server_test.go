@@ -1688,3 +1688,98 @@ func TestPages(t *testing.T) {
 		t.Errorf("missing upload page: code=%d, want 404", rec.Code)
 	}
 }
+
+func TestGitLabNestedWorkspaceUpload(t *testing.T) {
+	// GitLab namespaces nest (D2): the workspace prefix is the registered
+	// namespace path — possibly a subgroup — and project slugs may carry
+	// further subgroup segments below it.
+	ctx := context.Background()
+	newGLFixture := func(t *testing.T, prefix string) *fixture {
+		t.Helper()
+		st := storemem.New()
+		ws := &store.Workspace{Forge: "gitlab", Prefix: prefix, Token: "ws-token", DefaultBranch: "main"}
+		if err := st.CreateWorkspace(ctx, ws); err != nil {
+			t.Fatal(err)
+		}
+		ff := forgefake.New()
+		cfg := Config{
+			Store:   st,
+			Blobs:   blobmem.New(),
+			Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
+			Forges:  map[string]forge.Factory{"gitlab": ff.Factory()},
+			BaseURL: "https://gocov.example",
+		}
+		return &fixture{srv: New(cfg), store: st, forge: ff}
+	}
+
+	t.Run("subgroup workspace accepts its projects", func(t *testing.T) {
+		f := newGLFixture(t, "grp/sub")
+		rec := doUpload(t, f, "ws-token", map[string]string{
+			"repo": "grp/sub/proj", "commit": "c1",
+		}, testProfile)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+		}
+		if _, err := f.store.RepoBySlug(ctx, "grp/sub/proj"); err != nil {
+			t.Errorf("repo not auto-registered: %v", err)
+		}
+	})
+
+	t.Run("project deeper below the workspace", func(t *testing.T) {
+		f := newGLFixture(t, "grp")
+		rec := doUpload(t, f, "ws-token", map[string]string{
+			"repo": "grp/sub/team/proj", "commit": "c1",
+		}, testProfile)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+		}
+	})
+
+	t.Run("segment boundary is enforced", func(t *testing.T) {
+		// "grp/subx" must not pass as being under workspace "grp/sub".
+		f := newGLFixture(t, "grp/sub")
+		rec := doUpload(t, f, "ws-token", map[string]string{
+			"repo": "grp/subx/proj", "commit": "c1",
+		}, testProfile)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("status = %d, want 403; body = %s", rec.Code, rec.Body)
+		}
+	})
+
+	t.Run("nested name segments are validated", func(t *testing.T) {
+		f := newGLFixture(t, "grp")
+		for _, slug := range []string{"grp/sub/../victim", "grp/sub//proj", "grp/sub/"} {
+			rec := doUpload(t, f, "ws-token", map[string]string{
+				"repo": slug, "commit": "c1",
+			}, testProfile)
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("%s: status = %d, want 400; body = %s", slug, rec.Code, rec.Body)
+			}
+		}
+		if repos, _ := f.store.ListRepos(ctx); len(repos) != 0 {
+			t.Errorf("rejected uploads must not create repos, got %v", repos)
+		}
+	})
+}
+
+func TestValidRepoName(t *testing.T) {
+	tests := []struct {
+		forge, name string
+		want        bool
+	}{
+		{"bitbucket", "widgets", true},
+		{"bitbucket", "sub/widgets", false},
+		{"github", "sub/widgets", false},
+		{"gitlab", "widgets", true},
+		{"gitlab", "sub/widgets", true},
+		{"gitlab", "sub/team/widgets", true},
+		{"gitlab", "sub//widgets", false},
+		{"gitlab", "sub/../widgets", false},
+		{"gitlab", "", false},
+	}
+	for _, tt := range tests {
+		if got := validRepoName(tt.forge, tt.name); got != tt.want {
+			t.Errorf("validRepoName(%q, %q) = %v, want %v", tt.forge, tt.name, got, tt.want)
+		}
+	}
+}

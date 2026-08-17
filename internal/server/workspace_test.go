@@ -431,3 +431,73 @@ func TestSetupPageHostedOmitsServer(t *testing.T) {
 		t.Errorf("onboarding should not use go run @latest:\n%s", body)
 	}
 }
+
+// TestGitLabSubgroupWorkspace covers D2 end to end at the UI layer: a
+// workspace registered at subgroup depth ("grp/sub") admits its member,
+// serves its pages behind a %2F-encoded prefix, and scopes visibility to
+// projects below the subgroup.
+func TestGitLabSubgroupWorkspace(t *testing.T) {
+	ctx := context.Background()
+	st := storemem.New()
+	ws := &store.Workspace{Forge: "gitlab", Prefix: "grp/sub", Token: "ws-secret", DefaultBranch: "main"}
+	if err := st.CreateWorkspace(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+	repo := &store.Repo{Forge: "gitlab", Slug: "grp/sub/proj", Token: "repo-token", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	other := &store.Repo{Forge: "gitlab", Slug: "grp/elsewhere", Token: "other-token", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	f := &fixture{
+		srv: New(Config{
+			Store:   st,
+			Blobs:   blobmem.New(),
+			Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
+			Forges:  map[string]forge.Factory{"gitlab": forgefake.New().Factory()},
+			BaseURL: "https://gocov.example",
+			Auths: []auth.Provider{&fakeProvider{name: "gitlab", identity: &auth.Identity{
+				ForgeUUID:   "12345",
+				DisplayName: "Jane Dev",
+				Email:       "jane@example.com",
+				// The forge reports the subgroup's full path, not its root.
+				Workspaces: []string{"grp/sub", "janedev"},
+			}}},
+		}),
+		store: st,
+	}
+	sess := signInVia(t, f, "gitlab")
+
+	// The settings and setup pages live behind the %2F-encoded prefix.
+	for _, path := range []string{"/workspaces/grp%2Fsub", "/workspaces/grp%2Fsub/setup"} {
+		rec := get(f, path, sess)
+		if rec.Code != http.StatusOK {
+			t.Errorf("GET %s: status = %d, want 200", path, rec.Code)
+		}
+	}
+	// The raw-slash form must not resolve to the workspace pages.
+	if rec := get(f, "/workspaces/grp/sub", sess); rec.Code != http.StatusNotFound {
+		t.Errorf("raw-slash workspace path: status = %d, want 404", rec.Code)
+	}
+
+	// Membership at subgroup depth scopes repo visibility: the subgroup's
+	// project is visible, the sibling project outside it is not.
+	if rec := get(f, "/repos/grp/sub/proj", sess); rec.Code != http.StatusOK {
+		t.Errorf("member repo page: status = %d, want 200", rec.Code)
+	}
+	if rec := get(f, "/repos/grp/elsewhere", sess); rec.Code != http.StatusNotFound {
+		t.Errorf("non-member repo page: status = %d, want 404", rec.Code)
+	}
+
+	// The setup page renders the GitLab snippet, not a Bitbucket pipe.
+	rec := get(f, "/workspaces/grp%2Fsub/setup", sess)
+	body := rec.Body.String()
+	if !strings.Contains(body, ".gitlab-ci.yml") || !strings.Contains(body, "sha256sum") {
+		t.Error("setup page must render the GitLab CI snippet with checksum verification")
+	}
+	if strings.Contains(body, "bitbucket-pipelines.yml") {
+		t.Error("setup page must not render the Bitbucket snippet for a gitlab workspace")
+	}
+}

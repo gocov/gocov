@@ -131,6 +131,9 @@ func main() {
 			BitbucketGrantAccount: "gocov-bot", BitbucketRefreshToken: "rt"},
 		{Forge: "bitbucket", Prefix: "bb-broken", Token: "bb-broken-token", DefaultBranch: "main",
 			BitbucketGrantAccount: "gocov-bot", BitbucketRefreshToken: "rt", BitbucketGrantBroken: true},
+		// A GitLab workspace at subgroup depth, for the setup page's
+		// .gitlab-ci.yml snippet and the %2F-encoded workspace routes.
+		{Forge: "gitlab", Prefix: "gl-group/platform", Token: "gl-token", DefaultBranch: "main"},
 	} {
 		if err := st.CreateWorkspace(ctx, ws); err != nil {
 			log.Fatal(err)
@@ -143,9 +146,10 @@ func main() {
 		auths = []auth.Provider{
 			devAuth{forge: "bitbucket", workspaces: []string{"acme", "personal", "bb-connected", "bb-broken"}},
 			devAuth{forge: "github", workspaces: []string{"gh-new", "gh-connected", "gh-broken"}},
+			devAuth{forge: "gitlab", workspaces: []string{"gl-group/platform", "gl-personal"}},
 		}
 		hosted = true
-		log.Println("preview auth on: sign-in via bitbucket lands in acme, via github in the gh-* workspaces")
+		log.Println("preview auth on: sign-in via bitbucket lands in acme, via github in the gh-* workspaces, via gitlab in gl-group/platform")
 	}
 	srv := server.New(server.Config{
 		Store: st, Blobs: blobmem.New(),
@@ -153,6 +157,7 @@ func main() {
 		Forges: map[string]forge.Factory{
 			"bitbucket": forgefake.New().Factory(),
 			"github":    forgefake.New().Factory(),
+			"gitlab":    forgefake.New().Factory(),
 		},
 		BaseURL:          "http://localhost:8099",
 		Auths:            auths,

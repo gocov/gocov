@@ -115,6 +115,7 @@ type loginProvider struct {
 var providerLabels = map[string]string{
 	"bitbucket": "Bitbucket",
 	"github":    "GitHub",
+	"gitlab":    "GitLab",
 }
 
 func providerLabel(name string) string {
@@ -356,11 +357,28 @@ func (s *Server) allowedWorkspaceSet(r *http.Request) (map[string]bool, error) {
 		return nil, err
 	}
 	for _, repo := range repos {
-		if prefix, _, ok := strings.Cut(repo.Slug, "/"); ok {
+		for _, prefix := range slugPrefixes(repo.Slug) {
 			set[prefix] = true
 		}
 	}
 	return set, nil
+}
+
+// slugPrefixes returns every slash-boundary prefix of a repo slug,
+// longest first: "a/b/c" → ["a/b", "a"]. GitLab namespaces nest, so a
+// repo's workspace can sit at any depth (a registered subgroup path is a
+// workspace of its own); Bitbucket and GitHub slugs only ever have the
+// single-segment prefix.
+func slugPrefixes(slug string) []string {
+	var out []string
+	for i := len(slug); ; {
+		j := strings.LastIndex(slug[:i], "/")
+		if j < 0 {
+			return out
+		}
+		out = append(out, slug[:j])
+		i = j
+	}
 }
 
 // syncMemberships persists the user's workspace memberships (M2/D2): the
@@ -398,12 +416,18 @@ type repoScope struct {
 }
 
 // allows reports whether a namespaced repo slug falls within the scope.
+// Any slash-boundary prefix may carry the membership — a GitLab workspace
+// registered at subgroup depth covers the projects below it.
 func (rs repoScope) allows(slug string) bool {
 	if !rs.scoped {
 		return true
 	}
-	prefix, _, _ := strings.Cut(slug, "/")
-	return rs.prefixes[prefix]
+	for _, prefix := range slugPrefixes(slug) {
+		if rs.prefixes[prefix] {
+			return true
+		}
+	}
+	return false
 }
 
 // userScope resolves the request user's workspace membership into a scope.

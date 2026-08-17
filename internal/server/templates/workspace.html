@@ -1,7 +1,7 @@
 {{define "title"}}gocov — {{.Workspace.Prefix}} settings{{end}}
 {{define "content"}}
 <h1>Workspace <span class="mono">{{.Workspace.Prefix}}</span></h1>
-<p class="sub">{{.ForgeLabel}} &middot; <a href="/workspaces/{{.Workspace.Prefix}}/setup">Setup instructions</a></p>
+<p class="sub">{{.ForgeLabel}} &middot; <a href="/workspaces/{{pathesc .Workspace.Prefix}}/setup">Setup instructions</a></p>
 
 {{with .Notice}}<p class="notice">{{.}}</p>{{end}}
 {{with .Error}}<p class="notice fail">{{.}}</p>{{end}}
@@ -20,7 +20,7 @@
   <h2>Upload token</h2>
   <p class="sub">Authorizes uploads for every repo under <code>{{.Workspace.Prefix}}/</code>.
   It was shown once at registration; if it is lost or leaked, rotate it.</p>
-  <form method="post" action="/workspaces/{{.Workspace.Prefix}}/rotate-token"
+  <form method="post" action="/workspaces/{{pathesc .Workspace.Prefix}}/rotate-token"
         data-confirm="Rotate the upload token? The current token stops working immediately and CI must be updated.">
     <button class="btn" type="submit">Rotate token</button>
   </form>
@@ -28,7 +28,7 @@
 
 <div class="card pad">
   <h2>Defaults &amp; coverage gate</h2>
-  <form method="post" action="/workspaces/{{.Workspace.Prefix}}/settings">
+  <form method="post" action="/workspaces/{{pathesc .Workspace.Prefix}}/settings">
     <p><label>Default branch<br>
       <input class="input" type="text" name="default_branch" value="{{.Workspace.DefaultBranch}}"></label></p>
     <p><label>Min total coverage %<br>
@@ -71,7 +71,7 @@
   {{end}}
   {{end}}
   {{if .GitHubAppConnected}}
-  <form method="post" action="/workspaces/{{.Workspace.Prefix}}/github/disconnect"
+  <form method="post" action="/workspaces/{{pathesc .Workspace.Prefix}}/github/disconnect"
         data-confirm="Disconnect the GitHub App? Statuses and comments fall back to configured tokens, or are skipped.">
     <button class="btn" type="submit">Disconnect</button>
   </form>
@@ -97,11 +97,11 @@
   <span class="chip plain">not connected</span></p>
   {{end}}
   {{if or (not .BBGrantAccount) .BBGrantBroken}}
-  <p><a class="btn primary" href="/workspaces/{{.Workspace.Prefix}}/bitbucket/connect">
+  <p><a class="btn primary" href="/workspaces/{{pathesc .Workspace.Prefix}}/bitbucket/connect">
     {{if .BBGrantBroken}}Reconnect workspace{{else}}Connect workspace{{end}}</a></p>
   {{end}}
   {{if .BBGrantAccount}}
-  <form method="post" action="/workspaces/{{.Workspace.Prefix}}/bitbucket/disconnect"
+  <form method="post" action="/workspaces/{{pathesc .Workspace.Prefix}}/bitbucket/disconnect"
         data-confirm="Disconnect the workspace? Statuses and comments fall back to configured credentials, or are skipped.">
     <button class="btn" type="submit">Disconnect</button>
   </form>
@@ -115,11 +115,17 @@
   insights on this workspace&rsquo;s repos when a repo has none of its own.
   {{if .CredsConfigured}}<span class="chip pass">configured &#10003;</span>
   {{else}}<span class="chip plain">not configured</span>{{end}}</p>
-  <form method="post" action="/workspaces/{{.Workspace.Prefix}}/credentials">
+  <form method="post" action="/workspaces/{{pathesc .Workspace.Prefix}}/credentials">
     {{if eq .Workspace.Forge "github"}}
     <p><label>Access token<br>
       <input class="input" type="password" name="token" autocomplete="new-password"
              placeholder="{{if .CredsConfigured}}enter a new token to replace{{else}}ghp_&hellip;{{end}}"></label></p>
+    {{else if eq .Workspace.Forge "gitlab"}}
+    <p><label>Access token<br>
+      <input class="input" type="password" name="token" autocomplete="new-password"
+             placeholder="{{if .CredsConfigured}}enter a new token to replace{{else}}glpat-&hellip;{{end}}"></label></p>
+    <p class="muted small">A project or group access token with the <code>api</code> scope
+    (a personal access token works too).</p>
     {{else}}
     <p><label>Username<br>
       <input class="input" type="text" name="username" autocomplete="off"></label></p>

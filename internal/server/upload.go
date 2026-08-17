@@ -570,26 +570,28 @@ func (s *Server) connectedForge(ctx context.Context, ws *store.Workspace, forgeN
 }
 
 // repoWorkspace returns the workspace owning the slug's prefix, nil when
-// there is none. A lookup failure only degrades down the credential
+// there is none. Prefixes are tried longest first, so a repo below a
+// registered GitLab subgroup resolves to that subgroup's workspace, not a
+// same-named ancestor. A lookup failure only degrades down the credential
 // chain — forge surfaces are best-effort everywhere else too. The forge
 // must match: prefixes are globally unique, and a same-named workspace
 // on another forge must not lend its secrets or its installation.
 func (s *Server) repoWorkspace(ctx context.Context, slug, forgeName string) *store.Workspace {
-	prefix, _, ok := strings.Cut(slug, "/")
-	if !ok {
-		return nil
-	}
-	ws, err := s.store.WorkspaceByPrefix(ctx, prefix)
-	if err != nil {
-		if !errors.Is(err, store.ErrNotFound) {
-			s.log.Error("workspace lookup", "repo", slug, "err", err)
+	for _, prefix := range slugPrefixes(slug) {
+		ws, err := s.store.WorkspaceByPrefix(ctx, prefix)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
 		}
-		return nil
+		if err != nil {
+			s.log.Error("workspace lookup", "repo", slug, "err", err)
+			return nil
+		}
+		if ws.Forge != forgeName {
+			return nil
+		}
+		return ws
 	}
-	if ws.Forge != forgeName {
-		return nil
-	}
-	return ws
+	return nil
 }
 
 // forgeFromCreds builds a forge client for the named forge with the given
@@ -690,6 +692,32 @@ func (s *Server) lookupUploadToken(w http.ResponseWriter, r *http.Request, token
 // segment, conservative charset, sane length.
 var repoNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}$`)
 
+// maxRepoNameSegments bounds a GitLab repo name's depth below the
+// workspace; GitLab itself caps group nesting at 20 levels.
+const maxRepoNameSegments = 21
+
+// validRepoName validates the repo part of a workspace-token slug.
+// GitLab projects can sit in subgroups below the registered namespace, so
+// a gitlab name may span several path segments; other forges take exactly
+// one.
+func validRepoName(forgeName, name string) bool {
+	segments := strings.Split(name, "/")
+	if forgeName != "gitlab" && len(segments) != 1 {
+		return false
+	}
+	if len(segments) > maxRepoNameSegments {
+		return false
+	}
+	for _, s := range segments {
+		// repoNameRe's charset admits "." and ".." — as path segments they
+		// are traversal, not names.
+		if s == "." || s == ".." || !repoNameRe.MatchString(s) {
+			return false
+		}
+	}
+	return true
+}
+
 // commitRe bounds commit identifiers: they appear in forge API paths and
 // in blobstore cache keys, so separators are not welcome.
 var commitRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
@@ -719,13 +747,13 @@ func (s *Server) resolveUploadRepo(w http.ResponseWriter, r *http.Request, repo 
 		httpError(w, http.StatusBadRequest, "workspace tokens require the repo field")
 		return nil, false, false
 	}
-	prefix, name, found := strings.Cut(slug, "/")
-	if !found || prefix != ws.Prefix {
+	name, matched := strings.CutPrefix(slug, ws.Prefix+"/")
+	if !matched {
 		httpError(w, http.StatusForbidden, "token is for workspace %q, not %q", ws.Prefix, slug)
 		return nil, false, false
 	}
-	if !repoNameRe.MatchString(name) {
-		httpError(w, http.StatusBadRequest, "invalid repo name %q: want %s/<name> with a single path segment", slug, ws.Prefix)
+	if !validRepoName(ws.Forge, name) {
+		httpError(w, http.StatusBadRequest, "invalid repo name %q under workspace %q", slug, ws.Prefix)
 		return nil, false, false
 	}
 

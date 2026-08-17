@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -154,6 +155,9 @@ func New(cfg Config) *Server {
 		// asset appends a content-derived version so browsers refetch
 		// embedded assets after a server upgrade despite long cache TTLs.
 		"asset": func(path string) string { return path + "?v=" + assetVer },
+		// pathesc encodes a value into a single URL path segment; GitLab
+		// workspace prefixes contain slashes and must ride as %2F.
+		"pathesc": url.PathEscape,
 	}
 	// Every page is its own template set sharing the layout and partials,
 	// so pages can define "content" without colliding.

@@ -111,6 +111,52 @@ func TestDetectBuild(t *testing.T) {
 			want: buildInfo{Commit: "deadbeef"},
 		},
 		{
+			name: "gitlab ci branch pipeline",
+			env: map[string]string{
+				"GITLAB_CI":        "true",
+				"CI_PROJECT_PATH":  "acme/widgets",
+				"CI_COMMIT_SHA":    "abc123",
+				"CI_COMMIT_BRANCH": "main",
+			},
+			git:  map[string]string{"rev-parse HEAD": "should-not-be-used"},
+			want: buildInfo{Repo: "acme/widgets", Commit: "abc123", Branch: "main"},
+		},
+		{
+			// Merge request pipeline: CI_COMMIT_BRANCH is empty, the source
+			// branch name carries the branch and the IID the MR id.
+			name: "gitlab ci merge request pipeline",
+			env: map[string]string{
+				"GITLAB_CI":                           "true",
+				"CI_PROJECT_PATH":                     "grp/sub/proj",
+				"CI_COMMIT_SHA":                       "headsha",
+				"CI_MERGE_REQUEST_SOURCE_BRANCH_NAME": "feature/x",
+				"CI_MERGE_REQUEST_IID":                "42",
+			},
+			want: buildInfo{Repo: "grp/sub/proj", Commit: "headsha", Branch: "feature/x", PRID: "42"},
+		},
+		{
+			// Merged-results pipeline: CI_COMMIT_SHA is a transient merged
+			// commit; the source branch SHA names the real head and wins.
+			name: "gitlab ci merged results pipeline",
+			env: map[string]string{
+				"GITLAB_CI":                           "true",
+				"CI_PROJECT_PATH":                     "acme/widgets",
+				"CI_COMMIT_SHA":                       "mergesha",
+				"CI_MERGE_REQUEST_SOURCE_BRANCH_SHA":  "headsha",
+				"CI_MERGE_REQUEST_SOURCE_BRANCH_NAME": "feature/x",
+				"CI_MERGE_REQUEST_IID":                "42",
+			},
+			want: buildInfo{Repo: "acme/widgets", Commit: "headsha", Branch: "feature/x", PRID: "42"},
+		},
+		{
+			// CI_* variables in a developer shell must not be trusted
+			// without the GITLAB_CI marker.
+			name: "gitlab env ignored outside gitlab ci",
+			env:  map[string]string{"CI_PROJECT_PATH": "acme/widgets"},
+			git:  map[string]string{"rev-parse HEAD": "deadbeef"},
+			want: buildInfo{Commit: "deadbeef"},
+		},
+		{
 			name: "no env no git",
 			env:  map[string]string{},
 			git:  map[string]string{},

@@ -38,8 +38,8 @@ type gitFunc func(args ...string) (string, error)
 type readFileFunc func(path string) ([]byte, error)
 
 // detectBuild resolves build metadata from the CI environment — Bitbucket
-// Pipelines or GitHub Actions variables — falling back to git for
-// anything missing.
+// Pipelines, GitHub Actions or GitLab CI variables — falling back to git
+// for anything missing.
 func detectBuild(env envFunc, git gitFunc, readFile readFileFunc) buildInfo {
 	b := buildInfo{
 		Repo:   env("BITBUCKET_REPO_FULL_NAME"),
@@ -48,6 +48,7 @@ func detectBuild(env envFunc, git gitFunc, readFile readFileFunc) buildInfo {
 		PRID:   env("BITBUCKET_PR_ID"),
 	}
 	b.fill(githubBuild(env, readFile))
+	b.fill(gitlabBuild(env))
 	if b.Commit == "" {
 		if out, err := git("rev-parse", "HEAD"); err == nil {
 			b.Commit = out
@@ -111,6 +112,32 @@ func githubBuild(env envFunc, readFile readFileFunc) buildInfo {
 				}
 			}
 		}
+	}
+	return b
+}
+
+// gitlabBuild reads GitLab CI environment variables. CI_COMMIT_BRANCH is
+// empty in merge request pipelines, where the source branch name carries
+// the branch instead. The known trap (a cousin of GitHub's merge-commit
+// trap): in merged-results pipelines CI_COMMIT_SHA points at a transient
+// merged commit no status or comment can reach — when
+// CI_MERGE_REQUEST_SOURCE_BRANCH_SHA is set, it names the real head and
+// wins.
+func gitlabBuild(env envFunc) buildInfo {
+	if env("GITLAB_CI") == "" {
+		return buildInfo{}
+	}
+	b := buildInfo{
+		Repo:   env("CI_PROJECT_PATH"),
+		Commit: env("CI_COMMIT_SHA"),
+		Branch: env("CI_COMMIT_BRANCH"),
+		PRID:   env("CI_MERGE_REQUEST_IID"),
+	}
+	if sha := env("CI_MERGE_REQUEST_SOURCE_BRANCH_SHA"); sha != "" {
+		b.Commit = sha
+	}
+	if b.Branch == "" {
+		b.Branch = env("CI_MERGE_REQUEST_SOURCE_BRANCH_NAME")
 	}
 	return b
 }

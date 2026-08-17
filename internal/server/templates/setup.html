@@ -2,7 +2,7 @@
 {{define "content"}}
 <h1>Get coverage flowing</h1>
 <p class="sub">Workspace <code>{{.Workspace.Prefix}}</code> on {{.ForgeLabel}} &middot;
-<a href="/workspaces/{{.Workspace.Prefix}}">Settings</a></p>
+<a href="/workspaces/{{pathesc .Workspace.Prefix}}">Settings</a></p>
 
 {{if and .BitbucketConnect (not .BBGrantAccount)}}
 <div class="card pad">
@@ -11,7 +11,7 @@
   manual credentials. Posts appear as the connecting account &mdash; use a bot account if you
   have one. The upload steps below are still needed &mdash; the connection covers the
   reporting side.</p>
-  <p><a class="btn primary" href="/workspaces/{{.Workspace.Prefix}}/bitbucket/connect">Connect workspace</a></p>
+  <p><a class="btn primary" href="/workspaces/{{pathesc .Workspace.Prefix}}/bitbucket/connect">Connect workspace</a></p>
 </div>
 {{end}}
 
@@ -31,6 +31,10 @@
   <p class="sub">In your GitHub org or repo: <em>Settings &rarr; Secrets and variables &rarr;
   Actions</em>. Add <code>GOCOV_TOKEN</code> as a secret{{if not .ServerImplicit}}
   and <code>GOCOV_SERVER</code> as a variable{{end}}:</p>
+  {{else if eq .Workspace.Forge "gitlab"}}
+  <p class="sub">In your GitLab group or project: <em>Settings &rarr; CI/CD &rarr;
+  Variables</em>. Add <code>GOCOV_TOKEN</code>, marked masked{{if not .ServerImplicit}},
+  and <code>GOCOV_SERVER</code>{{end}}:</p>
   {{else}}
   <p class="sub">In Bitbucket: <em>Workspace settings &rarr; Workspace variables</em>.
   Add <code>GOCOV_TOKEN</code>, marked secured{{if not .ServerImplicit}}, and
@@ -54,6 +58,24 @@ GOCOV_SERVER={{.BaseURL}}{{end}}</code></pre>
   env:
     GOCOV_TOKEN: ${{"{{"}} secrets.GOCOV_TOKEN {{"}}"}}{{if not .ServerImplicit}}
     GOCOV_SERVER: ${{"{{"}} vars.GOCOV_SERVER {{"}}"}}{{end}}</code></pre>
+  {{else if eq .Workspace.Forge "gitlab"}}
+  <p class="sub">In your <code>.gitlab-ci.yml</code> — the <code>workflow</code> rules run
+  the job on merge requests and the default branch without duplicate pipelines, and the
+  checksum line pins the binary you download:</p>
+  <pre><code id="setup-snippet">workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+coverage:
+  image: golang:1.23
+  script:
+    - go test ./... -covermode=atomic -coverprofile=coverage.out
+    - curl -fsSLO https://github.com/gocov/gocov/releases/download/v0.9.0/gocov-linux-amd64
+    - curl -fsSL https://github.com/gocov/gocov/releases/download/v0.9.0/checksums.txt
+      | grep ' gocov-linux-amd64$' | sha256sum -c -
+    - chmod +x gocov-linux-amd64
+    - ./gocov-linux-amd64 upload coverage.out</code></pre>
   {{else}}
   <p class="sub">The full <code>bitbucket-pipelines.yml</code> — <code>branches</code> and
   <code>pull-requests</code> share one step so a PR build runs once, not twice:</p>
@@ -100,7 +122,7 @@ pipelines:
 </div>
 {{else}}
 <div class="notice" id="setup-status"
-     hx-get="/workspaces/{{.Workspace.Prefix}}/setup/status"
+     hx-get="/workspaces/{{pathesc .Workspace.Prefix}}/setup/status"
      hx-trigger="every 3s" hx-swap="outerHTML">
   Waiting for your first upload&hellip; this page updates by itself.
 </div>
