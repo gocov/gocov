@@ -113,6 +113,13 @@ func mergeFile(path string, parts []FileCoverage) (FileCoverage, bool) {
 		}
 	}
 	sort.Ints(uncovered)
+	// When parts disagree, the union of their uncovered lines can exceed the
+	// largest part's total (each part only saw its own changed lines), which
+	// would make CoveredLines negative. The distinct uncovered lines are all
+	// changed lines, so the total is at least that many.
+	if int64(len(uncovered)) > total {
+		total = int64(len(uncovered))
+	}
 	return FileCoverage{
 		Path:           path,
 		TotalLines:     total,

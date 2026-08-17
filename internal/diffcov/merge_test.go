@@ -87,6 +87,31 @@ func TestMerge(t *testing.T) {
 		}
 	})
 
+	t.Run("disjoint uncovered sets never make coverage negative", func(t *testing.T) {
+		// Parts disagree on a.go's changed lines and their uncovered sets are
+		// disjoint, so the union (13 lines) exceeds the larger total (10).
+		// CoveredLines must clamp at 0, not go negative, and the file is
+		// flagged as conflicted.
+		a := &Result{
+			Files:        []FileCoverage{{Path: "a.go", CoveredLines: 4, TotalLines: 10, UncoveredLines: []int{1, 2, 3, 4, 5, 6}}},
+			CoveredLines: 4, TotalLines: 10,
+		}
+		b := &Result{
+			Files:        []FileCoverage{{Path: "a.go", CoveredLines: 1, TotalLines: 8, UncoveredLines: []int{11, 12, 13, 14, 15, 16, 17}}},
+			CoveredLines: 1, TotalLines: 8,
+		}
+		m, conflicts := Merge(a, b)
+		if m.Files[0].CoveredLines < 0 || m.CoveredLines < 0 {
+			t.Errorf("covered lines went negative: file=%d total=%d", m.Files[0].CoveredLines, m.CoveredLines)
+		}
+		if m.Files[0].CoveredLines != 0 || m.Files[0].TotalLines != 13 {
+			t.Errorf("file = %+v, want 0/13 (union of 13 uncovered lines)", m.Files[0])
+		}
+		if !reflect.DeepEqual(conflicts, []string{"a.go"}) {
+			t.Errorf("conflicts = %v, want [a.go]", conflicts)
+		}
+	})
+
 	t.Run("file covered by one part drops from another's unmatched", func(t *testing.T) {
 		// Backend changed and covered a.go; the frontend part changed it too
 		// but its profile had no data, so it reported a.go unmatched.
