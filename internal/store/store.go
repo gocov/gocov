@@ -111,7 +111,12 @@ type Upload struct {
 	// PathPrefix maps profile paths to repo-relative paths (e.g. the Go
 	// module path), as sent with the upload.
 	PathPrefix string
-	CreatedAt  time.Time
+	// Part names the slice of the commit this upload covers (e.g. "backend",
+	// "frontend"). Uploads with no explicit part carry "default". The merged
+	// report reads the latest upload per (commit, part), so re-uploading a
+	// part replaces it rather than accumulating.
+	Part      string
+	CreatedAt time.Time
 }
 
 // User is a web UI account, identified by the forge account it signed in
@@ -141,6 +146,35 @@ type Session struct {
 	UserID    int64
 	CreatedAt time.Time
 	ExpiresAt time.Time
+}
+
+// CommitReport is the merged coverage of a commit, derived from the latest
+// upload of each part and recomputed on every upload. It is the source of
+// truth for status, gate, PR comment, insights, badge and trend, so a
+// commit whose parts arrive in separate CI jobs reports their combined
+// total rather than whichever part uploaded last. A commit with a single
+// upload has a single-part report equal to that upload.
+type CommitReport struct {
+	ID           int64
+	RepoID       int64
+	CommitSHA    string
+	Branch       string
+	PRID         string // empty when not a PR build
+	TotalPct     float64
+	CoveredStmts int64
+	TotalStmts   int64
+	// GateFailed marks reports that violated the coverage gate; they are
+	// excluded from comparison baselines, the same rule uploads carried.
+	GateFailed bool
+	// DiffCoverage is the merged diff coverage for PR commits; nil otherwise.
+	DiffCoverage *diffcov.Result
+	// PartCount is how many parts (distinct upload parts) fed the report.
+	PartCount int
+	// UploadID is the latest upload that fed this report; the trend links a
+	// point to its upload detail page through it.
+	UploadID  int64
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // UploadFile is per-file coverage within an upload. Blocks keep the full
@@ -220,9 +254,53 @@ type Store interface {
 	// ListBranchUploads is ListUploads restricted to one branch.
 	ListBranchUploads(ctx context.Context, repoID int64, branch string, limit int) ([]*Upload, error)
 	UploadFiles(ctx context.Context, uploadID int64) ([]*UploadFile, error)
-	// LatestUpload returns the most recent upload for a branch.
-	LatestUpload(ctx context.Context, repoID int64, branch string) (*Upload, error)
-	// LatestPassedUpload returns the most recent upload for a branch that
-	// did not fail the coverage gate; used as a comparison baseline.
-	LatestPassedUpload(ctx context.Context, repoID int64, branch string) (*Upload, error)
+	// LatestUploadsPerPart returns the most recent upload for each distinct
+	// part of a commit — the set the merged report is computed from. A
+	// re-uploaded part supersedes its earlier uploads here.
+	LatestUploadsPerPart(ctx context.Context, repoID int64, commitSHA string) ([]*Upload, error)
+	// WithCommitReportTx serializes the recompute of one commit's merged
+	// report against concurrent uploads of the same commit and runs fn's
+	// reads and upsert as one atomic, locked unit — so a slow recompute can
+	// neither interleave with nor clobber a newer one and drop a part. fn
+	// must route all its store access through the passed CommitTx. Locks on
+	// different commits never contend.
+	WithCommitReportTx(ctx context.Context, repoID int64, commitSHA string, fn func(ctx context.Context, tx CommitTx) error) error
+	// UpsertCommitReport creates or replaces the merged report for
+	// (repo, commit), setting cr.ID, cr.CreatedAt and cr.UpdatedAt. The
+	// first-seen creation time is preserved across recomputes.
+	UpsertCommitReport(ctx context.Context, cr *CommitReport) error
+	// CommitReport returns the merged report for a commit, or ErrNotFound.
+	CommitReport(ctx context.Context, repoID int64, commitSHA string) (*CommitReport, error)
+	// LatestCommitReport returns the most recent merged report on a branch.
+	LatestCommitReport(ctx context.Context, repoID int64, branch string) (*CommitReport, error)
+	// LatestPassedCommitReport returns the most recent gate-passing merged
+	// report on a branch, skipping excludeCommit (the commit being uploaded,
+	// whose own in-progress report must not serve as its baseline). Used as
+	// the delta and gate-drop baseline.
+	LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*CommitReport, error)
+	// ListBranchCommitReports returns merged reports on a branch newest
+	// first; limit <= 0 means all. Feeds the coverage trend.
+	ListBranchCommitReports(ctx context.Context, repoID int64, branch string, limit int) ([]*CommitReport, error)
+	// TryPushStatus serializes forge status/PR-comment pushes for one commit
+	// and runs push only if version is at least the last successfully pushed
+	// version, recording version only after push returns nil. It closes the
+	// window where a slow older push lands after a newer one, and a failed
+	// push leaves the version untouched so a later part retries. push runs
+	// with the per-commit lock held and does the forge HTTP itself, bounded
+	// by ctx. Returns whether push ran.
+	TryPushStatus(ctx context.Context, repoID int64, commitSHA string, version int64, push func(context.Context) error) (pushed bool, err error)
+	// CommitParts returns the distinct part names uploaded for a commit —
+	// a cheap read (no blocks/diff) for the per-commit parts cap.
+	CommitParts(ctx context.Context, repoID int64, commitSHA string) ([]string, error)
+}
+
+// CommitTx is the store access available inside WithCommitReportTx. On
+// Postgres every call runs on the one locked transaction, so the recompute's
+// reads and its upsert are consistent and cannot deadlock on a second pooled
+// connection.
+type CommitTx interface {
+	LatestUploadsPerPart(ctx context.Context, repoID int64, commitSHA string) ([]*Upload, error)
+	UploadFiles(ctx context.Context, uploadID int64) ([]*UploadFile, error)
+	LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*CommitReport, error)
+	UpsertCommitReport(ctx context.Context, cr *CommitReport) error
 }

@@ -18,9 +18,14 @@ type Store struct {
 	upSeq      int64
 	wsSeq      int64
 	userSeq    int64
+	crSeq      int64
 	repos      map[int64]*store.Repo
 	uploads    map[int64]*store.Upload
 	files      map[int64][]*store.UploadFile // keyed by upload ID
+	reports    map[int64]*store.CommitReport // merged reports, keyed by report ID
+	crLocks    map[string]*sync.Mutex        // per-commit recompute locks
+	crPush     map[string]*sync.Mutex        // per-commit status-push locks
+	crStatus   map[string]int64              // last pushed status version, keyed repoID:sha
 	workspaces map[int64]*store.Workspace
 	users      map[int64]*store.User
 	sessions   map[string]*store.Session // keyed by token hash
@@ -33,6 +38,10 @@ func New() *Store {
 		repos:      map[int64]*store.Repo{},
 		uploads:    map[int64]*store.Upload{},
 		files:      map[int64][]*store.UploadFile{},
+		reports:    map[int64]*store.CommitReport{},
+		crLocks:    map[string]*sync.Mutex{},
+		crPush:     map[string]*sync.Mutex{},
+		crStatus:   map[string]int64{},
 		workspaces: map[int64]*store.Workspace{},
 		users:      map[int64]*store.User{},
 		sessions:   map[string]*store.Session{},
@@ -479,31 +488,182 @@ func (s *Store) ListBranchUploads(_ context.Context, repoID int64, branch string
 	return out, nil
 }
 
-func (s *Store) LatestUpload(_ context.Context, repoID int64, branch string) (*store.Upload, error) {
-	return s.latestUpload(repoID, branch, false)
-}
-
-func (s *Store) LatestPassedUpload(_ context.Context, repoID int64, branch string) (*store.Upload, error) {
-	return s.latestUpload(repoID, branch, true)
-}
-
-func (s *Store) latestUpload(repoID int64, branch string, passedOnly bool) (*store.Upload, error) {
+func (s *Store) LatestUploadsPerPart(_ context.Context, repoID int64, commitSHA string) ([]*store.Upload, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var latest *store.Upload
+	latest := map[string]*store.Upload{}
 	for _, u := range s.uploads {
-		if u.RepoID != repoID || u.Branch != branch {
+		if u.RepoID != repoID || u.CommitSHA != commitSHA {
 			continue
 		}
-		if passedOnly && u.GateFailed {
+		if cur, ok := latest[u.Part]; !ok || u.ID > cur.ID {
+			latest[u.Part] = u
+		}
+	}
+	out := make([]*store.Upload, 0, len(latest))
+	for _, u := range latest {
+		out = append(out, copyUpload(u))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+func (s *Store) WithCommitReportTx(ctx context.Context, repoID int64, commitSHA string, fn func(context.Context, store.CommitTx) error) error {
+	key := fmt.Sprintf("%d:%s", repoID, commitSHA)
+	s.mu.Lock()
+	m := s.crLocks[key]
+	if m == nil {
+		m = &sync.Mutex{}
+		s.crLocks[key] = m
+	}
+	s.mu.Unlock()
+	m.Lock()
+	defer m.Unlock()
+	// The store's own methods satisfy store.CommitTx; the per-commit mutex
+	// gives the same serialization the Postgres advisory lock does.
+	return fn(ctx, s)
+}
+
+func (s *Store) UpsertCommitReport(_ context.Context, cr *store.CommitReport) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	for _, existing := range s.reports {
+		if existing.RepoID == cr.RepoID && existing.CommitSHA == cr.CommitSHA {
+			// Preserve id and first-seen created_at across recomputes.
+			cr.ID = existing.ID
+			cr.CreatedAt = existing.CreatedAt
+			cr.UpdatedAt = now
+			s.reports[cr.ID] = copyCommitReport(cr)
+			return nil
+		}
+	}
+	s.crSeq++
+	cr.ID = s.crSeq
+	if cr.CreatedAt.IsZero() {
+		cr.CreatedAt = now
+	}
+	cr.UpdatedAt = now
+	s.reports[cr.ID] = copyCommitReport(cr)
+	return nil
+}
+
+func (s *Store) CommitReport(_ context.Context, repoID int64, commitSHA string) (*store.CommitReport, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, cr := range s.reports {
+		if cr.RepoID == repoID && cr.CommitSHA == commitSHA {
+			return copyCommitReport(cr), nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+func (s *Store) LatestCommitReport(_ context.Context, repoID int64, branch string) (*store.CommitReport, error) {
+	return s.latestCommitReport(repoID, branch, "", false)
+}
+
+func (s *Store) LatestPassedCommitReport(_ context.Context, repoID int64, branch, excludeCommit string) (*store.CommitReport, error) {
+	return s.latestCommitReport(repoID, branch, excludeCommit, true)
+}
+
+func (s *Store) latestCommitReport(repoID int64, branch, excludeCommit string, passedOnly bool) (*store.CommitReport, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var latest *store.CommitReport
+	for _, cr := range s.reports {
+		if cr.RepoID != repoID || cr.Branch != branch {
 			continue
 		}
-		if latest == nil || u.ID > latest.ID {
-			latest = u
+		if passedOnly && cr.GateFailed {
+			continue
+		}
+		if excludeCommit != "" && cr.CommitSHA == excludeCommit {
+			continue
+		}
+		if latest == nil || cr.ID > latest.ID {
+			latest = cr
 		}
 	}
 	if latest == nil {
 		return nil, store.ErrNotFound
 	}
-	return copyUpload(latest), nil
+	return copyCommitReport(latest), nil
+}
+
+func (s *Store) TryPushStatus(ctx context.Context, repoID int64, commitSHA string, version int64, push func(context.Context) error) (bool, error) {
+	key := fmt.Sprintf("%d:%s", repoID, commitSHA)
+	// Serialize the whole check-push-advance per commit, mirroring the
+	// Postgres advisory lock.
+	s.mu.Lock()
+	m := s.crPush[key]
+	if m == nil {
+		m = &sync.Mutex{}
+		s.crPush[key] = m
+	}
+	s.mu.Unlock()
+	m.Lock()
+	defer m.Unlock()
+
+	s.mu.Lock()
+	exists := false
+	for _, cr := range s.reports {
+		if cr.RepoID == repoID && cr.CommitSHA == commitSHA {
+			exists = true
+			break
+		}
+	}
+	cur := s.crStatus[key]
+	s.mu.Unlock()
+	if !exists {
+		return false, nil // no report to attach a status to
+	}
+	if version < cur {
+		return false, nil // a newer push already owns the status
+	}
+	if err := push(ctx); err != nil {
+		return false, err // version not advanced, so a retry can push
+	}
+	s.mu.Lock()
+	s.crStatus[key] = version
+	s.mu.Unlock()
+	return true, nil
+}
+
+func (s *Store) CommitParts(_ context.Context, repoID int64, commitSHA string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	seen := map[string]bool{}
+	var out []string
+	for _, u := range s.uploads {
+		if u.RepoID == repoID && u.CommitSHA == commitSHA && !seen[u.Part] {
+			seen[u.Part] = true
+			out = append(out, u.Part)
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) ListBranchCommitReports(_ context.Context, repoID int64, branch string, limit int) ([]*store.CommitReport, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []*store.CommitReport
+	for _, cr := range s.reports {
+		if cr.RepoID == repoID && cr.Branch == branch {
+			out = append(out, copyCommitReport(cr))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// copyCommitReport deep-copies a report so callers never alias the stored
+// DiffCoverage, matching the Postgres JSON round-trip.
+func copyCommitReport(cr *store.CommitReport) *store.CommitReport {
+	cp := *cr
+	cp.DiffCoverage = cr.DiffCoverage.Clone()
+	return &cp
 }

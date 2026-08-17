@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gocov/gocov/internal/diffcov"
 	"github.com/gocov/gocov/internal/forge"
@@ -22,6 +23,13 @@ import (
 
 // maxUploadBytes bounds the whole multipart request body.
 const maxUploadBytes = 64 << 20
+
+// maxPartsPerCommit caps how many distinct parts one commit's merged report
+// is built from. It bounds recompute cost (every upload re-reads and
+// re-merges every part under the lock) and catches the -part $CI_JOB_ID
+// mistake, where a varying part name accumulates parts without end. Well
+// above any real matrix.
+const maxPartsPerCommit = 50
 
 type uploadResponse struct {
 	ID           int64    `json:"id"`
@@ -38,6 +46,11 @@ type uploadResponse struct {
 	// Gate reports the coverage-gate outcome: "passed" or
 	// "failed: <reasons>". Omitted when the repo has no gate configured.
 	Gate string `json:"gate,omitempty"`
+
+	// Warnings carries non-fatal notices about how the merged report was
+	// built — e.g. a diff-coverage file merged conservatively because its
+	// parts disagreed. Omitted when there are none.
+	Warnings []string `json:"warnings,omitempty"`
 
 	// PR-only fields, set when pr_id was part of the upload.
 	DiffPct          *float64 `json:"diff_pct,omitempty"`
@@ -135,6 +148,41 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	prID := r.FormValue("pr_id")
 
+	// A part names one slice of the commit's coverage (backend, frontend,
+	// e2e, ...) uploaded from a separate CI job. It is normalized (trimmed
+	// and lowercased) before validation so the same logical part from
+	// different callers keys the same bucket; the API is called directly,
+	// not only through the CLI, so normalization lives here on the server.
+	// Omitting it keeps the historical single-upload behaviour: everything
+	// lands in "default".
+	part := strings.ToLower(strings.TrimSpace(r.FormValue("part")))
+	if part == "" {
+		part = "default"
+	} else if !partRe.MatchString(part) {
+		httpError(w, http.StatusBadRequest, "invalid part %q: want up to 64 alphanumeric, dot, dash or underscore characters starting with a letter or digit", part)
+		return
+	}
+
+	// Cap the distinct parts per commit before doing any work, so a runaway
+	// part name (e.g. -part $CI_JOB_ID) can't accumulate parts unbounded.
+	// Re-uploading an existing part is always allowed — it replaces.
+	if parts, err := s.store.CommitParts(r.Context(), repo.ID, commit); err != nil {
+		s.internalError(w, "counting commit parts", err)
+		return
+	} else if len(parts) >= maxPartsPerCommit {
+		isNew := true
+		for _, p := range parts {
+			if p == part {
+				isNew = false
+				break
+			}
+		}
+		if isNew {
+			httpError(w, http.StatusBadRequest, "commit %s already has %d coverage parts (the maximum); check that the upload's part name is stable across CI jobs", commit, len(parts))
+			return
+		}
+	}
+
 	file, _, err := r.FormFile("profile")
 	if err != nil {
 		httpError(w, http.StatusBadRequest, "missing file field: profile")
@@ -172,28 +220,15 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	covered, total := prof.Coverage()
 	totalPct := profile.Percent(covered, total)
 
-	// Delta vs the previous gate-passing upload on the same branch,
-	// falling back to the default branch for first-time feature branches.
-	// Gate-failing uploads never serve as a baseline.
-	var deltaPct *float64
-	prev, err := s.store.LatestPassedUpload(r.Context(), repo.ID, branch)
-	if errors.Is(err, store.ErrNotFound) && branch != repo.DefaultBranch {
-		prev, err = s.store.LatestPassedUpload(r.Context(), repo.ID, repo.DefaultBranch)
-	}
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		s.internalError(w, "loading previous upload", err)
-		return
-	}
-	if prev != nil {
-		d := totalPct - prev.TotalPct
-		deltaPct = &d
-	}
-
-	// The gate's drop rule always compares against the default branch, so
-	// a PR cannot lower coverage step by step within tolerance.
+	// The upload row keeps its own single-part gate result (its gate_failed
+	// column still feeds the per-upload web views); the response, forge
+	// status, gate and PR comment are driven by the merged report computed
+	// after the row is stored. The drop rule always compares against the
+	// default branch, so a PR cannot lower coverage step by step within
+	// tolerance.
 	var dropDelta *float64
 	if repo.Gate.MaxCoverageDrop != nil {
-		base, err := s.store.LatestPassedUpload(r.Context(), repo.ID, repo.DefaultBranch)
+		base, err := s.store.LatestPassedCommitReport(r.Context(), repo.ID, repo.DefaultBranch, commit)
 		if err != nil && !errors.Is(err, store.ErrNotFound) {
 			s.internalError(w, "loading gate baseline", err)
 			return
@@ -236,6 +271,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		DiffCoverage: diffResult,
 		GateFailed:   gate.failed(),
 		PathPrefix:   pathPrefix,
+		Part:         part,
 	}
 	files := make([]*store.UploadFile, 0, len(prof.Files))
 	for i := range prof.Files {
@@ -258,30 +294,230 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Recompute the commit's merged report from every part's latest upload
+	// and drive all outward-facing surfaces from it, so a commit uploaded
+	// in several parts reports its combined total, not the last part in.
+	rc, err := s.recomputeCommitReport(r.Context(), repo, upload)
+	if err != nil {
+		// The upload row is already committed; a recompute failure (including
+		// the bounded-timeout case) returns 500 deliberately so the CI client
+		// sees the upload didn't fully land. It self-heals: the next part's
+		// upload — or a retry of this one — recomputes the commit again.
+		s.internalError(w, "computing merged report", err)
+		return
+	}
+	merged, mergedDelta, mergedGate := rc.upload, rc.delta, rc.gate
+
 	resp := uploadResponse{
 		ID:           upload.ID,
-		TotalPct:     totalPct,
-		CoveredStmts: covered,
-		TotalStmts:   total,
-		DeltaPct:     deltaPct,
-		BuildStatus:  s.pushBuildStatus(r.Context(), fg, fgErr, repo, upload, deltaPct, gate),
-		CodeInsights: s.pushCodeInsights(r.Context(), fg, fgErr, repo, upload, deltaPct, gate),
+		TotalPct:     merged.TotalPct,
+		CoveredStmts: merged.CoveredStmts,
+		TotalStmts:   merged.TotalStmts,
+		DeltaPct:     mergedDelta,
 		RepoCreated:  repoCreated,
 		DiffStatus:   diffStatus,
-		PRComment:    s.pushPRComment(r.Context(), fg, fgErr, repo, upload, deltaPct, gate),
+		Warnings:     rc.warnings,
 	}
-	if gate.configured {
-		resp.Gate = gate.String()
+	if mergedGate.configured {
+		resp.Gate = mergedGate.String()
 	}
-	if diffResult != nil {
-		pct := diffResult.Percent()
+
+	// Forge status/insights/comment push after the locked recompute. Two
+	// parts of one commit can push concurrently, and forge latency could let
+	// an older push land last and pin the commit to a stale status. Serialize
+	// the push per commit and gate it on this upload's version (its id, which
+	// rises with the most-complete merged state): TryPushStatus runs the push
+	// only if it is not older than the last successful one, and records the
+	// version only after the push succeeds — so a failed push doesn't burn the
+	// version and a later part retries.
+	pushCtx, cancel := context.WithTimeout(r.Context(), statusPushTimeout)
+	defer cancel()
+	pushed, err := s.store.TryPushStatus(pushCtx, repo.ID, upload.CommitSHA, upload.ID, func(ctx context.Context) error {
+		resp.BuildStatus = s.pushBuildStatus(ctx, fg, fgErr, repo, merged, mergedDelta, mergedGate)
+		resp.CodeInsights = s.pushCodeInsights(ctx, fg, fgErr, repo, merged, mergedDelta, mergedGate)
+		resp.PRComment = s.pushPRComment(ctx, fg, fgErr, repo, merged, mergedDelta, mergedGate)
+		// The build status gates merges; if it didn't post, signal failure so
+		// the version isn't advanced and a later part retries. Insights and
+		// PR comment are best effort and don't hold back the version.
+		if strings.HasPrefix(resp.BuildStatus, "error") {
+			return errStatusPushFailed
+		}
+		return nil
+	})
+	switch {
+	case errors.Is(err, errStatusPushFailed):
+		// resp fields already carry the per-surface outcome; nothing to do.
+	case err != nil:
+		// Lock/tx failure: the push may not have run. Report it rather than
+		// leaving the fields blank.
+		s.log.Warn("status push lock", "repo", repo.Slug, "commit", upload.CommitSHA, "err", err)
+		if resp.BuildStatus == "" {
+			resp.BuildStatus = "error: " + err.Error()
+			resp.CodeInsights = "error: " + err.Error()
+		}
+	case !pushed:
+		resp.BuildStatus = "skipped: superseded"
+		resp.CodeInsights = "skipped: superseded"
+		if merged.PRID != "" {
+			resp.PRComment = "skipped: superseded"
+		}
+	}
+	if md := merged.DiffCoverage; md != nil {
+		pct := md.Percent()
 		resp.DiffPct = &pct
-		resp.DiffCoveredLines = &diffResult.CoveredLines
-		resp.DiffTotalLines = &diffResult.TotalLines
+		resp.DiffCoveredLines = &md.CoveredLines
+		resp.DiffTotalLines = &md.TotalLines
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// recomputeCommitReport rebuilds the merged report for the upload's commit
+// from the latest upload of every part, persists it, and returns the merged
+// view that drives the response and the forge side effects. It is
+// self-healing: because every upload recomputes the whole commit, a partial
+// early state (only the backend part in, say) is corrected in place as the
+// remaining parts arrive. The trade-off is a window in which the merged
+// numbers are incomplete — see the README's note on merged reports.
+//
+// The returned upload is synthetic: it carries the merged totals and diff
+// coverage to the existing push helpers, with the triggering upload's id so
+// the report card and PR comment link back to it.
+type mergedRecompute struct {
+	upload   *store.Upload
+	delta    *float64
+	gate     gateResult
+	warnings []string // surfaced to the uploader, e.g. conservative diff merges
+}
+
+// recomputeTimeout bounds a single recompute so a saturated connection pool
+// fails the upload fast instead of hanging a CI client indefinitely.
+const recomputeTimeout = 30 * time.Second
+
+// statusPushTimeout bounds the serialized forge push: TryPushStatus holds a
+// per-commit lock (and its connection) across the forge HTTP calls, so a
+// hung forge must not pin them.
+const statusPushTimeout = 20 * time.Second
+
+// errStatusPushFailed signals TryPushStatus that the build-status push did
+// not post, so the status version must not advance and a later part retries.
+// It never surfaces as an upload error — the response carries the per-surface
+// outcome.
+var errStatusPushFailed = errors.New("build status push failed")
+
+func (s *Server) recomputeCommitReport(ctx context.Context, repo *store.Repo, u *store.Upload) (*mergedRecompute, error) {
+	ctx, cancel := context.WithTimeout(ctx, recomputeTimeout)
+	defer cancel()
+
+	// The whole recompute — read every part, merge, upsert — runs inside one
+	// locked transaction, serialized per commit against concurrent uploads
+	// (parallel CI jobs are the point) so it cannot interleave with or
+	// clobber a newer recompute and drop a part.
+	var result *mergedRecompute
+	err := s.store.WithCommitReportTx(ctx, repo.ID, u.CommitSHA, func(ctx context.Context, tx store.CommitTx) error {
+		parts, err := tx.LatestUploadsPerPart(ctx, repo.ID, u.CommitSHA)
+		if err != nil {
+			return fmt.Errorf("loading commit parts: %w", err)
+		}
+
+		profiles := make([]*profile.Profile, 0, len(parts))
+		diffs := make([]*diffcov.Result, 0, len(parts))
+		for _, p := range parts {
+			files, err := tx.UploadFiles(ctx, p.ID)
+			if err != nil {
+				return fmt.Errorf("loading part files: %w", err)
+			}
+			prof := &profile.Profile{Files: make([]profile.File, 0, len(files))}
+			for _, f := range files {
+				prof.Files = append(prof.Files, profile.File{Path: f.Path, Blocks: f.Blocks})
+			}
+			profiles = append(profiles, prof)
+			if p.DiffCoverage != nil {
+				diffs = append(diffs, p.DiffCoverage)
+			}
+		}
+
+		merged := profile.Merge(profiles...)
+		covered, total := merged.Coverage()
+		totalPct := profile.Percent(covered, total)
+		mergedDiff, diffConflicts := diffcov.Merge(diffs...)
+		var warnings []string
+		if len(diffConflicts) > 0 {
+			warnings = append(warnings, fmt.Sprintf(
+				"diff coverage merged conservatively for %d changed file(s) whose parts disagree on their changed lines (%s); merged coverage is a safe lower bound",
+				len(diffConflicts), strings.Join(diffConflicts, ", ")))
+		}
+
+		// Delta vs the previous gate-passing merged report on the branch,
+		// falling back to the default branch for first-time feature branches.
+		// The commit's own report is skipped so an earlier part is never its
+		// own baseline.
+		var deltaPct *float64
+		prev, err := tx.LatestPassedCommitReport(ctx, repo.ID, u.Branch, u.CommitSHA)
+		if errors.Is(err, store.ErrNotFound) && u.Branch != repo.DefaultBranch {
+			prev, err = tx.LatestPassedCommitReport(ctx, repo.ID, repo.DefaultBranch, u.CommitSHA)
+		}
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("loading baseline report: %w", err)
+		}
+		if prev != nil {
+			d := totalPct - prev.TotalPct
+			deltaPct = &d
+		}
+
+		// The gate drop rule always compares against the default branch's
+		// latest passing merged report, so a PR cannot ratchet coverage down
+		// part by part within tolerance.
+		var dropDelta *float64
+		if repo.Gate.MaxCoverageDrop != nil {
+			base, err := tx.LatestPassedCommitReport(ctx, repo.ID, repo.DefaultBranch, u.CommitSHA)
+			if err != nil && !errors.Is(err, store.ErrNotFound) {
+				return fmt.Errorf("loading gate baseline report: %w", err)
+			}
+			if base != nil {
+				d := totalPct - base.TotalPct
+				dropDelta = &d
+			}
+		}
+
+		gate := evaluateGate(repo.Gate, totalPct, dropDelta, mergedDiff)
+
+		cr := &store.CommitReport{
+			RepoID:       repo.ID,
+			CommitSHA:    u.CommitSHA,
+			Branch:       u.Branch,
+			PRID:         u.PRID,
+			TotalPct:     totalPct,
+			CoveredStmts: covered,
+			TotalStmts:   total,
+			GateFailed:   gate.failed(),
+			DiffCoverage: mergedDiff,
+			PartCount:    len(parts),
+			UploadID:     u.ID,
+		}
+		if err := tx.UpsertCommitReport(ctx, cr); err != nil {
+			return fmt.Errorf("saving merged report: %w", err)
+		}
+
+		mergedUpload := &store.Upload{
+			ID:           u.ID,
+			RepoID:       repo.ID,
+			CommitSHA:    u.CommitSHA,
+			Branch:       u.Branch,
+			PRID:         u.PRID,
+			TotalPct:     totalPct,
+			CoveredStmts: covered,
+			TotalStmts:   total,
+			DiffCoverage: mergedDiff,
+		}
+		result = &mergedRecompute{upload: mergedUpload, delta: deltaPct, gate: gate, warnings: warnings}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // forgeFor builds a forge client for the repo, resolving credentials
@@ -457,6 +693,13 @@ var repoNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}$`)
 // commitRe bounds commit identifiers: they appear in forge API paths and
 // in blobstore cache keys, so separators are not welcome.
 var commitRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+
+// partRe bounds a normalized part name — a canonical lowercase slug that
+// starts alphanumeric. It becomes a storage key (and later a flag key), so
+// the charset is conservative and the length is bounded. Names are trimmed
+// and lowercased before this check, so "Backend" and " backend " reduce to
+// the same "backend" and can't split one commit into two parts.
+var partRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 // resolveUploadRepo maps the authenticated token to the target repo,
 // writing the error response itself on failure. Workspace tokens require

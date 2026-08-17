@@ -16,6 +16,7 @@ type uploadRequest struct {
 	Token       string
 	Format      string
 	PathPrefix  string
+	Part        string
 	ProfileData []byte
 	Build       buildInfo
 }
@@ -49,6 +50,7 @@ func upload(req uploadRequest) (*uploadResponse, error) {
 		"pr_id":       req.Build.PRID,
 		"format":      req.Format,
 		"path_prefix": req.PathPrefix,
+		"part":        req.Part,
 	}
 	for k, v := range fields {
 		if v == "" {

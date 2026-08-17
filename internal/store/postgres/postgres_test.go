@@ -3,8 +3,10 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -286,17 +288,6 @@ func TestUploadLifecycle(t *testing.T) {
 		t.Errorf("diff coverage round trip:\n got %+v\nwant %+v", got3.DiffCoverage, dc)
 	}
 
-	// LatestUpload is per branch.
-	if latest, err := st.LatestUpload(ctx, repo.ID, "main"); err != nil || latest.ID != u2.ID {
-		t.Errorf("latest main = %v, %v (want u2)", latest, err)
-	}
-	if latest, err := st.LatestUpload(ctx, repo.ID, "feature/x"); err != nil || latest.ID != u3.ID {
-		t.Errorf("latest feature = %v, %v (want u3)", latest, err)
-	}
-	if _, err := st.LatestUpload(ctx, repo.ID, "nope"); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("latest missing branch = %v", err)
-	}
-
 	// ListUploads: newest first, limited and unlimited.
 	ups, err := st.ListUploads(ctx, repo.ID, 2)
 	if err != nil || len(ups) != 2 || ups[0].ID != u3.ID || ups[1].ID != u2.ID {
@@ -307,8 +298,7 @@ func TestUploadLifecycle(t *testing.T) {
 		t.Errorf("unlimited list = %d uploads (err %v)", len(ups), err)
 	}
 
-	// Gate-failing uploads round-trip and are excluded from the passing
-	// baseline while still being the branch's latest upload.
+	// The gate_failed flag round-trips (the per-upload web views read it).
 	failed := &store.Upload{
 		RepoID: repo.ID, CommitSHA: "c4", Branch: "main", Format: "go",
 		TotalPct: 10, CoveredStmts: 1, TotalStmts: 10, GateFailed: true,
@@ -318,12 +308,6 @@ func TestUploadLifecycle(t *testing.T) {
 	}
 	if got, err := st.Upload(ctx, failed.ID); err != nil || !got.GateFailed {
 		t.Errorf("gate_failed round trip: %+v (err %v)", got, err)
-	}
-	if latest, err := st.LatestUpload(ctx, repo.ID, "main"); err != nil || latest.ID != failed.ID {
-		t.Errorf("LatestUpload = %v, %v (want the failed c4)", latest, err)
-	}
-	if passed, err := st.LatestPassedUpload(ctx, repo.ID, "main"); err != nil || passed.ID != u2.ID {
-		t.Errorf("LatestPassedUpload = %v, %v (want u2, skipping failed c4)", passed, err)
 	}
 
 	// DeleteRepo cascades to uploads and files.
@@ -338,6 +322,335 @@ func TestUploadLifecycle(t *testing.T) {
 	}
 	if err := st.DeleteRepo(ctx, repo.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("second delete = %v, want ErrNotFound", err)
+	}
+}
+
+func TestCommitReportLifecycle(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+
+	mkUpload := func(commit, part string, count int) *store.Upload {
+		t.Helper()
+		u := &store.Upload{RepoID: repo.ID, CommitSHA: commit, Branch: "main", Format: "go", Part: part}
+		files := []*store.UploadFile{{Path: "a.go", Blocks: []profile.Block{
+			{StartLine: 1, EndLine: 2, NumStmts: 1, Count: count},
+		}}}
+		if err := st.CreateUpload(ctx, u, files); err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+
+	// Two parts, plus a re-upload of one part that must supersede its
+	// predecessor in LatestUploadsPerPart.
+	mkUpload("c1", "backend", 0)
+	be2 := mkUpload("c1", "backend", 1)
+	fe := mkUpload("c1", "frontend", 1)
+	parts, err := st.LatestUploadsPerPart(ctx, repo.ID, "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 2 {
+		t.Fatalf("latest per part = %d uploads, want 2 (backend superseded)", len(parts))
+	}
+	got := map[string]int64{}
+	for _, p := range parts {
+		got[p.Part] = p.ID
+	}
+	if got["backend"] != be2.ID || got["frontend"] != fe.ID {
+		t.Errorf("latest per part = %v, want newest backend %d and frontend %d", got, be2.ID, fe.ID)
+	}
+
+	// Upsert creates, then replaces in place preserving id and created_at.
+	dc := &diffcov.Result{Files: []diffcov.FileCoverage{{Path: "a.go", CoveredLines: 1, TotalLines: 2, UncoveredLines: []int{9}}}, CoveredLines: 1, TotalLines: 2}
+	cr := &store.CommitReport{RepoID: repo.ID, CommitSHA: "c1", Branch: "main", PRID: "7",
+		TotalPct: 50, CoveredStmts: 1, TotalStmts: 2, DiffCoverage: dc, PartCount: 2}
+	if err := st.UpsertCommitReport(ctx, cr); err != nil {
+		t.Fatal(err)
+	}
+	if cr.ID == 0 || cr.CreatedAt.IsZero() {
+		t.Fatalf("upsert did not fill ID/CreatedAt: %+v", cr)
+	}
+	firstID, firstCreated := cr.ID, cr.CreatedAt
+	cr2 := &store.CommitReport{RepoID: repo.ID, CommitSHA: "c1", Branch: "main",
+		TotalPct: 80, CoveredStmts: 8, TotalStmts: 10, PartCount: 2}
+	if err := st.UpsertCommitReport(ctx, cr2); err != nil {
+		t.Fatal(err)
+	}
+	if cr2.ID != firstID || !cr2.CreatedAt.Equal(firstCreated) {
+		t.Errorf("upsert changed id/created_at: id %d→%d", firstID, cr2.ID)
+	}
+
+	// Round trip: latest values win, diff_coverage cleared to nil.
+	round, err := st.CommitReport(ctx, repo.ID, "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if round.TotalPct != 80 || round.CoveredStmts != 8 || round.DiffCoverage != nil {
+		t.Errorf("round trip = %+v, want 80%% 8/10 nil diff", round)
+	}
+
+	// Baseline selection: a passing report on another commit, skipping the
+	// excluded commit and gate-failing reports.
+	if err := st.UpsertCommitReport(ctx, &store.CommitReport{RepoID: repo.ID, CommitSHA: "c2", Branch: "main", TotalPct: 90, PartCount: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertCommitReport(ctx, &store.CommitReport{RepoID: repo.ID, CommitSHA: "c3", Branch: "main", TotalPct: 10, GateFailed: true, PartCount: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if latest, err := st.LatestCommitReport(ctx, repo.ID, "main"); err != nil || latest.CommitSHA != "c3" {
+		t.Errorf("latest report = %v, %v (want c3, the newest)", latest, err)
+	}
+	// Excluding c2 and skipping the failed c3 leaves c1 as the baseline.
+	base, err := st.LatestPassedCommitReport(ctx, repo.ID, "main", "c2")
+	if err != nil || base.CommitSHA != "c1" {
+		t.Errorf("passed baseline excluding c2 = %v, %v (want c1)", base, err)
+	}
+	// The trend lists reports newest first.
+	list, err := st.ListBranchCommitReports(ctx, repo.ID, "main", 0)
+	if err != nil || len(list) != 3 || list[0].CommitSHA != "c3" {
+		t.Errorf("branch reports = %+v (err %v)", list, err)
+	}
+
+	// DeleteRepo cascades to commit reports.
+	if err := st.DeleteRepo(ctx, repo.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CommitReport(ctx, repo.ID, "c1"); !errors.Is(err, store.ErrNotFound) {
+		t.Error("commit report survived repo deletion")
+	}
+}
+
+func TestWithCommitReportTx(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+
+	// Concurrency stress: far more simultaneous recomputes of one commit than
+	// the pool has connections, each issuing a read and a write *inside* the
+	// lock. The previous design held one pooled connection for the advisory
+	// lock and reached for a second to run these queries, which deadlocked
+	// the pool here; routing the queries through the locked transaction's own
+	// connection must not.
+	const n = 32
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			defer cancel()
+			errs[i] = st.WithCommitReportTx(cctx, repo.ID, "c1", func(ctx context.Context, tx store.CommitTx) error {
+				if _, err := tx.LatestUploadsPerPart(ctx, repo.ID, "c1"); err != nil {
+					return err
+				}
+				return tx.UpsertCommitReport(ctx, &store.CommitReport{
+					RepoID: repo.ID, CommitSHA: "c1", Branch: "main", TotalPct: float64(i), PartCount: 1,
+				})
+			})
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("tx %d failed (a pool deadlock would surface here as a timeout): %v", i, err)
+		}
+	}
+	if cr, err := st.CommitReport(ctx, repo.ID, "c1"); err != nil || cr.PartCount != 1 {
+		t.Fatalf("commit report after %d concurrent txs = %+v, %v (want one serialized row)", n, cr, err)
+	}
+
+	// Serialization: a second recompute of the same commit waits for the
+	// first to finish.
+	release := make(chan struct{})
+	entered := make(chan struct{})
+	go func() {
+		_ = st.WithCommitReportTx(ctx, repo.ID, "c1", func(context.Context, store.CommitTx) error {
+			close(entered)
+			<-release
+			return nil
+		})
+	}()
+	<-entered
+	second := make(chan struct{})
+	go func() {
+		_ = st.WithCommitReportTx(ctx, repo.ID, "c1", func(context.Context, store.CommitTx) error { return nil })
+		close(second)
+	}()
+	select {
+	case <-second:
+		t.Error("second recompute ran while the first held the commit lock")
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-second:
+	case <-time.After(3 * time.Second):
+		t.Error("second recompute never ran after the first released")
+	}
+
+	// A different commit never blocks behind a held one.
+	done := make(chan error, 1)
+	blocker := make(chan struct{})
+	go func() {
+		done <- st.WithCommitReportTx(ctx, repo.ID, "c1", func(context.Context, store.CommitTx) error {
+			<-blocker
+			return nil
+		})
+	}()
+	if err := st.WithCommitReportTx(ctx, repo.ID, "c2", func(context.Context, store.CommitTx) error { return nil }); err != nil {
+		t.Errorf("a different commit blocked behind a held lock: %v", err)
+	}
+	close(blocker)
+	if err := <-done; err != nil {
+		t.Errorf("c1 tx: %v", err)
+	}
+}
+
+func TestCommitReportBackfill(t *testing.T) {
+	pool := testpg.Pool(t)
+	st := postgres.New(pool)
+	ctx := context.Background()
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	mk := func(commit, branch string, pct float64) *store.Upload {
+		u := &store.Upload{RepoID: repo.ID, CommitSHA: commit, Branch: branch, Format: "go", TotalPct: pct, CoveredStmts: 1, TotalStmts: 2}
+		if err := st.CreateUpload(ctx, u, nil); err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+	// c1 uploaded twice (the later, higher-coverage row must win); c2 once.
+	// store.CreateUpload never writes commit_reports (only the recompute
+	// does), so these stand in for a repo that predates the feature.
+	mk("c1", "main", 50)
+	c1Latest := mk("c1", "main", 80)
+	c2 := mk("c2", "main", 90)
+
+	// Run the real backfill migration file, not a copy that could drift from
+	// it — this is what a deploy executes. It is ON CONFLICT DO NOTHING, so
+	// re-running after Migrate already applied it on the empty table is safe.
+	sql, err := os.ReadFile("migrations/0013_backfill_commit_reports.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(sql)); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+
+	cr1, err := st.CommitReport(ctx, repo.ID, "c1")
+	if err != nil || cr1.TotalPct != 80 || cr1.PartCount != 1 {
+		t.Fatalf("c1 report = %+v, %v (want latest 80%%, one part)", cr1, err)
+	}
+	// upload_id must be backfilled (the trend links through it) — the exact
+	// column an out-of-date hand-copied statement would have missed.
+	if cr1.UploadID != c1Latest.ID {
+		t.Errorf("c1 upload_id = %d, want %d (latest upload)", cr1.UploadID, c1Latest.ID)
+	}
+	cr2, err := st.CommitReport(ctx, repo.ID, "c2")
+	if err != nil || cr2.TotalPct != 90 || cr2.UploadID != c2.ID {
+		t.Fatalf("c2 report = %+v, %v", cr2, err)
+	}
+	// id ascends with commit order (c1's latest upload precedes c2's), so the
+	// branch's newest report is c2 — what badge/trend read.
+	if cr2.ID <= cr1.ID {
+		t.Errorf("backfill ids out of order: c1=%d c2=%d", cr1.ID, cr2.ID)
+	}
+	if latest, err := st.LatestCommitReport(ctx, repo.ID, "main"); err != nil || latest.CommitSHA != "c2" {
+		t.Errorf("latest report = %v, %v (want c2)", latest, err)
+	}
+}
+
+func TestTryPushStatus(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	noop := func(context.Context) error { return nil }
+
+	// Nothing to push before the report exists.
+	if pushed, err := st.TryPushStatus(ctx, repo.ID, "c1", 5, noop); err != nil || pushed {
+		t.Fatalf("push on missing report = %v, %v (want false)", pushed, err)
+	}
+	if err := st.UpsertCommitReport(ctx, &store.CommitReport{RepoID: repo.ID, CommitSHA: "c1", Branch: "main", PartCount: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A version pushes only if it is at least the last successful one.
+	steps := []struct {
+		version int64
+		want    bool
+	}{
+		{5, true},  // first push
+		{5, true},  // equal — a re-upload of the same part may re-push
+		{3, false}, // older push arriving late — must be skipped
+		{7, true},  // newer recompute pushes
+	}
+	for _, s := range steps {
+		if pushed, err := st.TryPushStatus(ctx, repo.ID, "c1", s.version, noop); err != nil || pushed != s.want {
+			t.Errorf("push v%d = %v (want %v), err %v", s.version, pushed, s.want, err)
+		}
+	}
+
+	// A failed push does not advance the version — a later part can retry.
+	boom := errors.New("forge down")
+	if _, err := st.TryPushStatus(ctx, repo.ID, "c1", 9, func(context.Context) error { return boom }); !errors.Is(err, boom) {
+		t.Fatalf("failed push err = %v, want boom", err)
+	}
+	// Version is still 7 (not 9): a push at 8 must still succeed.
+	if pushed, err := st.TryPushStatus(ctx, repo.ID, "c1", 8, noop); err != nil || !pushed {
+		t.Errorf("push v8 after failed v9 = %v, %v (want true; failed push must not burn the version)", pushed, err)
+	}
+
+	// Concurrent pushes serialize, so the forge never sees an older push land
+	// after a newer one: whatever pushes last is the highest version that ran.
+	if err := st.UpsertCommitReport(ctx, &store.CommitReport{RepoID: repo.ID, CommitSHA: "c2", Branch: "main", PartCount: 1}); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var order []int64
+	var wg sync.WaitGroup
+	for _, v := range []int64{100, 101, 102, 103, 104} {
+		wg.Add(1)
+		go func(v int64) {
+			defer wg.Done()
+			_, _ = st.TryPushStatus(ctx, repo.ID, "c2", v, func(context.Context) error {
+				mu.Lock()
+				order = append(order, v)
+				mu.Unlock()
+				return nil
+			})
+		}(v)
+	}
+	wg.Wait()
+	if len(order) == 0 {
+		t.Fatal("no push ran")
+	}
+	last, maxV := order[len(order)-1], int64(0)
+	for _, v := range order {
+		if v > maxV {
+			maxV = v
+		}
+	}
+	if last != maxV {
+		t.Errorf("last push was v%d but v%d pushed earlier — a stale status won: %v", last, maxV, order)
 	}
 }
 

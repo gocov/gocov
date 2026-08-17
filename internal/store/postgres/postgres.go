@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"sort"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/gocov/gocov/internal/secretbox"
@@ -209,6 +211,15 @@ func (s *Store) ListRepos(ctx context.Context) ([]*store.Repo, error) {
 
 type rowScanner interface {
 	Scan(dest ...any) error
+}
+
+// querier is the subset of pgx shared by *pgxpool.Pool and pgx.Tx, so the
+// commit-report queries can run either directly on the pool or inside the
+// locked transaction that WithCommitReportTx opens.
+type querier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
 func (s *Store) scanRepo(row rowScanner) (*store.Repo, error) {
@@ -592,11 +603,11 @@ func (s *Store) CreateUpload(ctx context.Context, u *store.Upload, files []*stor
 	}
 	err = tx.QueryRow(ctx, `
 		INSERT INTO uploads (repo_id, commit_sha, branch, pr_id, format,
-			total_pct, covered_stmts, total_stmts, raw_blob_key, diff_coverage, gate_failed, path_prefix)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			total_pct, covered_stmts, total_stmts, raw_blob_key, diff_coverage, gate_failed, path_prefix, part)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		RETURNING id, created_at`,
 		u.RepoID, u.CommitSHA, u.Branch, u.PRID, u.Format,
-		u.TotalPct, u.CoveredStmts, u.TotalStmts, u.RawBlobKey, diffCov, u.GateFailed, u.PathPrefix,
+		u.TotalPct, u.CoveredStmts, u.TotalStmts, u.RawBlobKey, diffCov, u.GateFailed, u.PathPrefix, u.Part,
 	).Scan(&u.ID, &u.CreatedAt)
 	if err != nil {
 		return err
@@ -620,7 +631,7 @@ func (s *Store) CreateUpload(ctx context.Context, u *store.Upload, files []*stor
 }
 
 const uploadCols = `id, repo_id, commit_sha, branch, pr_id, format,
-	total_pct, covered_stmts, total_stmts, raw_blob_key, diff_coverage, gate_failed, path_prefix, created_at`
+	total_pct, covered_stmts, total_stmts, raw_blob_key, diff_coverage, gate_failed, path_prefix, part, created_at`
 
 func (s *Store) Upload(ctx context.Context, id int64) (*store.Upload, error) {
 	return s.scanUpload(s.pool.QueryRow(ctx,
@@ -675,26 +686,11 @@ func (s *Store) ListBranchUploads(ctx context.Context, repoID int64, branch stri
 	return out, rows.Err()
 }
 
-func (s *Store) LatestUpload(ctx context.Context, repoID int64, branch string) (*store.Upload, error) {
-	return s.scanUpload(s.pool.QueryRow(ctx,
-		`SELECT `+uploadCols+` FROM uploads
-		 WHERE repo_id = $1 AND branch = $2 ORDER BY id DESC LIMIT 1`,
-		repoID, branch))
-}
-
-func (s *Store) LatestPassedUpload(ctx context.Context, repoID int64, branch string) (*store.Upload, error) {
-	return s.scanUpload(s.pool.QueryRow(ctx,
-		`SELECT `+uploadCols+` FROM uploads
-		 WHERE repo_id = $1 AND branch = $2 AND NOT gate_failed
-		 ORDER BY id DESC LIMIT 1`,
-		repoID, branch))
-}
-
 func (s *Store) scanUpload(row rowScanner) (*store.Upload, error) {
 	var u store.Upload
 	var diffCov []byte
 	err := row.Scan(&u.ID, &u.RepoID, &u.CommitSHA, &u.Branch, &u.PRID, &u.Format,
-		&u.TotalPct, &u.CoveredStmts, &u.TotalStmts, &u.RawBlobKey, &diffCov, &u.GateFailed, &u.PathPrefix, &u.CreatedAt)
+		&u.TotalPct, &u.CoveredStmts, &u.TotalStmts, &u.RawBlobKey, &diffCov, &u.GateFailed, &u.PathPrefix, &u.Part, &u.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -710,7 +706,11 @@ func (s *Store) scanUpload(row rowScanner) (*store.Upload, error) {
 }
 
 func (s *Store) UploadFiles(ctx context.Context, uploadID int64) ([]*store.UploadFile, error) {
-	rows, err := s.pool.Query(ctx, `
+	return uploadFiles(ctx, s.pool, uploadID)
+}
+
+func uploadFiles(ctx context.Context, q querier, uploadID int64) ([]*store.UploadFile, error) {
+	rows, err := q.Query(ctx, `
 		SELECT upload_id, path, pct, covered_stmts, total_stmts, blocks
 		FROM upload_files WHERE upload_id = $1 ORDER BY path`, uploadID)
 	if err != nil {
@@ -738,6 +738,270 @@ func (s *Store) UploadFiles(ctx context.Context, uploadID int64) ([]*store.Uploa
 		out = []*store.UploadFile{}
 	}
 	return out, nil
+}
+
+// LatestUploadsPerPart returns the newest upload of each distinct part for a
+// commit — the inputs to the merged report. DISTINCT ON keeps only the
+// highest id per part, so a re-uploaded part supersedes its predecessors.
+func (s *Store) LatestUploadsPerPart(ctx context.Context, repoID int64, commitSHA string) ([]*store.Upload, error) {
+	return s.latestUploadsPerPart(ctx, s.pool, repoID, commitSHA)
+}
+
+// CommitParts returns the distinct part names for a commit, reading only the
+// part column — the parts cap needs a count and a membership test, not the
+// full upload rows (which carry blocks and diff-coverage JSON).
+func (s *Store) CommitParts(ctx context.Context, repoID int64, commitSHA string) ([]string, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT DISTINCT part FROM uploads WHERE repo_id = $1 AND commit_sha = $2`,
+		repoID, commitSHA)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) latestUploadsPerPart(ctx context.Context, q querier, repoID int64, commitSHA string) ([]*store.Upload, error) {
+	rows, err := q.Query(ctx,
+		`SELECT DISTINCT ON (part) `+uploadCols+` FROM uploads
+		 WHERE repo_id = $1 AND commit_sha = $2
+		 ORDER BY part, id DESC`,
+		repoID, commitSHA)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.Upload
+	for rows.Next() {
+		u, err := s.scanUpload(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// WithCommitReportTx runs fn inside a transaction that holds a
+// transaction-scoped Postgres advisory lock keyed by the commit, so the
+// recompute of one commit's merged report serializes across all server
+// instances sharing the database. Every query fn issues through the passed
+// CommitTx runs on that same transaction's single connection — critically,
+// the lock does not tie up one pooled connection while the reads reach for a
+// second, which would deadlock the pool under enough concurrent uploads of
+// one commit. pg_advisory_xact_lock releases automatically when the
+// transaction ends, on commit or rollback. Different commits hash to
+// different keys and never contend (a collision only costs an occasional
+// extra wait, never correctness).
+func (s *Store) WithCommitReportTx(ctx context.Context, repoID int64, commitSHA string, fn func(context.Context, store.CommitTx) error) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", advisoryKey("recompute", repoID, commitSHA)); err != nil {
+		return err
+	}
+	if err := fn(ctx, &commitReportTx{s: s, tx: tx}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// commitReportTx binds the recompute's reads and upsert to one locked
+// transaction. It satisfies store.CommitTx.
+type commitReportTx struct {
+	s  *Store
+	tx pgx.Tx
+}
+
+func (c *commitReportTx) LatestUploadsPerPart(ctx context.Context, repoID int64, commitSHA string) ([]*store.Upload, error) {
+	return c.s.latestUploadsPerPart(ctx, c.tx, repoID, commitSHA)
+}
+
+func (c *commitReportTx) UploadFiles(ctx context.Context, uploadID int64) ([]*store.UploadFile, error) {
+	return uploadFiles(ctx, c.tx, uploadID)
+}
+
+func (c *commitReportTx) LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*store.CommitReport, error) {
+	return c.s.latestPassedCommitReport(ctx, c.tx, repoID, branch, excludeCommit)
+}
+
+func (c *commitReportTx) UpsertCommitReport(ctx context.Context, cr *store.CommitReport) error {
+	return c.s.upsertCommitReport(ctx, c.tx, cr)
+}
+
+// advisoryKey hashes a namespace and (repo, commit) into the signed 64-bit
+// space Postgres advisory locks use. The namespace keeps the recompute lock
+// and the status-push lock in separate spaces so they never block each other
+// for the same commit.
+func advisoryKey(namespace string, repoID int64, commitSHA string) int64 {
+	h := fnv.New64a()
+	fmt.Fprintf(h, "%s:%d:%s", namespace, repoID, commitSHA)
+	return int64(h.Sum64()) //nolint:gosec // intentional bit reinterpretation into the advisory key space
+}
+
+const commitReportCols = `id, repo_id, commit_sha, branch, pr_id, total_pct,
+	covered_stmts, total_stmts, gate_failed, diff_coverage, part_count, upload_id, created_at, updated_at`
+
+func (s *Store) UpsertCommitReport(ctx context.Context, cr *store.CommitReport) error {
+	return s.upsertCommitReport(ctx, s.pool, cr)
+}
+
+func (s *Store) upsertCommitReport(ctx context.Context, q querier, cr *store.CommitReport) error {
+	var diffCov []byte
+	if cr.DiffCoverage != nil {
+		var err error
+		if diffCov, err = json.Marshal(cr.DiffCoverage); err != nil {
+			return err
+		}
+	}
+	// The first-seen created_at survives the conflict update; only the
+	// derived fields and updated_at move.
+	return q.QueryRow(ctx, `
+		INSERT INTO commit_reports (repo_id, commit_sha, branch, pr_id, total_pct,
+			covered_stmts, total_stmts, gate_failed, diff_coverage, part_count, upload_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		ON CONFLICT (repo_id, commit_sha) DO UPDATE SET
+			branch = EXCLUDED.branch,
+			pr_id = EXCLUDED.pr_id,
+			total_pct = EXCLUDED.total_pct,
+			covered_stmts = EXCLUDED.covered_stmts,
+			total_stmts = EXCLUDED.total_stmts,
+			gate_failed = EXCLUDED.gate_failed,
+			diff_coverage = EXCLUDED.diff_coverage,
+			part_count = EXCLUDED.part_count,
+			upload_id = EXCLUDED.upload_id,
+			updated_at = now()
+		RETURNING id, created_at, updated_at`,
+		cr.RepoID, cr.CommitSHA, cr.Branch, cr.PRID, cr.TotalPct,
+		cr.CoveredStmts, cr.TotalStmts, cr.GateFailed, diffCov, cr.PartCount, cr.UploadID,
+	).Scan(&cr.ID, &cr.CreatedAt, &cr.UpdatedAt)
+}
+
+func (s *Store) CommitReport(ctx context.Context, repoID int64, commitSHA string) (*store.CommitReport, error) {
+	return s.scanCommitReport(s.pool.QueryRow(ctx,
+		`SELECT `+commitReportCols+` FROM commit_reports WHERE repo_id = $1 AND commit_sha = $2`,
+		repoID, commitSHA))
+}
+
+func (s *Store) LatestCommitReport(ctx context.Context, repoID int64, branch string) (*store.CommitReport, error) {
+	return s.scanCommitReport(s.pool.QueryRow(ctx,
+		`SELECT `+commitReportCols+` FROM commit_reports
+		 WHERE repo_id = $1 AND branch = $2 ORDER BY id DESC LIMIT 1`,
+		repoID, branch))
+}
+
+func (s *Store) LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*store.CommitReport, error) {
+	return s.latestPassedCommitReport(ctx, s.pool, repoID, branch, excludeCommit)
+}
+
+func (s *Store) latestPassedCommitReport(ctx context.Context, q querier, repoID int64, branch, excludeCommit string) (*store.CommitReport, error) {
+	return s.scanCommitReport(q.QueryRow(ctx,
+		`SELECT `+commitReportCols+` FROM commit_reports
+		 WHERE repo_id = $1 AND branch = $2 AND commit_sha <> $3 AND NOT gate_failed
+		 ORDER BY id DESC LIMIT 1`,
+		repoID, branch, excludeCommit))
+}
+
+// TryPushStatus serializes the forge status/PR-comment push for one commit
+// under a per-commit advisory lock and runs push only when version is at
+// least the last successfully pushed version, advancing the stored version
+// only after push returns nil. Serializing the whole check-push-advance —
+// rather than just claiming a version before an unordered push — means the
+// forge can't be left on a stale status by a slow older push landing last,
+// and a failed push (push returns an error) leaves the version untouched so
+// a later part retries. Returns whether push ran.
+//
+// push runs while the lock's transaction is held, so it must be bounded by
+// ctx; it performs the forge HTTP itself. When no report row exists yet
+// there is nothing to attach a status to and push does not run.
+func (s *Store) TryPushStatus(ctx context.Context, repoID int64, commitSHA string, version int64, push func(context.Context) error) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", advisoryKey("status", repoID, commitSHA)); err != nil {
+		return false, err
+	}
+	var cur int64
+	err = tx.QueryRow(ctx,
+		"SELECT status_pushed_version FROM commit_reports WHERE repo_id = $1 AND commit_sha = $2",
+		repoID, commitSHA).Scan(&cur)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil // no report to attach a status to
+	}
+	if err != nil {
+		return false, err
+	}
+	if version < cur {
+		return false, nil // a newer push already owns the status
+	}
+	if err := push(ctx); err != nil {
+		return false, err // rolled back: version not advanced, so a retry can push
+	}
+	if _, err := tx.Exec(ctx,
+		"UPDATE commit_reports SET status_pushed_version = $3 WHERE repo_id = $1 AND commit_sha = $2",
+		repoID, commitSHA, version); err != nil {
+		return false, err
+	}
+	return true, tx.Commit(ctx)
+}
+
+func (s *Store) ListBranchCommitReports(ctx context.Context, repoID int64, branch string, limit int) ([]*store.CommitReport, error) {
+	var lim any
+	if limit > 0 {
+		lim = limit
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+commitReportCols+` FROM commit_reports
+		 WHERE repo_id = $1 AND branch = $2 ORDER BY id DESC LIMIT $3`,
+		repoID, branch, lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.CommitReport
+	for rows.Next() {
+		cr, err := s.scanCommitReport(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, cr)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) scanCommitReport(row rowScanner) (*store.CommitReport, error) {
+	var cr store.CommitReport
+	var diffCov []byte
+	var uploadID *int64
+	err := row.Scan(&cr.ID, &cr.RepoID, &cr.CommitSHA, &cr.Branch, &cr.PRID, &cr.TotalPct,
+		&cr.CoveredStmts, &cr.TotalStmts, &cr.GateFailed, &diffCov, &cr.PartCount, &uploadID, &cr.CreatedAt, &cr.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if uploadID != nil {
+		cr.UploadID = *uploadID
+	}
+	if len(diffCov) > 0 {
+		if err := json.Unmarshal(diffCov, &cr.DiffCoverage); err != nil {
+			return nil, fmt.Errorf("commit report %d: bad diff_coverage: %w", cr.ID, err)
+		}
+	}
+	return &cr, nil
 }
 
 // ensure interface compliance

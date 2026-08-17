@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
@@ -138,6 +140,9 @@ func TestUploadHappyPath(t *testing.T) {
 	if u.CommitSHA != "abc123def456" || u.Branch != "main" || u.Format != "go" {
 		t.Errorf("stored upload = %+v", u)
 	}
+	if u.Part != "default" {
+		t.Errorf("part = %q, want default (no explicit part)", u.Part)
+	}
 	files, err := f.store.UploadFiles(context.Background(), resp.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -213,6 +218,297 @@ func TestUploadFeatureBranchDeltaAgainstDefault(t *testing.T) {
 	}
 }
 
+func TestUploadPartStored(t *testing.T) {
+	f := newFixture(t, nil)
+	rec := doUpload(t, f, "secret-token", map[string]string{
+		"commit": "c1",
+		"part":   "frontend",
+	}, testProfile)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	var resp uploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	u, err := f.store.Upload(context.Background(), resp.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Part != "frontend" {
+		t.Errorf("part = %q, want frontend", u.Part)
+	}
+
+	// The server normalizes the part: "  Frontend  " trims and lowercases to
+	// the same "frontend" bucket, so mixed-case callers don't split a commit.
+	norm := doUpload(t, f, "secret-token", map[string]string{
+		"commit": "c1",
+		"part":   "  Frontend  ",
+	}, testProfile)
+	var nr uploadResponse
+	if err := json.Unmarshal(norm.Body.Bytes(), &nr); err != nil {
+		t.Fatal(err)
+	}
+	if nu, err := f.store.Upload(context.Background(), nr.ID); err != nil {
+		t.Fatal(err)
+	} else if nu.Part != "frontend" {
+		t.Errorf("normalized part = %q, want frontend", nu.Part)
+	}
+
+	// Re-uploading the same part appends a fresh immutable row (uploads stay
+	// append-only); the merge feature reads the latest row per part.
+	rec = doUpload(t, f, "secret-token", map[string]string{
+		"commit": "c1",
+		"part":   "frontend",
+	}, testProfile)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("re-upload status = %d, body = %s", rec.Code, rec.Body)
+	}
+	var resp2 uploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp2); err != nil {
+		t.Fatal(err)
+	}
+	if resp2.ID == resp.ID {
+		t.Errorf("re-upload reused id %d; uploads must stay append-only", resp.ID)
+	}
+}
+
+// Parts covering disjoint files: backend is 8/8, frontend 0/2, so the
+// merged commit is 8/10 = 80%.
+const backendPart = "mode: set\nexample.com/m/back.go:1.1,5.2 8 1\n"
+const frontendPart = "mode: set\nexample.com/m/front.go:1.1,5.2 2 0\n"
+
+func TestMergedReportAcrossParts(t *testing.T) {
+	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+	ctx := context.Background()
+
+	// A single upload with no part is a one-part merged report identical to
+	// the upload — backward compatibility.
+	single := doUpload(t, f, "secret-token", map[string]string{"commit": "solo"}, testProfile)
+	var sr uploadResponse
+	if err := json.Unmarshal(single.Body.Bytes(), &sr); err != nil {
+		t.Fatal(err)
+	}
+	cr, err := f.store.CommitReport(ctx, f.repo.ID, "solo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cr.PartCount != 1 || cr.TotalPct != 80 || cr.TotalStmts != 10 || cr.CoveredStmts != 8 {
+		t.Errorf("single-upload merged report = %+v, want 1 part 80%% 8/10", cr)
+	}
+	if sr.TotalPct != cr.TotalPct {
+		t.Errorf("response %.1f != merged report %.1f", sr.TotalPct, cr.TotalPct)
+	}
+
+	// Backend part first: the merged report is backend alone, 8/8 = 100%.
+	back := doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "part": "backend"}, backendPart)
+	var br uploadResponse
+	if err := json.Unmarshal(back.Body.Bytes(), &br); err != nil {
+		t.Fatal(err)
+	}
+	if br.TotalPct != 100 || br.CoveredStmts != 8 || br.TotalStmts != 8 {
+		t.Errorf("backend-only response = %.1f%% %d/%d, want 100%% 8/8", br.TotalPct, br.CoveredStmts, br.TotalStmts)
+	}
+
+	// Frontend part lands: the merged report now spans both, 8/10 = 80%.
+	front := doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "part": "frontend"}, frontendPart)
+	var fr uploadResponse
+	if err := json.Unmarshal(front.Body.Bytes(), &fr); err != nil {
+		t.Fatal(err)
+	}
+	if fr.TotalPct != 80 || fr.CoveredStmts != 8 || fr.TotalStmts != 10 {
+		t.Errorf("merged response = %.1f%% %d/%d, want 80%% 8/10", fr.TotalPct, fr.CoveredStmts, fr.TotalStmts)
+	}
+	cr, err = f.store.CommitReport(ctx, f.repo.ID, "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cr.PartCount != 2 || cr.TotalPct != 80 || cr.TotalStmts != 10 {
+		t.Errorf("merged report = %+v, want 2 parts 80%% total 10", cr)
+	}
+
+	// The build status the forge saw reflects the merged total, not the last
+	// part uploaded (which alone was 0%).
+	last := f.forge.StatusCalls[len(f.forge.StatusCalls)-1]
+	if last.CommitSHA != "c1" || !strings.Contains(last.Status.Description, "80.0%") {
+		t.Errorf("last status = %+v, want merged 80%% for c1", last.Status)
+	}
+}
+
+func TestMergedReportReplaceNoDoubleCount(t *testing.T) {
+	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+	ctx := context.Background()
+
+	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "part": "backend"}, backendPart)
+	// Re-uploading the same (commit, part) — a CI retry — must replace, not
+	// accumulate: the merged total stays 8/8, not 16/16.
+	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "part": "backend"}, backendPart)
+
+	cr, err := f.store.CommitReport(ctx, f.repo.ID, "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cr.PartCount != 1 || cr.TotalStmts != 8 || cr.CoveredStmts != 8 {
+		t.Errorf("after retry merged report = %+v, want 1 part 8/8 (no double count)", cr)
+	}
+}
+
+func TestMergedReportConcurrentParts(t *testing.T) {
+	// Parallel CI jobs upload distinct parts of one commit at the same time.
+	// Without serialized recompute a slow recompute could clobber a newer
+	// one and drop a part; the merged report must end with every part.
+	f := newFixture(t, nil) // no forge creds: keep the test to the store/recompute path
+	const n = 8
+
+	type req struct {
+		body *bytes.Buffer
+		ct   string
+	}
+	reqs := make([]req, n)
+	for i := 0; i < n; i++ {
+		// Each part covers its own file, 1/1, so the merged commit is n/n.
+		prof := fmt.Sprintf("mode: set\nexample.com/m/f%d.go:1.1,2.2 1 1\n", i)
+		body, ct := multipartUpload(t, map[string]string{
+			"commit": "c1", "branch": "main", "part": fmt.Sprintf("p%d", i),
+		}, prof)
+		reqs[i] = req{body, ct}
+	}
+
+	codes := make([]int, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			r := httptest.NewRequest(http.MethodPost, "/api/v1/upload", reqs[i].body)
+			r.Header.Set("Content-Type", reqs[i].ct)
+			r.Header.Set("Authorization", "Bearer secret-token")
+			rec := httptest.NewRecorder()
+			f.srv.ServeHTTP(rec, r)
+			codes[i] = rec.Code
+		}(i)
+	}
+	wg.Wait()
+
+	for i, c := range codes {
+		if c != http.StatusCreated {
+			t.Fatalf("concurrent upload %d: status %d", i, c)
+		}
+	}
+	cr, err := f.store.CommitReport(context.Background(), f.repo.ID, "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cr.PartCount != n || cr.CoveredStmts != n || cr.TotalStmts != n || cr.TotalPct != 100 {
+		t.Errorf("merged report = %+v, want %d parts and %d/%d = 100%% (no part dropped)", cr, n, n, n)
+	}
+}
+
+func TestUploadPartsCap(t *testing.T) {
+	f := newFixture(t, nil)
+	for i := 0; i < maxPartsPerCommit; i++ {
+		rec := doUpload(t, f, "secret-token", map[string]string{
+			"commit": "c1", "part": fmt.Sprintf("p%d", i),
+		}, testProfile)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("part %d: status %d, body %s", i, rec.Code, rec.Body)
+		}
+	}
+	// A new part beyond the cap is rejected before any work.
+	rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "part": "overflow"}, testProfile)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("part past the cap = %d, want 400", rec.Code)
+	}
+	// Re-uploading an existing part is still allowed — it replaces.
+	rec = doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "part": "p0"}, testProfile)
+	if rec.Code != http.StatusCreated {
+		t.Errorf("re-upload of an existing part = %d, want 201", rec.Code)
+	}
+	// A different commit is unaffected by another commit's part count.
+	rec = doUpload(t, f, "secret-token", map[string]string{"commit": "c2", "part": "fresh"}, testProfile)
+	if rec.Code != http.StatusCreated {
+		t.Errorf("new commit part = %d, want 201", rec.Code)
+	}
+}
+
+func TestUploadStatusPushSuperseded(t *testing.T) {
+	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+	ctx := context.Background()
+
+	// First upload creates the report and pushes its status.
+	doUpload(t, f, "secret-token", map[string]string{"commit": "c1"}, testProfile)
+	if len(f.forge.StatusCalls) != 1 {
+		t.Fatalf("first upload: %d status calls, want 1", len(f.forge.StatusCalls))
+	}
+
+	// Simulate a newer concurrent recompute having already pushed a higher
+	// version. A subsequent upload (lower version) must not overwrite the
+	// forge status with its now-stale view.
+	if pushed, err := f.store.TryPushStatus(ctx, f.repo.ID, "c1", 1<<30, func(context.Context) error { return nil }); err != nil || !pushed {
+		t.Fatalf("setup push = %v, %v", pushed, err)
+	}
+
+	better := "mode: set\nexample.com/m/a.go:1.1,5.2 10 3\n" // 100%
+	rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c1"}, better)
+	var resp uploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.BuildStatus != "skipped: superseded" {
+		t.Errorf("build_status = %q, want skipped: superseded", resp.BuildStatus)
+	}
+	if len(f.forge.StatusCalls) != 1 {
+		t.Errorf("forge pushed a superseded status: %d calls, want still 1", len(f.forge.StatusCalls))
+	}
+	// The merged report itself still updated — only the forge push was held.
+	if cr, err := f.store.CommitReport(ctx, f.repo.ID, "c1"); err != nil || cr.TotalPct != 100 {
+		t.Errorf("report = %+v, %v (want recompute persisted 100%%)", cr, err)
+	}
+}
+
+func TestMergedGateSelfHeals(t *testing.T) {
+	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+	ctx := context.Background()
+	f.repo.Gate = store.Gate{MinCoverage: pctPtr(50)}
+	if err := f.store.UpdateRepo(ctx, f.repo); err != nil {
+		t.Fatal(err)
+	}
+
+	// The frontend part arrives first: 0/2 alone is below the 50% floor, so
+	// the interim merged report fails the gate.
+	first := doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "part": "frontend"}, frontendPart)
+	var fr uploadResponse
+	if err := json.Unmarshal(first.Body.Bytes(), &fr); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(fr.Gate, "failed") {
+		t.Errorf("interim gate = %q, want failed", fr.Gate)
+	}
+	if got := f.forge.StatusCalls[len(f.forge.StatusCalls)-1].Status.State; got != forge.StateFailed {
+		t.Errorf("interim status state = %q, want failed", got)
+	}
+	if cr, _ := f.store.CommitReport(ctx, f.repo.ID, "c1"); cr == nil || !cr.GateFailed {
+		t.Errorf("interim report should be gate-failed, got %+v", cr)
+	}
+
+	// The backend part lands: merged 8/10 = 80% clears the gate, and the
+	// status is corrected in place — self-healing.
+	second := doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "part": "backend"}, backendPart)
+	var sr uploadResponse
+	if err := json.Unmarshal(second.Body.Bytes(), &sr); err != nil {
+		t.Fatal(err)
+	}
+	if sr.Gate != "passed" {
+		t.Errorf("healed gate = %q, want passed", sr.Gate)
+	}
+	if got := f.forge.StatusCalls[len(f.forge.StatusCalls)-1].Status.State; got != forge.StateSuccessful {
+		t.Errorf("healed status state = %q, want successful", got)
+	}
+	if cr, _ := f.store.CommitReport(ctx, f.repo.ID, "c1"); cr == nil || cr.GateFailed {
+		t.Errorf("healed report should pass the gate, got %+v", cr)
+	}
+}
+
 func TestUploadAuth(t *testing.T) {
 	f := newFixture(t, nil)
 	tests := []struct {
@@ -259,6 +555,9 @@ func TestUploadValidation(t *testing.T) {
 		{"missing profile file", map[string]string{"commit": "c"}, "", http.StatusBadRequest},
 		{"unknown format", map[string]string{"commit": "c", "format": "opencover"}, testProfile, http.StatusBadRequest},
 		{"malformed profile", map[string]string{"commit": "c"}, "not a profile", http.StatusUnprocessableEntity},
+		{"part with slash", map[string]string{"commit": "c", "part": "back/end"}, testProfile, http.StatusBadRequest},
+		{"part leading dash", map[string]string{"commit": "c", "part": "-backend"}, testProfile, http.StatusBadRequest},
+		{"part with space inside", map[string]string{"commit": "c", "part": "back end"}, testProfile, http.StatusBadRequest},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1318,6 +1617,28 @@ func TestBadgeUsesDefaultBranchOnly(t *testing.T) {
 	f.srv.ServeHTTP(rec, req)
 	if !strings.Contains(rec.Body.String(), ">unknown<") {
 		t.Errorf("badge should be unknown without default-branch uploads: %s", rec.Body)
+	}
+}
+
+func TestBadgeAndDashboardShowMergedTotal(t *testing.T) {
+	f := newFixture(t, nil)
+	// Backend part (8/8) then frontend part (0/2) on the default branch: the
+	// merged total is 80%. The badge and dashboard must show 80%, not the 0%
+	// of the last part uploaded.
+	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main", "part": "backend"}, backendPart)
+	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main", "part": "frontend"}, frontendPart)
+
+	req := httptest.NewRequest(http.MethodGet, "/badge/acme/widgets.svg", nil)
+	rec := httptest.NewRecorder()
+	f.srv.ServeHTTP(rec, req)
+	if svg := rec.Body.String(); !strings.Contains(svg, ">80.0%<") {
+		t.Errorf("badge should show merged 80.0%%, got: %s", svg)
+	}
+
+	// The dashboard coverage bar shows the merged 80.0%. (The badge check
+	// above already proves the last part's 0% is not what surfaces.)
+	if body := doGet(t, f, "/").Body.String(); !strings.Contains(body, "80.0%") {
+		t.Errorf("dashboard should show merged 80.0%%: %s", body)
 	}
 }
 
