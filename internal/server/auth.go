@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"html/template"
 	"net/http"
 	"net/url"
 	"sort"
@@ -106,8 +107,9 @@ func redirectToLogin(w http.ResponseWriter, r *http.Request) {
 
 // loginProvider is one sign-in button on the login page.
 type loginProvider struct {
-	Name  string // forge name, the URL segment of the login routes
-	Label string // human-readable button label
+	Name   string // forge name, the URL segment of the login routes
+	Label  string // human-readable button label
+	Abbrev string // two-letter mark shown on the sign-in button
 }
 
 // providerLabels maps forge names to their proper spelling; unknown
@@ -118,11 +120,50 @@ var providerLabels = map[string]string{
 	"gitlab":    "GitLab",
 }
 
+// providerAbbrevs maps forge names to the two-letter mark on their button;
+// unknown forges fall back to the first two letters of the name. The mark's
+// colour is a per-forge CSS class (.pmark-<name>) in style.css.
+var providerAbbrevs = map[string]string{
+	"bitbucket": "BB",
+	"github":    "GH",
+	"gitlab":    "GL",
+}
+
 func providerLabel(name string) string {
 	if l, ok := providerLabels[name]; ok {
 		return l
 	}
 	return strings.ToUpper(name[:1]) + name[1:]
+}
+
+func providerAbbrev(name string) string {
+	if a, ok := providerAbbrevs[name]; ok {
+		return a
+	}
+	if len(name) >= 2 {
+		return strings.ToUpper(name[:2])
+	}
+	return strings.ToUpper(name)
+}
+
+// providerIcons holds the inner SVG (a single 24×24 brand path, filled with
+// currentColor) for each known forge's sign-in button mark. Unknown forges
+// have no icon and fall back to their two-letter abbreviation in the template.
+var providerIcons = map[string]string{
+	"github":    `<path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0 1 12 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222 0 1.606-.014 2.898-.014 3.293 0 .322.216.694.825.576C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>`,
+	"bitbucket": `<path d="M.778 1.213a.768.768 0 0 0-.768.892l3.263 19.81c.084.5.515.868 1.022.873H19.95a.772.772 0 0 0 .77-.646l3.27-20.03a.768.768 0 0 0-.768-.891zM14.52 15.53H9.522L8.17 8.466h7.561z"/>`,
+	"gitlab":    `<path d="M23.955 13.587l-1.342-4.135-2.664-8.189a.455.455 0 0 0-.867 0L16.418 9.45H7.582L4.919 1.263a.455.455 0 0 0-.867 0L1.388 9.452.045 13.587a.924.924 0 0 0 .331 1.023L12 23.054l11.624-8.443a.92.92 0 0 0 .331-1.024"/>`,
+}
+
+// providerIcon returns the inline SVG mark for a forge, or empty template.HTML
+// when the forge is unknown. The strings are compile-time constants, never
+// user input, so emitting them as trusted HTML is safe.
+func providerIcon(name string) template.HTML {
+	inner, ok := providerIcons[name]
+	if !ok {
+		return ""
+	}
+	return template.HTML(`<svg viewBox="0 0 24 24" aria-hidden="true">` + inner + `</svg>`)
 }
 
 // handleLogin implements GET /login — the sign-in page with one button
@@ -153,7 +194,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	providers := make([]loginProvider, 0, len(s.authOrder))
 	for _, p := range s.authOrder {
-		providers = append(providers, loginProvider{Name: p.Name(), Label: providerLabel(p.Name())})
+		providers = append(providers, loginProvider{
+			Name:   p.Name(),
+			Label:  providerLabel(p.Name()),
+			Abbrev: providerAbbrev(p.Name()),
+		})
 	}
 	s.render(w, r, "login.html", map[string]any{
 		"Failed":     r.FormValue("error") == "1",
