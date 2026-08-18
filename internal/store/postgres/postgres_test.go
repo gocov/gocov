@@ -981,3 +981,55 @@ func TestBitbucketGrantEncryptedAtRest(t *testing.T) {
 		t.Errorf("clearing without cipher: %v", err)
 	}
 }
+
+func TestGitLabGrantEncryptedAtRest(t *testing.T) {
+	st := newTestStore(t)
+	box, err := secretbox.New("test-secret-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SetCipher(box)
+	ctx := context.Background()
+
+	w := &store.Workspace{Forge: "gitlab", Prefix: "grp/sub", Token: "ws-tok", DefaultBranch: "main"}
+	if err := st.CreateWorkspace(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetWorkspaceGitLabGrant(ctx, w.ID, "covbot", "rt-secret-1", false); err != nil {
+		t.Fatal(err)
+	}
+
+	// The column never sees the plaintext.
+	var raw string
+	if err := st.Pool().QueryRow(ctx,
+		`SELECT gitlab_refresh_token FROM workspaces WHERE id = $1`, w.ID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(raw, "v1:") || strings.Contains(raw, "rt-secret-1") {
+		t.Errorf("stored column = %q, want sealed v1: value", raw)
+	}
+
+	got, err := st.WorkspaceByPrefix(ctx, "grp/sub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GitLabRefreshToken != "rt-secret-1" || got.GitLabGrantAccount != "covbot" || got.GitLabGrantBroken {
+		t.Errorf("loaded grant = %q/%q/%v", got.GitLabGrantAccount, got.GitLabRefreshToken, got.GitLabGrantBroken)
+	}
+
+	// Rotation swap + full-row-update isolation, in one pass.
+	if err := st.SetWorkspaceGitLabGrant(ctx, w.ID, "covbot", "rt-secret-2", false); err != nil {
+		t.Fatal(err)
+	}
+	stale := *got
+	stale.GitLabRefreshToken = "rt-secret-1"
+	stale.DefaultBranch = "trunk"
+	if err := st.UpdateWorkspace(ctx, &stale); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = st.WorkspaceByPrefix(ctx, "grp/sub")
+	if got.DefaultBranch != "trunk" || got.GitLabRefreshToken != "rt-secret-2" {
+		t.Errorf("after rotation + full-row update: branch %q token %q, want trunk + rt-secret-2",
+			got.DefaultBranch, got.GitLabRefreshToken)
+	}
+}

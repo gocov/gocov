@@ -251,7 +251,8 @@ func marshalCreds(creds map[string]string) ([]byte, error) {
 const workspaceCols = `id, forge, prefix, token, default_branch, COALESCE(forge_credentials, 'null'::jsonb),
 	min_coverage, min_diff_coverage, max_coverage_drop,
 	github_installation_id, github_app_broken,
-	bitbucket_grant_account, bitbucket_refresh_token, bitbucket_grant_broken, created_at`
+	bitbucket_grant_account, bitbucket_refresh_token, bitbucket_grant_broken,
+	gitlab_grant_account, gitlab_refresh_token, gitlab_grant_broken, created_at`
 
 func (s *Store) CreateWorkspace(ctx context.Context, w *store.Workspace) error {
 	return s.createWorkspace(ctx, s.pool, w)
@@ -271,17 +272,23 @@ func (s *Store) createWorkspace(ctx context.Context, db execer, w *store.Workspa
 	if err != nil {
 		return err
 	}
+	sealedGL, err := s.sealToken(w.GitLabRefreshToken)
+	if err != nil {
+		return err
+	}
 	return db.QueryRow(ctx, `
 		INSERT INTO workspaces (forge, prefix, token, default_branch, forge_credentials,
 			min_coverage, min_diff_coverage, max_coverage_drop,
 			github_installation_id, github_app_broken,
-			bitbucket_grant_account, bitbucket_refresh_token, bitbucket_grant_broken)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			bitbucket_grant_account, bitbucket_refresh_token, bitbucket_grant_broken,
+			gitlab_grant_account, gitlab_refresh_token, gitlab_grant_broken)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		RETURNING id, created_at`,
 		w.Forge, w.Prefix, w.Token, w.DefaultBranch, creds,
 		w.Gate.MinCoverage, w.Gate.MinDiffCoverage, w.Gate.MaxCoverageDrop,
 		w.GitHubInstallationID, w.GitHubAppBroken,
 		w.BitbucketGrantAccount, sealed, w.BitbucketGrantBroken,
+		w.GitLabGrantAccount, sealedGL, w.GitLabGrantBroken,
 	).Scan(&w.ID, &w.CreatedAt)
 }
 
@@ -304,9 +311,10 @@ func (s *Store) RegisterWorkspace(ctx context.Context, w *store.Workspace, userI
 }
 
 // UpdateWorkspace replaces the stored row with w's fields — except the
-// Bitbucket grant columns, which only SetWorkspaceBitbucketGrant touches:
-// the refresh token rotates on every use, so a full-row write from an
-// earlier read would resurrect an already-invalidated token.
+// Bitbucket and GitLab grant columns, which only their SetWorkspace*Grant
+// methods touch: the refresh tokens rotate on every use, so a full-row
+// write from an earlier read would resurrect an already-invalidated
+// token.
 func (s *Store) UpdateWorkspace(ctx context.Context, w *store.Workspace) error {
 	creds, err := marshalCreds(w.ForgeCredentials)
 	if err != nil {
@@ -338,6 +346,25 @@ func (s *Store) SetWorkspaceBitbucketGrant(ctx context.Context, workspaceID int6
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE workspaces SET bitbucket_grant_account = $2,
 			bitbucket_refresh_token = $3, bitbucket_grant_broken = $4
+		WHERE id = $1`,
+		workspaceID, account, sealed, broken)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) SetWorkspaceGitLabGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
+	sealed, err := s.sealToken(refreshToken)
+	if err != nil {
+		return err
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE workspaces SET gitlab_grant_account = $2,
+			gitlab_refresh_token = $3, gitlab_grant_broken = $4
 		WHERE id = $1`,
 		workspaceID, account, sealed, broken)
 	if err != nil {
@@ -390,11 +417,12 @@ func (s *Store) ListWorkspaces(ctx context.Context) ([]*store.Workspace, error) 
 func (s *Store) scanWorkspace(row rowScanner) (*store.Workspace, error) {
 	var w store.Workspace
 	var creds []byte
-	var sealedRefresh string
+	var sealedRefresh, sealedGLRefresh string
 	err := row.Scan(&w.ID, &w.Forge, &w.Prefix, &w.Token, &w.DefaultBranch, &creds,
 		&w.Gate.MinCoverage, &w.Gate.MinDiffCoverage, &w.Gate.MaxCoverageDrop,
 		&w.GitHubInstallationID, &w.GitHubAppBroken,
-		&w.BitbucketGrantAccount, &sealedRefresh, &w.BitbucketGrantBroken, &w.CreatedAt)
+		&w.BitbucketGrantAccount, &sealedRefresh, &w.BitbucketGrantBroken,
+		&w.GitLabGrantAccount, &sealedGLRefresh, &w.GitLabGrantBroken, &w.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -407,6 +435,11 @@ func (s *Store) scanWorkspace(row rowScanner) (*store.Workspace, error) {
 		// Undecryptable (key rotated away, or missing): surface as a
 		// broken connection instead of failing every workspace read.
 		w.BitbucketGrantBroken = true
+	}
+	if token, ok := s.openToken(sealedGLRefresh); ok {
+		w.GitLabRefreshToken = token
+	} else {
+		w.GitLabGrantBroken = true
 	}
 	if len(creds) > 0 && string(creds) != "null" {
 		if err := json.Unmarshal(creds, &w.ForgeCredentials); err != nil {
@@ -448,7 +481,8 @@ func (s *Store) ListWorkspacesForUser(ctx context.Context, userID int64) ([]*sto
 			COALESCE(w.forge_credentials, 'null'::jsonb),
 			w.min_coverage, w.min_diff_coverage, w.max_coverage_drop,
 			w.github_installation_id, w.github_app_broken,
-			w.bitbucket_grant_account, w.bitbucket_refresh_token, w.bitbucket_grant_broken, w.created_at
+			w.bitbucket_grant_account, w.bitbucket_refresh_token, w.bitbucket_grant_broken,
+			w.gitlab_grant_account, w.gitlab_refresh_token, w.gitlab_grant_broken, w.created_at
 		FROM workspaces w
 		JOIN workspace_members m ON m.workspace_id = w.id
 		WHERE m.user_id = $1

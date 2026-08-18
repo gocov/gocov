@@ -71,7 +71,15 @@ type Workspace struct {
 	// BitbucketGrantBroken mirrors GitHubAppBroken for the Bitbucket
 	// grant: set lazily when a refresh comes back invalid_grant.
 	BitbucketGrantBroken bool
-	CreatedAt            time.Time
+	// GitLabGrantAccount, GitLabRefreshToken and GitLabGrantBroken
+	// mirror the Bitbucket grant fields for GitLab Connect: the granting
+	// account's username (notes post as it), the rotating refresh token
+	// (encrypted at rest; empty with the broken flag set when
+	// undecryptable) and the lazily-set revocation flag.
+	GitLabGrantAccount string
+	GitLabRefreshToken string
+	GitLabGrantBroken  bool
+	CreatedAt          time.Time
 }
 
 // Repo is a tracked repository. Slug is namespaced ("workspace/repo").
@@ -219,6 +227,9 @@ type Store interface {
 	// a single narrow UPDATE that cannot clobber (or be clobbered by) a
 	// concurrent full-row settings save.
 	SetWorkspaceBitbucketGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error
+	// SetWorkspaceGitLabGrant is SetWorkspaceBitbucketGrant's GitLab
+	// twin, with the same rotation-safety contract.
+	SetWorkspaceGitLabGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error
 
 	// SetUserWorkspaces replaces a user's workspace memberships with the
 	// given set: memberships not listed are removed and listed ones are

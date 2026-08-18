@@ -556,17 +556,21 @@ func (s *Server) forgeFor(ctx context.Context, repo *store.Repo) (forge.Forge, e
 // credentials for the forge — the gate for the extra workspace lookup.
 func (s *Server) oneClickCapable(forgeName string) bool {
 	return (s.githubApp != nil && forgeName == "github") ||
-		(s.bbConnect != nil && forgeName == "bitbucket")
+		(s.bbConnect != nil && forgeName == "bitbucket") ||
+		(s.glConnect != nil && forgeName == "gitlab")
 }
 
 // connectedForge returns the workspace's one-click-connected client —
-// GitHub App installation or Bitbucket grant — or nil, the top link of
-// the credential chain (D4/D7).
+// GitHub App installation, Bitbucket grant or GitLab grant — or nil,
+// the top link of the credential chain (D4/D7).
 func (s *Server) connectedForge(ctx context.Context, ws *store.Workspace, forgeName string) forge.Forge {
 	if fg := s.installationForge(ctx, ws, forgeName); fg != nil {
 		return fg
 	}
-	return s.grantForge(ctx, ws, forgeName)
+	if fg := s.grantForge(ctx, ws, forgeName); fg != nil {
+		return fg
+	}
+	return s.gitlabGrantForge(ctx, ws, forgeName)
 }
 
 // repoWorkspace returns the workspace owning the slug's prefix, nil when

@@ -15,6 +15,17 @@
 </div>
 {{end}}
 
+{{if and .GitLabConnect (not .GLGrantAccount)}}
+<div class="card pad">
+  <h2>Recommended: connect the workspace</h2>
+  <p class="sub">One GitLab consent (the <code>api</code> scope) and statuses and MR comments
+  work with zero manual tokens. Posts appear as the connecting account &mdash; use a bot
+  account if you have one. The upload steps below are still needed &mdash; the connection
+  covers the reporting side.</p>
+  <p><a class="btn primary" href="/workspaces/{{pathesc .Workspace.Prefix}}/gitlab/connect">Connect workspace</a></p>
+</div>
+{{end}}
+
 {{if and .GitHubApp (not .GitHubAppConnected)}}
 <div class="card pad">
   <h2>Recommended: install the GitHub App</h2>
@@ -33,8 +44,10 @@
   and <code>GOCOV_SERVER</code> as a variable{{end}}:</p>
   {{else if eq .Workspace.Forge "gitlab"}}
   <p class="sub">In your GitLab group or project: <em>Settings &rarr; CI/CD &rarr;
-  Variables</em>. Add <code>GOCOV_TOKEN</code>, marked masked{{if not .ServerImplicit}},
-  and <code>GOCOV_SERVER</code>{{end}}:</p>
+  Variables</em>. Add <code>GOCOV_TOKEN</code>, marked <strong>masked</strong> but
+  <strong>not protected</strong> &mdash; GitLab checks &ldquo;Protect variable&rdquo; by
+  default, and protected variables never reach merge request
+  pipelines{{if not .ServerImplicit}}. Add <code>GOCOV_SERVER</code> too{{end}}:</p>
   {{else}}
   <p class="sub">In Bitbucket: <em>Workspace settings &rarr; Workspace variables</em>.
   Add <code>GOCOV_TOKEN</code>, marked secured{{if not .ServerImplicit}}, and

@@ -19,6 +19,7 @@ import (
 	"github.com/gocov/gocov/internal/forge"
 	"github.com/gocov/gocov/internal/forge/bitbucket"
 	forgefake "github.com/gocov/gocov/internal/forge/fake"
+	"github.com/gocov/gocov/internal/forge/gitlab"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/server"
 	"github.com/gocov/gocov/internal/store"
@@ -59,6 +60,22 @@ func (devGitHubApp) InstallationAccount(context.Context, int64) (string, error) 
 func (devGitHubApp) InstallURL(context.Context) (string, error) {
 	return "https://github.com/apps/gocov/installations/new", nil
 }
+
+// devGLConnect stubs server.GitLabConnect the same way devBBConnect
+// stubs Bitbucket: the consent bounce goes straight back to the local
+// callback, so the whole connect loop is previewable without GitLab.
+type devGLConnect struct{ fg forge.Forge }
+
+func (devGLConnect) AuthorizeURL(state, redirectURI string) string {
+	return redirectURI + "?state=" + url.QueryEscape(state) + "&code=dev"
+}
+func (devGLConnect) Exchange(context.Context, string, string) (*gitlab.Grant, error) {
+	return &gitlab.Grant{Account: "gocov-bot", AccessToken: "at", RefreshToken: "rt", TTL: 2 * time.Hour}, nil
+}
+func (devGLConnect) Refresh(context.Context, string, string) (*gitlab.Grant, error) {
+	return &gitlab.Grant{AccessToken: "at", RefreshToken: "rt", TTL: 2 * time.Hour}, nil
+}
+func (d devGLConnect) ForgeClient(string) forge.Forge { return d.fg }
 
 // devBBConnect stubs server.BitbucketConnect: the consent bounce goes
 // straight back to the local callback, so the whole connect loop is
@@ -132,8 +149,13 @@ func main() {
 		{Forge: "bitbucket", Prefix: "bb-broken", Token: "bb-broken-token", DefaultBranch: "main",
 			BitbucketGrantAccount: "gocov-bot", BitbucketRefreshToken: "rt", BitbucketGrantBroken: true},
 		// A GitLab workspace at subgroup depth, for the setup page's
-		// .gitlab-ci.yml snippet and the %2F-encoded workspace routes.
+		// .gitlab-ci.yml snippet and the %2F-encoded workspace routes,
+		// plus the GitLab-connect states.
 		{Forge: "gitlab", Prefix: "gl-group/platform", Token: "gl-token", DefaultBranch: "main"},
+		{Forge: "gitlab", Prefix: "gl-connected", Token: "gl-conn-token", DefaultBranch: "main",
+			GitLabGrantAccount: "gocov-bot", GitLabRefreshToken: "rt"},
+		{Forge: "gitlab", Prefix: "gl-broken", Token: "gl-broken-token", DefaultBranch: "main",
+			GitLabGrantAccount: "gocov-bot", GitLabRefreshToken: "rt", GitLabGrantBroken: true},
 	} {
 		if err := st.CreateWorkspace(ctx, ws); err != nil {
 			log.Fatal(err)
@@ -146,7 +168,7 @@ func main() {
 		auths = []auth.Provider{
 			devAuth{forge: "bitbucket", workspaces: []string{"acme", "personal", "bb-connected", "bb-broken"}},
 			devAuth{forge: "github", workspaces: []string{"gh-new", "gh-connected", "gh-broken"}},
-			devAuth{forge: "gitlab", workspaces: []string{"gl-group/platform", "gl-personal"}},
+			devAuth{forge: "gitlab", workspaces: []string{"gl-group/platform", "gl-connected", "gl-broken", "gl-personal"}},
 		}
 		hosted = true
 		log.Println("preview auth on: sign-in via bitbucket lands in acme, via github in the gh-* workspaces, via gitlab in gl-group/platform")
@@ -164,6 +186,7 @@ func main() {
 		Hosted:           hosted,
 		GitHubApp:        devGitHubApp{fg: forgefake.New()},
 		BitbucketConnect: devBBConnect{fg: forgefake.New()},
+		GitLabConnect:    devGLConnect{fg: forgefake.New()},
 	})
 	log.Println("preview on :8099")
 	log.Fatal(http.ListenAndServe(":8099", srv))

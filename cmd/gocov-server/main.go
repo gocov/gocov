@@ -34,9 +34,11 @@
 // GOCOV_SECRET_KEY (exactly 64 hex characters, e.g. `openssl rand -hex
 // 32`; the AES key is a plain SHA-256 of it, so the value must carry a
 // full 256 bits of entropy and boot fails on anything else) enables the
-// Bitbucket workspace connect on top of the Bitbucket OAuth consumer:
-// one consent and the workspace acts through that grant, its refresh
-// token stored encrypted.
+// Bitbucket workspace connect on top of the Bitbucket OAuth consumer,
+// and the GitLab workspace connect on top of the GitLab OAuth
+// application (which must then also carry the "api" scope): one consent
+// and the workspace acts through that grant, its refresh token stored
+// encrypted.
 // GOCOV_GITHUB_WEBHOOK_SECRET enables the GitHub App / Marketplace
 // webhook at POST /github/webhook, verifying delivery signatures against
 // this secret (required for a Marketplace listing).
@@ -307,6 +309,15 @@ func serve() error {
 		log.Info("bitbucket workspace connect enabled")
 	case oauthKey != "" && oauthSecret != "":
 		log.Info("GOCOV_SECRET_KEY not set; Bitbucket workspace connect stays disabled")
+	}
+	// GitLab workspace connect rides the sign-in application the same
+	// way; the application must additionally carry the "api" scope.
+	switch {
+	case glKey != "" && glSecret != "" && strings.TrimSpace(os.Getenv("GOCOV_SECRET_KEY")) != "":
+		cfg.GitLabConnect = &gitlab.Application{Key: glKey, Secret: glSecret}
+		log.Info("gitlab workspace connect enabled")
+	case glKey != "" && glSecret != "":
+		log.Info("GOCOV_SECRET_KEY not set; GitLab workspace connect stays disabled")
 	}
 	srv := server.New(cfg)
 
