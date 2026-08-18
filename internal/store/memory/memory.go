@@ -196,12 +196,15 @@ func (s *Store) UpdateWorkspace(_ context.Context, w *store.Workspace) error {
 	if cp.CreatedAt.IsZero() {
 		cp.CreatedAt = existing.CreatedAt
 	}
-	// Mirror postgres: the Bitbucket grant columns belong exclusively to
-	// SetWorkspaceBitbucketGrant — the token rotates on every use, and a
+	// Mirror postgres: the grant columns belong exclusively to their
+	// SetWorkspace*Grant methods — the tokens rotate on every use, and a
 	// full-row write from an earlier read would resurrect a dead one.
 	cp.BitbucketGrantAccount = existing.BitbucketGrantAccount
 	cp.BitbucketRefreshToken = existing.BitbucketRefreshToken
 	cp.BitbucketGrantBroken = existing.BitbucketGrantBroken
+	cp.GitLabGrantAccount = existing.GitLabGrantAccount
+	cp.GitLabRefreshToken = existing.GitLabRefreshToken
+	cp.GitLabGrantBroken = existing.GitLabGrantBroken
 	s.workspaces[w.ID] = &cp
 	return nil
 }
@@ -216,6 +219,19 @@ func (s *Store) SetWorkspaceBitbucketGrant(_ context.Context, workspaceID int64,
 	w.BitbucketGrantAccount = account
 	w.BitbucketRefreshToken = refreshToken
 	w.BitbucketGrantBroken = broken
+	return nil
+}
+
+func (s *Store) SetWorkspaceGitLabGrant(_ context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	w, ok := s.workspaces[workspaceID]
+	if !ok {
+		return store.ErrNotFound
+	}
+	w.GitLabGrantAccount = account
+	w.GitLabRefreshToken = refreshToken
+	w.GitLabGrantBroken = broken
 	return nil
 }
 

@@ -19,6 +19,7 @@ import (
 	"github.com/gocov/gocov/internal/diffcov"
 	"github.com/gocov/gocov/internal/forge"
 	"github.com/gocov/gocov/internal/forge/bitbucket"
+	"github.com/gocov/gocov/internal/forge/gitlab"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 )
@@ -68,6 +69,12 @@ type Config struct {
 	// forge/bitbucket.Consumer. Nil disables the feature; requires
 	// GOCOV_SECRET_KEY at the store for the at-rest token encryption.
 	BitbucketConnect BitbucketConnect
+	// GitLabConnect is the OAuth application powering the GitLab
+	// workspace-connect grant, implemented by forge/gitlab.Application.
+	// Nil disables the feature; requires GOCOV_SECRET_KEY at the store
+	// for the at-rest token encryption, and the application must carry
+	// the "api" scope on top of sign-in's read scopes.
+	GitLabConnect GitLabConnect
 	// GitHubWebhookSecret enables the GitHub App / Marketplace webhook
 	// (POST /github/webhook) and is the HMAC secret its signatures are
 	// verified against. Empty leaves the route unregistered.
@@ -86,6 +93,23 @@ type BitbucketConnect interface {
 	// Refresh trades a refresh token for a fresh access token and — the
 	// tokens rotate — a new refresh token to persist.
 	Refresh(ctx context.Context, refreshToken string) (*bitbucket.Grant, error)
+	// ForgeClient returns a forge client acting through the access token.
+	ForgeClient(accessToken string) forge.Forge
+}
+
+// GitLabConnect runs the GitLab OAuth grants for workspace connect —
+// BitbucketConnect's twin. Errors wrapping forge.ErrCredentialsRevoked
+// mean the grant is gone (revoked on the account's applications page).
+type GitLabConnect interface {
+	// AuthorizeURL is the consent page for the connect grant (scope api).
+	AuthorizeURL(state, redirectURI string) string
+	// Exchange trades the consent code for the grant, including the
+	// granting account's username.
+	Exchange(ctx context.Context, code, redirectURI string) (*gitlab.Grant, error)
+	// Refresh trades a refresh token for a fresh access token and — the
+	// tokens rotate — a new refresh token to persist. GitLab's token
+	// endpoint wants the redirect URI on refreshes too.
+	Refresh(ctx context.Context, refreshToken, redirectURI string) (*gitlab.Grant, error)
 	// ForgeClient returns a forge client acting through the access token.
 	ForgeClient(accessToken string) forge.Forge
 }
@@ -121,6 +145,8 @@ type Server struct {
 	githubApp     GitHubApp
 	bbConnect     BitbucketConnect
 	bbTokens      *bbTokenCache
+	glConnect     GitLabConnect
+	glTokens      *bbTokenCache // same cache/locking shape, separate tokens
 	webhookSecret string
 
 	// auths holds the sign-in providers by forge name; authOrder keeps
@@ -182,6 +208,8 @@ func New(cfg Config) *Server {
 		githubApp:     cfg.GitHubApp,
 		bbConnect:     cfg.BitbucketConnect,
 		bbTokens:      newBBTokenCache(),
+		glConnect:     cfg.GitLabConnect,
+		glTokens:      newBBTokenCache(),
 		webhookSecret: cfg.GitHubWebhookSecret,
 
 		auths:             map[string]auth.Provider{},
@@ -216,6 +244,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /workspaces/{prefix}/github/disconnect", s.handleGitHubDisconnect)
 	s.mux.HandleFunc("GET /workspaces/{prefix}/bitbucket/connect", s.handleBitbucketConnect)
 	s.mux.HandleFunc("POST /workspaces/{prefix}/bitbucket/disconnect", s.handleBitbucketDisconnect)
+	s.mux.HandleFunc("GET /workspaces/{prefix}/gitlab/connect", s.handleGitLabConnect)
+	s.mux.HandleFunc("POST /workspaces/{prefix}/gitlab/disconnect", s.handleGitLabDisconnect)
 	s.mux.HandleFunc("GET /workspaces/{prefix}/setup", s.handleWorkspaceSetup)
 	s.mux.HandleFunc("GET /workspaces/{prefix}/setup/status", s.handleWorkspaceSetupStatus)
 	s.mux.HandleFunc("GET /github/setup", s.handleGitHubSetup)

@@ -109,6 +109,36 @@
 </div>
 {{end}}
 
+{{if .GitLabConnect}}
+<div class="card pad">
+  <h2>GitLab connection</h2>
+  {{if .GLGrantBroken}}
+  <p class="sub">The connection stopped working — the grant was revoked on GitLab, or the
+  account that connected it left. Statuses and MR comments fall back to configured
+  credentials, or are skipped. <span class="chip fail">reconnect needed</span></p>
+  {{else if .GLGrantAccount}}
+  <p class="sub">Statuses, MR comments, diffs and source fetch act through the connected
+  grant &mdash; no access tokens needed. Posts appear as
+  <code>@{{.GLGrantAccount}}</code>. <span class="chip pass">connected &#10003;</span></p>
+  {{else}}
+  <p class="sub">Connect the workspace with one GitLab consent (the <code>api</code> scope)
+  and statuses and MR comments work with zero manual tokens. Posts will appear as the
+  account that clicks Connect &mdash; teams with a bot account should connect with it.
+  <span class="chip plain">not connected</span></p>
+  {{end}}
+  {{if or (not .GLGrantAccount) .GLGrantBroken}}
+  <p><a class="btn primary" href="/workspaces/{{pathesc .Workspace.Prefix}}/gitlab/connect">
+    {{if .GLGrantBroken}}Reconnect workspace{{else}}Connect workspace{{end}}</a></p>
+  {{end}}
+  {{if .GLGrantAccount}}
+  <form method="post" action="/workspaces/{{pathesc .Workspace.Prefix}}/gitlab/disconnect"
+        data-confirm="Disconnect the workspace? Statuses and comments fall back to configured credentials, or are skipped.">
+    <button class="btn" type="submit">Disconnect</button>
+  </form>
+  {{end}}
+</div>
+{{end}}
+
 <div class="card pad">
   <h2>Forge credentials</h2>
   <p class="sub">A {{.ForgeLabel}} bot credential used for build statuses, PR comments and

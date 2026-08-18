@@ -66,6 +66,7 @@ func (s *Server) settingsData(r *http.Request, ws *store.Workspace, newToken, no
 	}
 	s.addGitHubAppData(r, ws, data)
 	s.addBitbucketGrantData(ws, data)
+	s.addGitLabGrantData(ws, data)
 	return data
 }
 
@@ -94,10 +95,14 @@ func (s *Server) handleWorkspacePage(w http.ResponseWriter, r *http.Request) {
 		notice = "Saved."
 	}
 	if r.FormValue("connected") == "1" {
-		if ws.Forge == "bitbucket" {
+		switch ws.Forge {
+		case "bitbucket":
 			notice = "Workspace connected — statuses, PR comments and reports now post as @" +
 				ws.BitbucketGrantAccount + "."
-		} else {
+		case "gitlab":
+			notice = "Workspace connected — statuses and MR comments now post as @" +
+				ws.GitLabGrantAccount + "."
+		default:
 			notice = "GitHub App connected — statuses, PR comments and check runs now post as gocov[bot]."
 		}
 	}
@@ -254,6 +259,7 @@ func (s *Server) handleWorkspaceSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	s.addGitHubAppData(r, ws, data)
 	s.addBitbucketGrantData(ws, data)
+	s.addGitLabGrantData(ws, data)
 	s.render(w, r, "setup.html", data)
 }
 

@@ -449,10 +449,14 @@ coverage:
     - ./gocov-linux-amd64 upload coverage.out
 ```
 
-with `GOCOV_TOKEN` (masked) and, when self-hosting, `GOCOV_SERVER` set
+with `GOCOV_TOKEN` (masked, but **not protected** — GitLab checks
+"Protect variable" by default, and protected variables never reach
+merge request pipelines) and, when self-hosting, `GOCOV_SERVER` set
 as CI/CD variables under **Settings → CI/CD → Variables** on the group
 or project. The `workflow` rules run the job on merge requests and the
-default branch without duplicate pipelines.
+default branch without duplicate pipelines. Note that gitlab.com's free
+tier requires a verified account (credit card) before shared runners
+pick up jobs.
 
 On runners without a Go toolchain, use the prebuilt binaries from
 [GitHub Releases](https://github.com/gocov/gocov/releases) instead
@@ -656,6 +660,25 @@ To make the coverage gate blocking on GitHub, add a branch protection
 rule under **Settings → Branches → Require status checks to pass** and
 pick `gocov` (the commit status — works with every credential) or
 `gocov coverage` (the check run). A failed gate then blocks the merge.
+
+### GitLab connect (one-click)
+
+Instead of manufacturing a token, GitLab workspaces can be connected
+with one OAuth consent: on the workspace settings (or setup) page,
+**Connect workspace** sends a member through GitLab's consent screen
+with the `api` scope, and from then on statuses, MR comments, diffs and
+source fetch act through that grant — no manual tokens. As with the
+Bitbucket connect, posts visibly appear as the account that clicked
+Connect, so teams with a bot account should connect with it. The grant's
+refresh token is stored encrypted (GOCOV_SECRET_KEY) and rotates on
+every use; revoking the application on GitLab (or the member leaving)
+degrades uploads to the configured credentials and surfaces a
+"reconnect" prompt.
+
+Requirements on top of GitLab sign-in: `GOCOV_SECRET_KEY` must be set,
+and the GitLab OAuth application must carry the **`api` scope in
+addition to** `read_user` and `read_api` — sign-in keeps requesting only
+the read scopes; the bigger consent happens solely on Connect.
 
 ### GitLab token permissions
 
