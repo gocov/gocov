@@ -184,6 +184,8 @@ func New(cfg Config) *Server {
 		// pathesc encodes a value into a single URL path segment; GitLab
 		// workspace prefixes contain slashes and must ride as %2F.
 		"pathesc": url.PathEscape,
+		// forgeicon renders a forge's brand mark for the sign-in button.
+		"forgeicon": providerIcon,
 	}
 	// Every page is its own template set sharing the layout and partials,
 	// so pages can define "content" without colliding.

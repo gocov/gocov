@@ -56,10 +56,24 @@ a:hover { text-decoration: underline; }
   font-size: 16px; line-height: 1; cursor: pointer; padding: 0 2px; }
 
 /* login page */
-.login { display: flex; justify-content: center; padding-top: 8vh; }
-.login-card { max-width: 420px; width: 100%; padding: 28px 32px 32px; text-align: center; }
-.login-card h1 { margin-top: 0; }
-.login-card .btn.primary { justify-content: center; width: 100%; margin-top: 6px; padding: 10px 14px; }
+.login { display: flex; justify-content: center; padding: 9vh 0 6vh; }
+.login-card { max-width: 400px; width: 100%; padding: 30px 32px 26px; }
+.login-mark { display: block; width: 32px; height: 32px; margin-bottom: 18px; }
+.login-card h1 { margin: 0 0 6px; font-size: 20px; }
+.login-card .sub { margin: 0 0 22px; font-size: 13.5px; }
+.login-card .notice { margin: 0 0 18px; }
+.providers { display: grid; gap: 8px; }
+.btn.provider { width: 100%; justify-content: flex-start; gap: 10px; padding: 10px 13px; font-size: 14px; }
+.btn.provider:hover { background: var(--surface2); border-color: var(--text-3); }
+.btn.provider .pmark { flex: none; width: 20px; height: 20px; border-radius: 5px; display: grid;
+  place-items: center; font-family: var(--mono); font-size: 9.5px; font-weight: 700; color: #fff; }
+.btn.provider .pmark svg { width: 13px; height: 13px; display: block; fill: currentColor; }
+.pmark { background: var(--text-3); }
+.pmark-github { background: var(--nav); }
+.pmark-bitbucket { background: var(--accent); }
+.pmark-gitlab { background: var(--yellow); }
+.login-foot { margin: 22px 0 0; padding-top: 16px; border-top: 1px solid var(--border-soft);
+  color: var(--text-2); font-size: 12.5px; }
 .login-workspaces { margin-top: 18px; }
 .notice { border-radius: var(--radius-sm); padding: 10px 12px; font-size: 13px; text-align: left; }
 .notice.fail { background: var(--red-soft); color: var(--red); }
