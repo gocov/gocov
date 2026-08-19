@@ -86,14 +86,14 @@ func (s *Server) gitlabConnectCallback(w http.ResponseWriter, r *http.Request) b
 	if r.FormValue("error") != "" || code == "" || prefix == "" {
 		s.log.Warn("gitlab connect callback rejected", "gl_error", r.FormValue("error"))
 		s.renderConnect(w, r, http.StatusBadRequest, "Connect failed",
-			"The consent redirect could not be validated. Start again from the workspace settings page.", connectAction{})
+			"The consent redirect could not be validated. Start again from the workspace settings page.")
 		return true
 	}
 	u := s.sessionUser(r)
 	if u == nil {
 		s.renderConnect(w, r, http.StatusForbidden, "Sign in first",
 			"Your gocov session expired during the consent. Sign in and start the connect again "+
-				"from the workspace settings page.", connectAction{})
+				"from the workspace settings page.")
 		return true
 	}
 	ws, err := s.store.WorkspaceByPrefix(r.Context(), prefix)
@@ -120,7 +120,7 @@ func (s *Server) gitlabConnectCallback(w http.ResponseWriter, r *http.Request) b
 		s.log.Error("gitlab connect exchange", "workspace", ws.Prefix, "err", err)
 		s.renderConnect(w, r, http.StatusBadGateway, "GitLab did not confirm the grant",
 			"The authorization could not be completed with GitLab. Start again from the "+
-				"workspace settings page.", connectAction{})
+				"workspace settings page.")
 		return true
 	}
 	if err := s.store.SetWorkspaceGitLabGrant(r.Context(), ws.ID, grant.Account, grant.RefreshToken, false); err != nil {

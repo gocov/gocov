@@ -141,14 +141,14 @@ func (s *Server) bitbucketConnectCallback(w http.ResponseWriter, r *http.Request
 	if r.FormValue("error") != "" || code == "" || prefix == "" {
 		s.log.Warn("bitbucket connect callback rejected", "bb_error", r.FormValue("error"))
 		s.renderConnect(w, r, http.StatusBadRequest, "Connect failed",
-			"The consent redirect could not be validated. Start again from the workspace settings page.", connectAction{})
+			"The consent redirect could not be validated. Start again from the workspace settings page.")
 		return true
 	}
 	u := s.sessionUser(r)
 	if u == nil {
 		s.renderConnect(w, r, http.StatusForbidden, "Sign in first",
 			"Your gocov session expired during the consent. Sign in and start the connect again "+
-				"from the workspace settings page.", connectAction{})
+				"from the workspace settings page.")
 		return true
 	}
 	ws, err := s.store.WorkspaceByPrefix(r.Context(), prefix)
@@ -175,7 +175,7 @@ func (s *Server) bitbucketConnectCallback(w http.ResponseWriter, r *http.Request
 		s.log.Error("bitbucket connect exchange", "workspace", ws.Prefix, "err", err)
 		s.renderConnect(w, r, http.StatusBadGateway, "Bitbucket did not confirm the grant",
 			"The authorization could not be completed with Bitbucket. Start again from the "+
-				"workspace settings page.", connectAction{})
+				"workspace settings page.")
 		return true
 	}
 	if err := s.store.SetWorkspaceBitbucketGrant(r.Context(), ws.ID, grant.Account, grant.RefreshToken, false); err != nil {
