@@ -155,7 +155,7 @@ func TestGitLabConnectFlow(t *testing.T) {
 		t.Errorf("redirect_uri = %q, must equal the sign-in callback exactly", got)
 	}
 	stateCk := cookieNamed(t, start, glConnectStateCookie)
-	state, prefix, _ := strings.Cut(stateCk.Value, "|")
+	state, prefix, _ := splitConnectState(stateCk.Value)
 	if prefix != "grp/sub" {
 		t.Errorf("cookie prefix = %q", prefix)
 	}

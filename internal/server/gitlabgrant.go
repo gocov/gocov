@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gocov/gocov/internal/forge"
@@ -52,7 +51,7 @@ func (s *Server) handleGitLabConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     glConnectStateCookie,
-		Value:    state + "|" + ws.Prefix,
+		Value:    state + "|" + ws.Prefix + "|" + connectFrom(r),
 		Path:     "/",
 		MaxAge:   int((10 * time.Minute).Seconds()),
 		HttpOnly: true,
@@ -75,7 +74,7 @@ func (s *Server) gitlabConnectCallback(w http.ResponseWriter, r *http.Request) b
 	if err != nil {
 		return false
 	}
-	state, prefix, _ := strings.Cut(c.Value, "|")
+	state, prefix, from := splitConnectState(c.Value)
 	if state == "" || r.FormValue("state") != state {
 		// Not this flow's redirect (a plain sign-in, or garbage); the
 		// stale cookie stays until it expires or a connect finishes.
@@ -129,7 +128,7 @@ func (s *Server) gitlabConnectCallback(w http.ResponseWriter, r *http.Request) b
 	}
 	s.glTokens.put(ws.ID, grant.AccessToken, grant.TTL)
 	s.log.Info("gitlab workspace connected", "workspace", ws.Prefix, "account", grant.Account, "user", u.DisplayName)
-	http.Redirect(w, r, workspaceURL(ws.Prefix, "?connected=1"), http.StatusSeeOther)
+	http.Redirect(w, r, connectDest(ws.Prefix, from), http.StatusSeeOther)
 	return true
 }
 

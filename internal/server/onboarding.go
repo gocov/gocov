@@ -161,11 +161,11 @@ func (s *Server) reportingState(ws *store.Workspace, data map[string]any) {
 	case "bitbucket":
 		data["ReportingConnected"] = ws.BitbucketGrantAccount != ""
 		data["GrantAccount"] = ws.BitbucketGrantAccount
-		data["GrantURL"] = workspaceURL(ws.Prefix, "/bitbucket/connect")
+		data["GrantURL"] = workspaceURL(ws.Prefix, "/bitbucket/connect") + "?from=onboarding"
 	case "gitlab":
 		data["ReportingConnected"] = ws.GitLabGrantAccount != ""
 		data["GrantAccount"] = ws.GitLabGrantAccount
-		data["GrantURL"] = workspaceURL(ws.Prefix, "/gitlab/connect")
+		data["GrantURL"] = workspaceURL(ws.Prefix, "/gitlab/connect") + "?from=onboarding"
 	}
 }
 
@@ -174,6 +174,41 @@ func (s *Server) reportingState(ws *store.Workspace, data map[string]any) {
 // reporting card before CI.
 func onboardingReadyURL(prefix string) string {
 	return "/onboarding?ws=" + url.QueryEscape(prefix)
+}
+
+// The connect flow (Bitbucket/GitLab grant) returns to wherever it started:
+// the onboarding Workspace-ready card, or the settings page. The origin
+// rides in the connect state cookie's third field so the callback can route
+// back. connectFrom reads it off the start request.
+func connectFrom(r *http.Request) string {
+	if r.FormValue("from") == "onboarding" {
+		return "onboarding"
+	}
+	return ""
+}
+
+// splitConnectState parses the connect state cookie value (state|prefix|from).
+func splitConnectState(v string) (state, prefix, from string) {
+	parts := strings.SplitN(v, "|", 3)
+	if len(parts) > 0 {
+		state = parts[0]
+	}
+	if len(parts) > 1 {
+		prefix = parts[1]
+	}
+	if len(parts) > 2 {
+		from = parts[2]
+	}
+	return state, prefix, from
+}
+
+// connectDest is where a completed connect lands: the onboarding
+// Workspace-ready state when it started there, else the settings page.
+func connectDest(prefix, from string) string {
+	if from == "onboarding" {
+		return onboardingReadyURL(prefix)
+	}
+	return workspaceURL(prefix, "") + "?connected=1"
 }
 
 // setupViewData assembles the steps 2-3 payload (CI snippet, token and the
