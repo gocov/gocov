@@ -16,9 +16,9 @@ func workspaceURL(prefix, suffix string) string {
 	return "/workspaces/" + url.PathEscape(prefix) + suffix
 }
 
-// Workspace settings page (M3/R3) — CLI parity in the UI: token rotation,
-// default branch, one-click forge connection and gate defaults. The
-// onboarding/setup page (R4) lives next to it. Both are
+// Workspace settings page (M3/R3) — the way workspaces are administered:
+// token rotation, default branch, one-click forge connection and gate
+// defaults. The onboarding/setup page (R4) lives next to it. Both are
 // members-only; anyone else 404s (like every other tenant surface, a
 // non-member must not learn the workspace exists).
 
@@ -108,7 +108,7 @@ func (s *Server) handleWorkspacePage(w http.ResponseWriter, r *http.Request) {
 
 // handleWorkspaceRotate implements POST /workspaces/{prefix}/rotate-token.
 // The response renders the new token once; the old one is already dead by
-// then (single UPDATE, no grace period — same semantics as the CLI).
+// then (single UPDATE, no grace period).
 func (s *Server) handleWorkspaceRotate(w http.ResponseWriter, r *http.Request) {
 	ws := s.memberWorkspace(w, r)
 	if ws == nil {
@@ -130,7 +130,7 @@ func (s *Server) handleWorkspaceRotate(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleWorkspaceSettings implements POST /workspaces/{prefix}/settings:
-// default branch and gate defaults, mirroring `workspace update`.
+// default branch and gate defaults for repos registered from now on.
 func (s *Server) handleWorkspaceSettings(w http.ResponseWriter, r *http.Request) {
 	ws := s.memberWorkspace(w, r)
 	if ws == nil {

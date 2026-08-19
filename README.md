@@ -92,64 +92,39 @@ docker compose up
 This starts Postgres and the server on http://localhost:8080 (migrations
 apply automatically).
 
-### Onboarding a whole workspace (recommended)
+### Onboarding (in the web UI)
 
-For many repos, register the workspace once and use a single token:
+Workspaces, repos, tokens, gates and forge connections are all
+administered from the web UI — there is no server-side admin CLI. Because
+onboarding derives the workspaces you may register from your signed-in
+forge identity, the first step is to **enable sign-in** (see the next
+section); a fully open instance with no provider configured has no
+identity to register from.
 
-```sh
-docker compose exec server gocov-server workspace add \
-  -prefix myworkspace -default-branch main
-```
+Once a sign-in provider is set:
 
-Set the printed token as a *Bitbucket workspace variable* (`GOCOV_TOKEN`,
-secured) together with `GOCOV_SERVER` — every repo inherits them. Repos
-register themselves on their first upload; their default branch is asked
-from Bitbucket when the workspace has credentials of its own (or a
-one-click connection), falling back to the workspace's `-default-branch`.
+1. Sign in with your forge account.
+2. The onboarding wizard registers your workspace (the org/group/user
+   the forge lists for you) and shows its **upload token — once**.
+3. Set that token as a *workspace variable* (`GOCOV_TOKEN`, secured)
+   together with `GOCOV_SERVER`; every repo under the workspace inherits
+   them. Repos register themselves on their first upload — their default
+   branch is asked from the forge when the workspace is connected,
+   falling back to the workspace's default.
+4. Connect the workspace to its forge (GitHub App, or a Bitbucket/GitLab
+   one-click grant) so gocov can post statuses, PR/MR comments and check
+   runs. A workspace with no connection still stores and reports
+   coverage; the forge surfaces are simply skipped.
 
-### Registering repos one by one
+A workspace can sit at any level of a namespace tree: a GitHub org, a
+GitLab group or subgroup (registered by its full path), a Bitbucket
+workspace, or a personal namespace — repos below it register themselves
+on first upload.
 
-```sh
-docker compose exec server gocov-server repo add \
-  -slug myworkspace/myrepo \
-  -default-branch main
-```
-
-For a GitHub repo, the slug is `owner/repo`; for a GitLab project it is
-the full namespace path, subgroups included:
-
-```sh
-docker compose exec server gocov-server repo add \
-  -slug myorg/myrepo -forge github -default-branch main
-
-docker compose exec server gocov-server repo add \
-  -slug mygroup/subgroup/myproject -forge gitlab -default-branch main
-```
-
-Registering a repo only tracks coverage. To let gocov post build
-statuses, PR/MR comments and check runs, connect the repo's workspace
-once through the web UI (GitHub App, or a Bitbucket/GitLab one-click
-grant — see "Forge connection" below). A repo whose workspace has no
-connection still stores and reports coverage; the forge surfaces are
-simply skipped.
-
-A GitHub org or GitLab group can also be onboarded wholesale:
-`workspace add -prefix myorg -forge github` (or `-prefix
-mygroup/subgroup -forge gitlab` — a workspace can sit at any level of
-the namespace tree) — repos then register themselves on first upload,
-exactly like a Bitbucket workspace.
-
-Manage repos later with:
-
-```sh
-gocov-server repo list                                   # slugs, branches, gate
-gocov-server repo rotate-token -slug myworkspace/myrepo  # invalidates the old token
-gocov-server repo update -slug myworkspace/myrepo \
-  -default-branch develop                                # and/or gate flags
-gocov-server repo remove -slug myworkspace/myrepo -force # deletes uploads and raw profiles too;
-                                                         # without -force only prints a summary
-gocov-server workspace list|rotate-token|update|remove   # workspace token management
-```
+After onboarding, manage everything from the dashboard: each workspace
+links to its **settings** page (rotate the upload token, set the default
+branch and coverage-gate defaults, connect/disconnect the forge). See
+"Workspace settings in the UI" below.
 
 ### Enable sign-in (Bitbucket, GitHub and/or GitLab)
 
@@ -219,6 +194,17 @@ an explicit list. Accounts are provisioned on first successful sign-in
 — there is no user bookkeeping, and gocov never sees or stores
 passwords (the forge tokens are discarded right after login).
 
+**Bootstrapping a fresh private instance:** a brand-new instance tracks
+no workspaces yet, so the derived allow-set is empty and no one could
+sign in. Set `GOCOV_ALLOWED_WORKSPACES` to the workspace/org you want to
+track (e.g. `GOCOV_ALLOWED_WORKSPACES=myorg`) so its members can sign
+in; the first member to sign in lands on the onboarding wizard and
+registers the workspace, which mints its upload token. With an explicit
+`GOCOV_ALLOWED_WORKSPACES`, sign-in stays pinned to that list no matter
+what gets registered later; leave it unset and the allow-set grows to
+include every workspace registered from the UI. Signed-in members can
+register any workspace their forge account vouches for.
+
 CI is unaffected either way: the upload API keeps its Bearer tokens,
 badges stay embeddable, `/healthz` stays open.
 
@@ -251,18 +237,13 @@ immediately; the new one is shown once), change the default branch and
 gate defaults for auto-registered repos, and connect the workspace to
 its forge (GitHub App, or a Bitbucket/GitLab one-click grant) for
 statuses, PR comments and insights. The upload token is never rendered
-back — it is shown once, right after a rotation. The CLI (`gocov-server
-workspace ...`) keeps working; the UI is an addition, not a migration.
+back — it is shown once, right after a rotation. This is the only way
+workspaces are administered; there is no server-side admin CLI.
 
-```sh
-gocov-server user list                          # who has signed in
-gocov-server user remove -email jane@example.com  # revoke immediately
-```
-
-Removal deletes the account and its sessions; the person can sign in
-again (and is re-provisioned) as long as they are still a workspace
-member. Sessions last 30 days; membership is re-checked at each login,
-not per request.
+There is no user bookkeeping to manage: accounts are provisioned on
+first sign-in and access is re-derived from forge membership at each
+login (not per request), so removing someone from the workspace on the
+forge removes their access at their next login. Sessions last 30 days.
 
 Access mirrors your forge workspace membership. Once sign-in is
 configured, each account sees only the repos in the workspaces and orgs
@@ -361,24 +342,26 @@ page offers a reconnect.
 
 ### Coverage gate
 
-```sh
-gocov-server repo update -slug myworkspace/myrepo \
-  -min-coverage 80 -min-diff-coverage 70 -max-drop 0.5
-```
+Set the gate on a workspace's **settings** page (Defaults & coverage
+gate): a minimum total percentage, a minimum diff coverage for the
+changed lines of PR uploads, and a max total-coverage drop. Each rule is
+optional — leave a field empty to disable it — and the values apply to
+repos registered from then on.
 
-Each rule is optional: `-min-coverage` is the minimum total percentage,
-`-min-diff-coverage` applies to the changed lines of PR uploads (skipped
-when no diff coverage is available), and `-max-drop` bounds how far
-total coverage may fall below the latest gate-passing upload on the
-default branch (0 forbids any drop). Gate-failing uploads are recorded
-but never serve as a baseline, so re-running CI cannot launder a failure
-and a PR cannot ratchet coverage down push by push. Violations mark the
-pushed build status FAILED — require the `gocov` build in Bitbucket's
-merge checks to block such PRs — and are reported in the PR comment and
-the upload response (`gate` field). `-clear-gate` removes all rules. The
-same flags on `workspace add` and `workspace update` set defaults
-inherited by auto-registered repos. The CLI exits non-zero on a failed
-gate when run with `-fail-on-gate`.
+- **Min coverage** — the minimum total percentage.
+- **Min diff coverage** — applies to the changed lines of PR uploads
+  (skipped when no diff coverage is available).
+- **Max coverage drop** — bounds how far total coverage may fall below
+  the latest gate-passing upload on the default branch; `0` forbids any
+  drop.
+
+Gate-failing uploads are recorded but never serve as a baseline, so
+re-running CI cannot launder a failure and a PR cannot ratchet coverage
+down push by push. Violations mark the pushed build status FAILED —
+require the `gocov` build in Bitbucket's merge checks to block such PRs —
+and are reported in the PR comment and the upload response (`gate`
+field). The uploader `gocov` CLI exits non-zero on a failed gate when
+run with `-fail-on-gate`.
 
 ## Uploading coverage from CI
 

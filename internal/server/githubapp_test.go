@@ -281,16 +281,41 @@ func TestGitHubSetupClaimsWorkspaceHosted(t *testing.T) {
 }
 
 func TestGitHubSetupClaimPrivateMode(t *testing.T) {
-	// A private instance has no self-service registration; installs on
-	// unregistered accounts point the admin at the CLI.
+	// Install-first onboarding works in private mode too: the account is
+	// vouched for by the signed-in user's forge list, so the install claims
+	// it with the installation linked — the same claim rules as hosted, the
+	// forge-list check being the only gate.
 	f, sess := newGitHubAppFixture(t, false, true)
 	f.app.accounts[7] = "janedev"
 
-	if rec := get(f.fixture, "/github/setup?installation_id=7", sess); rec.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", rec.Code)
+	rec := get(f.fixture, "/github/setup?installation_id=7", sess)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
-	if _, err := f.store.WorkspaceByPrefix(context.Background(), "janedev"); err == nil {
-		t.Error("private mode must not register workspaces")
+	if loc := rec.Header().Get("Location"); loc != "/onboarding?ws=janedev" {
+		t.Errorf("redirect = %q, want the workspace-ready state", loc)
+	}
+	ws, err := f.store.WorkspaceByPrefix(context.Background(), "janedev")
+	if err != nil {
+		t.Fatalf("private-mode install must register the workspace: %v", err)
+	}
+	if ws.GitHubInstallationID != 7 || ws.Forge != "github" {
+		t.Errorf("claimed workspace: installation = %d, forge = %q", ws.GitHubInstallationID, ws.Forge)
+	}
+}
+
+func TestGitHubSetupClaimDeniedNonMember(t *testing.T) {
+	// The forge-list check still gates: an install on an account the user's
+	// forge identity does not vouch for is refused, in private mode as in
+	// hosted.
+	f, sess := newGitHubAppFixture(t, false, true)
+	f.app.accounts[7] = "stranger" // not in the identity's Workspaces
+
+	if rec := get(f.fixture, "/github/setup?installation_id=7", sess); rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", rec.Code)
+	}
+	if _, err := f.store.WorkspaceByPrefix(context.Background(), "stranger"); err == nil {
+		t.Error("an unvouched account must not be registered")
 	}
 }
 

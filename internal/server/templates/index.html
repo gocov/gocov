@@ -29,7 +29,11 @@
 </tbody>
 </table>
 {{else}}
-<div class="empty">No repositories yet. Add one with <code>gocov-server repo add</code> or upload through a workspace token.</div>
+{{if .CanOnboard}}
+<div class="empty">No repositories yet. <a href="/onboarding">Register a workspace</a> for an upload token, then push coverage from CI &mdash; repos register themselves on their first upload.</div>
+{{else}}
+<div class="empty">No repositories yet. Enable sign-in so a member can register a workspace and get an upload token; repos then register themselves on their first upload.</div>
+{{end}}
 {{end}}
 </div>
 {{end}}

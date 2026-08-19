@@ -121,17 +121,12 @@ func (s *Server) connectExisting(w http.ResponseWriter, r *http.Request, u *stor
 }
 
 // connectNew is the install-first path: the account has no workspace here
-// yet, so the M3 claim rules apply — hosted mode only, and only accounts
-// the user's forge list vouches for. The workspace is registered with the
-// installation already linked, then the user lands on the setup page: the
-// same activation moment as the register flow, minus the credentials step.
+// yet, so the M3 claim rules apply — only accounts the user's forge list
+// vouches for. The workspace is registered with the installation already
+// linked, then the user lands on the setup page: the same activation moment
+// as the register flow, minus the credentials step. Works in hosted and
+// private mode alike; the forge-list check is the only claim gate.
 func (s *Server) connectNew(w http.ResponseWriter, r *http.Request, u *store.User, login string, installationID int64) {
-	if !s.hosted {
-		s.renderConnect(w, r, http.StatusNotFound, "Workspace not registered",
-			"This server has no workspace named "+login+". Register it first "+
-				"(gocov-server workspace add), then install the app again.")
-		return
-	}
 	if !inForgeWorkspaces(u, login) {
 		s.log.Warn("github setup claim denied", "user", u.DisplayName, "installation", installationID, "account", login)
 		s.renderConnect(w, r, http.StatusForbidden, "Not your workspace",

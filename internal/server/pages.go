@@ -113,7 +113,13 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		}
 		rows = append(rows, row)
 	}
-	s.render(w, r, "index.html", map[string]any{"Rows": rows, "Query": query, "Workspaces": workspaces})
+	s.render(w, r, "index.html", map[string]any{
+		"Rows": rows, "Query": query, "Workspaces": workspaces,
+		// A signed-in user can register a workspace from the onboarding
+		// wizard (hosted and private mode alike); an open instance has no
+		// identity to register from and points at sign-in instead.
+		"CanOnboard": currentUser(r) != nil,
+	})
 }
 
 // gateSummary renders the repo's gate rules for the stats card.

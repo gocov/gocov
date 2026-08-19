@@ -34,15 +34,16 @@ type registerRow struct {
 // registerUser gates both registration routes: hosted mode only (a private
 // instance has no registration UI, D1) and a signed-in user required.
 func (s *Server) registerUser(w http.ResponseWriter, r *http.Request) *store.User {
-	if !s.hosted {
-		http.NotFound(w, r)
-		return nil
-	}
 	u := currentUser(r)
 	if u == nil {
-		// Unreachable behind requireAuth while hosted mode demands a
-		// provider; kept as a guard against future routing changes.
-		redirectToLogin(w, r)
+		// Registration derives its claimable workspaces from the signed-in
+		// forge identity, so it needs sign-in configured — hosted mode
+		// always has it, a private instance only when a provider is set.
+		// With no provider the UI is open and there is no identity to
+		// register from; 404 rather than a login loop. When sign-in is on,
+		// requireAuth has already redirected an anonymous visitor to /login
+		// before this runs, so u is non-nil past here.
+		http.NotFound(w, r)
 		return nil
 	}
 	return u
@@ -87,8 +88,9 @@ func (s *Server) registerRows(r *http.Request, u *store.User) ([]registerRow, er
 
 // handleRegisterPage implements GET /register. The onboarding wizard's
 // Workspace step is now the claim surface (it shows the same picker), so
-// this route only preserves the old URL by redirecting there. The
-// hosted-only / signed-in gate — and its private-mode 404 — is unchanged.
+// this route only preserves the old URL by redirecting there. The signed-in
+// gate is unchanged; it works in both hosted and private mode once a
+// sign-in provider is configured.
 func (s *Server) handleRegisterPage(w http.ResponseWriter, r *http.Request) {
 	if s.registerUser(w, r) == nil {
 		return

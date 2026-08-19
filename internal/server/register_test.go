@@ -99,16 +99,42 @@ func TestHostedUserWithMembershipLandsOnIndex(t *testing.T) {
 	}
 }
 
-func TestRegistrationIsHostedOnly(t *testing.T) {
-	// Private mode (M3/D1): no registration UI, byte-identical denial flow.
+func TestRegistrationWorksInPrivateMode(t *testing.T) {
+	// A signed-in private-mode user can register a workspace their forge
+	// vouches for — the bootstrap path now that the admin CLI is gone. The
+	// signed-in identity is a member of "acme" and "personal" (memberIdentity).
 	f := newAuthFixture(t, &fakeProvider{identity: memberIdentity()}, nil)
 	sess := signIn(t, f, "/")
 
-	if rec := get(f, "/register", sess); rec.Code != http.StatusNotFound {
-		t.Errorf("GET /register in private mode: status = %d, want 404", rec.Code)
+	// GET /register preserves the old URL by redirecting to the wizard.
+	if rec := get(f, "/register", sess); rec.Code != http.StatusFound ||
+		rec.Header().Get("Location") != "/onboarding" {
+		t.Errorf("GET /register: status = %d, location = %q; want 302 -> /onboarding",
+			rec.Code, rec.Header().Get("Location"))
 	}
-	if rec := postRegister(f, "acme", sess); rec.Code != http.StatusNotFound {
-		t.Errorf("POST /register in private mode: status = %d, want 404", rec.Code)
+	// Claiming a forge-vouched workspace creates it and lands on the ready state.
+	rec := postRegister(f, "personal", sess)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("POST /register: status = %d, body = %s", rec.Code, rec.Body)
+	}
+	if _, err := f.store.WorkspaceByPrefix(context.Background(), "personal"); err != nil {
+		t.Fatalf("workspace not registered: %v", err)
+	}
+	// The forge-list check still gates: a workspace the identity does not list.
+	if rec := postRegister(f, "notmine", sess); rec.Code != http.StatusForbidden {
+		t.Errorf("POST /register for an unvouched workspace: status = %d, want 403", rec.Code)
+	}
+}
+
+func TestRegistrationNeedsSignIn(t *testing.T) {
+	// An open instance (no sign-in provider) has no forge identity to
+	// register from, so the registration routes stay 404.
+	f := newAuthFixture(t, nil, nil)
+	if rec := get(f, "/onboarding"); rec.Code != http.StatusNotFound {
+		t.Errorf("GET /onboarding with auth disabled: status = %d, want 404", rec.Code)
+	}
+	if rec := get(f, "/register"); rec.Code != http.StatusNotFound {
+		t.Errorf("GET /register with auth disabled: status = %d, want 404", rec.Code)
 	}
 }
 
