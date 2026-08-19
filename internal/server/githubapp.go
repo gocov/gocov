@@ -156,7 +156,7 @@ func (s *Server) connectNew(w http.ResponseWriter, r *http.Request, u *store.Use
 		return
 	}
 	s.log.Info("workspace registered via github app", "prefix", login, "installation", installationID, "user", u.DisplayName)
-	http.Redirect(w, r, "/workspaces/"+ws.Prefix+"/setup", http.StatusSeeOther)
+	http.Redirect(w, r, onboardingReadyURL(ws.Prefix), http.StatusSeeOther)
 }
 
 // handleGitHubDisconnect implements POST /workspaces/{prefix}/github/disconnect:

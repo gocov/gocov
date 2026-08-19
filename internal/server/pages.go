@@ -75,7 +75,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	// permanently empty dashboard; registration is the only useful page
 	// for them (M3/R1).
 	if s.hosted && scope.scoped && len(scope.prefixes) == 0 && currentUser(r) != nil {
-		http.Redirect(w, r, "/register", http.StatusFound)
+		http.Redirect(w, r, "/onboarding", http.StatusFound)
 		return
 	}
 	// The settings pages hang off the index as a workspace strip — the

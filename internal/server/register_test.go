@@ -72,7 +72,7 @@ func TestHostedAdmitsNonMemberAndRoutesToRegistration(t *testing.T) {
 	// workspace matches); hosted mode signs it in and lands on /register.
 	f := newHostedFixture(t, &fakeProvider{identity: memberIdentity()})
 
-	sess := hostedSignIn(t, f, "/", "/register")
+	sess := hostedSignIn(t, f, "/", "/onboarding")
 
 	// The user exists with the login-time workspace snapshot (D3).
 	users, err := f.store.ListUsers(context.Background())
@@ -83,9 +83,9 @@ func TestHostedAdmitsNonMemberAndRoutesToRegistration(t *testing.T) {
 		t.Errorf("stored forge workspaces = %v", users[0].ForgeWorkspaces)
 	}
 
-	// The dashboard bounces a membership-less hosted user to registration.
-	if rec := get(f, "/", sess); rec.Code != http.StatusFound || rec.Header().Get("Location") != "/register" {
-		t.Errorf("index: %d -> %q, want redirect to /register", rec.Code, rec.Header().Get("Location"))
+	// The dashboard bounces a membership-less hosted user to onboarding.
+	if rec := get(f, "/", sess); rec.Code != http.StatusFound || rec.Header().Get("Location") != "/onboarding" {
+		t.Errorf("index: %d -> %q, want redirect to /onboarding", rec.Code, rec.Header().Get("Location"))
 	}
 }
 
@@ -125,28 +125,28 @@ func TestRegisterPageStates(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sess := hostedSignIn(t, f, "/", "/register")
-	rec := get(f, "/register", sess)
+	sess := hostedSignIn(t, f, "/", "/onboarding")
+	rec := get(f, "/onboarding", sess)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("register page: status = %d", rec.Code)
+		t.Fatalf("onboarding picker: status = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "personal") || !strings.Contains(body, "not registered yet") {
+	if !strings.Contains(body, "personal") || !strings.Contains(body, "Not set up") {
 		t.Errorf("free workspace not offered:\n%s", body)
 	}
 	// The collision row must name the forge holding the prefix.
-	if !strings.Contains(body, "name registered under GitHub") {
+	if !strings.Contains(body, "Name registered under GitHub") {
 		t.Errorf("cross-forge collision not surfaced:\n%s", body)
 	}
 }
 
 func TestRegisterCreatesWorkspaceAndShowsTokenOnce(t *testing.T) {
 	f := newHostedFixture(t, &fakeProvider{identity: memberIdentity()})
-	sess := hostedSignIn(t, f, "/", "/register")
+	sess := hostedSignIn(t, f, "/", "/onboarding")
 
 	rec := postRegister(f, "personal", sess)
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/workspaces/personal/setup" {
-		t.Fatalf("register: %d -> %q, want redirect to the setup page", rec.Code, rec.Header().Get("Location"))
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/onboarding?ws=personal" {
+		t.Fatalf("register: %d -> %q, want redirect to the workspace-ready state", rec.Code, rec.Header().Get("Location"))
 	}
 
 	ctx := context.Background()
@@ -174,19 +174,19 @@ func TestRegisterCreatesWorkspaceAndShowsTokenOnce(t *testing.T) {
 		t.Errorf("index after registration: status = %d", rec.Code)
 	}
 
-	// The register page now shows the workspace as joined, without the token.
-	page := get(f, "/register", sess)
+	// The onboarding picker now shows the workspace as joined, without the token.
+	page := get(f, "/onboarding", sess)
 	if !strings.Contains(page.Body.String(), "member") {
-		t.Errorf("register page misses the member state:\n%s", page.Body)
+		t.Errorf("onboarding picker misses the member state:\n%s", page.Body)
 	}
 	if strings.Contains(page.Body.String(), ws.Token) {
-		t.Error("register page leaks the upload token")
+		t.Error("onboarding picker leaks the upload token")
 	}
 }
 
 func TestRegisterRejectsForeignPrefix(t *testing.T) {
 	f := newHostedFixture(t, &fakeProvider{identity: memberIdentity()})
-	sess := hostedSignIn(t, f, "/", "/register")
+	sess := hostedSignIn(t, f, "/", "/onboarding")
 
 	// "evilcorp" is not in the identity's forge workspace list; the form
 	// value must be rejected server-side regardless of what was posted.
@@ -206,7 +206,7 @@ func TestRegisterCrossForgeCollisionConflicts(t *testing.T) {
 		&store.Workspace{Forge: "github", Prefix: "acme", Token: "gh-tok", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
-	sess := hostedSignIn(t, f, "/", "/register")
+	sess := hostedSignIn(t, f, "/", "/onboarding")
 
 	if rec := postRegister(f, "acme", sess); rec.Code != http.StatusConflict {
 		t.Errorf("cross-forge claim: status = %d, want 409", rec.Code)
@@ -217,7 +217,7 @@ func TestRegisterAlreadyRegisteredJoins(t *testing.T) {
 	// A colleague registered "acme" after this user's login sync; claiming
 	// it is a non-event (D2): membership is granted, no new workspace.
 	f := newHostedFixture(t, &fakeProvider{identity: memberIdentity()})
-	sess := hostedSignIn(t, f, "/", "/register")
+	sess := hostedSignIn(t, f, "/", "/onboarding")
 	ctx := context.Background()
 	if err := f.store.CreateWorkspace(ctx,
 		&store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "ws-tok", DefaultBranch: "main"}); err != nil {
@@ -245,10 +245,10 @@ func TestRegisterAlreadyRegisteredJoins(t *testing.T) {
 func TestReLoginRefreshesForgeWorkspaces(t *testing.T) {
 	provider := &fakeProvider{identity: memberIdentity()}
 	f := newHostedFixture(t, provider)
-	hostedSignIn(t, f, "/", "/register")
+	hostedSignIn(t, f, "/", "/onboarding")
 
 	provider.identity.Workspaces = []string{"acme", "personal", "newco"}
-	hostedSignIn(t, f, "/", "/register")
+	hostedSignIn(t, f, "/", "/onboarding")
 
 	users, _ := f.store.ListUsers(context.Background())
 	if len(users) != 1 || !reflect.DeepEqual(users[0].ForgeWorkspaces, []string{"acme", "personal", "newco"}) {

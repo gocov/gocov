@@ -191,7 +191,7 @@ func New(cfg Config) *Server {
 	// so pages can define "content" without colliding.
 	pages := map[string]*template.Template{}
 	for _, name := range []string{"index.html", "repo.html", "upload.html", "source.html", "login.html",
-		"register.html", "workspace.html", "setup.html", "connect.html"} {
+		"workspace.html", "onboarding.html", "connect.html"} {
 		pages[name] = template.Must(template.New(name).Funcs(funcs).ParseFS(templatesFS,
 			"templates/layout.html", "templates/partials.html", "templates/"+name))
 	}
@@ -237,6 +237,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /oauth/{forge}/start", s.handleOAuthStart)
 	s.mux.HandleFunc("GET /oauth/{forge}/callback", s.handleOAuthCallback)
 	s.mux.HandleFunc("POST /logout", s.handleLogout)
+	s.mux.HandleFunc("GET /onboarding", s.handleOnboarding)
 	s.mux.HandleFunc("GET /register", s.handleRegisterPage)
 	s.mux.HandleFunc("POST /register", s.handleRegister)
 	s.mux.HandleFunc("GET /workspaces/{prefix}", s.handleWorkspacePage)

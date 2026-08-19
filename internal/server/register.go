@@ -85,22 +85,15 @@ func (s *Server) registerRows(r *http.Request, u *store.User) ([]registerRow, er
 	return rows, nil
 }
 
-// handleRegisterPage implements GET /register — the hosted-mode workspace
-// claim page (M3/R2).
+// handleRegisterPage implements GET /register. The onboarding wizard's
+// Workspace step is now the claim surface (it shows the same picker), so
+// this route only preserves the old URL by redirecting there. The
+// hosted-only / signed-in gate — and its private-mode 404 — is unchanged.
 func (s *Server) handleRegisterPage(w http.ResponseWriter, r *http.Request) {
-	u := s.registerUser(w, r)
-	if u == nil {
+	if s.registerUser(w, r) == nil {
 		return
 	}
-	rows, err := s.registerRows(r, u)
-	if err != nil {
-		s.internalError(w, "resolving registrable workspaces", err)
-		return
-	}
-	s.render(w, r, "register.html", map[string]any{
-		"Rows":  rows,
-		"Forge": providerLabel(u.Forge),
-	})
+	http.Redirect(w, r, "/onboarding", http.StatusFound)
 }
 
 // handleRegister implements POST /register: it creates the workspace and
@@ -134,9 +127,9 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	if created != nil {
 		s.log.Info("workspace registered", "prefix", created.Prefix, "forge", created.Forge, "user", u.DisplayName)
-		// The onboarding page is the activation moment (D6): CI snippet
-		// with the token pre-filled and the waiting-for-first-upload state.
-		http.Redirect(w, r, workspaceURL(created.Prefix, "/setup"), http.StatusSeeOther)
+		// Land on the wizard's "workspace ready" state (D6): the reporting
+		// capability card, then Continue to the CI step.
+		http.Redirect(w, r, onboardingReadyURL(created.Prefix), http.StatusSeeOther)
 		return
 	}
 

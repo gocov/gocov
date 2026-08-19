@@ -84,6 +84,7 @@ func newGLConnectFixture(t *testing.T) (*glConnectFixture, *http.Cookie) {
 				Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
 				Forges:  map[string]forge.Factory{"gitlab": credsForge.Factory()},
 				BaseURL: "https://gocov.example",
+				Hosted:  true,
 				Auths: []auth.Provider{&fakeProvider{name: "gitlab", identity: &auth.Identity{
 					ForgeUUID: "777", DisplayName: "Jane Dev", Email: "jane@example.com",
 					Workspaces: []string{"grp/sub", "janedev"},
@@ -354,15 +355,17 @@ func TestSettingsPageGitLabStates(t *testing.T) {
 func TestGitLabSetupPageRecommendsConnect(t *testing.T) {
 	f, sess := newGLConnectFixture(t)
 
-	body := get(f.fixture, "/workspaces/grp%2Fsub/setup", sess).Body.String()
-	if !strings.Contains(body, "Recommended: connect the workspace") ||
-		!strings.Contains(body, "/workspaces/grp%2Fsub/gitlab/connect") {
-		t.Error("setup page must recommend the connect with the encoded prefix link")
+	body := get(f.fixture, "/onboarding?ws=grp%2Fsub", sess).Body.String()
+	if !strings.Contains(body, "/workspaces/grp%2Fsub/gitlab/connect") {
+		t.Error("ready state must offer the connect with the encoded prefix link")
 	}
 
 	f.grant(t, "covbot", "rt-0", false)
-	body = get(f.fixture, "/workspaces/grp%2Fsub/setup", sess).Body.String()
-	if strings.Contains(body, "Recommended: connect the workspace") {
-		t.Error("connected workspace must not see the recommendation card")
+	body = get(f.fixture, "/onboarding?ws=grp%2Fsub", sess).Body.String()
+	if strings.Contains(body, "/workspaces/grp%2Fsub/gitlab/connect") {
+		t.Error("connected workspace must not offer the connect link")
+	}
+	if !strings.Contains(body, "@covbot") {
+		t.Error("connected workspace must show the posting identity")
 	}
 }

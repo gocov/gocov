@@ -305,9 +305,14 @@ func TestSetupPageWaitsAndFlips(t *testing.T) {
 		t.Fatalf("setup page: status = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	// The snippet carries the real server URL and token (R4/D6)...
-	if !strings.Contains(body, "GOCOV_SERVER=https://gocov.example") || !strings.Contains(body, "GOCOV_TOKEN=ws-secret") {
-		t.Errorf("setup snippet misses server URL or token:\n%s", body)
+	// The self-hosted base URL is surfaced and the token is available to
+	// reveal/copy (R4/D6). The token rides in the secret card's data-full,
+	// not an inline GOCOV_TOKEN= line, since it is masked by default.
+	if !strings.Contains(body, "GOCOV_SERVER") || !strings.Contains(body, "https://gocov.example") {
+		t.Errorf("setup page misses the self-hosted server URL:\n%s", body)
+	}
+	if !strings.Contains(body, `data-full="ws-secret"`) {
+		t.Errorf("setup page misses the workspace token:\n%s", body)
 	}
 	if !strings.Contains(body, "bitbucket-pipelines.yml") {
 		t.Errorf("bitbucket workspace must get the Pipelines snippet:\n%s", body)
@@ -329,15 +334,20 @@ func TestSetupPageWaitsAndFlips(t *testing.T) {
 		t.Fatalf("first upload: status = %d, body = %s", up.Code, up.Body)
 	}
 	st := get(f, "/workspaces/acme/setup/status", sess)
-	if !strings.Contains(st.Body.String(), "First upload received") ||
+	if !strings.Contains(st.Body.String(), "Coverage is flowing") ||
 		!strings.Contains(st.Body.String(), `href="/repos/acme/newrepo"`) {
 		t.Errorf("status endpoint did not flip:\n%s", st.Body)
+	}
+	// The done card carries the first-report summary (coverage + lines).
+	if !strings.Contains(st.Body.String(), "First report") ||
+		!strings.Contains(st.Body.String(), "Lines covered") {
+		t.Errorf("done card missing the first-report summary:\n%s", st.Body)
 	}
 	if strings.Contains(st.Body.String(), "hx-get") {
 		t.Error("flipped status block must stop polling")
 	}
 	// A fresh page load shows the done state directly.
-	if rec := get(f, "/workspaces/acme/setup", sess); !strings.Contains(rec.Body.String(), "First upload received") {
+	if rec := get(f, "/workspaces/acme/setup", sess); !strings.Contains(rec.Body.String(), "Coverage is flowing") {
 		t.Errorf("reloaded setup page still waiting:\n%s", rec.Body)
 	}
 }
@@ -377,7 +387,7 @@ func TestSetupPageGitHubSnippet(t *testing.T) {
 		"GitHub Actions workflow",
 		"${{ vars.GOCOV_SERVER }}",
 		"${{ secrets.GOCOV_TOKEN }}",
-		"GOCOV_TOKEN=gh-secret",
+		`data-full="gh-secret"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("github setup page misses %q:\n%s", want, body)
@@ -421,7 +431,7 @@ func TestSetupPageHostedOmitsServer(t *testing.T) {
 	if strings.Contains(body, "GOCOV_SERVER") {
 		t.Errorf("hosted onboarding should omit GOCOV_SERVER:\n%s", body)
 	}
-	if !strings.Contains(body, "GOCOV_TOKEN=ws-secret") {
+	if !strings.Contains(body, `data-full="ws-secret"`) {
 		t.Errorf("hosted onboarding still needs the token:\n%s", body)
 	}
 	if !strings.Contains(body, "pipe: docker://gocov/upload-pipe:") {
