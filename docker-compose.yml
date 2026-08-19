@@ -6,7 +6,11 @@ services:
       POSTGRES_PASSWORD: gocov
       POSTGRES_DB: gocov
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # Postgres 18 images store data under /var/lib/postgresql/<major>/…
+      # and declare the volume at /var/lib/postgresql (not /data), so the
+      # mount must sit there for the data to persist. See docker-library
+      # postgres#1259.
+      - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U gocov -d gocov"]
       interval: 2s
