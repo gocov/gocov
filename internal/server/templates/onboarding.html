@@ -15,7 +15,6 @@
     {{else}}{{template "wiz-ws-pick" .}}{{end}}
   {{else if eq .Active 1}}
     {{template "wiz-ci" .}}
-    {{template "wiz-firstupload" .}}
   {{else}}
     {{template "wiz-firstupload" .}}
   {{end}}
@@ -188,6 +187,16 @@
     <code>GOCOV_SERVER</code>{{end}}.</p>
     {{end}}
 
+    {{if not .ServerImplicit}}
+    <div class="secret">
+      <div class="secret-hd"><span class="name">GOCOV_SERVER</span><span class="chip plain">Variable</span>
+        <span class="spacer"></span><span class="muted small">Your gocov instance &mdash; a plain value, not a secret</span></div>
+      <div class="secret-bd">
+        <span class="v" id="srv">{{.BaseURL}}</span>
+        <button class="btn primary" type="button" data-copy="#srv">Copy</button>
+      </div>
+    </div>
+    {{end}}
     <div class="secret">
       <div class="secret-hd"><span class="name">GOCOV_TOKEN</span><span class="chip plain">Secret</span>
         <span class="spacer"></span><span class="muted small">Shown once &mdash; rotate it any time from Settings</span></div>
@@ -198,9 +207,6 @@
         <input type="hidden" id="tok-full" value="{{.Workspace.Token}}">
       </div>
     </div>
-    {{if not .ServerImplicit}}
-    <p class="sub">Also set <code>GOCOV_SERVER</code> to <code>{{.BaseURL}}</code>.</p>
-    {{end}}
 
     {{if eq .Workspace.Forge "github"}}
     <p class="sub">Then add the gocov action to your GitHub Actions workflow, after your tests
@@ -263,6 +269,8 @@ pipelines:
     <div class="foot">
       <span class="hint">Reporting and CI are independent &mdash; coverage uploads even if
       reporting is off.</span>
+      <span class="spacer"></span>
+      <a class="btn primary" href="/workspaces/{{pathesc .Workspace.Prefix}}/setup?awaiting=1">I&rsquo;ve added these</a>
     </div>
   </div>
 </section>
@@ -319,6 +327,9 @@ pipelines:
   opens its dashboard. Nothing else to configure.</p>
   <div class="notice wait"><span class="spin"></span> Waiting for your first upload from
     <strong>{{.Workspace.Prefix}}</strong>&hellip; this page updates by itself.</div>
+  <div class="foot">
+    <a class="btn" href="/workspaces/{{pathesc .Workspace.Prefix}}/setup">Back</a>
+  </div>
 </div>
 {{end}}
 {{end}}

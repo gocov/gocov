@@ -246,12 +246,15 @@ func (s *Server) handleWorkspaceSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repos, _ := data["Repos"].([]*store.Repo)
-	// While waiting, Wire up CI (rail 1) is active with the first-upload
-	// poll beneath it. Once the first upload lands the page becomes the
-	// clean First-upload done state (rail 2) — no CI card, rail all green.
+	// Each stage is its own clean panel. Wire up CI (rail 1) is a single
+	// card; "I've added these" advances to First upload (rail 2), which
+	// polls while waiting and flips to the done state once a repo lands.
 	active := 1
-	if len(repos) > 0 {
-		active = 2
+	switch {
+	case len(repos) > 0:
+		active = 2 // First upload — done
+	case r.FormValue("awaiting") == "1":
+		active = 2 // First upload — waiting
 	}
 	data["Active"] = active
 	data["Forge"] = ws.Forge

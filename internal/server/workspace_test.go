@@ -317,12 +317,20 @@ func TestSetupPageWaitsAndFlips(t *testing.T) {
 	if !strings.Contains(body, "bitbucket-pipelines.yml") {
 		t.Errorf("bitbucket workspace must get the Pipelines snippet:\n%s", body)
 	}
-	// ...and starts in the polling waiting state.
-	if !strings.Contains(body, "Waiting for your first upload") ||
-		!strings.Contains(body, `hx-get="/workspaces/acme/setup/status"`) {
-		t.Errorf("setup page misses the waiting state:\n%s", body)
+	// The CI step is a single clean card — no waiting card stacked under it —
+	// with a button to advance to the First-upload step.
+	if strings.Contains(body, "Waiting for your first upload") {
+		t.Errorf("CI step must not stack the waiting card:\n%s", body)
 	}
-	// The poll target keeps waiting while there are no repos.
+	if !strings.Contains(body, `href="/workspaces/acme/setup?awaiting=1"`) {
+		t.Errorf("CI step misses the advance-to-first-upload button:\n%s", body)
+	}
+	// Advancing (or the poll target) shows the polling waiting state.
+	await := get(f, "/workspaces/acme/setup?awaiting=1", sess).Body.String()
+	if !strings.Contains(await, "Waiting for your first upload") ||
+		!strings.Contains(await, `hx-get="/workspaces/acme/setup/status"`) {
+		t.Errorf("first-upload step misses the waiting state:\n%s", await)
+	}
 	if st := get(f, "/workspaces/acme/setup/status", sess); !strings.Contains(st.Body.String(), "Waiting") {
 		t.Errorf("status endpoint should still wait:\n%s", st.Body)
 	}
