@@ -51,9 +51,8 @@ func (f *fakeGitHubApp) InstallURL(context.Context) (string, error) {
 	return f.installURL, nil
 }
 
-// githubAppFixture bundles the two forge doubles: credsForge receives
-// clients built from stored credentials, app.appForge the ones built
-// from the installation.
+// githubAppFixture exposes the App's forge double (app.appForge, also the
+// fixture's forge): the client built from the installation.
 type githubAppFixture struct {
 	*fixture
 	app       *fakeGitHubApp
@@ -74,7 +73,6 @@ func newGitHubAppFixture(t *testing.T, hosted, withWorkspace bool) (*githubAppFi
 			t.Fatal(err)
 		}
 	}
-	credsForge := forgefake.New()
 	appForge := forgefake.New()
 	app := &fakeGitHubApp{
 		appForge:   appForge,
@@ -93,14 +91,13 @@ func newGitHubAppFixture(t *testing.T, hosted, withWorkspace bool) (*githubAppFi
 				Store:     st,
 				Blobs:     blobmem.New(),
 				Parsers:   map[string]profile.Parser{"go": profile.GoParser{}},
-				Forges:    map[string]forge.Factory{"github": credsForge.Factory()},
 				BaseURL:   "https://gocov.example",
 				Auths:     []auth.Provider{provider},
 				Hosted:    hosted,
 				GitHubApp: app,
 			}),
 			store: st,
-			forge: credsForge,
+			forge: appForge,
 		},
 		app:       app,
 		appForge:  appForge,
@@ -253,7 +250,7 @@ func TestGitHubSetupBadRequests(t *testing.T) {
 func TestGitHubSetupWithoutApp404s(t *testing.T) {
 	// No App configured: the route does not exist, like every feature
 	// switch on this server.
-	f, sess := newWorkspaceFixture(t, nil, false)
+	f, sess := newWorkspaceFixture(t, false)
 	if rec := get(f, "/github/setup?installation_id=42", sess); rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", rec.Code)
 	}
@@ -310,11 +307,11 @@ func TestGitHubDisconnect(t *testing.T) {
 	}
 }
 
-// uploadRepo creates a GitHub repo under acme with optional credentials.
-func (f *githubAppFixture) uploadRepo(t *testing.T, creds map[string]string) {
+// uploadRepo creates a GitHub repo under acme.
+func (f *githubAppFixture) uploadRepo(t *testing.T) {
 	t.Helper()
 	repo := &store.Repo{Forge: "github", Slug: "acme/widgets", Token: "repo-token",
-		DefaultBranch: "main", ForgeCredentials: creds}
+		DefaultBranch: "main"}
 	if err := f.store.CreateRepo(context.Background(), repo); err != nil {
 		t.Fatal(err)
 	}
@@ -330,12 +327,11 @@ func uploadResp(t *testing.T, rec *httptest.ResponseRecorder) uploadResponse {
 	return resp
 }
 
-func TestUploadPrefersInstallation(t *testing.T) {
-	// D4: the installation outranks even per-repo credentials, so the
-	// check-run path always runs as the App where one is connected.
+func TestUploadUsesInstallation(t *testing.T) {
+	// D4: the check-run path runs as the App where one is connected.
 	f, _ := newGitHubAppFixture(t, false, true)
 	f.connectWorkspace(t, 42)
-	f.uploadRepo(t, map[string]string{"token": "pat"})
+	f.uploadRepo(t)
 
 	rec := doUpload(t, f.fixture, "repo-token", map[string]string{
 		"repo": "acme/widgets", "commit": "abc123",
@@ -351,9 +347,6 @@ func TestUploadPrefersInstallation(t *testing.T) {
 		t.Errorf("app forge got %d status / %d report calls, want 1/1",
 			len(f.appForge.StatusCalls), len(f.appForge.ReportCalls))
 	}
-	if got := len(f.forge.FactoryCreds); got != 0 {
-		t.Errorf("credential factory ran %d times, want 0 (installation outranks repo creds)", got)
-	}
 }
 
 func TestUploadRevokedInstallationDegrades(t *testing.T) {
@@ -361,7 +354,7 @@ func TestUploadRevokedInstallationDegrades(t *testing.T) {
 	// flagged, and the upload degrades exactly like missing credentials.
 	f, _ := newGitHubAppFixture(t, false, true)
 	f.connectWorkspace(t, 42)
-	f.uploadRepo(t, nil)
+	f.uploadRepo(t)
 	f.app.forgeErr = fmt.Errorf("%w: installation 42 gone", forge.ErrCredentialsRevoked)
 
 	rec := doUpload(t, f.fixture, "repo-token", map[string]string{
@@ -383,28 +376,6 @@ func TestUploadRevokedInstallationDegrades(t *testing.T) {
 	}
 }
 
-func TestUploadRevokedInstallationFallsBackToCreds(t *testing.T) {
-	// With stored credentials further down the chain, a broken App
-	// degrades to them — PAT-configured repos behave as before.
-	f, _ := newGitHubAppFixture(t, false, true)
-	f.connectWorkspace(t, 42)
-	f.uploadRepo(t, map[string]string{"token": "pat"})
-	f.app.forgeErr = fmt.Errorf("%w: installation 42 gone", forge.ErrCredentialsRevoked)
-
-	rec := doUpload(t, f.fixture, "repo-token", map[string]string{
-		"repo": "acme/widgets", "commit": "abc123",
-	}, testProfile)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
-	}
-	if resp := uploadResp(t, rec); resp.BuildStatus != "posted" {
-		t.Errorf("build status = %q, want posted via the repo credential", resp.BuildStatus)
-	}
-	if len(f.forge.StatusCalls) != 1 {
-		t.Errorf("credential forge got %d status calls, want 1", len(f.forge.StatusCalls))
-	}
-}
-
 func TestUploadHealsBrokenFlag(t *testing.T) {
 	f, _ := newGitHubAppFixture(t, false, true)
 	f.connectWorkspace(t, 42)
@@ -413,7 +384,7 @@ func TestUploadHealsBrokenFlag(t *testing.T) {
 	if err := f.store.UpdateWorkspace(context.Background(), ws); err != nil {
 		t.Fatal(err)
 	}
-	f.uploadRepo(t, nil)
+	f.uploadRepo(t)
 
 	if rec := doUpload(t, f.fixture, "repo-token", map[string]string{
 		"repo": "acme/widgets", "commit": "abc123",

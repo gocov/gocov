@@ -255,22 +255,6 @@ func TestGetDefaultBranchErrors(t *testing.T) {
 	})
 }
 
-func TestFactoryValidation(t *testing.T) {
-	if _, err := Factory(map[string]string{"username": "u"}); err == nil {
-		t.Error("want error without app_password")
-	}
-	if _, err := Factory(nil); err == nil {
-		t.Error("want error without credentials")
-	}
-	f, err := Factory(map[string]string{"username": "u", "app_password": "p"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if f.(*Client).BaseURL != DefaultBaseURL {
-		t.Errorf("base URL = %q", f.(*Client).BaseURL)
-	}
-}
-
 func TestPublishReport(t *testing.T) {
 	type call struct {
 		method, path string

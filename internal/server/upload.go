@@ -520,36 +520,21 @@ func (s *Server) recomputeCommitReport(ctx context.Context, repo *store.Repo, u 
 	return result, nil
 }
 
-// forgeFor builds a forge client for the repo, resolving credentials
-// along the precedence chain installation token (One-Click Connect D4)
-// > repo > workspace (M3/D4) > server-wide defaults. Returns (nil, nil)
-// when none are configured.
+// forgeFor builds a forge client for the repo through the workspace's
+// one-click connection (GitHub App installation, Bitbucket grant or
+// GitLab grant). Returns (nil, nil) when the repo's workspace has no
+// connection — there is no manual-credential fallback.
 func (s *Server) forgeFor(ctx context.Context, repo *store.Repo) (forge.Forge, error) {
 	// The workspace is looked up lazily: only when a connection could
-	// apply or the repo has no credentials of its own — anything else
-	// would tax every token-configured upload with a query it never
-	// needed.
-	var ws *store.Workspace
-	wsLoaded := false
+	// apply, so a forge that supports no one-click connect skips the
+	// query entirely.
 	if s.oneClickCapable(repo.Forge) {
-		ws, wsLoaded = s.repoWorkspace(ctx, repo.Slug, repo.Forge), true
+		ws := s.repoWorkspace(ctx, repo.Slug, repo.Forge)
 		if fg := s.connectedForge(ctx, ws, repo.Forge); fg != nil {
 			return fg, nil
 		}
 	}
-	creds := repo.ForgeCredentials
-	if len(creds) == 0 {
-		if !wsLoaded {
-			ws = s.repoWorkspace(ctx, repo.Slug, repo.Forge)
-		}
-		if ws != nil {
-			creds = ws.ForgeCredentials
-		}
-	}
-	if len(creds) == 0 {
-		creds = s.defaultCreds[repo.Forge]
-	}
-	return s.forgeFromCreds(repo.Forge, creds)
+	return nil, nil
 }
 
 // oneClickCapable reports whether a one-click connection could supply
@@ -598,19 +583,6 @@ func (s *Server) repoWorkspace(ctx context.Context, slug, forgeName string) *sto
 	return nil
 }
 
-// forgeFromCreds builds a forge client for the named forge with the given
-// credentials; (nil, nil) when there are no credentials.
-func (s *Server) forgeFromCreds(forgeName string, creds map[string]string) (forge.Forge, error) {
-	if len(creds) == 0 {
-		return nil, nil
-	}
-	factory, ok := s.forges[forgeName]
-	if !ok {
-		return nil, fmt.Errorf("no integration for forge %q", forgeName)
-	}
-	return factory(creds)
-}
-
 // sourceExts maps a profile format to the extensions of source files whose
 // absence from the coverage report is worth flagging in diff coverage.
 var sourceExts = map[string][]string{
@@ -628,7 +600,7 @@ func (s *Server) computeDiffCoverage(ctx context.Context, fg forge.Forge, fgErr 
 		return nil, "error: " + fgErr.Error()
 	}
 	if fg == nil {
-		return nil, "skipped: no forge credentials"
+		return nil, "skipped: no forge connection"
 	}
 	diffText, err := fg.GetPRDiff(ctx, repo.Slug, prID)
 	if errors.Is(err, forge.ErrNotImplemented) {
@@ -782,24 +754,14 @@ func (s *Server) resolveUploadRepo(w http.ResponseWriter, r *http.Request, repo 
 }
 
 // autoCreateRepo registers a repo first seen through a workspace token.
-// The default branch is asked from the forge when a client can be built
-// (repo-less, so installation, then workspace credentials, then global),
-// then falls back to the workspace default and finally to "main". A forge
-// that positively says the repo does not exist aborts the registration
-// (ErrRepoNotFound), so a leaked workspace token cannot fill the
-// dashboard with invented repos.
+// The default branch is asked from the forge when the workspace has a
+// one-click connection, then falls back to the workspace default and
+// finally to "main". A forge that positively says the repo does not
+// exist aborts the registration (ErrRepoNotFound), so a leaked workspace
+// token cannot fill the dashboard with invented repos.
 func (s *Server) autoCreateRepo(ctx context.Context, ws *store.Workspace, slug string) (*store.Repo, error) {
 	branch := ""
-	creds := ws.ForgeCredentials
-	if len(creds) == 0 {
-		creds = s.defaultCreds[ws.Forge]
-	}
 	fg := s.connectedForge(ctx, ws, ws.Forge)
-	if fg == nil {
-		if f, err := s.forgeFromCreds(ws.Forge, creds); err == nil {
-			fg = f
-		}
-	}
 	if fg != nil {
 		b, err := fg.GetDefaultBranch(ctx, slug)
 		switch {
@@ -912,7 +874,7 @@ func (s *Server) pushCodeInsights(ctx context.Context, fg forge.Forge, fgErr err
 		return "error: " + fgErr.Error()
 	}
 	if fg == nil {
-		s.log.Debug("code insights skipped: no forge credentials", "repo", repo.Slug)
+		s.log.Debug("code insights skipped: no forge connection", "repo", repo.Slug)
 		return "skipped"
 	}
 	report, annotations := s.insightsReport(u, deltaPct, gate)

@@ -112,7 +112,3 @@ type Forge interface {
 	// annotations from an earlier publish behind.
 	PublishReport(ctx context.Context, repoSlug, commitSHA string, report Report, annotations []Annotation) error
 }
-
-// Factory builds a Forge from per-repo credentials (as stored in
-// repos.forge_credentials). The server holds one Factory per forge name.
-type Factory func(credentials map[string]string) (Forge, error)

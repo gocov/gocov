@@ -51,11 +51,11 @@
   <h2>GitHub App</h2>
   {{if .GitHubAppBroken}}
   <p class="sub">The gocov app no longer has access — it was probably uninstalled on GitHub.
-  Statuses, PR comments and check runs fall back to configured tokens, or are skipped.
+  Statuses, PR comments and check runs are skipped until you reconnect.
   <span class="chip fail">reconnect needed</span></p>
   {{else if .GitHubAppConnected}}
   <p class="sub">Statuses, PR comments and check runs are posted as <code>gocov[bot]</code>
-  through the app — no tokens needed, and they outrank any credentials below.
+  through the app — no tokens needed.
   <span class="chip pass">connected &#10003;</span></p>
   {{else}}
   <p class="sub">Install the gocov app on <code>{{.Workspace.Prefix}}</code> and statuses,
@@ -72,7 +72,7 @@
   {{end}}
   {{if .GitHubAppConnected}}
   <form method="post" action="/workspaces/{{pathesc .Workspace.Prefix}}/github/disconnect"
-        data-confirm="Disconnect the GitHub App? Statuses and comments fall back to configured tokens, or are skipped.">
+        data-confirm="Disconnect the GitHub App? Statuses and comments are then skipped for this workspace.">
     <button class="btn" type="submit">Disconnect</button>
   </form>
   {{end}}
@@ -84,8 +84,8 @@
   <h2>Bitbucket connection</h2>
   {{if .BBGrantBroken}}
   <p class="sub">The connection stopped working — the grant was revoked on Bitbucket, or the
-  account that connected it left. Statuses, PR comments and reports fall back to configured
-  credentials, or are skipped. <span class="chip fail">reconnect needed</span></p>
+  account that connected it left. Statuses, PR comments and reports are skipped until you
+  reconnect. <span class="chip fail">reconnect needed</span></p>
   {{else if .BBGrantAccount}}
   <p class="sub">Statuses, PR comments, reports, diffs and source fetch act through the
   connected grant — no app passwords or API tokens needed. Posts appear as
@@ -102,7 +102,7 @@
   {{end}}
   {{if .BBGrantAccount}}
   <form method="post" action="/workspaces/{{pathesc .Workspace.Prefix}}/bitbucket/disconnect"
-        data-confirm="Disconnect the workspace? Statuses and comments fall back to configured credentials, or are skipped.">
+        data-confirm="Disconnect the workspace? Statuses and comments are then skipped for this workspace.">
     <button class="btn" type="submit">Disconnect</button>
   </form>
   {{end}}
@@ -114,8 +114,8 @@
   <h2>GitLab connection</h2>
   {{if .GLGrantBroken}}
   <p class="sub">The connection stopped working — the grant was revoked on GitLab, or the
-  account that connected it left. Statuses and MR comments fall back to configured
-  credentials, or are skipped. <span class="chip fail">reconnect needed</span></p>
+  account that connected it left. Statuses and MR comments are skipped until you
+  reconnect. <span class="chip fail">reconnect needed</span></p>
   {{else if .GLGrantAccount}}
   <p class="sub">Statuses, MR comments, diffs and source fetch act through the connected
   grant &mdash; no access tokens needed. Posts appear as
@@ -132,44 +132,10 @@
   {{end}}
   {{if .GLGrantAccount}}
   <form method="post" action="/workspaces/{{pathesc .Workspace.Prefix}}/gitlab/disconnect"
-        data-confirm="Disconnect the workspace? Statuses and comments fall back to configured credentials, or are skipped.">
+        data-confirm="Disconnect the workspace? Statuses and comments are then skipped for this workspace.">
     <button class="btn" type="submit">Disconnect</button>
   </form>
   {{end}}
 </div>
 {{end}}
-
-<div class="card pad">
-  <h2>Forge credentials</h2>
-  <p class="sub">A {{.ForgeLabel}} bot credential used for build statuses, PR comments and
-  insights on this workspace&rsquo;s repos when a repo has none of its own.
-  {{if .CredsConfigured}}<span class="chip pass">configured &#10003;</span>
-  {{else}}<span class="chip plain">not configured</span>{{end}}</p>
-  <form method="post" action="/workspaces/{{pathesc .Workspace.Prefix}}/credentials">
-    {{if eq .Workspace.Forge "github"}}
-    <p><label>Access token<br>
-      <input class="input" type="password" name="token" autocomplete="new-password"
-             placeholder="{{if .CredsConfigured}}enter a new token to replace{{else}}ghp_&hellip;{{end}}"></label></p>
-    {{else if eq .Workspace.Forge "gitlab"}}
-    <p><label>Access token<br>
-      <input class="input" type="password" name="token" autocomplete="new-password"
-             placeholder="{{if .CredsConfigured}}enter a new token to replace{{else}}glpat-&hellip;{{end}}"></label></p>
-    <p class="muted small">A project or group access token with the <code>api</code> scope
-    (a personal access token works too).</p>
-    {{else}}
-    <p><label>Username<br>
-      <input class="input" type="text" name="username" autocomplete="off"></label></p>
-    <p><label>App password / API token<br>
-      <input class="input" type="password" name="app_password" autocomplete="new-password"
-             placeholder="{{if .CredsConfigured}}enter a new value to replace{{end}}"></label></p>
-    {{end}}
-    <p class="muted small">Stored values are never shown again — entering new ones replaces them.</p>
-    <button class="btn primary" type="submit" name="action" value="save">
-      {{if .CredsConfigured}}Replace{{else}}Save{{end}}</button>
-    {{if .CredsConfigured}}
-    <button class="btn" type="submit" name="action" value="clear"
-            formnovalidate>Clear</button>
-    {{end}}
-  </form>
-</div>
 {{end}}

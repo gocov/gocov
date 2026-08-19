@@ -17,8 +17,8 @@ func workspaceURL(prefix, suffix string) string {
 }
 
 // Workspace settings page (M3/R3) — CLI parity in the UI: token rotation,
-// default branch, workspace-level forge credentials (D4) and gate
-// defaults. The onboarding/setup page (R4) lives next to it. Both are
+// default branch, one-click forge connection and gate defaults. The
+// onboarding/setup page (R4) lives next to it. Both are
 // members-only; anyone else 404s (like every other tenant surface, a
 // non-member must not learn the workspace exists).
 
@@ -51,17 +51,15 @@ func (s *Server) memberWorkspace(w http.ResponseWriter, r *http.Request) *store.
 }
 
 // settingsData assembles the template payload for the settings page.
-// Stored secrets never leave the server: credentials render as a
-// configured/not-configured state only (D4), and the upload token is
-// only ever shown as newToken right after a rotation.
+// The upload token never leaves the server either: it is only ever shown
+// as newToken right after a rotation.
 func (s *Server) settingsData(r *http.Request, ws *store.Workspace, newToken, notice, errMsg string) map[string]any {
 	data := map[string]any{
-		"Workspace":       ws,
-		"ForgeLabel":      providerLabel(ws.Forge),
-		"CredsConfigured": len(ws.ForgeCredentials) > 0,
-		"NewToken":        newToken,
-		"Notice":          notice,
-		"Error":           errMsg,
+		"Workspace":  ws,
+		"ForgeLabel": providerLabel(ws.Forge),
+		"NewToken":   newToken,
+		"Notice":     notice,
+		"Error":      errMsg,
 	}
 	s.addGitHubAppData(r, ws, data)
 	s.addBitbucketGrantData(ws, data)
@@ -171,59 +169,6 @@ func (s *Server) handleWorkspaceSettings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	http.Redirect(w, r, workspaceURL(ws.Prefix, "?saved=1"), http.StatusSeeOther)
-}
-
-// handleWorkspaceCredentials implements POST /workspaces/{prefix}/credentials
-// (D4): set/replace or clear the workspace-level bot credential. Values
-// are write-only — nothing stored is ever rendered back.
-func (s *Server) handleWorkspaceCredentials(w http.ResponseWriter, r *http.Request) {
-	ws := s.memberWorkspace(w, r)
-	if ws == nil {
-		return
-	}
-	switch r.FormValue("action") {
-	case "clear":
-		ws.ForgeCredentials = nil
-	default:
-		creds, errMsg := credentialsFromForm(ws.Forge, r)
-		if errMsg != "" {
-			s.settingsError(w, r, ws, errMsg)
-			return
-		}
-		ws.ForgeCredentials = creds
-	}
-	if err := s.store.UpdateWorkspace(r.Context(), ws); err != nil {
-		s.internalError(w, "updating workspace credentials", err)
-		return
-	}
-	http.Redirect(w, r, workspaceURL(ws.Prefix, "?saved=1"), http.StatusSeeOther)
-}
-
-// credentialsFromForm validates the forge-specific credential fields,
-// mirroring the CLI's pairing rules (`-bb-username`/`-bb-app-password`
-// vs `-gh-token`).
-func credentialsFromForm(forgeName string, r *http.Request) (map[string]string, string) {
-	switch forgeName {
-	case "github":
-		token := strings.TrimSpace(r.FormValue("token"))
-		if token == "" {
-			return nil, "A GitHub access token is required."
-		}
-		return map[string]string{"token": token}, ""
-	case "gitlab":
-		token := strings.TrimSpace(r.FormValue("token"))
-		if token == "" {
-			return nil, "A GitLab access token is required."
-		}
-		return map[string]string{"token": token}, ""
-	default: // bitbucket
-		username := strings.TrimSpace(r.FormValue("username"))
-		password := r.FormValue("app_password")
-		if username == "" || password == "" {
-			return nil, "Username and app password must both be set."
-		}
-		return map[string]string{"username": username, "app_password": password}, ""
-	}
 }
 
 // settingsError re-renders the settings page with a validation message.

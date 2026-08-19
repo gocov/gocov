@@ -43,10 +43,6 @@ type Workspace struct {
 	// DefaultBranch is assigned to auto-created repos when the forge
 	// cannot be asked for the real one.
 	DefaultBranch string
-	// ForgeCredentials holds workspace-level forge secrets (same shape as
-	// Repo.ForgeCredentials). They rank between repo credentials and the
-	// global defaults. Nil or empty when not configured.
-	ForgeCredentials map[string]string
 	// Gate is copied to auto-created repos at registration time.
 	Gate Gate
 	// GitHubInstallationID links the workspace to a GitHub App
@@ -89,9 +85,6 @@ type Repo struct {
 	Slug          string
 	Token         string // per-repo upload token
 	DefaultBranch string
-	// ForgeCredentials holds forge-specific secrets (e.g. bitbucket
-	// username/app_password). Nil or empty when not configured.
-	ForgeCredentials map[string]string
 	// Gate holds the repo's coverage requirements; violations turn the
 	// pushed build status into a failure.
 	Gate      Gate

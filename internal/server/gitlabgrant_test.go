@@ -73,7 +73,6 @@ func newGLConnectFixture(t *testing.T) (*glConnectFixture, *http.Cookie) {
 	if err := st.CreateWorkspace(context.Background(), ws); err != nil {
 		t.Fatal(err)
 	}
-	credsForge := forgefake.New()
 	grantForge := forgefake.New()
 	gl := &fakeGLConnect{grantForge: grantForge}
 	f := &glConnectFixture{
@@ -82,7 +81,6 @@ func newGLConnectFixture(t *testing.T) (*glConnectFixture, *http.Cookie) {
 				Store:   st,
 				Blobs:   blobmem.New(),
 				Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
-				Forges:  map[string]forge.Factory{"gitlab": credsForge.Factory()},
 				BaseURL: "https://gocov.example",
 				Hosted:  true,
 				Auths: []auth.Provider{&fakeProvider{name: "gitlab", identity: &auth.Identity{
@@ -92,7 +90,7 @@ func newGLConnectFixture(t *testing.T) (*glConnectFixture, *http.Cookie) {
 				GitLabConnect: gl,
 			}),
 			store: st,
-			forge: credsForge,
+			forge: grantForge,
 		},
 		gl:         gl,
 		grantForge: grantForge,
@@ -117,10 +115,10 @@ func (f *glConnectFixture) grant(t *testing.T, account, refresh string, broken b
 	}
 }
 
-func (f *glConnectFixture) addRepo(t *testing.T, creds map[string]string) {
+func (f *glConnectFixture) addRepo(t *testing.T) {
 	t.Helper()
 	repo := &store.Repo{Forge: "gitlab", Slug: "grp/sub/proj", Token: "repo-token",
-		DefaultBranch: "main", ForgeCredentials: creds}
+		DefaultBranch: "main"}
 	if err := f.store.CreateRepo(context.Background(), repo); err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +217,6 @@ func TestGitLabConnectRequiresFeature(t *testing.T) {
 		Store:   storemem.New(),
 		Blobs:   blobmem.New(),
 		Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
-		Forges:  map[string]forge.Factory{"gitlab": forgefake.New().Factory()},
 		BaseURL: "https://gocov.example",
 		Auths:   []auth.Provider{&fakeProvider{name: "gitlab", identity: &auth.Identity{ForgeUUID: "1", Workspaces: []string{"grp"}}}},
 		Hosted:  true,
@@ -237,11 +234,11 @@ func TestGitLabConnectRequiresFeature(t *testing.T) {
 }
 
 func TestGitLabUploadUsesGrantAndPersistsRotation(t *testing.T) {
-	// The grant outranks even per-repo credentials, and the rotated
-	// refresh token replaces the stored one on the first refresh.
+	// The grant serves the upload, and the rotated refresh token replaces
+	// the stored one on the first refresh.
 	f, _ := newGLConnectFixture(t)
 	f.grant(t, "covbot", "rt-0", false)
-	f.addRepo(t, map[string]string{"token": "glpat-x"})
+	f.addRepo(t)
 
 	resp := f.upload(t)
 	if resp.BuildStatus != "posted" {
@@ -249,9 +246,6 @@ func TestGitLabUploadUsesGrantAndPersistsRotation(t *testing.T) {
 	}
 	if len(f.grantForge.StatusCalls) != 1 {
 		t.Errorf("grant forge got %d status calls, want 1", len(f.grantForge.StatusCalls))
-	}
-	if got := len(f.forge.FactoryCreds); got != 0 {
-		t.Errorf("credential factory ran %d times, want 0 (grant outranks repo creds)", got)
 	}
 	if got := f.gl.refreshCalls; len(got) != 1 || got[0] != "rt-0" {
 		t.Errorf("refresh calls = %v, want exactly the stored token", got)
@@ -268,7 +262,7 @@ func TestGitLabUploadUsesGrantAndPersistsRotation(t *testing.T) {
 func TestGitLabUploadGrantAccessTokenCached(t *testing.T) {
 	f, _ := newGLConnectFixture(t)
 	f.grant(t, "covbot", "rt-0", false)
-	f.addRepo(t, nil)
+	f.addRepo(t)
 
 	f.upload(t)
 	f.upload(t)
@@ -280,7 +274,7 @@ func TestGitLabUploadGrantAccessTokenCached(t *testing.T) {
 func TestGitLabUploadGrantRevokedDegrades(t *testing.T) {
 	f, _ := newGLConnectFixture(t)
 	f.grant(t, "covbot", "rt-0", false)
-	f.addRepo(t, nil)
+	f.addRepo(t)
 	f.gl.refreshErr = fmt.Errorf("%w: invalid_grant", forge.ErrCredentialsRevoked)
 
 	resp := f.upload(t)
@@ -296,24 +290,10 @@ func TestGitLabUploadGrantRevokedDegrades(t *testing.T) {
 	}
 }
 
-func TestGitLabUploadGrantRevokedFallsBackToCreds(t *testing.T) {
-	f, _ := newGLConnectFixture(t)
-	f.grant(t, "covbot", "rt-0", false)
-	f.addRepo(t, map[string]string{"token": "glpat-x"})
-	f.gl.refreshErr = fmt.Errorf("%w: invalid_grant", forge.ErrCredentialsRevoked)
-
-	if resp := f.upload(t); resp.BuildStatus != "posted" {
-		t.Errorf("build status = %q, want posted via the repo credential", resp.BuildStatus)
-	}
-	if len(f.forge.StatusCalls) != 1 {
-		t.Errorf("credential forge got %d status calls, want 1", len(f.forge.StatusCalls))
-	}
-}
-
 func TestGitLabUploadGrantHealsBrokenFlag(t *testing.T) {
 	f, _ := newGLConnectFixture(t)
 	f.grant(t, "covbot", "rt-0", true)
-	f.addRepo(t, nil)
+	f.addRepo(t)
 
 	if resp := f.upload(t); resp.BuildStatus != "posted" {
 		t.Fatalf("build status = %q", resp.BuildStatus)

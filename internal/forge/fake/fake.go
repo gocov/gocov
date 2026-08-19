@@ -61,7 +61,6 @@ type Forge struct {
 	FileErr   error
 	ReportErr error // returned by PublishReport
 
-	FactoryCreds       []map[string]string // credentials each Factory() call received
 	StatusCalls        []StatusCall
 	CommentCalls       []CommentCall
 	UpdateCalls        []UpdateCall
@@ -85,17 +84,6 @@ type DiffCall struct {
 
 // New returns an empty fake forge.
 func New() *Forge { return &Forge{} }
-
-// Factory returns a forge.Factory that always yields f and records the
-// credentials it was invoked with.
-func (f *Forge) Factory() forge.Factory {
-	return func(creds map[string]string) (forge.Forge, error) {
-		f.mu.Lock()
-		f.FactoryCreds = append(f.FactoryCreds, creds)
-		f.mu.Unlock()
-		return f, nil
-	}
-}
 
 func (f *Forge) PostBuildStatus(_ context.Context, repoSlug, commitSHA string, status forge.BuildStatus) error {
 	f.mu.Lock()

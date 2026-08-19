@@ -295,9 +295,6 @@ func reportsPostedMsg(ws *store.Workspace) string {
 			return "Commit status posted as @" + ws.GitLabGrantAccount + "."
 		}
 	}
-	if len(ws.ForgeCredentials) > 0 {
-		return "Reported to " + providerLabel(ws.Forge) + " with your workspace token."
-	}
 	return ""
 }
 

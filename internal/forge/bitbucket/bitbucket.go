@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gocov/gocov/internal/forge"
 )
@@ -42,21 +41,6 @@ func (c *Client) authorize(req *http.Request) {
 		return
 	}
 	req.SetBasicAuth(c.Username, c.AppPassword)
-}
-
-// Factory builds a Client from repo credentials. Required keys:
-// "username" and "app_password".
-func Factory(creds map[string]string) (forge.Forge, error) {
-	username, password := creds["username"], creds["app_password"]
-	if username == "" || password == "" {
-		return nil, fmt.Errorf("bitbucket: credentials must include username and app_password")
-	}
-	return &Client{
-		BaseURL:     DefaultBaseURL,
-		Username:    username,
-		AppPassword: password,
-		HTTPClient:  &http.Client{Timeout: 15 * time.Second},
-	}, nil
 }
 
 var stateNames = map[string]string{

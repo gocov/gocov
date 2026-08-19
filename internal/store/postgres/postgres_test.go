@@ -37,11 +37,10 @@ func TestRepoLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	repo := &store.Repo{
-		Forge:            "bitbucket",
-		Slug:             "acme/widgets",
-		Token:            "tok-1",
-		DefaultBranch:    "main",
-		ForgeCredentials: map[string]string{"username": "u", "app_password": "p"},
+		Forge:         "bitbucket",
+		Slug:          "acme/widgets",
+		Token:         "tok-1",
+		DefaultBranch: "main",
 	}
 	if err := st.CreateRepo(ctx, repo); err != nil {
 		t.Fatal(err)
@@ -50,7 +49,7 @@ func TestRepoLifecycle(t *testing.T) {
 		t.Fatalf("CreateRepo did not fill ID/CreatedAt: %+v", repo)
 	}
 
-	// All lookups return the same row, credentials included.
+	// All lookups return the same row.
 	for name, get := range map[string]func() (*store.Repo, error){
 		"by id":    func() (*store.Repo, error) { return st.RepoByID(ctx, repo.ID) },
 		"by slug":  func() (*store.Repo, error) { return st.RepoBySlug(ctx, "acme/widgets") },
@@ -60,8 +59,7 @@ func TestRepoLifecycle(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		if got.Slug != repo.Slug || got.Token != repo.Token || got.DefaultBranch != "main" ||
-			!reflect.DeepEqual(got.ForgeCredentials, repo.ForgeCredentials) {
+		if got.Slug != repo.Slug || got.Token != repo.Token || got.DefaultBranch != "main" {
 			t.Errorf("%s: got %+v", name, got)
 		}
 	}
@@ -85,11 +83,10 @@ func TestRepoLifecycle(t *testing.T) {
 		t.Errorf("ListRepos = %v, %v", repos[0].Slug, repos[1].Slug)
 	}
 
-	// Update: branch change + credential clearing round-trips through JSONB,
-	// and nullable gate fields survive set/clear cycles.
+	// Update: branch change round-trips, and nullable gate fields survive
+	// set/clear cycles.
 	minCov, maxDrop := 82.5, 0.0
 	repo.DefaultBranch = "develop"
-	repo.ForgeCredentials = nil
 	repo.Token = "tok-rotated"
 	repo.Gate = store.Gate{MinCoverage: &minCov, MaxCoverageDrop: &maxDrop}
 	if err := st.UpdateRepo(ctx, repo); err != nil {
@@ -99,7 +96,7 @@ func TestRepoLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.DefaultBranch != "develop" || got.ForgeCredentials != nil || got.Token != "tok-rotated" {
+	if got.DefaultBranch != "develop" || got.Token != "tok-rotated" {
 		t.Errorf("after update: %+v", got)
 	}
 	if got.Gate.MinCoverage == nil || *got.Gate.MinCoverage != 82.5 ||
@@ -134,7 +131,6 @@ func TestWorkspaceLifecycle(t *testing.T) {
 	minDiff := 70.0
 	w := &store.Workspace{
 		Forge: "bitbucket", Prefix: "acme", Token: "ws-tok", DefaultBranch: "development",
-		ForgeCredentials:     map[string]string{"username": "bot", "app_password": "pw"},
 		Gate:                 store.Gate{MinDiffCoverage: &minDiff},
 		GitHubInstallationID: 42,
 	}
@@ -153,8 +149,7 @@ func TestWorkspaceLifecycle(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		if got.Prefix != "acme" || got.DefaultBranch != "development" ||
-			!reflect.DeepEqual(got.ForgeCredentials, w.ForgeCredentials) {
+		if got.Prefix != "acme" || got.DefaultBranch != "development" {
 			t.Errorf("%s: %+v", name, got)
 		}
 		if got.Gate.MinDiffCoverage == nil || *got.Gate.MinDiffCoverage != 70 {
@@ -182,10 +177,9 @@ func TestWorkspaceLifecycle(t *testing.T) {
 		t.Errorf("ListWorkspaces = %+v (err %v)", list, err)
 	}
 
-	// Update (rotation, credential clearing) and stale-token lookups.
+	// Update (rotation) and stale-token lookups.
 	w.Token = "ws-tok-2"
 	w.DefaultBranch = "trunk"
-	w.ForgeCredentials = nil
 	w.GitHubAppBroken = true
 	if err := st.UpdateWorkspace(ctx, w); err != nil {
 		t.Fatal(err)
@@ -196,9 +190,6 @@ func TestWorkspaceLifecycle(t *testing.T) {
 	got, err := st.WorkspaceByPrefix(ctx, "acme")
 	if err != nil || got.Token != "ws-tok-2" || got.DefaultBranch != "trunk" {
 		t.Errorf("after update: %+v (err %v)", got, err)
-	}
-	if got.ForgeCredentials != nil {
-		t.Errorf("credentials not cleared: %v", got.ForgeCredentials)
 	}
 	if !got.GitHubAppBroken {
 		t.Error("broken flag not persisted")

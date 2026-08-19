@@ -28,7 +28,7 @@ commands:
   add           register a repo and print its upload token
   list          list registered repos
   rotate-token  generate a new upload token (the old one stops working)
-  update        change default branch or forge credentials
+  update        change default branch or coverage gate
   remove        delete a repo with all its uploads (requires -force)
 `
 
@@ -148,51 +148,17 @@ func gateSummary(g store.Gate) string {
 	return strings.Join(parts, " ")
 }
 
-// forgeCredFlags validates the credential flags and returns the
-// credentials map, or nil when none were set. Bitbucket's flag pair,
-// GitHub's token and GitLab's token are mutually exclusive — a repo
-// lives on one forge.
-func forgeCredFlags(bbUsername, bbPassword, ghToken, glToken string) (map[string]string, error) {
-	if ghToken != "" && glToken != "" {
-		return nil, fmt.Errorf("-gh-token cannot be combined with -gl-token")
-	}
-	if bbUsername == "" && bbPassword == "" {
-		if ghToken != "" {
-			return map[string]string{"token": ghToken}, nil
-		}
-		if glToken != "" {
-			return map[string]string{"token": glToken}, nil
-		}
-		return nil, nil
-	}
-	if ghToken != "" || glToken != "" {
-		return nil, fmt.Errorf("-gh-token/-gl-token cannot be combined with -bb-username/-bb-app-password")
-	}
-	if bbUsername == "" || bbPassword == "" {
-		return nil, fmt.Errorf("-bb-username and -bb-app-password must be set together")
-	}
-	return map[string]string{"username": bbUsername, "app_password": bbPassword}, nil
-}
-
 func repoAdd(ctx context.Context, st store.Store, args []string, out io.Writer) error {
 	fs := newFlagSet("repo add", out)
 	slug := fs.String("slug", "", "repo slug, namespaced: workspace/repo (required)")
 	forgeName := fs.String("forge", "bitbucket", "forge hosting the repo")
 	defaultBranch := fs.String("default-branch", "main", "default branch")
-	bbUser := fs.String("bb-username", "", "Bitbucket username for build status pushes (optional)")
-	bbPassword := fs.String("bb-app-password", "", "Bitbucket app password (optional)")
-	ghToken := fs.String("gh-token", "", "GitHub access token for -forge github repos (optional)")
-	glToken := fs.String("gl-token", "", "GitLab access token for -forge gitlab repos (optional)")
 	gf := addGateFlags(fs)
 	if stop, err := parseFlags(fs, args); stop {
 		return err
 	}
 	if *slug == "" {
 		return fmt.Errorf("-slug is required")
-	}
-	creds, err := forgeCredFlags(*bbUser, *bbPassword, *ghToken, *glToken)
-	if err != nil {
-		return err
 	}
 	var gate store.Gate
 	if _, err := gf.apply(&gate); err != nil {
@@ -204,12 +170,11 @@ func repoAdd(ctx context.Context, st store.Store, args []string, out io.Writer) 
 	}
 
 	r := &store.Repo{
-		Forge:            *forgeName,
-		Slug:             *slug,
-		Token:            token,
-		DefaultBranch:    *defaultBranch,
-		ForgeCredentials: creds,
-		Gate:             gate,
+		Forge:         *forgeName,
+		Slug:          *slug,
+		Token:         token,
+		DefaultBranch: *defaultBranch,
+		Gate:          gate,
 	}
 	if err := st.CreateRepo(ctx, r); err != nil {
 		return fmt.Errorf("creating repo: %w", err)
@@ -264,14 +229,10 @@ func repoList(ctx context.Context, st store.Store, args []string, out io.Writer)
 		return nil
 	}
 	tw := tabwriter.NewWriter(out, 2, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "SLUG\tFORGE\tDEFAULT BRANCH\tCREDENTIALS\tGATE\tCREATED")
+	fmt.Fprintln(tw, "SLUG\tFORGE\tDEFAULT BRANCH\tGATE\tCREATED")
 	for _, r := range repos {
-		creds := "-"
-		if len(r.ForgeCredentials) > 0 {
-			creds = "set"
-		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			r.Slug, r.Forge, r.DefaultBranch, creds, gateSummary(r.Gate), r.CreatedAt.Format("2006-01-02"))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+			r.Slug, r.Forge, r.DefaultBranch, gateSummary(r.Gate), r.CreatedAt.Format("2006-01-02"))
 	}
 	return tw.Flush()
 }
@@ -306,11 +267,6 @@ func repoUpdate(ctx context.Context, st store.Store, args []string, out io.Write
 	fs := newFlagSet("repo update", out)
 	slug := fs.String("slug", "", "repo slug (required)")
 	defaultBranch := fs.String("default-branch", "", "new default branch")
-	bbUser := fs.String("bb-username", "", "Bitbucket username")
-	bbPassword := fs.String("bb-app-password", "", "Bitbucket app password")
-	ghToken := fs.String("gh-token", "", "GitHub access token")
-	glToken := fs.String("gl-token", "", "GitLab access token")
-	clearCreds := fs.Bool("clear-credentials", false, "remove stored forge credentials")
 	gf := addGateFlags(fs)
 	clearGate := fs.Bool("clear-gate", false, "remove all coverage gate rules")
 	if stop, err := parseFlags(fs, args); stop {
@@ -318,13 +274,6 @@ func repoUpdate(ctx context.Context, st store.Store, args []string, out io.Write
 	}
 	if *slug == "" {
 		return fmt.Errorf("-slug is required")
-	}
-	creds, err := forgeCredFlags(*bbUser, *bbPassword, *ghToken, *glToken)
-	if err != nil {
-		return err
-	}
-	if *clearCreds && creds != nil {
-		return fmt.Errorf("-clear-credentials cannot be combined with credential flags")
 	}
 
 	r, err := st.RepoBySlug(ctx, *slug)
@@ -338,17 +287,11 @@ func repoUpdate(ctx context.Context, st store.Store, args []string, out io.Write
 	if *clearGate && gateChanged {
 		return fmt.Errorf("-clear-gate cannot be combined with gate flags")
 	}
-	if *defaultBranch == "" && creds == nil && !*clearCreds && !gateChanged && !*clearGate {
-		return fmt.Errorf("nothing to update: pass -default-branch, credential or gate flags")
+	if *defaultBranch == "" && !gateChanged && !*clearGate {
+		return fmt.Errorf("nothing to update: pass -default-branch or gate flags")
 	}
 	if *defaultBranch != "" {
 		r.DefaultBranch = *defaultBranch
-	}
-	if creds != nil {
-		r.ForgeCredentials = creds
-	}
-	if *clearCreds {
-		r.ForgeCredentials = nil
 	}
 	if *clearGate {
 		r.Gate = store.Gate{}

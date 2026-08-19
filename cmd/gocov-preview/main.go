@@ -175,12 +175,7 @@ func main() {
 	}
 	srv := server.New(server.Config{
 		Store: st, Blobs: blobmem.New(),
-		Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
-		Forges: map[string]forge.Factory{
-			"bitbucket": forgefake.New().Factory(),
-			"github":    forgefake.New().Factory(),
-			"gitlab":    forgefake.New().Factory(),
-		},
+		Parsers:          map[string]profile.Parser{"go": profile.GoParser{}},
 		BaseURL:          "http://localhost:8099",
 		Auths:            auths,
 		Hosted:           hosted,
