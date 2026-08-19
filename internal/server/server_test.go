@@ -38,22 +38,28 @@ type fixture struct {
 	repo  *store.Repo
 }
 
-func newFixture(t *testing.T, creds map[string]string) *fixture {
+// newFixture builds a bitbucket-forge server with the repo acme/widgets.
+// A non-nil connected map wires a one-click Bitbucket connection (grant
+// on workspace acme) so the repo's forge surfaces are reachable through
+// f.forge; nil leaves the repo with no forge access. The map's contents
+// are ignored — only nil vs non-nil matters — so existing call sites that
+// passed credential maps keep working.
+func newFixture(t *testing.T, connected map[string]string) *fixture {
 	t.Helper()
+	ctx := context.Background()
 	st := storemem.New()
 	repo := &store.Repo{
-		Forge:            "bitbucket",
-		Slug:             "acme/widgets",
-		Token:            "secret-token",
-		DefaultBranch:    "main",
-		ForgeCredentials: creds,
+		Forge:         "bitbucket",
+		Slug:          "acme/widgets",
+		Token:         "secret-token",
+		DefaultBranch: "main",
 	}
-	if err := st.CreateRepo(context.Background(), repo); err != nil {
+	if err := st.CreateRepo(ctx, repo); err != nil {
 		t.Fatal(err)
 	}
 	blobs := blobmem.New()
 	ff := forgefake.New()
-	srv := New(Config{
+	cfg := Config{
 		Store: st,
 		Blobs: blobs,
 		Parsers: map[string]profile.Parser{
@@ -64,10 +70,19 @@ func newFixture(t *testing.T, creds map[string]string) *fixture {
 			"clover":    profile.CloverParser{},
 			"simplecov": profile.SimpleCovParser{},
 		},
-		Forges:  map[string]forge.Factory{"bitbucket": ff.Factory()},
 		BaseURL: "https://gocov.example",
-	})
-	return &fixture{srv: srv, store: st, blobs: blobs, forge: ff, repo: repo}
+	}
+	if connected != nil {
+		ws := &store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "ws-secret", DefaultBranch: "main"}
+		if err := st.CreateWorkspace(ctx, ws); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.SetWorkspaceBitbucketGrant(ctx, ws.ID, "covbot", "rt-0", false); err != nil {
+			t.Fatal(err)
+		}
+		cfg.BitbucketConnect = &fakeBBConnect{grantForge: ff}
+	}
+	return &fixture{srv: New(cfg), store: st, blobs: blobs, forge: ff, repo: repo}
 }
 
 func multipartUpload(t *testing.T, fields map[string]string, profileBody string) (*bytes.Buffer, string) {
@@ -1132,7 +1147,6 @@ func TestWorkspaceGateInheritedByAutoCreatedRepos(t *testing.T) {
 		Store:   st,
 		Blobs:   blobmem.New(),
 		Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
-		Forges:  map[string]forge.Factory{"bitbucket": forgefake.New().Factory()},
 	})
 	f := &fixture{srv: srv, store: st}
 	rec := doUpload(t, f, "ws-token", map[string]string{"repo": "acme/newrepo", "commit": "c"}, testProfile)
@@ -1287,7 +1301,7 @@ var errFake = errors.New("fake forge failure")
 
 func TestWorkspaceTokenUpload(t *testing.T) {
 	ctx := context.Background()
-	newWsFixture := func(t *testing.T, wsDefaultBranch, forgeDefaultBranch string, withGlobalCreds bool) *fixture {
+	newWsFixture := func(t *testing.T, wsDefaultBranch, forgeDefaultBranch string, connected bool) *fixture {
 		t.Helper()
 		st := storemem.New()
 		ws := &store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "ws-token", DefaultBranch: wsDefaultBranch}
@@ -1300,13 +1314,15 @@ func TestWorkspaceTokenUpload(t *testing.T) {
 			Store:   st,
 			Blobs:   blobmem.New(),
 			Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
-			Forges:  map[string]forge.Factory{"bitbucket": ff.Factory()},
 			BaseURL: "https://gocov.example",
 		}
-		if withGlobalCreds {
-			cfg.DefaultForgeCredentials = map[string]map[string]string{
-				"bitbucket": {"username": "bot", "app_password": "botpass"},
+		// A one-click Bitbucket connection is what makes the forge askable
+		// for a repo-less auto-create; without it no forge client is built.
+		if connected {
+			if err := st.SetWorkspaceBitbucketGrant(ctx, ws.ID, "covbot", "rt-0", false); err != nil {
+				t.Fatal(err)
 			}
+			cfg.BitbucketConnect = &fakeBBConnect{grantForge: ff}
 		}
 		return &fixture{srv: New(cfg), store: st, forge: ff}
 	}
@@ -1356,7 +1372,7 @@ func TestWorkspaceTokenUpload(t *testing.T) {
 	})
 
 	t.Run("falls back to workspace default branch without forge", func(t *testing.T) {
-		// No global credentials: the forge cannot be asked.
+		// No credentials: the forge cannot be asked.
 		f := newWsFixture(t, "develop", "development", false)
 		doUpload(t, f, "ws-token", map[string]string{"repo": "acme/newrepo", "commit": "c1"}, testProfile)
 		repo, err := f.store.RepoBySlug(ctx, "acme/newrepo")
@@ -1451,74 +1467,6 @@ func TestWorkspaceTokenUpload(t *testing.T) {
 		rec := doUpload(t, f, "repo-token", map[string]string{"commit": "c"}, testProfile)
 		if rec.Code != http.StatusCreated {
 			t.Errorf("repo token upload failed: %d", rec.Code)
-		}
-	})
-}
-
-func TestDefaultForgeCredentials(t *testing.T) {
-	newSrvWith := func(t *testing.T, repoCreds map[string]string, factory forge.Factory) *Server {
-		t.Helper()
-		st := storemem.New()
-		repo := &store.Repo{
-			Forge: "bitbucket", Slug: "acme/widgets", Token: "secret-token",
-			DefaultBranch: "main", ForgeCredentials: repoCreds,
-		}
-		if err := st.CreateRepo(context.Background(), repo); err != nil {
-			t.Fatal(err)
-		}
-		return New(Config{
-			Store:   st,
-			Blobs:   blobmem.New(),
-			Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
-			Forges:  map[string]forge.Factory{"bitbucket": factory},
-			DefaultForgeCredentials: map[string]map[string]string{
-				"bitbucket": {"username": "bot", "app_password": "botpass"},
-			},
-		})
-	}
-	upload := func(t *testing.T, srv *Server) uploadResponse {
-		t.Helper()
-		body, ct := multipartUpload(t, map[string]string{"commit": "c"}, testProfile)
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/upload", body)
-		req.Header.Set("Content-Type", ct)
-		req.Header.Set("Authorization", "Bearer secret-token")
-		rec := httptest.NewRecorder()
-		srv.ServeHTTP(rec, req)
-		var resp uploadResponse
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("body: %s", rec.Body)
-		}
-		return resp
-	}
-
-	t.Run("repo without credentials falls back to global bot", func(t *testing.T) {
-		var gotCreds map[string]string
-		ff := forgefake.New()
-		factory := func(creds map[string]string) (forge.Forge, error) {
-			gotCreds = creds
-			return ff, nil
-		}
-		if resp := upload(t, newSrvWith(t, nil, factory)); resp.BuildStatus != "posted" {
-			t.Errorf("build_status = %q, want posted via global credentials", resp.BuildStatus)
-		}
-		if gotCreds["username"] != "bot" {
-			t.Errorf("factory got %v, want global bot credentials", gotCreds)
-		}
-	})
-
-	t.Run("per-repo credentials take precedence", func(t *testing.T) {
-		var gotCreds map[string]string
-		ff := forgefake.New()
-		factory := func(creds map[string]string) (forge.Forge, error) {
-			gotCreds = creds
-			return ff, nil
-		}
-		own := map[string]string{"username": "own", "app_password": "ownpass"}
-		if resp := upload(t, newSrvWith(t, own, factory)); resp.BuildStatus != "posted" {
-			t.Errorf("build_status = %q", resp.BuildStatus)
-		}
-		if gotCreds["username"] != "own" {
-			t.Errorf("factory got %v, want per-repo credentials", gotCreds)
 		}
 	})
 }
@@ -1706,7 +1654,6 @@ func TestGitLabNestedWorkspaceUpload(t *testing.T) {
 			Store:   st,
 			Blobs:   blobmem.New(),
 			Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
-			Forges:  map[string]forge.Factory{"gitlab": ff.Factory()},
 			BaseURL: "https://gocov.example",
 		}
 		return &fixture{srv: New(cfg), store: st, forge: ff}

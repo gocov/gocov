@@ -12,10 +12,7 @@
 //	gocov-server user remove -email someone@example.com
 //
 // Configuration via environment: DATABASE_URL (required), GOCOV_ADDR
-// (default :8080), GOCOV_BASE_URL (default http://localhost:8080), and
-// optionally GOCOV_BITBUCKET_USERNAME / GOCOV_BITBUCKET_APP_PASSWORD,
-// GOCOV_GITHUB_TOKEN and/or GOCOV_GITLAB_TOKEN for global bot
-// credentials used by repos without their own.
+// (default :8080), GOCOV_BASE_URL (default http://localhost:8080).
 // Setting GOCOV_OAUTH_BITBUCKET_KEY / GOCOV_OAUTH_BITBUCKET_SECRET (a
 // Bitbucket OAuth consumer), GOCOV_OAUTH_GITHUB_KEY /
 // GOCOV_OAUTH_GITHUB_SECRET (a GitHub OAuth app) and/or
@@ -64,7 +61,6 @@ import (
 	authgh "github.com/gocov/gocov/internal/auth/github"
 	authgl "github.com/gocov/gocov/internal/auth/gitlab"
 	blobpg "github.com/gocov/gocov/internal/blobstore/postgres"
-	"github.com/gocov/gocov/internal/forge"
 	"github.com/gocov/gocov/internal/forge/bitbucket"
 	"github.com/gocov/gocov/internal/forge/github"
 	"github.com/gocov/gocov/internal/forge/gitlab"
@@ -192,24 +188,6 @@ func serve() error {
 	addr := envOr("GOCOV_ADDR", ":8080")
 	baseURL := envOr("GOCOV_BASE_URL", "http://localhost:8080")
 
-	defaultCreds := map[string]map[string]string{}
-	bbUser, bbPassword := os.Getenv("GOCOV_BITBUCKET_USERNAME"), os.Getenv("GOCOV_BITBUCKET_APP_PASSWORD")
-	switch {
-	case bbUser != "" && bbPassword != "":
-		defaultCreds["bitbucket"] = map[string]string{"username": bbUser, "app_password": bbPassword}
-		log.Info("global bitbucket credentials configured", "username", bbUser)
-	case bbUser != "" || bbPassword != "":
-		log.Warn("GOCOV_BITBUCKET_USERNAME and GOCOV_BITBUCKET_APP_PASSWORD must both be set; ignoring")
-	}
-	if ghToken := os.Getenv("GOCOV_GITHUB_TOKEN"); ghToken != "" {
-		defaultCreds["github"] = map[string]string{"token": ghToken}
-		log.Info("global github credentials configured")
-	}
-	if glToken := os.Getenv("GOCOV_GITLAB_TOKEN"); glToken != "" {
-		defaultCreds["gitlab"] = map[string]string{"token": glToken}
-		log.Info("global gitlab credentials configured")
-	}
-
 	githubApp, err := githubAppFromEnv(log)
 	if err != nil {
 		return err
@@ -277,19 +255,13 @@ func serve() error {
 			"clover":    profile.CloverParser{},
 			"simplecov": profile.SimpleCovParser{},
 		},
-		Forges: map[string]forge.Factory{
-			"bitbucket": bitbucket.Factory,
-			"github":    github.Factory,
-			"gitlab":    gitlab.Factory,
-		},
 		BaseURL: baseURL,
 		Logger:  log,
 		Health:  st.Pool().Ping,
 
-		DefaultForgeCredentials: defaultCreds,
-		Auths:                   authProviders,
-		AllowedWorkspaces:       allowedWorkspaces,
-		Hosted:                  hosted,
+		Auths:             authProviders,
+		AllowedWorkspaces: allowedWorkspaces,
+		Hosted:            hosted,
 	}
 	// Assigned conditionally: a typed-nil *github.App in the interface
 	// field would read as "configured".

@@ -70,7 +70,6 @@ func newBBConnectFixture(t *testing.T) (*bbConnectFixture, *http.Cookie) {
 	if err := st.CreateWorkspace(context.Background(), ws); err != nil {
 		t.Fatal(err)
 	}
-	credsForge := forgefake.New()
 	grantForge := forgefake.New()
 	bb := &fakeBBConnect{grantForge: grantForge}
 	f := &bbConnectFixture{
@@ -79,14 +78,13 @@ func newBBConnectFixture(t *testing.T) (*bbConnectFixture, *http.Cookie) {
 				Store:            st,
 				Blobs:            blobmem.New(),
 				Parsers:          map[string]profile.Parser{"go": profile.GoParser{}},
-				Forges:           map[string]forge.Factory{"bitbucket": credsForge.Factory()},
 				BaseURL:          "https://gocov.example",
 				Hosted:           true,
 				Auths:            []auth.Provider{&fakeProvider{identity: memberIdentity()}},
 				BitbucketConnect: bb,
 			}),
 			store: st,
-			forge: credsForge,
+			forge: grantForge,
 		},
 		bb:         bb,
 		grantForge: grantForge,
@@ -111,10 +109,10 @@ func (f *bbConnectFixture) grant(t *testing.T, account, refresh string, broken b
 	}
 }
 
-func (f *bbConnectFixture) addRepo(t *testing.T, creds map[string]string) {
+func (f *bbConnectFixture) addRepo(t *testing.T) {
 	t.Helper()
 	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "repo-token",
-		DefaultBranch: "main", ForgeCredentials: creds}
+		DefaultBranch: "main"}
 	if err := f.store.CreateRepo(context.Background(), repo); err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +225,7 @@ func TestBitbucketConnectCallbackRejects(t *testing.T) {
 func TestBitbucketConnectRequiresFeature(t *testing.T) {
 	// No BitbucketConnect configured: the connect start does not exist,
 	// and a stray connect cookie on the sign-in callback changes nothing.
-	f, sess := newWorkspaceFixture(t, nil, false)
+	f, sess := newWorkspaceFixture(t, false)
 	if rec := get(f, "/workspaces/acme/bitbucket/connect", sess); rec.Code != http.StatusNotFound {
 		t.Errorf("connect without feature: status = %d, want 404", rec.Code)
 	}
@@ -240,11 +238,11 @@ func TestBitbucketConnectRequiresFeature(t *testing.T) {
 }
 
 func TestUploadUsesGrantAndPersistsRotation(t *testing.T) {
-	// D7: the grant outranks even per-repo credentials, and the rotated
-	// refresh token replaces the stored one on the first refresh.
+	// D7: the grant serves the upload, and the rotated refresh token
+	// replaces the stored one on the first refresh.
 	f, _ := newBBConnectFixture(t)
 	f.grant(t, "covbot", "rt-0", false)
-	f.addRepo(t, map[string]string{"username": "u", "app_password": "p"})
+	f.addRepo(t)
 
 	resp := f.upload(t)
 	if resp.BuildStatus != "posted" || resp.CodeInsights != "posted" {
@@ -252,9 +250,6 @@ func TestUploadUsesGrantAndPersistsRotation(t *testing.T) {
 	}
 	if len(f.grantForge.StatusCalls) != 1 {
 		t.Errorf("grant forge got %d status calls, want 1", len(f.grantForge.StatusCalls))
-	}
-	if got := len(f.forge.FactoryCreds); got != 0 {
-		t.Errorf("credential factory ran %d times, want 0 (grant outranks repo creds)", got)
 	}
 	if got := f.bb.refreshCalls; len(got) != 1 || got[0] != "rt-0" {
 		t.Errorf("refresh calls = %v, want exactly the stored token", got)
@@ -267,7 +262,7 @@ func TestUploadUsesGrantAndPersistsRotation(t *testing.T) {
 func TestUploadGrantAccessTokenCached(t *testing.T) {
 	f, _ := newBBConnectFixture(t)
 	f.grant(t, "covbot", "rt-0", false)
-	f.addRepo(t, nil)
+	f.addRepo(t)
 
 	f.upload(t)
 	f.upload(t)
@@ -281,7 +276,7 @@ func TestUploadGrantRevokedDegrades(t *testing.T) {
 	// detected lazily, flagged, upload degrades like missing credentials.
 	f, _ := newBBConnectFixture(t)
 	f.grant(t, "covbot", "rt-0", false)
-	f.addRepo(t, nil)
+	f.addRepo(t)
 	f.bb.refreshErr = fmt.Errorf("%w: invalid_grant", forge.ErrCredentialsRevoked)
 
 	resp := f.upload(t)
@@ -297,24 +292,10 @@ func TestUploadGrantRevokedDegrades(t *testing.T) {
 	}
 }
 
-func TestUploadGrantRevokedFallsBackToCreds(t *testing.T) {
-	f, _ := newBBConnectFixture(t)
-	f.grant(t, "covbot", "rt-0", false)
-	f.addRepo(t, map[string]string{"username": "u", "app_password": "p"})
-	f.bb.refreshErr = fmt.Errorf("%w: invalid_grant", forge.ErrCredentialsRevoked)
-
-	if resp := f.upload(t); resp.BuildStatus != "posted" {
-		t.Errorf("build status = %q, want posted via the repo credential", resp.BuildStatus)
-	}
-	if len(f.forge.StatusCalls) != 1 {
-		t.Errorf("credential forge got %d status calls, want 1", len(f.forge.StatusCalls))
-	}
-}
-
 func TestUploadGrantHealsBrokenFlag(t *testing.T) {
 	f, _ := newBBConnectFixture(t)
 	f.grant(t, "covbot", "rt-0", true)
-	f.addRepo(t, nil)
+	f.addRepo(t)
 
 	if resp := f.upload(t); resp.BuildStatus != "posted" {
 		t.Fatalf("build status = %q", resp.BuildStatus)

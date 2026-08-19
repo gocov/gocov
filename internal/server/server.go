@@ -36,16 +36,11 @@ type Config struct {
 	Store   store.Store
 	Blobs   blobstore.Store
 	Parsers map[string]profile.Parser // by format name, e.g. "go"
-	Forges  map[string]forge.Factory  // by forge name, e.g. "bitbucket"
 	BaseURL string                    // public URL of this server, for links in build statuses
 	Logger  *slog.Logger
 	// Health is probed by GET /healthz (e.g. a database ping).
 	// When nil, /healthz always reports healthy.
 	Health func(ctx context.Context) error
-	// DefaultForgeCredentials maps a forge name to fallback credentials
-	// (e.g. a global bot account) used for repos that have none of their
-	// own. Per-repo credentials always take precedence.
-	DefaultForgeCredentials map[string]map[string]string
 	// Auths enables web UI sign-in, one provider per forge, rendered as
 	// one login button each. Empty keeps the UI open (with a banner
 	// explaining how to enable sign-in); the upload API, badges and health
@@ -134,14 +129,12 @@ type Server struct {
 	store         store.Store
 	blobs         blobstore.Store
 	parsers       map[string]profile.Parser
-	forges        map[string]forge.Factory
 	baseURL       string
 	log           *slog.Logger
 	pages         map[string]*template.Template
 	mux           *http.ServeMux
 	handler       http.Handler // mux wrapped in the auth middleware
 	health        func(ctx context.Context) error
-	defaultCreds  map[string]map[string]string
 	githubApp     GitHubApp
 	bbConnect     BitbucketConnect
 	bbTokens      *bbTokenCache
@@ -200,13 +193,11 @@ func New(cfg Config) *Server {
 		store:         cfg.Store,
 		blobs:         cfg.Blobs,
 		parsers:       cfg.Parsers,
-		forges:        cfg.Forges,
 		baseURL:       cfg.BaseURL,
 		log:           log,
 		pages:         pages,
 		mux:           http.NewServeMux(),
 		health:        cfg.Health,
-		defaultCreds:  cfg.DefaultForgeCredentials,
 		githubApp:     cfg.GitHubApp,
 		bbConnect:     cfg.BitbucketConnect,
 		bbTokens:      newBBTokenCache(),
@@ -243,7 +234,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /workspaces/{prefix}", s.handleWorkspacePage)
 	s.mux.HandleFunc("POST /workspaces/{prefix}/rotate-token", s.handleWorkspaceRotate)
 	s.mux.HandleFunc("POST /workspaces/{prefix}/settings", s.handleWorkspaceSettings)
-	s.mux.HandleFunc("POST /workspaces/{prefix}/credentials", s.handleWorkspaceCredentials)
 	s.mux.HandleFunc("POST /workspaces/{prefix}/github/disconnect", s.handleGitHubDisconnect)
 	s.mux.HandleFunc("GET /workspaces/{prefix}/bitbucket/connect", s.handleBitbucketConnect)
 	s.mux.HandleFunc("POST /workspaces/{prefix}/bitbucket/disconnect", s.handleBitbucketDisconnect)

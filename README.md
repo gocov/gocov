@@ -23,14 +23,14 @@ detected from the uploaded content.
 - Uploader CLI that auto-detects Bitbucket Pipelines, GitHub Actions
   and GitLab CI environment variables and falls back to git
 - Pushes a `coverage: X% (±Y%)` build status to Bitbucket commits (or a
-  commit status to GitHub/GitLab) when the repo has forge credentials
-  configured
+  commit status to GitHub/GitLab) when the repo's workspace is connected
+  to its forge
 - Coverage gate: per-repo minimums for total and diff coverage plus a
   drop tolerance; violations push a FAILED build status, so a Bitbucket
   merge check can block the PR
 - Source view: any file in an upload renders line by line with coverage
   overlay and hit counts, fetched from the forge at the exact commit and
-  cached immutably (misses are cached too); without forge credentials
+  cached immutably (misses are cached too); without a forge connection
   the page falls back to an uncovered-line summary. When an upload has
   no `path_prefix`, recorded paths that carry an unmapped leading
   prefix (a Go module path, a CI checkout directory) are resolved by
@@ -104,38 +104,34 @@ docker compose exec server gocov-server workspace add \
 Set the printed token as a *Bitbucket workspace variable* (`GOCOV_TOKEN`,
 secured) together with `GOCOV_SERVER` — every repo inherits them. Repos
 register themselves on their first upload; their default branch is asked
-from Bitbucket when a global bot account is configured (see
-Configuration), falling back to the workspace's `-default-branch`.
+from Bitbucket when the workspace has credentials of its own (or a
+one-click connection), falling back to the workspace's `-default-branch`.
 
 ### Registering repos one by one
 
 ```sh
 docker compose exec server gocov-server repo add \
   -slug myworkspace/myrepo \
-  -default-branch main \
-  -bb-username myuser -bb-app-password "$APP_PASSWORD"   # optional, for build statuses
+  -default-branch main
 ```
 
-For a GitHub repo, the slug is `owner/repo` and the credential is a
-single access token (see "GitHub token permissions"):
+For a GitHub repo, the slug is `owner/repo`; for a GitLab project it is
+the full namespace path, subgroups included:
 
 ```sh
 docker compose exec server gocov-server repo add \
-  -slug myorg/myrepo -forge github \
-  -default-branch main \
-  -gh-token "$GITHUB_TOKEN"                              # optional, for statuses and PR comments
-```
+  -slug myorg/myrepo -forge github -default-branch main
 
-For a GitLab project, the slug is the full namespace path — subgroups
-included — and the credential is a single access token with the `api`
-scope (see "GitLab token permissions"):
-
-```sh
 docker compose exec server gocov-server repo add \
-  -slug mygroup/subgroup/myproject -forge gitlab \
-  -default-branch main \
-  -gl-token "$GITLAB_TOKEN"                              # optional, for statuses and MR comments
+  -slug mygroup/subgroup/myproject -forge gitlab -default-branch main
 ```
+
+Registering a repo only tracks coverage. To let gocov post build
+statuses, PR/MR comments and check runs, connect the repo's workspace
+once through the web UI (GitHub App, or a Bitbucket/GitLab one-click
+grant — see "Forge connection" below). A repo whose workspace has no
+connection still stores and reports coverage; the forge surfaces are
+simply skipped.
 
 A GitHub org or GitLab group can also be onboarded wholesale:
 `workspace add -prefix myorg -forge github` (or `-prefix
@@ -146,11 +142,10 @@ exactly like a Bitbucket workspace.
 Manage repos later with:
 
 ```sh
-gocov-server repo list                                   # slugs, branches, credential status
+gocov-server repo list                                   # slugs, branches, gate
 gocov-server repo rotate-token -slug myworkspace/myrepo  # invalidates the old token
 gocov-server repo update -slug myworkspace/myrepo \
-  -default-branch develop                                # and/or -bb-username/-bb-app-password
-                                                         # or -gh-token, or -clear-credentials
+  -default-branch develop                                # and/or gate flags
 gocov-server repo remove -slug myworkspace/myrepo -force # deletes uploads and raw profiles too;
                                                          # without -force only prints a summary
 gocov-server workspace list|rotate-token|update|remove   # workspace token management
@@ -253,11 +248,11 @@ requires at least one sign-in provider.
 Signed-in members manage their workspaces from the dashboard (private
 and hosted mode alike): rotate the upload token (the old one dies
 immediately; the new one is shown once), change the default branch and
-gate defaults for auto-registered repos, and set a workspace-level bot
-credential used for statuses, PR comments and insights on repos without
-their own. Stored secrets are never rendered back — the page only shows
-whether a credential is configured. The CLI (`gocov-server workspace
-...`) keeps working; the UI is an addition, not a migration.
+gate defaults for auto-registered repos, and connect the workspace to
+its forge (GitHub App, or a Bitbucket/GitLab one-click grant) for
+statuses, PR comments and insights. The upload token is never rendered
+back — it is shown once, right after a rotation. The CLI (`gocov-server
+workspace ...`) keeps working; the UI is an addition, not a migration.
 
 ```sh
 gocov-server user list                          # who has signed in
@@ -322,21 +317,18 @@ on gocov with the workspace connected. In hosted mode the install can
 even come first — an install on an account with no workspace yet
 registers it on the spot (same claim rules as **/register**).
 
-A connected installation sits at the top of the credential chain: it
-outranks per-repo and workspace credentials for every forge surface.
-Uninstalling the app on GitHub is detected on the next upload — the
-affected surfaces degrade to the stored credentials, or to `skipped`,
-never to a failed upload — and the settings page offers a reconnect.
-The token paths below keep working untouched; the App is an addition,
-not a migration.
+A connected installation is what gives the workspace's repos forge
+access. Uninstalling the app on GitHub is detected on the next upload —
+the affected surfaces degrade to `skipped`, never to a failed upload —
+and the settings page offers a reconnect.
 
 ### Bitbucket workspace connect (one-click)
 
 Bitbucket workspaces get the same effortless path: a member clicks
 **Connect workspace** on the settings (or setup) page, consents once on
 Bitbucket, and statuses, PR comments, reports, diffs and source fetch
-work with zero manual credentials from then on. To enable it, the
-deployment needs the sign-in OAuth consumer plus an encryption key:
+work from then on. To enable it, the deployment needs the sign-in OAuth
+consumer plus an encryption key:
 
 ```sh
 GOCOV_SECRET_KEY=...   # 64 hex characters (`openssl rand -hex 32`); encrypts the stored grant at rest
@@ -364,9 +356,8 @@ rotates refresh tokens on every use — gocov persists each rotation
 atomically. If the grant dies (the connecting account leaves the
 workspace, the consent is revoked under *Personal settings → Authorized
 applications*, or the token ages out after three unused months), the
-next upload degrades to the stored credentials or to `skipped`, never
-to a failure, and the settings page offers a reconnect. The app-password
-/ API-token paths keep working untouched.
+next upload degrades to `skipped`, never to a failure, and the settings
+page offers a reconnect.
 
 ### Coverage gate
 
@@ -573,7 +564,7 @@ the repo's default branch.
 Returns `201` with `{id, total_pct, covered_stmts, total_stmts,
 delta_pct, build_status}`. Uploads carrying a `pr_id` additionally get
 `diff_pct`, `diff_covered_lines`, `diff_total_lines`, `diff_status` and
-`pr_comment` when the repo has forge credentials configured.
+`pr_comment` when the repo's workspace is connected to its forge.
 
 ## Configuration
 
@@ -582,10 +573,6 @@ delta_pct, build_status}`. Uploads carrying a `pr_id` additionally get
 | `DATABASE_URL`                 | —                       | Postgres DSN (required)     |
 | `GOCOV_ADDR`                   | `:8080`                 | listen address              |
 | `GOCOV_BASE_URL`               | `http://localhost:8080` | public URL used in statuses |
-| `GOCOV_BITBUCKET_USERNAME`     | —                       | global Bitbucket bot account (with an API token, the account email) |
-| `GOCOV_BITBUCKET_APP_PASSWORD` | —                       | the bot's app password or scoped API token |
-| `GOCOV_GITHUB_TOKEN`           | —                       | global GitHub token for repos without their own credentials |
-| `GOCOV_GITLAB_TOKEN`           | —                       | global GitLab token for repos without their own credentials |
 | `GOCOV_GITHUB_APP_ID`          | —                       | GitHub App id; with the key, enables one-click workspace connect |
 | `GOCOV_GITHUB_APP_PRIVATE_KEY` | —                       | the App's private key: PEM content, or a path to the PEM file |
 | `GOCOV_SECRET_KEY`             | —                       | at-rest encryption key (long random value, e.g. `openssl rand -hex 32`); with the Bitbucket OAuth consumer, enables one-click workspace connect |
@@ -598,114 +585,63 @@ delta_pct, build_status}`. Uploads carrying a `pr_id` additionally get
 | `GOCOV_ALLOWED_WORKSPACES`     | derived from tracked repos | comma-separated workspace/org slugs allowed to sign in |
 | `GOCOV_MODE`                   | `private`               | `hosted` opens sign-in to any forge account with self-service workspace registration |
 
-Forge credentials resolve per repo along a precedence chain: a
-one-click connection (GitHub App installation, or Bitbucket workspace
-grant) beats per-repo credentials (`repo update -bb-username ...` /
-`-gh-token ...` / `-gl-token ...`) beats workspace credentials (set on the workspace
-settings page in the UI) beats the global bot credentials above.
-Whichever wins is used for build statuses, PR comments, diff coverage
-and default branch detection.
+Forge access is per repo, through its workspace's one-click connection:
+a GitHub App installation, or a Bitbucket/GitLab grant. A repo whose
+workspace has no connection has no forge access — build statuses, PR
+comments, diff coverage and default-branch detection are skipped for it,
+while coverage is still stored and reported.
 
-### Bitbucket token permissions
+Forge access is always granted through the workspace's one-click
+connection — there is no manual bot token to provision. The OAuth
+consumer/app used for web UI sign-in is separate from the connection
+grant and only needs the account/email read permissions described under
+"Enable sign-in".
 
-Workspaces connected through the one-click grant need none of this.
-The manual bot credential (a scoped API token; Bitbucket removed app
-passwords in July 2026) needs:
+### Bitbucket connection
 
-| capability | API token scopes | app password checkboxes |
-|---|---|---|
-| build status, Code Insights report + annotations, source view, default branch | `read:repository:bitbucket`, `write:repository:bitbucket` | Repositories: Read, Write |
-| PR diff coverage, PR comment | `read:pullrequest:bitbucket`, `write:pullrequest:bitbucket` | Pull requests: Read, Write |
-| updating the PR comment in place | `read:user:bitbucket` | Account: Read |
+The Bitbucket connect grant covers every surface: build status, Code
+Insights report and annotations, PR diff coverage, PR comments, source
+view and default branch. Posts visibly appear as the account that
+clicked Connect, so teams with a bot account should connect with it.
+Because the grant carries that account's identity, gocov recognizes its
+own earlier PR comment and updates it in place rather than stacking new
+ones.
 
-Without the account/user scope everything still works, but gocov cannot
-recognize its own earlier comment, so every upload posts a **new** PR
-comment instead of updating the existing one. If comments stack, this
-scope is the fix.
+### GitHub App
 
-The OAuth consumer used for web UI sign-in is separate and needs the
-**Account: Read** and **Email** permissions on the consumer itself.
-
-### GitHub token permissions
-
-Workspaces connected through the GitHub App need none of this — the
-App's own permissions cover every surface, check runs included. The
-token path remains for repos outside a connected workspace:
-
-The GitHub credential (`GOCOV_GITHUB_TOKEN` or `repo add/update
--gh-token`) is a personal access token of a user or bot account with
-access to the repos:
-
-- **Classic token**: the `repo` scope covers commit statuses, PR
-  comments, PR diffs, file content and the default branch. Public repos
-  get by with `public_repo`. GitHub does **not** let classic tokens
-  write check runs — those uploads report `code_insights: skipped`
-  while everything else keeps working.
-- **Fine-grained token**: grant the repositories with **Contents:
-  Read** (file content, default branch, PR diffs), **Commit statuses:
-  Write** (build status), **Pull requests: Write** (PR comment) and
-  **Checks: Write** (the check run with inline annotations).
-
-GitHub documents check-run writes as a GitHub App capability; a
-fine-grained token with Checks: Write is the closest a plain credential
-gets, and coverage has historically had gaps on some repo types. If the
-check run is skipped for you, the commit status and PR comment still
-carry the full verdict.
-
-Unlike Bitbucket, updating the PR comment in place needs no extra
-account scope — gocov recognizes its own comment by its `**gocov**`
-marker.
+The GitHub App covers every surface, check runs included — nothing to
+provision per repo beyond installing the app on the org or account.
+gocov recognizes its own PR comment by its `**gocov**` marker and
+updates it in place.
 
 To make the coverage gate blocking on GitHub, add a branch protection
 rule under **Settings → Branches → Require status checks to pass** and
-pick `gocov` (the commit status — works with every credential) or
-`gocov coverage` (the check run). A failed gate then blocks the merge.
+pick `gocov` (the commit status) or `gocov coverage` (the check run). A
+failed gate then blocks the merge.
 
-### GitLab connect (one-click)
+### GitLab connection (one-click)
 
-Instead of manufacturing a token, GitLab workspaces can be connected
-with one OAuth consent: on the workspace settings (or setup) page,
-**Connect workspace** sends a member through GitLab's consent screen
-with the `api` scope, and from then on statuses, MR comments, diffs and
-source fetch act through that grant — no manual tokens. As with the
-Bitbucket connect, posts visibly appear as the account that clicked
-Connect, so teams with a bot account should connect with it. The grant's
-refresh token is stored encrypted (GOCOV_SECRET_KEY) and rotates on
-every use; revoking the application on GitLab (or the member leaving)
-degrades uploads to the configured credentials and surfaces a
-"reconnect" prompt.
+GitLab workspaces are connected with one OAuth consent: on the workspace
+settings (or setup) page, **Connect workspace** sends a member through
+GitLab's consent screen with the `api` scope, and from then on statuses,
+MR comments, diffs and source fetch act through that grant. Posts
+visibly appear as the account that clicked Connect, so teams with a bot
+account should connect with it. The grant's refresh token is stored
+encrypted (GOCOV_SECRET_KEY) and rotates on every use; revoking the
+application on GitLab (or the member leaving) skips the forge surfaces
+and surfaces a "reconnect" prompt.
 
 Requirements on top of GitLab sign-in: `GOCOV_SECRET_KEY` must be set,
 and the GitLab OAuth application must carry the **`api` scope in
 addition to** `read_user` and `read_api` — sign-in keeps requesting only
 the read scopes; the bigger consent happens solely on Connect.
 
-### GitLab token permissions
-
-The GitLab credential (`GOCOV_GITLAB_TOKEN`, `repo add/update
--gl-token`, or the workspace settings page) is an access token with the
-`api` scope — that single scope covers commit statuses, MR notes, MR
-diffs, file content and the default branch:
-
-- **Group access token** (Premium/self-managed, **Group → Settings →
-  Access tokens**): the natural workspace-level credential — one token
-  covers every project in the group, and notes are authored by the
-  token's bot user (`group_bot`). Give it the *Reporter* role or higher
-  (*Developer* if you want the commit status to satisfy a merge check).
-- **Project access token** (**Project → Settings → Access tokens**): the
-  per-repo equivalent, same scope and role notes.
-- **Personal access token** of a user or bot account with access to the
-  projects also works.
-
-Updating the MR note in place needs no extra scope — gocov recognizes
-its own note by its `**gocov**` marker.
-
-To make the coverage gate blocking on GitLab, add a status check or use
-**Settings → Merge requests → Status checks / Pipelines must succeed**
-policies that reference the `gocov` commit status; a failed gate then
-blocks the merge. GitLab has no check-run equivalent — the MR note's
-diff coverage table is the in-MR surface, and uploads report
-`code_insights: skipped` by design.
+gocov recognizes its own MR note by its `**gocov**` marker and updates
+it in place. To make the coverage gate blocking on GitLab, use
+**Settings → Merge requests → Status checks** policies that reference
+the `gocov` commit status; a failed gate then blocks the merge. GitLab
+has no check-run equivalent — the MR note's diff coverage table is the
+in-MR surface, and uploads report `code_insights: skipped` by design.
 
 ## Development
 

@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gocov/gocov/internal/forge"
 )
@@ -27,19 +26,6 @@ type Client struct {
 	BaseURL    string
 	Token      string
 	HTTPClient *http.Client
-}
-
-// Factory builds a Client from repo credentials. Required key: "token".
-func Factory(creds map[string]string) (forge.Forge, error) {
-	token := creds["token"]
-	if token == "" {
-		return nil, fmt.Errorf("github: credentials must include token")
-	}
-	return &Client{
-		BaseURL:    DefaultBaseURL,
-		Token:      token,
-		HTTPClient: &http.Client{Timeout: 15 * time.Second},
-	}, nil
 }
 
 // authorize sets the request's auth header. The single seam a future

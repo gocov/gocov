@@ -128,31 +128,23 @@ func (s *Store) Migrate(ctx context.Context) error {
 }
 
 func (s *Store) CreateRepo(ctx context.Context, r *store.Repo) error {
-	creds, err := marshalCreds(r.ForgeCredentials)
-	if err != nil {
-		return err
-	}
 	return s.pool.QueryRow(ctx, `
-		INSERT INTO repos (forge, slug, token, default_branch, forge_credentials,
+		INSERT INTO repos (forge, slug, token, default_branch,
 			min_coverage, min_diff_coverage, max_coverage_drop)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id, created_at`,
-		r.Forge, r.Slug, r.Token, r.DefaultBranch, creds,
+		r.Forge, r.Slug, r.Token, r.DefaultBranch,
 		r.Gate.MinCoverage, r.Gate.MinDiffCoverage, r.Gate.MaxCoverageDrop,
 	).Scan(&r.ID, &r.CreatedAt)
 }
 
 func (s *Store) UpdateRepo(ctx context.Context, r *store.Repo) error {
-	creds, err := marshalCreds(r.ForgeCredentials)
-	if err != nil {
-		return err
-	}
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE repos SET forge = $2, slug = $3, token = $4,
-			default_branch = $5, forge_credentials = $6,
-			min_coverage = $7, min_diff_coverage = $8, max_coverage_drop = $9
+			default_branch = $5,
+			min_coverage = $6, min_diff_coverage = $7, max_coverage_drop = $8
 		WHERE id = $1`,
-		r.ID, r.Forge, r.Slug, r.Token, r.DefaultBranch, creds,
+		r.ID, r.Forge, r.Slug, r.Token, r.DefaultBranch,
 		r.Gate.MinCoverage, r.Gate.MinDiffCoverage, r.Gate.MaxCoverageDrop)
 	if err != nil {
 		return err
@@ -163,7 +155,7 @@ func (s *Store) UpdateRepo(ctx context.Context, r *store.Repo) error {
 	return nil
 }
 
-const repoCols = `id, forge, slug, token, default_branch, COALESCE(forge_credentials, 'null'::jsonb),
+const repoCols = `id, forge, slug, token, default_branch,
 	min_coverage, min_diff_coverage, max_coverage_drop, created_at`
 
 func (s *Store) DeleteRepo(ctx context.Context, id int64) error {
@@ -224,8 +216,7 @@ type querier interface {
 
 func (s *Store) scanRepo(row rowScanner) (*store.Repo, error) {
 	var r store.Repo
-	var creds []byte
-	err := row.Scan(&r.ID, &r.Forge, &r.Slug, &r.Token, &r.DefaultBranch, &creds,
+	err := row.Scan(&r.ID, &r.Forge, &r.Slug, &r.Token, &r.DefaultBranch,
 		&r.Gate.MinCoverage, &r.Gate.MinDiffCoverage, &r.Gate.MaxCoverageDrop, &r.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
@@ -233,22 +224,10 @@ func (s *Store) scanRepo(row rowScanner) (*store.Repo, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(creds) > 0 && string(creds) != "null" {
-		if err := json.Unmarshal(creds, &r.ForgeCredentials); err != nil {
-			return nil, fmt.Errorf("repo %s: bad forge_credentials: %w", r.Slug, err)
-		}
-	}
 	return &r, nil
 }
 
-func marshalCreds(creds map[string]string) ([]byte, error) {
-	if len(creds) == 0 {
-		return nil, nil
-	}
-	return json.Marshal(creds)
-}
-
-const workspaceCols = `id, forge, prefix, token, default_branch, COALESCE(forge_credentials, 'null'::jsonb),
+const workspaceCols = `id, forge, prefix, token, default_branch,
 	min_coverage, min_diff_coverage, max_coverage_drop,
 	github_installation_id, github_app_broken,
 	bitbucket_grant_account, bitbucket_refresh_token, bitbucket_grant_broken,
@@ -264,10 +243,6 @@ type execer interface {
 }
 
 func (s *Store) createWorkspace(ctx context.Context, db execer, w *store.Workspace) error {
-	creds, err := marshalCreds(w.ForgeCredentials)
-	if err != nil {
-		return err
-	}
 	sealed, err := s.sealToken(w.BitbucketRefreshToken)
 	if err != nil {
 		return err
@@ -277,14 +252,14 @@ func (s *Store) createWorkspace(ctx context.Context, db execer, w *store.Workspa
 		return err
 	}
 	return db.QueryRow(ctx, `
-		INSERT INTO workspaces (forge, prefix, token, default_branch, forge_credentials,
+		INSERT INTO workspaces (forge, prefix, token, default_branch,
 			min_coverage, min_diff_coverage, max_coverage_drop,
 			github_installation_id, github_app_broken,
 			bitbucket_grant_account, bitbucket_refresh_token, bitbucket_grant_broken,
 			gitlab_grant_account, gitlab_refresh_token, gitlab_grant_broken)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		RETURNING id, created_at`,
-		w.Forge, w.Prefix, w.Token, w.DefaultBranch, creds,
+		w.Forge, w.Prefix, w.Token, w.DefaultBranch,
 		w.Gate.MinCoverage, w.Gate.MinDiffCoverage, w.Gate.MaxCoverageDrop,
 		w.GitHubInstallationID, w.GitHubAppBroken,
 		w.BitbucketGrantAccount, sealed, w.BitbucketGrantBroken,
@@ -316,17 +291,12 @@ func (s *Store) RegisterWorkspace(ctx context.Context, w *store.Workspace, userI
 // write from an earlier read would resurrect an already-invalidated
 // token.
 func (s *Store) UpdateWorkspace(ctx context.Context, w *store.Workspace) error {
-	creds, err := marshalCreds(w.ForgeCredentials)
-	if err != nil {
-		return err
-	}
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE workspaces SET forge = $2, prefix = $3, token = $4, default_branch = $5,
-			forge_credentials = $6,
-			min_coverage = $7, min_diff_coverage = $8, max_coverage_drop = $9,
-			github_installation_id = $10, github_app_broken = $11
+			min_coverage = $6, min_diff_coverage = $7, max_coverage_drop = $8,
+			github_installation_id = $9, github_app_broken = $10
 		WHERE id = $1`,
-		w.ID, w.Forge, w.Prefix, w.Token, w.DefaultBranch, creds,
+		w.ID, w.Forge, w.Prefix, w.Token, w.DefaultBranch,
 		w.Gate.MinCoverage, w.Gate.MinDiffCoverage, w.Gate.MaxCoverageDrop,
 		w.GitHubInstallationID, w.GitHubAppBroken)
 	if err != nil {
@@ -416,9 +386,8 @@ func (s *Store) ListWorkspaces(ctx context.Context) ([]*store.Workspace, error) 
 
 func (s *Store) scanWorkspace(row rowScanner) (*store.Workspace, error) {
 	var w store.Workspace
-	var creds []byte
 	var sealedRefresh, sealedGLRefresh string
-	err := row.Scan(&w.ID, &w.Forge, &w.Prefix, &w.Token, &w.DefaultBranch, &creds,
+	err := row.Scan(&w.ID, &w.Forge, &w.Prefix, &w.Token, &w.DefaultBranch,
 		&w.Gate.MinCoverage, &w.Gate.MinDiffCoverage, &w.Gate.MaxCoverageDrop,
 		&w.GitHubInstallationID, &w.GitHubAppBroken,
 		&w.BitbucketGrantAccount, &sealedRefresh, &w.BitbucketGrantBroken,
@@ -440,11 +409,6 @@ func (s *Store) scanWorkspace(row rowScanner) (*store.Workspace, error) {
 		w.GitLabRefreshToken = token
 	} else {
 		w.GitLabGrantBroken = true
-	}
-	if len(creds) > 0 && string(creds) != "null" {
-		if err := json.Unmarshal(creds, &w.ForgeCredentials); err != nil {
-			return nil, fmt.Errorf("workspace %s: bad forge_credentials: %w", w.Prefix, err)
-		}
 	}
 	return &w, nil
 }
@@ -478,7 +442,6 @@ func (s *Store) SetUserWorkspaces(ctx context.Context, userID int64, workspaceID
 func (s *Store) ListWorkspacesForUser(ctx context.Context, userID int64) ([]*store.Workspace, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT w.id, w.forge, w.prefix, w.token, w.default_branch,
-			COALESCE(w.forge_credentials, 'null'::jsonb),
 			w.min_coverage, w.min_diff_coverage, w.max_coverage_drop,
 			w.github_installation_id, w.github_app_broken,
 			w.bitbucket_grant_account, w.bitbucket_refresh_token, w.bitbucket_grant_broken,

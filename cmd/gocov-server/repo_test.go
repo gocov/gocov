@@ -43,8 +43,7 @@ func mustAdd(t *testing.T, st store.Store, args ...string) string {
 
 func TestRepoAdd(t *testing.T) {
 	st := storemem.New()
-	token := mustAdd(t, st, "-slug", "acme/widgets", "-default-branch", "develop",
-		"-bb-username", "u", "-bb-app-password", "p")
+	token := mustAdd(t, st, "-slug", "acme/widgets", "-default-branch", "develop")
 
 	r, err := st.RepoByToken(context.Background(), token)
 	if err != nil {
@@ -52,9 +51,6 @@ func TestRepoAdd(t *testing.T) {
 	}
 	if r.Slug != "acme/widgets" || r.DefaultBranch != "develop" || r.Forge != "bitbucket" {
 		t.Errorf("repo = %+v", r)
-	}
-	if r.ForgeCredentials["username"] != "u" || r.ForgeCredentials["app_password"] != "p" {
-		t.Errorf("credentials = %v", r.ForgeCredentials)
 	}
 }
 
@@ -109,7 +105,7 @@ func TestRepoAddCreatesWorkspace(t *testing.T) {
 
 func TestRepoAddGitHub(t *testing.T) {
 	st := storemem.New()
-	token := mustAdd(t, st, "-slug", "acme/widgets", "-forge", "github", "-gh-token", "ghp_x")
+	token := mustAdd(t, st, "-slug", "acme/widgets", "-forge", "github")
 
 	r, err := st.RepoByToken(context.Background(), token)
 	if err != nil {
@@ -117,9 +113,6 @@ func TestRepoAddGitHub(t *testing.T) {
 	}
 	if r.Forge != "github" {
 		t.Errorf("forge = %q", r.Forge)
-	}
-	if r.ForgeCredentials["token"] != "ghp_x" {
-		t.Errorf("credentials = %v", r.ForgeCredentials)
 	}
 }
 
@@ -130,9 +123,6 @@ func TestRepoAddValidation(t *testing.T) {
 		args []string
 	}{
 		{"missing slug", []string{"add"}},
-		{"username without password", []string{"add", "-slug", "a/b", "-bb-username", "u"}},
-		{"github token mixed with bitbucket pair", []string{"add", "-slug", "a/b",
-			"-gh-token", "t", "-bb-username", "u", "-bb-app-password", "p"}},
 		{"unknown flag", []string{"add", "-slug", "a/b", "-nope"}},
 	}
 	for _, tt := range tests {
@@ -176,7 +166,7 @@ func TestRepoList(t *testing.T) {
 		t.Errorf("empty list output: %s", out)
 	}
 
-	mustAdd(t, st, "-slug", "acme/widgets", "-bb-username", "u", "-bb-app-password", "p")
+	mustAdd(t, st, "-slug", "acme/widgets")
 	mustAdd(t, st, "-slug", "acme/gadgets")
 
 	out, err = runRepoCmd(t, st, "list")
@@ -192,11 +182,8 @@ func TestRepoList(t *testing.T) {
 	}
 	// Credentials shown as set/- only.
 	widgetsLine := lineContaining(out, "acme/widgets")
-	if !strings.Contains(widgetsLine, "set") {
-		t.Errorf("widgets line should show credentials as set: %q", widgetsLine)
-	}
-	if strings.Contains(out, "app_password") || strings.Contains(out, "\tp\t") {
-		t.Errorf("list output leaks credentials: %s", out)
+	if !strings.Contains(widgetsLine, "bitbucket") {
+		t.Errorf("widgets line should show the forge: %q", widgetsLine)
 	}
 }
 
@@ -251,9 +238,8 @@ func TestRepoUpdate(t *testing.T) {
 	st := storemem.New()
 	token := mustAdd(t, st, "-slug", "acme/widgets")
 
-	// Set credentials and change the default branch in one call.
-	_, err := runRepoCmd(t, st, "update", "-slug", "acme/widgets",
-		"-default-branch", "develop", "-bb-username", "u", "-bb-app-password", "p")
+	// Change the default branch.
+	_, err := runRepoCmd(t, st, "update", "-slug", "acme/widgets", "-default-branch", "develop")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,38 +247,11 @@ func TestRepoUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.DefaultBranch != "develop" || r.ForgeCredentials["username"] != "u" {
+	if r.DefaultBranch != "develop" {
 		t.Errorf("after update: %+v", r)
 	}
 	if r.Token != token {
 		t.Error("update must not change the token")
-	}
-
-	// Clear credentials, leave the branch alone.
-	if _, err := runRepoCmd(t, st, "update", "-slug", "acme/widgets", "-clear-credentials"); err != nil {
-		t.Fatal(err)
-	}
-	r, err = st.RepoBySlug(ctx, "acme/widgets")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(r.ForgeCredentials) != 0 {
-		t.Errorf("credentials not cleared: %v", r.ForgeCredentials)
-	}
-	if r.DefaultBranch != "develop" {
-		t.Errorf("default branch changed unexpectedly: %s", r.DefaultBranch)
-	}
-
-	// Set a GitHub token; it replaces the credential map wholesale.
-	if _, err := runRepoCmd(t, st, "update", "-slug", "acme/widgets", "-gh-token", "ghp_x"); err != nil {
-		t.Fatal(err)
-	}
-	r, err = st.RepoBySlug(ctx, "acme/widgets")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.ForgeCredentials["token"] != "ghp_x" || len(r.ForgeCredentials) != 1 {
-		t.Errorf("credentials = %v", r.ForgeCredentials)
 	}
 }
 
@@ -305,14 +264,7 @@ func TestRepoUpdateValidation(t *testing.T) {
 	}{
 		{"missing slug", []string{"update", "-default-branch", "x"}},
 		{"no changes", []string{"update", "-slug", "acme/widgets"}},
-		{"clear and set together", []string{"update", "-slug", "acme/widgets",
-			"-clear-credentials", "-bb-username", "u", "-bb-app-password", "p"}},
 		{"unknown slug", []string{"update", "-slug", "no/such", "-default-branch", "x"}},
-		{"password without username", []string{"update", "-slug", "acme/widgets", "-bb-app-password", "p"}},
-		{"github token mixed with bitbucket pair", []string{"update", "-slug", "acme/widgets",
-			"-gh-token", "t", "-bb-username", "u", "-bb-app-password", "p"}},
-		{"clear and github token together", []string{"update", "-slug", "acme/widgets",
-			"-clear-credentials", "-gh-token", "t"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

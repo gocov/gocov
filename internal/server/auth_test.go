@@ -12,8 +12,6 @@ import (
 
 	"github.com/gocov/gocov/internal/auth"
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
-	"github.com/gocov/gocov/internal/forge"
-	forgefake "github.com/gocov/gocov/internal/forge/fake"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
@@ -77,7 +75,6 @@ func newMultiAuthFixture(t *testing.T, providers []auth.Provider, allowed []stri
 		Store:             st,
 		Blobs:             blobmem.New(),
 		Parsers:           map[string]profile.Parser{"go": profile.GoParser{}},
-		Forges:            map[string]forge.Factory{"bitbucket": forgefake.New().Factory()},
 		BaseURL:           "https://gocov.example",
 		Auths:             providers,
 		AllowedWorkspaces: allowed,

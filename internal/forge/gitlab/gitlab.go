@@ -15,7 +15,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gocov/gocov/internal/forge"
 )
@@ -31,24 +30,6 @@ type Client struct {
 	BaseURL    string
 	Token      string
 	HTTPClient *http.Client
-}
-
-// Factory builds a Client from repo credentials. Required key: "token";
-// optional "base_url" points at a self-managed instance.
-func Factory(creds map[string]string) (forge.Forge, error) {
-	token := creds["token"]
-	if token == "" {
-		return nil, fmt.Errorf("gitlab: credentials must include token")
-	}
-	baseURL := creds["base_url"]
-	if baseURL == "" {
-		baseURL = DefaultBaseURL
-	}
-	return &Client{
-		BaseURL:    baseURL,
-		Token:      token,
-		HTTPClient: &http.Client{Timeout: 15 * time.Second},
-	}, nil
 }
 
 // authorize sets the request's auth header. Bearer works for personal,

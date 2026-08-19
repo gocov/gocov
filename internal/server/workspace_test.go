@@ -5,13 +5,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/gocov/gocov/internal/auth"
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
-	"github.com/gocov/gocov/internal/forge"
 	forgefake "github.com/gocov/gocov/internal/forge/fake"
 	"github.com/gocov/gocov/internal/hosted"
 	"github.com/gocov/gocov/internal/profile"
@@ -22,7 +20,7 @@ import (
 // newWorkspaceFixture builds a private-mode server with sign-in enabled,
 // the workspace acme (token ws-secret) and optionally the repo
 // acme/widgets (token secret-token), then signs the member in.
-func newWorkspaceFixture(t *testing.T, globalCreds map[string]string, withRepo bool) (*fixture, *http.Cookie) {
+func newWorkspaceFixture(t *testing.T, withRepo bool) (*fixture, *http.Cookie) {
 	t.Helper()
 	st := storemem.New()
 	ws := &store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "ws-secret", DefaultBranch: "main"}
@@ -37,19 +35,13 @@ func newWorkspaceFixture(t *testing.T, globalCreds map[string]string, withRepo b
 		}
 	}
 	ff := forgefake.New()
-	var defaults map[string]map[string]string
-	if globalCreds != nil {
-		defaults = map[string]map[string]string{"bitbucket": globalCreds}
-	}
 	f := &fixture{
 		srv: New(Config{
-			Store:                   st,
-			Blobs:                   blobmem.New(),
-			Parsers:                 map[string]profile.Parser{"go": profile.GoParser{}},
-			Forges:                  map[string]forge.Factory{"bitbucket": ff.Factory()},
-			BaseURL:                 "https://gocov.example",
-			Auths:                   []auth.Provider{&fakeProvider{identity: memberIdentity()}},
-			DefaultForgeCredentials: defaults,
+			Store:   st,
+			Blobs:   blobmem.New(),
+			Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
+			BaseURL: "https://gocov.example",
+			Auths:   []auth.Provider{&fakeProvider{identity: memberIdentity()}},
 		}),
 		store: st,
 		forge: ff,
@@ -70,16 +62,13 @@ func postForm(f *fixture, path string, form url.Values, cookies ...*http.Cookie)
 }
 
 func TestWorkspaceSettingsAccess(t *testing.T) {
-	f, sess := newWorkspaceFixture(t, nil, true)
+	f, sess := newWorkspaceFixture(t, true)
 
 	rec := get(f, "/workspaces/acme", sess)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("member settings page: status = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "not configured") {
-		t.Error("page must show the credentials-unset state")
-	}
 	// R3: the page never renders a stored secret — not even the token.
 	if strings.Contains(body, "ws-secret") {
 		t.Error("settings page leaks the upload token")
@@ -118,7 +107,7 @@ func TestWorkspaceSettingsNeedAuthEnabled(t *testing.T) {
 }
 
 func TestWorkspaceRotateToken(t *testing.T) {
-	f, sess := newWorkspaceFixture(t, nil, true)
+	f, sess := newWorkspaceFixture(t, true)
 	ctx := context.Background()
 
 	// The workspace token authorizes uploads before rotation...
@@ -161,7 +150,7 @@ func TestWorkspaceRotateToken(t *testing.T) {
 }
 
 func TestWorkspaceSettingsUpdate(t *testing.T) {
-	f, sess := newWorkspaceFixture(t, nil, true)
+	f, sess := newWorkspaceFixture(t, true)
 	ctx := context.Background()
 
 	rec := postForm(f, "/workspaces/acme/settings", url.Values{
@@ -201,104 +190,8 @@ func TestWorkspaceSettingsUpdate(t *testing.T) {
 	}
 }
 
-func TestWorkspaceCredentials(t *testing.T) {
-	f, sess := newWorkspaceFixture(t, nil, true)
-	ctx := context.Background()
-
-	// Both halves of the Bitbucket credential are required.
-	if rec := postForm(f, "/workspaces/acme/credentials", url.Values{
-		"action": {"save"}, "username": {"bot"}}, sess); rec.Code != http.StatusBadRequest {
-		t.Errorf("half credential: status = %d, want 400", rec.Code)
-	}
-
-	rec := postForm(f, "/workspaces/acme/credentials", url.Values{
-		"action": {"save"}, "username": {"bot"}, "app_password": {"hunter2"}}, sess)
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("save credentials: status = %d", rec.Code)
-	}
-	ws, _ := f.store.WorkspaceByPrefix(ctx, "acme")
-	want := map[string]string{"username": "bot", "app_password": "hunter2"}
-	if !reflect.DeepEqual(ws.ForgeCredentials, want) {
-		t.Errorf("stored credentials = %v", ws.ForgeCredentials)
-	}
-
-	// The page reports the configured state but never echoes the secret (R3).
-	page := get(f, "/workspaces/acme", sess)
-	if !strings.Contains(page.Body.String(), "configured") {
-		t.Error("page must show the configured state")
-	}
-	if strings.Contains(page.Body.String(), "hunter2") || strings.Contains(page.Body.String(), `value="bot"`) {
-		t.Errorf("settings page echoes stored credentials:\n%s", page.Body)
-	}
-
-	if rec := postForm(f, "/workspaces/acme/credentials", url.Values{"action": {"clear"}}, sess); rec.Code != http.StatusSeeOther {
-		t.Fatalf("clear credentials: status = %d", rec.Code)
-	}
-	if ws, _ := f.store.WorkspaceByPrefix(ctx, "acme"); ws.ForgeCredentials != nil {
-		t.Errorf("credentials not cleared: %v", ws.ForgeCredentials)
-	}
-}
-
-// TestCredentialPrecedence covers the R3 acceptance chain: repo
-// credentials beat workspace credentials beat the global defaults.
-func TestCredentialPrecedence(t *testing.T) {
-	global := map[string]string{"username": "global-bot", "app_password": "g"}
-	f, sess := newWorkspaceFixture(t, global, true)
-	ctx := context.Background()
-
-	wsCreds := url.Values{"action": {"save"}, "username": {"ws-bot"}, "app_password": {"w"}}
-	if rec := postForm(f, "/workspaces/acme/credentials", wsCreds, sess); rec.Code != http.StatusSeeOther {
-		t.Fatalf("save workspace credentials: status = %d", rec.Code)
-	}
-
-	// factoryCreds runs one upload and returns the credential sets the
-	// forge factory saw for it.
-	factoryCreds := func(commit string) []map[string]string {
-		t.Helper()
-		f.forge.FactoryCreds = nil
-		rec := doUpload(t, f, "secret-token", map[string]string{
-			"repo": "acme/widgets", "commit": commit, "branch": "main"}, testProfile)
-		if rec.Code != http.StatusCreated {
-			t.Fatalf("upload: status = %d, body = %s", rec.Code, rec.Body)
-		}
-		if len(f.forge.FactoryCreds) == 0 {
-			t.Fatal("upload built no forge client")
-		}
-		return f.forge.FactoryCreds
-	}
-	assertAll := func(got []map[string]string, wantUser string) {
-		t.Helper()
-		for _, creds := range got {
-			if creds["username"] != wantUser {
-				t.Errorf("forge client built with %v, want username %q", creds, wantUser)
-			}
-		}
-	}
-
-	// Repo has no credentials of its own -> workspace credentials (D4).
-	assertAll(factoryCreds("c1"), "ws-bot")
-
-	// Repo credentials win over both.
-	repo, _ := f.store.RepoBySlug(ctx, "acme/widgets")
-	repo.ForgeCredentials = map[string]string{"username": "repo-bot", "app_password": "r"}
-	if err := f.store.UpdateRepo(ctx, repo); err != nil {
-		t.Fatal(err)
-	}
-	assertAll(factoryCreds("c2"), "repo-bot")
-
-	// Neither repo nor workspace credentials -> the global defaults.
-	repo.ForgeCredentials = nil
-	if err := f.store.UpdateRepo(ctx, repo); err != nil {
-		t.Fatal(err)
-	}
-	if rec := postForm(f, "/workspaces/acme/credentials", url.Values{"action": {"clear"}}, sess); rec.Code != http.StatusSeeOther {
-		t.Fatalf("clear workspace credentials: status = %d", rec.Code)
-	}
-	assertAll(factoryCreds("c3"), "global-bot")
-}
-
 func TestSetupPageWaitsAndFlips(t *testing.T) {
-	f, sess := newWorkspaceFixture(t, nil, false) // no repos yet
+	f, sess := newWorkspaceFixture(t, false) // no repos yet
 
 	rec := get(f, "/workspaces/acme/setup", sess)
 	if rec.Code != http.StatusOK {
@@ -375,7 +268,6 @@ func TestSetupPageGitHubSnippet(t *testing.T) {
 			Store:   st,
 			Blobs:   blobmem.New(),
 			Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
-			Forges:  map[string]forge.Factory{"github": forgefake.New().Factory()},
 			BaseURL: "https://gocov.example",
 			Auths:   []auth.Provider{gh},
 		}),
@@ -426,7 +318,6 @@ func TestSetupPageGitLabSnippet(t *testing.T) {
 			Store:   st,
 			Blobs:   blobmem.New(),
 			Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
-			Forges:  map[string]forge.Factory{"gitlab": forgefake.New().Factory()},
 			BaseURL: "https://gocov.example",
 			Auths:   []auth.Provider{gl},
 		}),
@@ -460,7 +351,6 @@ func TestSetupPageHostedOmitsServer(t *testing.T) {
 			Store:   st,
 			Blobs:   blobmem.New(),
 			Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
-			Forges:  map[string]forge.Factory{"bitbucket": forgefake.New().Factory()},
 			BaseURL: hosted.DefaultServer,
 			Auths:   []auth.Provider{bb},
 		}),
@@ -511,7 +401,6 @@ func TestGitLabSubgroupWorkspace(t *testing.T) {
 			Store:   st,
 			Blobs:   blobmem.New(),
 			Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
-			Forges:  map[string]forge.Factory{"gitlab": forgefake.New().Factory()},
 			BaseURL: "https://gocov.example",
 			Auths: []auth.Provider{&fakeProvider{name: "gitlab", identity: &auth.Identity{
 				ForgeUUID:   "12345",
