@@ -179,15 +179,66 @@ select.input { min-width: 160px; }
 .htmx-request { opacity: .55; transition: opacity .15s; }
 
 /* source view */
-.code { font-family: var(--mono); font-size: 12.5px; line-height: 1.7; overflow-x: auto; }
-.codeline { display: grid; grid-template-columns: 52px 44px 1fr; }
+.filehead { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin: 8px 0 14px; }
+.filehead h1 { font-size: 19px; margin: 0 0 3px; letter-spacing: -.01em; overflow-wrap: anywhere; }
+.filehead h1 .dir { color: var(--text-3); font-weight: 400; }
+.filehead .sub { margin: 0; font-size: 13px; }
+.filehead .spacer { flex: 1; }
+.filehead .figure { text-align: right; }
+.filehead .figure .k { color: var(--text-3); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+.filehead .figure .v { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.1; letter-spacing: -.01em; }
+.filehead .figure .v.good { color: var(--green); }
+.filehead .figure .v.warn { color: var(--yellow); }
+.filehead .figure .v.bad { color: var(--red); }
+@media (max-width: 720px) { .filehead .figure { text-align: left; } }
+
+.source-toolbar { flex-wrap: wrap; }
+.source-toolbar .count { color: var(--text-2); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.source-toolbar .hint { color: var(--text-3); font-size: 12.5px; }
+.btn.sm { padding: 4px 10px; font-size: 12.5px; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; background: var(--surface); }
+.seg button { background: none; border: none; border-left: 1px solid var(--border); padding: 5px 11px;
+  font: inherit; font-size: 12.5px; font-weight: 550; color: var(--text-2); cursor: pointer; }
+.seg button:first-child { border-left: none; }
+.seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.seg button[disabled] { opacity: .45; cursor: default; }
+
+.panel { display: grid; grid-template-columns: 26px minmax(0, 1fr); background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+.map { position: relative; background: var(--surface2); border-right: 1px solid var(--border-soft); }
+.map .seg-miss { position: absolute; left: 7px; width: 12px; min-height: 3px; background: var(--red);
+  border-radius: 2px; opacity: .85; border: none; padding: 0; cursor: pointer; }
+.map .seg-miss:hover { opacity: 1; outline: 2px solid var(--red-soft); }
+
+.code { font-family: var(--mono); font-size: 12.5px; line-height: 1.7; overflow: auto; max-height: 620px; padding: 8px 0; }
+.codeline { display: grid; grid-template-columns: 56px 46px minmax(0, 1fr); scroll-margin-top: 60px; }
 .codeline .ln { text-align: right; padding-right: 12px; color: var(--text-3); user-select: none; }
-.codeline .hits { text-align: right; padding-right: 10px; font-size: 11px; color: var(--text-3); }
+.codeline .hits { text-align: right; padding-right: 10px; font-size: 11px; color: var(--text-3); user-select: none; }
 .codeline pre { margin: 0; padding: 0 14px 0 10px; white-space: pre; }
 .codeline.hit { background: color-mix(in srgb, var(--green) 9%, transparent); box-shadow: inset 3px 0 var(--green); }
 .codeline.hit .hits { color: var(--green); font-weight: 600; }
 .codeline.miss { background: color-mix(in srgb, var(--red) 10%, transparent); box-shadow: inset 3px 0 var(--red); }
 .codeline.miss .hits { color: var(--red); font-weight: 700; }
+.codeline.focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+.codeline[data-new] { box-shadow: inset 3px 0 var(--red), inset 0 -1px 0 color-mix(in srgb, var(--red) 25%, transparent); }
+.codeline[data-new] .ln::before { content: "\25CF"; color: var(--red); font-size: 8px; vertical-align: middle; margin-right: 5px; }
+.codeline[data-folded] { display: none; }
+.newmiss { color: var(--red); font-weight: 600; }
+.fold { display: grid; grid-template-columns: 56px minmax(0, 1fr); background: var(--surface2);
+  border-top: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft);
+  color: var(--text-3); font-size: 12px; padding: 5px 0; user-select: none; }
+.fold .l { text-align: right; padding-right: 12px; }
+.fold .t { padding-left: 10px; }
+body[data-only="miss"] .codeline:not(.miss) { display: none; }
+body[data-only="miss"] .fold { display: none; }
+
+.legend { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 10px; color: var(--text-3); font-size: 12.5px; }
+.legend .s { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.legend .sw.hit { background: color-mix(in srgb, var(--green) 30%, transparent); box-shadow: inset 3px 0 var(--green); }
+.legend .sw.miss { background: color-mix(in srgb, var(--red) 30%, transparent); box-shadow: inset 3px 0 var(--red); }
+.legend .sw.none { background: var(--surface2); border: 1px solid var(--border-soft); }
+.legend .sw.new { background: var(--red); opacity: .85; }
 
 /* onboarding wizard — a fixed three-stage rail whose Workspace step is filled
    differently per forge (see templates/onboarding.html). Scoped under .wiz

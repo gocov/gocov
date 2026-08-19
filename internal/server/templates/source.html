@@ -1,7 +1,15 @@
 {{define "title"}}gocov — {{.File.Path}}{{end}}
 {{define "content"}}
 <div class="crumbs"><a href="/">Repos</a> / <a href="/repos/{{.Repo.Slug}}"><code>{{.Repo.Slug}}</code></a> / <a href="/uploads/{{.Upload.ID}}"><code>{{short .Upload.CommitSHA}}</code></a> / <code>{{.File.Path}}</code></div>
-<h1>{{pct .File.Pct}} <small>&middot; {{.File.CoveredStmts}}/{{.File.TotalStmts}} statements &middot; commit <code class="mono">{{short .Upload.CommitSHA}}</code></small></h1>
+
+<div class="filehead">
+  <div>
+    <h1 class="mono">{{with .FileDir}}<span class="dir">{{.}}</span>{{end}}{{.FileBase}}</h1>
+    <p class="sub">{{.File.CoveredStmts}} of {{.File.TotalStmts}} statements covered{{with .Delta}} &middot; <span class="delta {{.Class}}">{{.Arrow}} {{.Text}}</span>{{end}} &middot; commit <a class="mono" href="/uploads/{{.Upload.ID}}">{{short .Upload.CommitSHA}}</a>{{if .NewlyUncovered}} &middot; <span class="newmiss">{{.NewlyUncovered}} line{{if ne .NewlyUncovered 1}}s{{end}} newly uncovered</span>{{end}}</p>
+  </div>
+  <span class="spacer"></span>
+  <div class="figure"><div class="k">File coverage</div><div class="v {{covclass .File.Pct}}">{{pct .File.Pct}}</div></div>
+</div>
 
 {{if .Unavailable}}
 <div class="card"><div class="pad" style="padding: 16px 18px">
@@ -13,10 +21,81 @@
   {{end}}
 </div></div>
 {{else}}
-<p class="sub">Lines marked <span class="chip fail" style="padding: 1px 8px">&#10007;</span> were never executed</p>
-<div class="card"><div class="code" style="padding: 10px 0">
-{{range .Lines}}<div class="codeline{{with .Class}} {{.}}{{end}}"><span class="ln">{{.No}}</span><span class="hits">{{.Hits}}</span><pre>{{.Text}}</pre></div>
-{{end}}
-</div></div>
+
+<div class="toolbar source-toolbar">
+  <span class="seg" role="group" aria-label="Line filter">
+    <button type="button" aria-pressed="true" data-only="all">All lines</button>
+    <button type="button" aria-pressed="false" data-only="miss"{{if not .MissBlocks}} disabled{{end}}>Uncovered only</button>
+  </span>
+  <button class="btn sm" type="button" id="miss-prev"{{if not .MissBlocks}} disabled{{end}}>&uarr; Previous miss</button>
+  <button class="btn sm" type="button" id="miss-next"{{if not .MissBlocks}} disabled{{end}}>&darr; Next miss</button>
+  <span class="count" id="miss-pos"></span>
+  <span class="spacer"></span>
+  {{if .MissBlocks}}
+  <span class="hint">{{.MissLines}} uncovered line{{if ne .MissLines 1}}s{{end}} in {{len .MissBlocks}} block{{if ne (len .MissBlocks) 1}}s{{end}}</span>
+  {{else}}
+  <span class="hint">Every statement in this file is covered.</span>
+  {{end}}
+</div>
+
+<div class="panel">
+  <div class="map" id="miss-map" aria-hidden="true">
+    {{range .MissBlocks}}<button class="seg-miss" type="button" style="top:{{printf "%.2f" .Top}}%;height:{{printf "%.2f" .Height}}%" data-jump="{{.Anchor}}" title="Lines {{.StartLine}}&ndash;{{.EndLine}} &middot; {{.Lines}} uncovered"></button>{{end}}
+  </div>
+  <div class="code" id="miss-code">
+{{range .Items}}{{if .Fold}}<div class="fold" data-fold="{{.Fold.ID}}"><span class="l">&ctdot;</span><span class="t">{{.Fold.Label}} &middot; <a href="#" data-expand="{{.Fold.ID}}">expand</a></span></div>
+{{else}}{{with .Line}}<div class="codeline{{with .Class}} {{.}}{{end}}"{{with .Anchor}} id="{{.}}" data-miss="1"{{end}}{{if .NewMiss}} data-new="1"{{end}}{{with .FoldID}} data-folded="{{.}}"{{end}}><span class="ln">{{.No}}</span><span class="hits">{{.Hits}}</span><pre>{{.Text}}</pre></div>
+{{end}}{{end}}{{end}}
+  </div>
+</div>
+
+<div class="legend">
+  <span class="s"><span class="sw hit"></span> Executed, with hit count</span>
+  <span class="s"><span class="sw miss"></span> Never executed</span>
+  <span class="s"><span class="sw none"></span> Not a statement</span>
+  {{if .NewlyUncovered}}<span class="s"><span class="sw new"></span> Newly uncovered by this commit</span>{{end}}
+  <span class="s">The rail maps all {{len .Lines}} lines of the file.</span>
+</div>
+
+<script>
+(function(){
+  var code=document.getElementById('miss-code'),map=document.getElementById('miss-map'),pos=document.getElementById('miss-pos');
+  if(!code)return;
+  var blocks=[].slice.call(code.querySelectorAll('[data-miss]'));
+  var cur=-1;
+  function focusBlock(i){
+    if(!blocks.length)return;
+    cur=(i%blocks.length+blocks.length)%blocks.length;
+    var el=blocks[cur];
+    code.scrollTop=el.offsetTop-code.clientHeight/3;
+    blocks.forEach(function(x){x.classList.remove('focus');});
+    el.classList.add('focus');
+    pos.textContent='Block '+(cur+1)+' of '+blocks.length;
+  }
+  var next=document.getElementById('miss-next'),prev=document.getElementById('miss-prev');
+  if(next)next.addEventListener('click',function(){focusBlock(cur+1);});
+  if(prev)prev.addEventListener('click',function(){focusBlock(cur-1);});
+  if(map)map.addEventListener('click',function(e){
+    var s=e.target.closest('.seg-miss');if(!s)return;
+    var el=document.getElementById(s.getAttribute('data-jump'));if(!el)return;
+    var i=blocks.indexOf(el);if(i>=0)focusBlock(i);
+  });
+  code.addEventListener('click',function(e){
+    var a=e.target.closest('[data-expand]');if(!a)return;e.preventDefault();
+    var id=a.getAttribute('data-expand');
+    code.querySelectorAll('[data-folded="'+id+'"]').forEach(function(el){el.removeAttribute('data-folded');});
+    var bar=a.closest('.fold');if(bar)bar.remove();
+  });
+  document.querySelectorAll('.source-toolbar .seg button').forEach(function(b){
+    b.addEventListener('click',function(){
+      if(b.disabled)return;
+      document.body.dataset.only=b.getAttribute('data-only');
+      b.parentElement.querySelectorAll('button').forEach(function(x){
+        x.setAttribute('aria-pressed',String(x===b));
+      });
+    });
+  });
+})();
+</script>
 {{end}}
 {{end}}
