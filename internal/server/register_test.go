@@ -148,6 +148,14 @@ func TestRegisterPageStates(t *testing.T) {
 	if !strings.Contains(body, "Name registered under GitHub") {
 		t.Errorf("cross-forge collision not surfaced:\n%s", body)
 	}
+	// "Sign in again" re-runs OAuth to refresh the snapshot. It must not
+	// point at /logout, which is POST-only and 404s on a link's GET.
+	if strings.Contains(body, `href="/logout"`) {
+		t.Error("pick page links the POST-only /logout, which 404s on GET")
+	}
+	if !strings.Contains(body, "/start?next=/onboarding") {
+		t.Errorf("pick page misses the re-auth 'sign in again' link:\n%s", body)
+	}
 }
 
 func TestRegisterCreatesWorkspaceAndShowsTokenOnce(t *testing.T) {

@@ -87,7 +87,7 @@
     <div class="empty">Your {{.ForgeLabel}} account reported no {{$noun}}s at sign-in.</div>
     {{end}}
     <p class="hint">Joined a new {{$noun}} since you signed in?
-    <a href="/logout">Sign in again</a> to read your memberships fresh.</p>
+    <a href="/oauth/{{.Forge}}/start?next=/onboarding">Sign in again</a> to read your memberships fresh.</p>
     <div class="foot">
       <span class="hint">Signed in as <strong>{{.Account}}</strong> &middot;
         {{.MembershipCount}} membership{{if ne .MembershipCount 1}}s{{end}} read at sign-in.</span>
