@@ -41,6 +41,39 @@ document.addEventListener("click", (e) => {
   }
 });
 
+// Coverage-gate toggle: the .tg switch enables/disables its paired number
+// input. A disabled input is not submitted, so the server reads an empty
+// value and treats that gate as off — the same "empty = off" contract the
+// settings handler already uses. The header chip tracks how many are on.
+document.addEventListener("click", (e) => {
+  const tg = e.target.closest(".tg");
+  if (!tg) return;
+  const gate = tg.closest(".gate");
+  const input = gate && gate.querySelector(".gate-input");
+  const on = tg.getAttribute("aria-pressed") !== "true";
+  tg.setAttribute("aria-pressed", String(on));
+  if (on) {
+    gate.removeAttribute("data-off");
+    if (input) { input.disabled = false; input.focus(); }
+  } else {
+    gate.setAttribute("data-off", "");
+    if (input) input.disabled = true;
+  }
+  const chip = document.getElementById("gatecount");
+  if (chip) {
+    const n = document.querySelectorAll(".gate:not([data-off])").length;
+    chip.textContent = n === 0 ? "None active" : n + " active";
+  }
+});
+
+// Settings sidebar: highlight the section link that was clicked.
+document.addEventListener("click", (e) => {
+  const link = e.target.closest(".side a");
+  if (!link) return;
+  document.querySelectorAll(".side a").forEach((a) => a.classList.remove("on"));
+  link.classList.add("on");
+});
+
 // Copy-to-clipboard: <button data-copy="#selector">Copy</button> copies the
 // value/text of the referenced element. Falls back to select+execCommand on
 // plain-http deployments where the Clipboard API is unavailable.

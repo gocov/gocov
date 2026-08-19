@@ -179,6 +179,23 @@ func New(cfg Config) *Server {
 		"pathesc": url.PathEscape,
 		// forgeicon renders a forge's brand mark for the sign-in button.
 		"forgeicon": providerIcon,
+		// dict builds a map from alternating key/value args so a shared
+		// sub-template (e.g. the coverage-gate row) can be invoked with
+		// named fields inline.
+		"dict": func(pairs ...any) (map[string]any, error) {
+			if len(pairs)%2 != 0 {
+				return nil, fmt.Errorf("dict: odd number of arguments")
+			}
+			m := make(map[string]any, len(pairs)/2)
+			for i := 0; i < len(pairs); i += 2 {
+				k, ok := pairs[i].(string)
+				if !ok {
+					return nil, fmt.Errorf("dict: key %d is not a string", i)
+				}
+				m[k] = pairs[i+1]
+			}
+			return m, nil
+		},
 	}
 	// Every page is its own template set sharing the layout and partials,
 	// so pages can define "content" without colliding.
@@ -234,6 +251,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /workspaces/{prefix}", s.handleWorkspacePage)
 	s.mux.HandleFunc("POST /workspaces/{prefix}/rotate-token", s.handleWorkspaceRotate)
 	s.mux.HandleFunc("POST /workspaces/{prefix}/settings", s.handleWorkspaceSettings)
+	s.mux.HandleFunc("POST /workspaces/{prefix}/delete", s.handleWorkspaceDelete)
 	s.mux.HandleFunc("POST /workspaces/{prefix}/github/disconnect", s.handleGitHubDisconnect)
 	s.mux.HandleFunc("GET /workspaces/{prefix}/bitbucket/connect", s.handleBitbucketConnect)
 	s.mux.HandleFunc("POST /workspaces/{prefix}/bitbucket/disconnect", s.handleBitbucketDisconnect)

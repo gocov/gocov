@@ -45,6 +45,10 @@ type Workspace struct {
 	DefaultBranch string
 	// Gate is copied to auto-created repos at registration time.
 	Gate Gate
+	// ReportRetentionDays is how long coverage uploads are kept before
+	// pruning; 0 keeps them forever. Recorded from the settings UI; the
+	// job that prunes on it lands separately.
+	ReportRetentionDays int
 	// GitHubInstallationID links the workspace to a GitHub App
 	// installation (One-Click Connect D3); 0 when not connected. When
 	// set, installation tokens outrank every stored credential (D4).
@@ -205,8 +209,10 @@ type Store interface {
 	CreateWorkspace(ctx context.Context, w *Workspace) error
 	// UpdateWorkspace replaces the stored row matching w.ID with w's fields.
 	UpdateWorkspace(ctx context.Context, w *Workspace) error
-	// DeleteWorkspace removes the workspace token; repos created through
-	// it are left untouched.
+	// DeleteWorkspace removes the workspace and cascades: every repo whose
+	// slug sits under the workspace prefix is deleted too, taking its
+	// uploads and coverage reports with it. Memberships cascade away with
+	// the workspace row. Nothing is touched on the forge.
 	DeleteWorkspace(ctx context.Context, id int64) error
 	WorkspaceByPrefix(ctx context.Context, prefix string) (*Workspace, error)
 	WorkspaceByToken(ctx context.Context, token string) (*Workspace, error)

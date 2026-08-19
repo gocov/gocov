@@ -460,7 +460,7 @@ func TestSettingsPageBrokenState(t *testing.T) {
 	}
 
 	body := get(f.fixture, "/workspaces/acme", sess).Body.String()
-	if !strings.Contains(body, "reconnect needed") {
+	if !strings.Contains(body, "Reconnect needed") {
 		t.Error("settings page must surface the broken connection")
 	}
 	if !strings.Contains(body, f.app.installURL) {

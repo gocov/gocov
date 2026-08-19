@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -238,12 +239,33 @@ func (s *Store) SetWorkspaceGitLabGrant(_ context.Context, workspaceID int64, ac
 func (s *Store) DeleteWorkspace(_ context.Context, id int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.workspaces[id]; !ok {
+	ws, ok := s.workspaces[id]
+	if !ok {
 		return store.ErrNotFound
 	}
+	// Cascade repos under the prefix along with their uploads, upload
+	// files and reports — mirroring the postgres ON DELETE CASCADE chain.
+	pfx := ws.Prefix + "/"
+	for rid, r := range s.repos {
+		if !strings.HasPrefix(r.Slug, pfx) {
+			continue
+		}
+		for uid, u := range s.uploads {
+			if u.RepoID == rid {
+				delete(s.uploads, uid)
+				delete(s.files, uid)
+			}
+		}
+		for crid, cr := range s.reports {
+			if cr.RepoID == rid {
+				delete(s.reports, crid)
+			}
+		}
+		delete(s.repos, rid)
+	}
 	delete(s.workspaces, id)
-	for _, ws := range s.members {
-		delete(ws, id)
+	for _, m := range s.members {
+		delete(m, id)
 	}
 	return nil
 }

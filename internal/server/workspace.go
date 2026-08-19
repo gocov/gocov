@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gocov/gocov/internal/hosted"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -60,11 +61,94 @@ func (s *Server) settingsData(r *http.Request, ws *store.Workspace, newToken, no
 		"NewToken":   newToken,
 		"Notice":     notice,
 		"Error":      errMsg,
+		// Uploads card: the token is shown to members on demand (Reveal).
+		// It lives on the workspace row in the clear, so this exposes
+		// nothing the DB does not already hold; MaskedToken is the default.
+		"Token":       ws.Token,
+		"MaskedToken": maskSecret(ws.Token),
+		// Self-hosters need GOCOV_SERVER in CI; on the public hosted
+		// service the CLI already defaults to it, so the row is dropped.
+		"ServerURL":  strings.TrimSuffix(s.baseURL, "/"),
+		"ShowServer": strings.TrimSuffix(s.baseURL, "/") != hosted.DefaultServer,
+		"GateActive": gateActiveCount(ws.Gate),
+	}
+	if repos, err := s.workspaceRepos(r, ws); err == nil {
+		data["RepoCount"] = len(repos)
 	}
 	s.addGitHubAppData(r, ws, data)
 	s.addBitbucketGrantData(ws, data)
 	s.addGitLabGrantData(ws, data)
+	s.addReportingState(ws, data)
 	return data
+}
+
+// addReportingState collapses the per-forge connection flags into the
+// single state the consolidated Reporting card renders: whether a
+// one-click mechanism exists for this deployment ("available"), whether
+// it is currently on/off/broken, and the identity posts carry.
+func (s *Server) addReportingState(ws *store.Workspace, data map[string]any) {
+	available, _ := data["GitHubApp"].(bool)
+	if bb, _ := data["BitbucketConnect"].(bool); bb {
+		available = true
+	}
+	if gl, _ := data["GitLabConnect"].(bool); gl {
+		available = true
+	}
+	state, account := "off", ""
+	switch ws.Forge {
+	case "github":
+		switch {
+		case ws.GitHubAppBroken:
+			state = "broken"
+		case ws.GitHubInstallationID != 0:
+			state = "on"
+		}
+	case "bitbucket":
+		account = ws.BitbucketGrantAccount
+		switch {
+		case ws.BitbucketGrantBroken:
+			state = "broken"
+		case ws.BitbucketGrantAccount != "":
+			state = "on"
+		}
+	case "gitlab":
+		account = ws.GitLabGrantAccount
+		switch {
+		case ws.GitLabGrantBroken:
+			state = "broken"
+		case ws.GitLabGrantAccount != "":
+			state = "on"
+		}
+	}
+	initial := "?"
+	if rs := []rune(account); len(rs) > 0 {
+		initial = strings.ToUpper(string(rs[0]))
+	}
+	data["ReportingAvailable"] = available
+	data["ReportingState"] = state
+	data["ReportingAccount"] = account
+	data["ReportingInitial"] = initial
+}
+
+// maskSecret renders a token as its last eight characters behind a run of
+// bullets, matching the Reveal control's masked form.
+func maskSecret(tok string) string {
+	const tail = 8
+	if len(tok) <= tail {
+		return strings.Repeat("•", len(tok))
+	}
+	return strings.Repeat("•", 40) + tok[len(tok)-tail:]
+}
+
+// gateActiveCount reports how many of the workspace gate rules are set.
+func gateActiveCount(g store.Gate) int {
+	n := 0
+	for _, p := range []*float64{g.MinCoverage, g.MinDiffCoverage, g.MaxCoverageDrop} {
+		if p != nil {
+			n++
+		}
+	}
+	return n
 }
 
 // addGitHubAppData fills the GitHub App connection state shared by the
@@ -162,13 +246,50 @@ func (s *Server) handleWorkspaceSettings(w http.ResponseWriter, r *http.Request)
 		}
 		*f.field = &v
 	}
+	retention := ws.ReportRetentionDays
+	if raw := strings.TrimSpace(r.FormValue("report_retention_days")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || !validRetention(v) {
+			s.settingsError(w, r, ws, "Report retention must be 90 days, 1 year or forever.")
+			return
+		}
+		retention = v
+	}
 	ws.DefaultBranch = branch
 	ws.Gate = gate
+	ws.ReportRetentionDays = retention
 	if err := s.store.UpdateWorkspace(r.Context(), ws); err != nil {
 		s.internalError(w, "updating workspace", err)
 		return
 	}
 	http.Redirect(w, r, workspaceURL(ws.Prefix, "?saved=1"), http.StatusSeeOther)
+}
+
+// validRetention accepts the retention windows the Defaults selector
+// offers: 90 days, 1 year, or 0 (keep forever).
+func validRetention(days int) bool {
+	switch days {
+	case 0, 90, 365:
+		return true
+	}
+	return false
+}
+
+// handleWorkspaceDelete implements POST /workspaces/{prefix}/delete: it
+// removes the workspace and cascades its repos and coverage reports (the
+// store does the cascade). Members only; uploads with the token start
+// failing at once and nothing is changed on the forge.
+func (s *Server) handleWorkspaceDelete(w http.ResponseWriter, r *http.Request) {
+	ws := s.memberWorkspace(w, r)
+	if ws == nil {
+		return
+	}
+	if err := s.store.DeleteWorkspace(r.Context(), ws.ID); err != nil {
+		s.internalError(w, "deleting workspace", err)
+		return
+	}
+	s.log.Info("workspace deleted", "prefix", ws.Prefix, "user", currentUser(r).DisplayName)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 // settingsError re-renders the settings page with a validation message.

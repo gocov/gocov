@@ -173,18 +173,24 @@ func main() {
 		hosted = true
 		log.Println("preview auth on: sign-in via bitbucket lands in acme, via github in the gh-* workspaces, via gitlab in gl-group/platform")
 	}
+	// Port is overridable so several sessions can run their own preview
+	// side by side (default :8099 to match launch.json).
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8099"
+	}
 	srv := server.New(server.Config{
 		Store: st, Blobs: blobmem.New(),
 		Parsers:          map[string]profile.Parser{"go": profile.GoParser{}},
-		BaseURL:          "http://localhost:8099",
+		BaseURL:          "http://localhost:" + port,
 		Auths:            auths,
 		Hosted:           hosted,
 		GitHubApp:        devGitHubApp{fg: forgefake.New()},
 		BitbucketConnect: devBBConnect{fg: forgefake.New()},
 		GitLabConnect:    devGLConnect{fg: forgefake.New()},
 	})
-	log.Println("preview on :8099")
-	log.Fatal(http.ListenAndServe(":8099", srv))
+	log.Println("preview on :" + port)
+	log.Fatal(http.ListenAndServe(":"+port, srv))
 }
 
 func pctPtr(v float64) *float64 { return &v }

@@ -169,7 +169,7 @@ func TestBitbucketConnectFlow(t *testing.T) {
 	if !strings.Contains(body, "@covbot") || !strings.Contains(body, "Disconnect") {
 		t.Error("settings page must show the connected account and disconnect")
 	}
-	if !strings.Contains(body, "posts will appear") && !strings.Contains(body, "Posts appear") {
+	if !strings.Contains(body, "under the connecting account") {
 		t.Error("settings page must state the comment identity caveat (D8)")
 	}
 }
@@ -323,13 +323,13 @@ func TestSettingsPageBitbucketStates(t *testing.T) {
 	f, sess := newBBConnectFixture(t)
 
 	body := get(f.fixture, "/workspaces/acme", sess).Body.String()
-	if !strings.Contains(body, "Connect workspace") || !strings.Contains(body, "bot account") {
-		t.Error("unconnected settings must offer Connect and recommend a bot account (D8)")
+	if !strings.Contains(body, "Grant write access") || !strings.Contains(body, "under your own account") {
+		t.Error("unconnected settings must offer to grant write access and state the identity caveat (D8)")
 	}
 
 	f.grant(t, "covbot", "rt-0", true)
 	body = get(f.fixture, "/workspaces/acme", sess).Body.String()
-	if !strings.Contains(body, "reconnect needed") || !strings.Contains(body, "Reconnect workspace") {
+	if !strings.Contains(body, "Reconnect needed") || !strings.Contains(body, "Grant write access again") {
 		t.Error("broken grant must surface the reconnect state")
 	}
 }

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -69,9 +70,11 @@ func TestWorkspaceSettingsAccess(t *testing.T) {
 		t.Fatalf("member settings page: status = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	// R3: the page never renders a stored secret — not even the token.
-	if strings.Contains(body, "ws-secret") {
-		t.Error("settings page leaks the upload token")
+	// Uploads card (v2): the token is stored in the clear and shown to
+	// members on demand (Reveal), so it rides in the page for that control.
+	// The security boundary is membership — non-members 404 below.
+	if !strings.Contains(body, "ws-secret") {
+		t.Error("settings page should make the upload token available to members (Reveal)")
 	}
 	if !strings.Contains(body, "/workspaces/acme/setup") {
 		t.Error("settings page must link to the setup instructions (R4)")
@@ -143,9 +146,14 @@ func TestWorkspaceRotateToken(t *testing.T) {
 		t.Errorf("new token: status = %d, body = %s", rec.Code, rec.Body)
 	}
 
-	// A fresh settings page load no longer shows any token.
-	if page := get(f, "/workspaces/acme", sess); strings.Contains(page.Body.String(), ws.Token) {
-		t.Error("settings page shows the token after rotation (rotate-only means shown once)")
+	// A fresh settings page load still carries the current token so a
+	// member can reveal it (masked by default); the OLD token is gone.
+	page := get(f, "/workspaces/acme", sess).Body.String()
+	if !strings.Contains(page, ws.Token) {
+		t.Error("settings page should expose the rotated token to members (Reveal)")
+	}
+	if strings.Contains(page, "ws-secret") {
+		t.Error("settings page still shows the pre-rotation token")
 	}
 }
 
@@ -187,6 +195,79 @@ func TestWorkspaceSettingsUpdate(t *testing.T) {
 	}
 	if ws, _ := f.store.WorkspaceByPrefix(ctx, "acme"); ws.DefaultBranch != "develop" {
 		t.Errorf("failed validation changed the workspace: %+v", ws)
+	}
+}
+
+func TestWorkspaceRetention(t *testing.T) {
+	f, sess := newWorkspaceFixture(t, true)
+	ctx := context.Background()
+
+	// A valid retention window is persisted alongside the branch.
+	rec := postForm(f, "/workspaces/acme/settings", url.Values{
+		"default_branch":        {"main"},
+		"report_retention_days": {"90"},
+	}, sess)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("save: status = %d", rec.Code)
+	}
+	if ws, _ := f.store.WorkspaceByPrefix(ctx, "acme"); ws.ReportRetentionDays != 90 {
+		t.Errorf("retention = %d, want 90", ws.ReportRetentionDays)
+	}
+
+	// "Forever" is 0; the selector renders it as the chosen option.
+	postForm(f, "/workspaces/acme/settings", url.Values{
+		"default_branch":        {"main"},
+		"report_retention_days": {"0"},
+	}, sess)
+	if ws, _ := f.store.WorkspaceByPrefix(ctx, "acme"); ws.ReportRetentionDays != 0 {
+		t.Errorf("retention = %d, want 0 (forever)", ws.ReportRetentionDays)
+	}
+
+	// An unlisted window is rejected and changes nothing.
+	if rec := postForm(f, "/workspaces/acme/settings", url.Values{
+		"default_branch":        {"main"},
+		"report_retention_days": {"7"},
+	}, sess); rec.Code != http.StatusBadRequest {
+		t.Errorf("bad retention: status = %d, want 400", rec.Code)
+	}
+}
+
+func TestWorkspaceDelete(t *testing.T) {
+	f, sess := newWorkspaceFixture(t, true)
+	ctx := context.Background()
+
+	// An upload under the workspace creates a repo (and its data) — all of
+	// which the delete must cascade away.
+	if rec := doUpload(t, f, "ws-secret", map[string]string{
+		"repo": "acme/widgets", "commit": "c1", "branch": "main"}, testProfile); rec.Code != http.StatusCreated {
+		t.Fatalf("seed upload: status = %d", rec.Code)
+	}
+	if _, err := f.store.RepoBySlug(ctx, "acme/widgets"); err != nil {
+		t.Fatalf("repo not present before delete: %v", err)
+	}
+
+	rec := postForm(f, "/workspaces/acme/delete", url.Values{}, sess)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
+		t.Fatalf("delete: %d -> %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if _, err := f.store.WorkspaceByPrefix(ctx, "acme"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("workspace survived delete: %v", err)
+	}
+	if _, err := f.store.RepoBySlug(ctx, "acme/widgets"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("repo survived workspace delete (no cascade): %v", err)
+	}
+
+	// A non-member cannot delete a workspace they cannot see (404).
+	f2, sess2 := newWorkspaceFixture(t, false)
+	if err := f2.store.CreateWorkspace(ctx,
+		&store.Workspace{Forge: "bitbucket", Prefix: "beta", Token: "beta-tok", DefaultBranch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	if rec := postForm(f2, "/workspaces/beta/delete", url.Values{}, sess2); rec.Code != http.StatusNotFound {
+		t.Errorf("non-member delete: status = %d, want 404", rec.Code)
+	}
+	if _, err := f2.store.WorkspaceByPrefix(ctx, "beta"); err != nil {
+		t.Errorf("non-member delete removed the workspace: %v", err)
 	}
 }
 

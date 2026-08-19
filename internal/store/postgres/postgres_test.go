@@ -316,6 +316,50 @@ func TestUploadLifecycle(t *testing.T) {
 	}
 }
 
+// TestDeleteWorkspaceCascade proves the settings-page delete removes the
+// workspace's repos (and their uploads, via ON DELETE CASCADE) by slug
+// prefix, while leaving repos of a different workspace that merely shares
+// a name-prefix substring untouched.
+func TestDeleteWorkspaceCascade(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	ws := &store.Workspace{Forge: "github", Prefix: "acme", Token: "acme-tok", DefaultBranch: "main"}
+	if err := st.CreateWorkspace(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+	mkRepo := func(slug string) *store.Repo {
+		t.Helper()
+		r := &store.Repo{Forge: "github", Slug: slug, Token: "t-" + slug, DefaultBranch: "main"}
+		if err := st.CreateRepo(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+		u := &store.Upload{RepoID: r.ID, CommitSHA: "c1", Branch: "main", Format: "go",
+			TotalPct: 50, CoveredStmts: 1, TotalStmts: 2, RawBlobKey: "b/" + slug}
+		if err := st.CreateUpload(ctx, u, nil); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	inside := mkRepo("acme/widgets")
+	// "acme-labs/x" shares the "acme" text but is NOT under the "acme/"
+	// prefix, so the LIKE-anchored delete must spare it.
+	outside := mkRepo("acme-labs/x")
+
+	if err := st.DeleteWorkspace(ctx, ws.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.WorkspaceByPrefix(ctx, "acme"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("workspace survived: %v", err)
+	}
+	if _, err := st.RepoByID(ctx, inside.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("in-prefix repo survived the cascade: %v", err)
+	}
+	if _, err := st.RepoByID(ctx, outside.ID); err != nil {
+		t.Errorf("out-of-prefix repo was wrongly deleted: %v", err)
+	}
+}
+
 func TestCommitReportLifecycle(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
