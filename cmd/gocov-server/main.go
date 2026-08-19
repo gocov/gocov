@@ -1,15 +1,11 @@
-// gocov-server runs the gocov API + web UI, and provides repo administration:
+// gocov-server runs the gocov API + web UI:
 //
 //	gocov-server serve                # default when no subcommand given
-//	gocov-server repo add -slug workspace/repo [flags]
-//	gocov-server repo list
-//	gocov-server repo rotate-token -slug workspace/repo
-//	gocov-server repo update -slug workspace/repo [flags]
-//	gocov-server repo remove -slug workspace/repo -force
-//	gocov-server workspace add -prefix workspace [flags]
-//	gocov-server workspace list|rotate-token|update|remove
-//	gocov-server user list
-//	gocov-server user remove -email someone@example.com
+//	gocov-server version
+//
+// Workspaces, repos, gates and members are all administered from the web
+// UI (sign in, then use the dashboard and workspace settings); hosted mode
+// adds self-service registration at /register.
 //
 // Configuration via environment: DATABASE_URL (required), GOCOV_ADDR
 // (default :8080), GOCOV_BASE_URL (default http://localhost:8080).
@@ -75,9 +71,7 @@ var version = "dev"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		if !errors.Is(err, errPrinted) {
-			fmt.Fprintln(os.Stderr, "gocov-server:", err)
-		}
+		fmt.Fprintln(os.Stderr, "gocov-server:", err)
 		os.Exit(1)
 	}
 }
@@ -92,32 +86,8 @@ func run(args []string) error {
 		return nil
 	case "serve":
 		return serve()
-	case "repo":
-		ctx := context.Background()
-		st, err := connect(ctx)
-		if err != nil {
-			return err
-		}
-		defer st.Pool().Close()
-		return repoCmd(ctx, st, blobpg.New(st.Pool()), args[1:], os.Stdout)
-	case "workspace":
-		ctx := context.Background()
-		st, err := connect(ctx)
-		if err != nil {
-			return err
-		}
-		defer st.Pool().Close()
-		return workspaceCmd(ctx, st, args[1:], os.Stdout)
-	case "user":
-		ctx := context.Background()
-		st, err := connect(ctx)
-		if err != nil {
-			return err
-		}
-		defer st.Pool().Close()
-		return userCmd(ctx, st, args[1:], os.Stdout)
 	default:
-		return fmt.Errorf("unknown command %q (want serve|repo|workspace|user)", args[0])
+		return fmt.Errorf("unknown command %q (want serve|version)", args[0])
 	}
 }
 
@@ -155,8 +125,7 @@ func connect(ctx context.Context) (*storepg.Store, error) {
 		return nil, fmt.Errorf("connecting to postgres: %w", err)
 	}
 	st := storepg.New(pool)
-	// The at-rest cipher for Bitbucket grant tokens (One-Click Connect
-	// D6); set here so the CLI subcommands share it with serve.
+	// The at-rest cipher for Bitbucket grant tokens (One-Click Connect D6).
 	key, err := secretKey(os.Getenv("GOCOV_SECRET_KEY"))
 	if err != nil {
 		return nil, err

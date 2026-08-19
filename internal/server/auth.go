@@ -17,8 +17,9 @@ import (
 	"github.com/gocov/gocov/internal/store"
 )
 
-// Session lifetime is fixed (no sliding renewal in M1); logout and
-// `gocov-server user remove` revoke server-side immediately.
+// Session lifetime is fixed (no sliding renewal in M1); logout revokes
+// server-side immediately, and dropped forge membership is re-checked at
+// each sign-in.
 const sessionTTL = 30 * 24 * time.Hour
 
 const (
@@ -336,7 +337,8 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	// yet — land them in the onboarding wizard rather than an empty dashboard.
 	// Only when no explicit destination was requested: a re-auth aimed at a
 	// pending GitHub install (next=/github/setup?...) must be honoured so it
-	// can connect after the org snapshot refreshes.
+	// can connect after the org snapshot refreshes. Private-mode users always
+	// land on the dashboard, which surfaces an onboarding link when empty.
 	if s.hosted && memberships == 0 && (next == "" || next == "/") {
 		next = "/onboarding"
 	}
