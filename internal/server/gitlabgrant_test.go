@@ -321,13 +321,13 @@ func TestSettingsPageGitLabStates(t *testing.T) {
 	f, sess := newGLConnectFixture(t)
 
 	body := get(f.fixture, "/workspaces/grp%2Fsub", sess).Body.String()
-	if !strings.Contains(body, "Connect workspace") || !strings.Contains(body, "bot account") {
-		t.Error("unconnected settings must offer Connect and recommend a bot account")
+	if !strings.Contains(body, "Grant write access") || !strings.Contains(body, "under your own account") {
+		t.Error("unconnected settings must offer to grant write access and state the identity caveat")
 	}
 
 	f.grant(t, "covbot", "rt-0", true)
 	body = get(f.fixture, "/workspaces/grp%2Fsub", sess).Body.String()
-	if !strings.Contains(body, "reconnect needed") || !strings.Contains(body, "Reconnect workspace") {
+	if !strings.Contains(body, "Reconnect needed") || !strings.Contains(body, "Grant write access again") {
 		t.Error("broken grant must surface the reconnect state")
 	}
 }

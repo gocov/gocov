@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"sort"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -228,7 +229,7 @@ func (s *Store) scanRepo(row rowScanner) (*store.Repo, error) {
 }
 
 const workspaceCols = `id, forge, prefix, token, default_branch,
-	min_coverage, min_diff_coverage, max_coverage_drop,
+	min_coverage, min_diff_coverage, max_coverage_drop, report_retention_days,
 	github_installation_id, github_app_broken,
 	bitbucket_grant_account, bitbucket_refresh_token, bitbucket_grant_broken,
 	gitlab_grant_account, gitlab_refresh_token, gitlab_grant_broken, created_at`
@@ -253,14 +254,14 @@ func (s *Store) createWorkspace(ctx context.Context, db execer, w *store.Workspa
 	}
 	return db.QueryRow(ctx, `
 		INSERT INTO workspaces (forge, prefix, token, default_branch,
-			min_coverage, min_diff_coverage, max_coverage_drop,
+			min_coverage, min_diff_coverage, max_coverage_drop, report_retention_days,
 			github_installation_id, github_app_broken,
 			bitbucket_grant_account, bitbucket_refresh_token, bitbucket_grant_broken,
 			gitlab_grant_account, gitlab_refresh_token, gitlab_grant_broken)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		RETURNING id, created_at`,
 		w.Forge, w.Prefix, w.Token, w.DefaultBranch,
-		w.Gate.MinCoverage, w.Gate.MinDiffCoverage, w.Gate.MaxCoverageDrop,
+		w.Gate.MinCoverage, w.Gate.MinDiffCoverage, w.Gate.MaxCoverageDrop, w.ReportRetentionDays,
 		w.GitHubInstallationID, w.GitHubAppBroken,
 		w.BitbucketGrantAccount, sealed, w.BitbucketGrantBroken,
 		w.GitLabGrantAccount, sealedGL, w.GitLabGrantBroken,
@@ -294,11 +295,11 @@ func (s *Store) UpdateWorkspace(ctx context.Context, w *store.Workspace) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE workspaces SET forge = $2, prefix = $3, token = $4, default_branch = $5,
 			min_coverage = $6, min_diff_coverage = $7, max_coverage_drop = $8,
-			github_installation_id = $9, github_app_broken = $10
+			report_retention_days = $9, github_installation_id = $10, github_app_broken = $11
 		WHERE id = $1`,
 		w.ID, w.Forge, w.Prefix, w.Token, w.DefaultBranch,
 		w.Gate.MinCoverage, w.Gate.MinDiffCoverage, w.Gate.MaxCoverageDrop,
-		w.GitHubInstallationID, w.GitHubAppBroken)
+		w.ReportRetentionDays, w.GitHubInstallationID, w.GitHubAppBroken)
 	if err != nil {
 		return err
 	}
@@ -347,14 +348,38 @@ func (s *Store) SetWorkspaceGitLabGrant(ctx context.Context, workspaceID int64, 
 }
 
 func (s *Store) DeleteWorkspace(ctx context.Context, id int64) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM workspaces WHERE id = $1`, id)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
-		return store.ErrNotFound
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
+
+	// The workspace prefix decides which repos belong to it — repos carry
+	// no workspace_id, the tie is the slug prefix (M2 convention). Delete
+	// those repos first; uploads, upload_files and commit_reports cascade
+	// off repos(id). Membership rows cascade off the workspace row below.
+	var prefix string
+	if err := tx.QueryRow(ctx,
+		`SELECT prefix FROM workspaces WHERE id = $1`, id).Scan(&prefix); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return store.ErrNotFound
+		}
+		return err
 	}
-	return nil
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM repos WHERE slug LIKE $1 ESCAPE '\'`, likePrefix(prefix)+`/%`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM workspaces WHERE id = $1`, id); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// likePrefix escapes the LIKE metacharacters in a literal prefix so it can
+// be used as the fixed head of a `<prefix>/%` pattern (ESCAPE '\').
+func likePrefix(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
 func (s *Store) WorkspaceByPrefix(ctx context.Context, prefix string) (*store.Workspace, error) {
@@ -388,7 +413,7 @@ func (s *Store) scanWorkspace(row rowScanner) (*store.Workspace, error) {
 	var w store.Workspace
 	var sealedRefresh, sealedGLRefresh string
 	err := row.Scan(&w.ID, &w.Forge, &w.Prefix, &w.Token, &w.DefaultBranch,
-		&w.Gate.MinCoverage, &w.Gate.MinDiffCoverage, &w.Gate.MaxCoverageDrop,
+		&w.Gate.MinCoverage, &w.Gate.MinDiffCoverage, &w.Gate.MaxCoverageDrop, &w.ReportRetentionDays,
 		&w.GitHubInstallationID, &w.GitHubAppBroken,
 		&w.BitbucketGrantAccount, &sealedRefresh, &w.BitbucketGrantBroken,
 		&w.GitLabGrantAccount, &sealedGLRefresh, &w.GitLabGrantBroken, &w.CreatedAt)
@@ -442,7 +467,7 @@ func (s *Store) SetUserWorkspaces(ctx context.Context, userID int64, workspaceID
 func (s *Store) ListWorkspacesForUser(ctx context.Context, userID int64) ([]*store.Workspace, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT w.id, w.forge, w.prefix, w.token, w.default_branch,
-			w.min_coverage, w.min_diff_coverage, w.max_coverage_drop,
+			w.min_coverage, w.min_diff_coverage, w.max_coverage_drop, w.report_retention_days,
 			w.github_installation_id, w.github_app_broken,
 			w.bitbucket_grant_account, w.bitbucket_refresh_token, w.bitbucket_grant_broken,
 			w.gitlab_grant_account, w.gitlab_refresh_token, w.gitlab_grant_broken, w.created_at

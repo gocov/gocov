@@ -1,141 +1,223 @@
 {{define "title"}}gocov — {{.Workspace.Prefix}} settings{{end}}
 {{define "content"}}
-<h1>Workspace <span class="mono">{{.Workspace.Prefix}}</span></h1>
-<p class="sub">{{.ForgeLabel}} &middot; <a href="/workspaces/{{pathesc .Workspace.Prefix}}/setup">Setup instructions</a></p>
+{{$prefix := pathesc .Workspace.Prefix}}
+{{$forge := .Workspace.Forge}}
+<div class="ws">
+
+<div class="ws-head">
+  <h1>Workspace <span class="mono">{{.Workspace.Prefix}}</span>
+    {{if eq .ReportingState "broken"}}<span class="chip fail">Reporting broken</span>{{end}}</h1>
+  <p class="sub">{{.ForgeLabel}}
+    {{with .RepoCount}} &middot; {{.}} repositor{{if eq . 1}}y{{else}}ies{{end}}{{end}}
+    &middot; <a href="/workspaces/{{$prefix}}/setup">Setup instructions</a></p>
+</div>
+
+<nav class="side">
+  <span class="grp">Workspace</span>
+  {{if .ReportingAvailable}}<a href="#reporting">Reporting</a>{{end}}
+  <a href="#uploads">Uploads</a>
+  <a href="#gates">Coverage gates</a>
+  <a href="#defaults">Defaults</a>
+  <span class="grp">Danger zone</span>
+  <a href="#delete">Delete workspace</a>
+</nav>
+
+<div class="ws-main">
 
 {{with .Notice}}<p class="notice">{{.}}</p>{{end}}
 {{with .Error}}<p class="notice fail">{{.}}</p>{{end}}
 
 {{if .NewToken}}
-<div class="card pad">
-  <h2>New upload token</h2>
-  <p><strong>Save it now — it is shown only this once.</strong> The previous token stopped
-  working the moment it was rotated.</p>
-  <p><code class="mono" id="ws-token">{{.NewToken}}</code>
-  <button class="btn" type="button" data-copy="#ws-token">Copy</button></p>
+<div class="card"><div class="card-bd">
+  <h2 style="margin:14px 0 6px">New upload token</h2>
+  <p><strong>Save it now — it is shown only this once</strong> in this banner. The previous
+  token stopped working the moment it was rotated.</p>
+  <div class="secret"><div class="secret-bd">
+    <span class="v" id="ws-newtoken">{{.NewToken}}</span>
+    <button class="btn" type="button" data-copy="#ws-newtoken">Copy</button>
+  </div></div>
+</div></div>
+{{end}}
+
+{{if .ReportingAvailable}}
+<div class="card" id="reporting">
+  <div class="card-hd">
+    <h2>Reporting to {{.ForgeLabel}}</h2>
+    <span class="spacer"></span>
+    {{if eq .ReportingState "on"}}<span class="chip pass">Connected</span>{{end}}
+    {{if eq .ReportingState "off"}}<span class="chip plain">Not connected</span>{{end}}
+    {{if eq .ReportingState "broken"}}<span class="chip fail">Reconnect needed</span>{{end}}
+  </div>
+  <div class="card-bd">
+    {{if eq .ReportingState "broken"}}
+    <div class="notice fail">The grant stopped working — it was revoked on {{.ForgeLabel}}, or the
+      account that connected it lost access. Nothing has been posted back since it broke.</div>
+    {{end}}
+
+    {{if eq $forge "github"}}
+      {{if eq .ReportingState "on"}}<p>Commit statuses, check runs and pull-request comments are posted through the app install. Nothing to manage here — permissions and repository access are changed on GitHub.</p>{{end}}
+      {{if eq .ReportingState "off"}}<p>Coverage still uploads and shows in gocov. Installing the app is what lets gocov post statuses, check runs and pull-request comments back to GitHub.</p>{{end}}
+      {{if eq .ReportingState "broken"}}<p>Coverage still uploads and shows in gocov; only posting back has stopped. Reinstalling the app restores it.</p>{{end}}
+    {{else if eq $forge "bitbucket"}}
+      {{if eq .ReportingState "on"}}<p>Build statuses and pull-request comments are posted with the write access you granted. They appear under the connecting account — Bitbucket has no bot identity for apps like gocov.</p>{{end}}
+      {{if eq .ReportingState "off"}}<p>Coverage still uploads and shows in gocov. Granting write access is what lets gocov post build statuses and pull-request comments, under your own account.</p>{{end}}
+      {{if eq .ReportingState "broken"}}<p>Coverage still uploads and shows in gocov; only posting back has stopped. Granting access again restores it.</p>{{end}}
+    {{else}}
+      {{if eq .ReportingState "on"}}<p>Commit statuses and merge-request comments are posted with the write access you granted. They appear under the connecting account — GitLab has no bot identity for apps like gocov.</p>{{end}}
+      {{if eq .ReportingState "off"}}<p>Coverage still uploads and shows in gocov. Granting write access is what lets gocov post commit statuses and merge-request comments, under your own account.</p>{{end}}
+      {{if eq .ReportingState "broken"}}<p>Coverage still uploads and shows in gocov; only posting back has stopped. Granting access again restores it.</p>{{end}}
+    {{end}}
+
+    {{if eq .ReportingState "on"}}
+      {{if eq $forge "github"}}
+      <div class="who"><span class="face bot">g</span>
+        <span><span class="id">gocov[bot]</span><br><span class="m">Posting through the app install{{with .RepoCount}} · {{.}} repositor{{if eq . 1}}y{{else}}ies{{end}}{{end}}</span></span>
+        <span class="spacer"></span><span class="chip plain">App install</span></div>
+      {{else}}
+      <div class="who"><span class="face">{{.ReportingInitial}}</span>
+        <span><span class="id">@{{.ReportingAccount}}</span><br><span class="m">Statuses and comments are posted as this account</span></span>
+        <span class="spacer"></span><span class="chip plain">Your account</span></div>
+      {{end}}
+    {{end}}
+    {{if eq .ReportingState "broken"}}
+      <div class="who"><span class="face">{{if .ReportingAccount}}{{.ReportingInitial}}{{else}}g{{end}}</span>
+        <span><span class="id">{{if .ReportingAccount}}@{{.ReportingAccount}}{{else}}gocov[bot]{{end}}</span><br>
+          <span class="m">{{if eq $forge "github"}}Install removed or suspended on GitHub{{else}}Grant revoked{{end}}</span></span>
+        <span class="spacer"></span><span class="chip fail">Inactive</span></div>
+    {{end}}
+  </div>
+  <div class="card-ft">
+    {{if eq $forge "github"}}
+      {{if .GitHubInstallURL}}
+        {{if eq .ReportingState "on"}}<a class="btn" href="{{.GitHubInstallURL}}">Manage on GitHub</a>{{end}}
+        {{if eq .ReportingState "off"}}<a class="btn primary" href="{{.GitHubInstallURL}}">Install the gocov app</a>{{end}}
+        {{if eq .ReportingState "broken"}}<a class="btn primary" href="{{.GitHubInstallURL}}">Reinstall the app</a>{{end}}
+      {{end}}
+    {{else}}
+      {{if eq .ReportingState "off"}}<a class="btn primary" href="/workspaces/{{$prefix}}/{{$forge}}/connect">Grant write access</a>{{end}}
+      {{if eq .ReportingState "broken"}}<a class="btn primary" href="/workspaces/{{$prefix}}/{{$forge}}/connect">Grant write access again</a>{{end}}
+    {{end}}
+    <span class="spacer"></span>
+    {{if eq .ReportingState "off"}}<span class="hint">Optional — uploads work without it.</span>{{end}}
+    {{if eq .ReportingState "on"}}
+      <form method="post" action="/workspaces/{{$prefix}}/{{$forge}}/disconnect"
+            data-confirm="Disconnect? Statuses and comments are then skipped for this workspace.">
+        <button class="btn danger" type="submit">Disconnect</button></form>
+    {{end}}
+    {{if eq .ReportingState "broken"}}
+      <form method="post" action="/workspaces/{{$prefix}}/{{$forge}}/disconnect"
+            data-confirm="Disconnect? Statuses and comments are then skipped for this workspace.">
+        <button class="btn" type="submit">Disconnect</button></form>
+    {{end}}
+  </div>
 </div>
 {{end}}
 
-<div class="card pad">
-  <h2>Upload token</h2>
-  <p class="sub">Authorizes uploads for every repo under <code>{{.Workspace.Prefix}}/</code>.
-  It was shown once at registration; if it is lost or leaked, rotate it.</p>
-  <form method="post" action="/workspaces/{{pathesc .Workspace.Prefix}}/rotate-token"
-        data-confirm="Rotate the upload token? The current token stops working immediately and CI must be updated.">
-    <button class="btn" type="submit">Rotate token</button>
-  </form>
+<div class="card" id="uploads">
+  <div class="card-hd"><h2>Uploads</h2></div>
+  <div class="card-bd">
+    <p>Every repository under <code>{{.Workspace.Prefix}}/</code> uploads with this token.
+    Rotating it takes effect immediately — CI has to be updated in the same change.</p>
+    {{if .ShowServer}}
+    <div class="secret">
+      <div class="secret-hd"><span class="name">GOCOV_SERVER</span><span class="chip plain">Variable</span>
+        <span class="spacer"></span><span class="muted small">Your instance — plain value, not a secret</span></div>
+      <div class="secret-bd">
+        <span class="v">{{.ServerURL}}</span>
+        <button class="btn" type="button" data-copy="#ws-server">Copy</button>
+        <input type="hidden" id="ws-server" value="{{.ServerURL}}">
+      </div>
+    </div>
+    {{end}}
+    <div class="secret">
+      <div class="secret-hd"><span class="name">GOCOV_TOKEN</span><span class="chip plain">Secret</span>
+        <span class="spacer"></span><span class="muted small">Shown to workspace members only</span></div>
+      <div class="secret-bd">
+        <span class="v" id="ws-token" data-full="{{.Token}}">{{.MaskedToken}}</span>
+        <button class="btn" type="button" data-reveal="#ws-token">Reveal</button>
+        <button class="btn" type="button" data-copy="#ws-tokenval">Copy</button>
+        <input type="hidden" id="ws-tokenval" value="{{.Token}}">
+      </div>
+    </div>
+  </div>
+  <div class="card-ft">
+    <form method="post" action="/workspaces/{{$prefix}}/rotate-token"
+          data-confirm="Rotate the upload token? The current token stops working immediately and CI must be updated.">
+      <button class="btn" type="submit">Rotate token</button></form>
+    <span class="hint">The old token stops working the moment you rotate.</span>
+  </div>
 </div>
 
-<div class="card pad">
-  <h2>Defaults &amp; coverage gate</h2>
-  <form method="post" action="/workspaces/{{pathesc .Workspace.Prefix}}/settings">
-    <p><label>Default branch<br>
-      <input class="input" type="text" name="default_branch" value="{{.Workspace.DefaultBranch}}"></label></p>
-    <p><label>Min total coverage %<br>
-      <input class="input" type="number" name="min_coverage" min="0" max="100" step="0.1"
-             value="{{with .Workspace.Gate.MinCoverage}}{{.}}{{end}}" placeholder="off"></label></p>
-    <p><label>Min diff coverage %<br>
-      <input class="input" type="number" name="min_diff_coverage" min="0" max="100" step="0.1"
-             value="{{with .Workspace.Gate.MinDiffCoverage}}{{.}}{{end}}" placeholder="off"></label></p>
-    <p><label>Max coverage drop %<br>
-      <input class="input" type="number" name="max_coverage_drop" min="0" max="100" step="0.1"
-             value="{{with .Workspace.Gate.MaxCoverageDrop}}{{.}}{{end}}" placeholder="off"></label></p>
-    <p class="muted small">Branch and gate defaults apply to repos registered from now on;
-    leave a gate field empty to disable that rule.</p>
-    <button class="btn primary" type="submit">Save</button>
-  </form>
+<form method="post" action="/workspaces/{{$prefix}}/settings">
+<div class="card" id="gates">
+  <div class="card-hd"><h2>Coverage gates</h2><span class="spacer"></span>
+    <span class="chip info" id="gatecount">{{if .GateActive}}{{.GateActive}} active{{else}}None active{{end}}</span></div>
+  <div class="card-bd">
+    <p>Gates decide whether a commit passes. They apply to every repository in this workspace
+    unless a repository sets its own. Leave a gate off to disable that rule.</p>
+    {{template "gate" dict "Name" "min_coverage" "Label" "Minimum total coverage"
+       "Help" "Fails when the whole project drops below this figure."
+       "Value" .Workspace.Gate.MinCoverage}}
+    {{template "gate" dict "Name" "min_diff_coverage" "Label" "Minimum diff coverage"
+       "Help" "Fails when the lines changed in a pull/merge request are covered below this figure."
+       "Value" .Workspace.Gate.MinDiffCoverage}}
+    {{template "gate" dict "Name" "max_coverage_drop" "Label" "Maximum coverage drop"
+       "Help" "Fails when total coverage falls by more than this against the base branch."
+       "Value" .Workspace.Gate.MaxCoverageDrop}}
+  </div>
+  <div class="card-ft"><button class="btn primary" type="submit">Save</button>
+    <span class="hint">Applies to the next upload.</span></div>
 </div>
 
-{{if .GitHubApp}}
-<div class="card pad">
-  <h2>GitHub App</h2>
-  {{if .GitHubAppBroken}}
-  <p class="sub">The gocov app no longer has access — it was probably uninstalled on GitHub.
-  Statuses, PR comments and check runs are skipped until you reconnect.
-  <span class="chip fail">reconnect needed</span></p>
-  {{else if .GitHubAppConnected}}
-  <p class="sub">Statuses, PR comments and check runs are posted as <code>gocov[bot]</code>
-  through the app — no tokens needed.
-  <span class="chip pass">connected &#10003;</span></p>
-  {{else}}
-  <p class="sub">Install the gocov app on <code>{{.Workspace.Prefix}}</code> and statuses,
-  PR comments and check runs work with zero tokens, posted as <code>gocov[bot]</code>.
-  <span class="chip plain">not connected</span></p>
-  {{end}}
-  {{if .GitHubInstallURL}}
-  {{if and .GitHubAppConnected (not .GitHubAppBroken)}}
-  <p><a class="btn" href="{{.GitHubInstallURL}}">Manage on GitHub</a></p>
-  {{else}}
-  <p><a class="btn primary" href="{{.GitHubInstallURL}}">
-    {{if .GitHubAppBroken}}Reinstall the gocov app{{else}}Install the gocov app{{end}}</a></p>
-  {{end}}
-  {{end}}
-  {{if .GitHubAppConnected}}
-  <form method="post" action="/workspaces/{{pathesc .Workspace.Prefix}}/github/disconnect"
-        data-confirm="Disconnect the GitHub App? Statuses and comments are then skipped for this workspace.">
-    <button class="btn" type="submit">Disconnect</button>
-  </form>
-  {{end}}
+<div class="card" id="defaults">
+  <div class="card-hd"><h2>Defaults</h2></div>
+  <div class="card-bd">
+    <div class="fields">
+      <span class="f"><label for="db">Default branch</label>
+        <input class="input" id="db" name="default_branch" type="text" value="{{.Workspace.DefaultBranch}}">
+        <span class="h">Trends and gate baselines are measured against this branch.</span></span>
+      <span class="f"><label for="rt">Keep reports for</label>
+        <select class="input" id="rt" name="report_retention_days">
+          <option value="90"{{if eq .Workspace.ReportRetentionDays 90}} selected{{end}}>90 days</option>
+          <option value="365"{{if eq .Workspace.ReportRetentionDays 365}} selected{{end}}>1 year</option>
+          <option value="0"{{if eq .Workspace.ReportRetentionDays 0}} selected{{end}}>Forever</option>
+        </select>
+        <span class="h">Older uploads are pruned; totals stay. Pruning is coming soon.</span></span>
+    </div>
+  </div>
+  <div class="card-ft"><button class="btn primary" type="submit">Save</button>
+    <span class="hint">Branch and gate defaults apply to repositories registered from now on.</span></div>
+</div>
+</form>
+
+<div class="card danger-card" id="delete">
+  <div class="card-hd"><h2>Delete workspace</h2></div>
+  <div class="card-bd">
+    <p>Removes <code>{{.Workspace.Prefix}}</code>{{with .RepoCount}}, its {{.}} repositor{{if eq . 1}}y{{else}}ies{{end}}{{end}}
+    and every coverage report gocov holds for them. Uploads with this token start failing
+    immediately. Nothing is changed on {{.ForgeLabel}}.</p>
+  </div>
+  <div class="card-ft">
+    <form method="post" action="/workspaces/{{$prefix}}/delete"
+          data-confirm="Delete {{.Workspace.Prefix}} and all of its coverage data? This cannot be undone.">
+      <button class="btn danger" type="submit">Delete this workspace</button></form>
+    <span class="hint">This cannot be undone.</span>
+  </div>
+</div>
+
+</div>
 </div>
 {{end}}
 
-{{if .BitbucketConnect}}
-<div class="card pad">
-  <h2>Bitbucket connection</h2>
-  {{if .BBGrantBroken}}
-  <p class="sub">The connection stopped working — the grant was revoked on Bitbucket, or the
-  account that connected it left. Statuses, PR comments and reports are skipped until you
-  reconnect. <span class="chip fail">reconnect needed</span></p>
-  {{else if .BBGrantAccount}}
-  <p class="sub">Statuses, PR comments, reports, diffs and source fetch act through the
-  connected grant — no app passwords or API tokens needed. Posts appear as
-  <code>@{{.BBGrantAccount}}</code>. <span class="chip pass">connected &#10003;</span></p>
-  {{else}}
-  <p class="sub">Connect the workspace with one Bitbucket consent and statuses, PR comments
-  and reports work with zero manual credentials. Posts will appear as the account that
-  clicks Connect &mdash; teams with a bot account should connect with it.
-  <span class="chip plain">not connected</span></p>
-  {{end}}
-  {{if or (not .BBGrantAccount) .BBGrantBroken}}
-  <p><a class="btn primary" href="/workspaces/{{pathesc .Workspace.Prefix}}/bitbucket/connect">
-    {{if .BBGrantBroken}}Reconnect workspace{{else}}Connect workspace{{end}}</a></p>
-  {{end}}
-  {{if .BBGrantAccount}}
-  <form method="post" action="/workspaces/{{pathesc .Workspace.Prefix}}/bitbucket/disconnect"
-        data-confirm="Disconnect the workspace? Statuses and comments are then skipped for this workspace.">
-    <button class="btn" type="submit">Disconnect</button>
-  </form>
-  {{end}}
+{{define "gate"}}
+<div class="gate"{{if not .Value}} data-off{{end}}>
+  <span><span class="n">{{.Label}}</span><br><span class="m">{{.Help}}</span></span>
+  <span class="ctl">
+    <input class="input gate-input" type="number" name="{{.Name}}" min="0" max="100" step="0.1"
+           value="{{with .Value}}{{.}}{{end}}"{{if not .Value}} disabled{{end}}>
+    <span class="muted">%</span>
+    <button class="tg" type="button" aria-pressed="{{if .Value}}true{{else}}false{{end}}"
+            aria-label="Toggle {{.Label}}"></button>
+  </span>
 </div>
-{{end}}
-
-{{if .GitLabConnect}}
-<div class="card pad">
-  <h2>GitLab connection</h2>
-  {{if .GLGrantBroken}}
-  <p class="sub">The connection stopped working — the grant was revoked on GitLab, or the
-  account that connected it left. Statuses and MR comments are skipped until you
-  reconnect. <span class="chip fail">reconnect needed</span></p>
-  {{else if .GLGrantAccount}}
-  <p class="sub">Statuses, MR comments, diffs and source fetch act through the connected
-  grant &mdash; no access tokens needed. Posts appear as
-  <code>@{{.GLGrantAccount}}</code>. <span class="chip pass">connected &#10003;</span></p>
-  {{else}}
-  <p class="sub">Connect the workspace with one GitLab consent (the <code>api</code> scope)
-  and statuses and MR comments work with zero manual tokens. Posts will appear as the
-  account that clicks Connect &mdash; teams with a bot account should connect with it.
-  <span class="chip plain">not connected</span></p>
-  {{end}}
-  {{if or (not .GLGrantAccount) .GLGrantBroken}}
-  <p><a class="btn primary" href="/workspaces/{{pathesc .Workspace.Prefix}}/gitlab/connect">
-    {{if .GLGrantBroken}}Reconnect workspace{{else}}Connect workspace{{end}}</a></p>
-  {{end}}
-  {{if .GLGrantAccount}}
-  <form method="post" action="/workspaces/{{pathesc .Workspace.Prefix}}/gitlab/disconnect"
-        data-confirm="Disconnect the workspace? Statuses and comments are then skipped for this workspace.">
-    <button class="btn" type="submit">Disconnect</button>
-  </form>
-  {{end}}
-</div>
-{{end}}
 {{end}}

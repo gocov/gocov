@@ -303,3 +303,61 @@ select.input { min-width: 160px; }
   .cov { min-width: 120px; }
   .badgebox { flex-wrap: wrap; }
 }
+
+/* workspace settings (v2): sidebar rail + structured cards */
+.ws { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 32px; align-items: start; }
+.ws-head { grid-column: 1 / -1; }
+.ws-head h1 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ws-main { min-width: 0; }
+/* plain .card carries no bottom margin (only .card.pad did); the settings
+   cards stack, so space them here — including the two wrapped in the
+   gates/defaults <form>. */
+.ws-main .card { margin-bottom: 16px; }
+.ws-main form { margin: 0; }
+.side { position: sticky; top: 20px; display: flex; flex-direction: column; gap: 1px; }
+.side a { display: block; padding: 7px 12px; border-radius: var(--radius-sm); color: var(--text-2); font-size: 13.5px; }
+.side a:hover { background: var(--surface2); text-decoration: none; color: var(--text); }
+.side a.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.side .grp { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3); padding: 14px 12px 4px; }
+
+.card-hd { display: flex; align-items: center; gap: 10px; padding: 14px 20px 0; flex-wrap: wrap; }
+.card-hd h2 { font-size: 16px; margin: 0; letter-spacing: -.005em; }
+.card-hd .spacer, .card-ft .spacer { flex: 1; }
+.card-bd { padding: 6px 20px 18px; }
+.card-bd p { color: var(--text-2); margin: 0 0 14px; max-width: 66ch; }
+.card-bd p:last-child { margin-bottom: 0; }
+.card-ft { display: flex; align-items: center; gap: 10px; padding: 12px 20px; background: var(--surface2);
+  border-top: 1px solid var(--border-soft); flex-wrap: wrap; }
+.card-ft form { margin: 0; }
+
+.btn.danger { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, var(--border)); }
+.btn.danger:hover { background: var(--red-soft); }
+.danger-card { border-color: color-mix(in srgb, var(--red) 45%, var(--border)); }
+.danger-card .card-ft { background: var(--red-soft); border-top-color: color-mix(in srgb, var(--red) 45%, var(--border)); }
+
+.gate { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; padding: 12px 14px;
+  border: 1px solid var(--border-soft); border-radius: var(--radius-sm); margin-bottom: 10px; }
+.gate:last-of-type { margin-bottom: 0; }
+.gate .n { font-weight: 600; font-size: 13.5px; }
+.gate .m { color: var(--text-2); font-size: 12.5px; }
+.gate .ctl { display: flex; align-items: center; gap: 8px; }
+.gate .ctl .input { width: 82px; text-align: right; font-variant-numeric: tabular-nums; }
+.gate[data-off] .ctl .input { opacity: .4; }
+.gate[data-off] .n, .gate[data-off] .m { color: var(--text-3); }
+.tg { position: relative; width: 36px; height: 20px; border-radius: 999px; background: var(--border);
+  border: none; cursor: pointer; flex: none; transition: background .12s; }
+.tg::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  border-radius: 50%; background: #fff; transition: transform .12s; }
+.tg[aria-pressed="true"] { background: var(--accent); }
+.tg[aria-pressed="true"]::after { transform: translateX(16px); }
+
+.fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px 18px; }
+.fields .f label { display: block; font-size: 12.5px; font-weight: 600; margin-bottom: 5px; }
+.fields .f .h { display: block; color: var(--text-3); font-size: 12px; font-weight: 400; margin-top: 4px; }
+.fields .f .input { width: 100%; }
+
+@media (max-width: 820px) {
+  .ws { grid-template-columns: 1fr; gap: 16px; }
+  .side { position: static; flex-direction: row; overflow-x: auto; gap: 4px; }
+  .side .grp { display: none; }
+}
