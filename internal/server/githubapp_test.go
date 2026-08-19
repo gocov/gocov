@@ -211,8 +211,20 @@ func TestGitHubSetupRejectsForeignInstallation(t *testing.T) {
 	// Same story for the claim path: the account is unregistered, but
 	// the user's forge list does not vouch for it.
 	f.app.accounts[8] = "strangers"
-	if rec := get(f.fixture, "/github/setup?installation_id=8", sess); rec.Code != http.StatusForbidden {
+	rec := get(f.fixture, "/github/setup?installation_id=8", sess)
+	if rec.Code != http.StatusForbidden {
 		t.Fatalf("foreign claim: status = %d, want 403", rec.Code)
+	}
+	// The dead end offers two ways forward: a link to the org's OAuth-app
+	// policy (the usual cause — a restricted org gocov can't see), and a
+	// one-click re-auth back to this same install for the stale-snapshot case.
+	if !strings.Contains(rec.Body.String(), "Sign in again") ||
+		!strings.Contains(rec.Body.String(), "/oauth/github/start?next=") ||
+		!strings.Contains(rec.Body.String(), "installation_id%3D8") {
+		t.Errorf("claim-denied page missing the re-auth self-heal link:\n%s", rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "github.com/organizations/strangers/settings/oauth_application_policy") {
+		t.Errorf("claim-denied page missing the org OAuth-policy link:\n%s", rec.Body)
 	}
 	if _, err := f.store.WorkspaceByPrefix(context.Background(), "strangers"); err == nil {
 		t.Error("foreign claim must not register a workspace")

@@ -246,10 +246,19 @@ func (s *Server) handleWorkspaceSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repos, _ := data["Repos"].([]*store.Repo)
-	// Wire up CI is rail step 1; First upload (rail 2) shows below it.
-	data["Active"] = 1
+	// Each stage is its own clean panel. Wire up CI (rail 1) is a single
+	// card; "I've added these" advances to First upload (rail 2), which
+	// polls while waiting and flips to the done state once a repo lands.
+	active := 1
+	switch {
+	case len(repos) > 0:
+		active = 2 // First upload — done
+	case r.FormValue("awaiting") == "1":
+		active = 2 // First upload — waiting
+	}
+	data["Active"] = active
 	data["Forge"] = ws.Forge
-	data["Rail"] = onboardingRail(1, ws.Forge, ws.Prefix, len(repos) > 0)
+	data["Rail"] = onboardingRail(active, ws.Forge, ws.Prefix, len(repos) > 0)
 	s.render(w, r, "onboarding.html", data)
 }
 
@@ -264,6 +273,13 @@ func (s *Server) handleWorkspaceSetupStatus(w http.ResponseWriter, r *http.Reque
 	data, err := s.setupViewData(r, ws)
 	if err != nil {
 		s.internalError(w, "listing workspace repos", err)
+		return
+	}
+	// The poll only owns the waiting card. Once the first upload lands,
+	// reload the whole page so the rail and panel move to the clean
+	// First-upload done state instead of stacking it under the CI card.
+	if repos, _ := data["Repos"].([]*store.Repo); len(repos) > 0 {
+		w.Header().Set("HX-Redirect", workspaceURL(ws.Prefix, "/setup"))
 		return
 	}
 	s.renderPartial(w, "onboarding.html", "setup-status", data)

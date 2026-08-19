@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"github.com/gocov/gocov/internal/forge"
@@ -41,7 +42,7 @@ func (s *Server) handleGitHubSetup(w http.ResponseWriter, r *http.Request) {
 		// there is no installation to link yet.
 		s.renderConnect(w, r, http.StatusOK, "Install requested",
 			"Your request went to the organization owners. Once an owner approves the "+
-				"installation, GitHub sends them back here and the workspace gets connected.", "")
+				"installation, GitHub sends them back here and the workspace gets connected.")
 		return
 	}
 
@@ -49,7 +50,8 @@ func (s *Server) handleGitHubSetup(w http.ResponseWriter, r *http.Request) {
 	if err != nil || id <= 0 {
 		s.renderConnect(w, r, http.StatusBadRequest, "Missing installation",
 			"This page is where GitHub returns after installing the gocov app; it cannot be "+
-				"used on its own. Start from the install page instead.", s.githubInstallURL(r.Context()))
+				"used on its own. Start from the install page instead.",
+			connectAction{URL: s.githubInstallURL(r.Context()), Label: "Open the install page"})
 		return
 	}
 	login, err := s.githubApp.InstallationAccount(r.Context(), id)
@@ -57,7 +59,7 @@ func (s *Server) handleGitHubSetup(w http.ResponseWriter, r *http.Request) {
 		s.log.Error("github app installation lookup", "installation", id, "err", err)
 		s.renderConnect(w, r, http.StatusBadGateway, "GitHub did not confirm the installation",
 			"The installation could not be verified with GitHub. If you just installed the "+
-				"app, try reloading this page in a moment.", "")
+				"app, try reloading this page in a moment.")
 		return
 	}
 
@@ -82,7 +84,7 @@ func (s *Server) connectExisting(w http.ResponseWriter, r *http.Request, u *stor
 		// belongs to another forge's tenant here.
 		s.renderConnect(w, r, http.StatusConflict, "Workspace name in use",
 			"The name "+login+" is already registered under another forge on this server, "+
-				"so the installation cannot be linked to it.", "")
+				"so the installation cannot be linked to it.")
 		return
 	}
 	member, err := s.isMember(r.Context(), u, ws)
@@ -96,8 +98,11 @@ func (s *Server) connectExisting(w http.ResponseWriter, r *http.Request, u *stor
 			// beyond what the conflict above already implies.
 			s.log.Warn("github setup denied", "user", u.DisplayName, "installation", installationID, "account", login)
 			s.renderConnect(w, r, http.StatusForbidden, "Not your workspace",
-				"You are not a member of the "+login+" workspace on this server. If you just "+
-					"joined the organization on GitHub, sign out and back in, then retry.", "")
+				"You are not a member of the "+login+" workspace on this server. If "+login+
+					" is your organization, it may restrict third-party OAuth apps so gocov can't "+
+					"see your membership — allow gocov below, then sign in again.",
+				connectAction{URL: githubOrgPolicyURL(login), Label: "Allow gocov on " + login, External: true},
+				connectAction{URL: githubReauthURL(installationID), Label: "Sign in again"})
 			return
 		}
 		if err := s.joinWorkspace(r, u, ws); err != nil {
@@ -124,14 +129,19 @@ func (s *Server) connectNew(w http.ResponseWriter, r *http.Request, u *store.Use
 	if !s.hosted {
 		s.renderConnect(w, r, http.StatusNotFound, "Workspace not registered",
 			"This server has no workspace named "+login+". Register it first "+
-				"(gocov-server workspace add), then install the app again.", "")
+				"(gocov-server workspace add), then install the app again.")
 		return
 	}
 	if !inForgeWorkspaces(u, login) {
 		s.log.Warn("github setup claim denied", "user", u.DisplayName, "installation", installationID, "account", login)
 		s.renderConnect(w, r, http.StatusForbidden, "Not your workspace",
-			"GitHub reports the installation on "+login+", which is not among your "+
-				"organizations on this account. Sign in again if you joined it recently.", "")
+			"gocov can see the app installed on "+login+", but your GitHub sign-in didn't list "+
+				login+" among your organizations. Most often that means "+login+" restricts "+
+				"third-party OAuth apps and hasn't approved gocov's, so it stays hidden no matter "+
+				"how many times you sign in. If "+login+" is yours, allow gocov below, then sign "+
+				"in again. (If you only just created it, signing in again alone may be enough.)",
+			connectAction{URL: githubOrgPolicyURL(login), Label: "Allow gocov on " + login, External: true},
+			connectAction{URL: githubReauthURL(installationID), Label: "Sign in again"})
 		return
 	}
 	token, err := newToken()
@@ -209,13 +219,41 @@ func inForgeWorkspaces(u *store.User, login string) bool {
 
 // renderConnect renders the connect flow's terminal states that have no
 // workspace page to land on.
-func (s *Server) renderConnect(w http.ResponseWriter, r *http.Request, code int, heading, message, installURL string) {
+func (s *Server) renderConnect(w http.ResponseWriter, r *http.Request, code int, heading, message string, actions ...connectAction) {
 	w.WriteHeader(code)
 	s.render(w, r, "connect.html", map[string]any{
-		"Heading":    heading,
-		"Message":    message,
-		"InstallURL": installURL,
+		"Heading": heading,
+		"Message": message,
+		"Actions": actions,
 	})
+}
+
+// connectAction is one button on a connect terminal page. The first is
+// rendered primary; External ones open in a new tab (they leave gocov, e.g.
+// a GitHub settings page).
+type connectAction struct {
+	URL      string
+	Label    string
+	External bool
+}
+
+// githubReauthURL re-runs GitHub sign-in and returns to this same
+// installation. A brand-new org is missing from the sign-in snapshot the
+// claim gate checks (the OAuth token is dropped at login, D3); re-auth
+// refreshes the snapshot, then the setup handler runs again with the same
+// installation and the claim goes through — no dead end.
+func githubReauthURL(installationID int64) string {
+	return "/oauth/github/start?next=" +
+		url.QueryEscape("/github/setup?installation_id="+strconv.FormatInt(installationID, 10))
+}
+
+// githubOrgPolicyURL is the org's third-party OAuth-app policy page. When an
+// installed org is absent from the user's sign-in org list, the usual cause
+// is that the org restricts third-party OAuth apps and hasn't approved
+// gocov's — so it never appears in GET /user/orgs and no amount of re-auth
+// helps. This links an owner straight to the setting to allow gocov.
+func githubOrgPolicyURL(login string) string {
+	return "https://github.com/organizations/" + url.PathEscape(login) + "/settings/oauth_application_policy"
 }
 
 // githubInstallURL resolves the app's public install page, best effort: a

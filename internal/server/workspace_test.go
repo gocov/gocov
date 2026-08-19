@@ -317,12 +317,20 @@ func TestSetupPageWaitsAndFlips(t *testing.T) {
 	if !strings.Contains(body, "bitbucket-pipelines.yml") {
 		t.Errorf("bitbucket workspace must get the Pipelines snippet:\n%s", body)
 	}
-	// ...and starts in the polling waiting state.
-	if !strings.Contains(body, "Waiting for your first upload") ||
-		!strings.Contains(body, `hx-get="/workspaces/acme/setup/status"`) {
-		t.Errorf("setup page misses the waiting state:\n%s", body)
+	// The CI step is a single clean card — no waiting card stacked under it —
+	// with a button to advance to the First-upload step.
+	if strings.Contains(body, "Waiting for your first upload") {
+		t.Errorf("CI step must not stack the waiting card:\n%s", body)
 	}
-	// The poll target keeps waiting while there are no repos.
+	if !strings.Contains(body, `href="/workspaces/acme/setup?awaiting=1"`) {
+		t.Errorf("CI step misses the advance-to-first-upload button:\n%s", body)
+	}
+	// Advancing (or the poll target) shows the polling waiting state.
+	await := get(f, "/workspaces/acme/setup?awaiting=1", sess).Body.String()
+	if !strings.Contains(await, "Waiting for your first upload") ||
+		!strings.Contains(await, `hx-get="/workspaces/acme/setup/status"`) {
+		t.Errorf("first-upload step misses the waiting state:\n%s", await)
+	}
 	if st := get(f, "/workspaces/acme/setup/status", sess); !strings.Contains(st.Body.String(), "Waiting") {
 		t.Errorf("status endpoint should still wait:\n%s", st.Body)
 	}
@@ -333,22 +341,23 @@ func TestSetupPageWaitsAndFlips(t *testing.T) {
 	if up.Code != http.StatusCreated {
 		t.Fatalf("first upload: status = %d, body = %s", up.Code, up.Body)
 	}
+	// Once the upload lands the poll redirects to the clean done page
+	// rather than swapping the card in under the CI step.
 	st := get(f, "/workspaces/acme/setup/status", sess)
-	if !strings.Contains(st.Body.String(), "Coverage is flowing") ||
-		!strings.Contains(st.Body.String(), `href="/repos/acme/newrepo"`) {
-		t.Errorf("status endpoint did not flip:\n%s", st.Body)
+	if loc := st.Header().Get("HX-Redirect"); loc != "/workspaces/acme/setup" {
+		t.Errorf("status endpoint did not redirect on flip: HX-Redirect=%q", loc)
 	}
-	// The done card carries the first-report summary (coverage + lines).
-	if !strings.Contains(st.Body.String(), "First report") ||
-		!strings.Contains(st.Body.String(), "Lines covered") {
-		t.Errorf("done card missing the first-report summary:\n%s", st.Body)
+	// The reloaded setup page is the clean First-upload done state: the
+	// report summary, no CI card, no polling.
+	rec = get(f, "/workspaces/acme/setup", sess)
+	body = rec.Body.String()
+	if !strings.Contains(body, "Coverage is flowing") ||
+		!strings.Contains(body, `href="/repos/acme/newrepo"`) ||
+		!strings.Contains(body, "First report") || !strings.Contains(body, "Lines covered") {
+		t.Errorf("done page missing content:\n%s", body)
 	}
-	if strings.Contains(st.Body.String(), "hx-get") {
-		t.Error("flipped status block must stop polling")
-	}
-	// A fresh page load shows the done state directly.
-	if rec := get(f, "/workspaces/acme/setup", sess); !strings.Contains(rec.Body.String(), "Coverage is flowing") {
-		t.Errorf("reloaded setup page still waiting:\n%s", rec.Body)
+	if strings.Contains(body, "GOCOV_TOKEN") || strings.Contains(body, "hx-get") {
+		t.Errorf("done page should drop the CI card and stop polling:\n%s", body)
 	}
 }
 
@@ -385,6 +394,7 @@ func TestSetupPageGitHubSnippet(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"GitHub Actions workflow",
+		"gocov/gocov-action@v1",
 		"${{ vars.GOCOV_SERVER }}",
 		"${{ secrets.GOCOV_TOKEN }}",
 		`data-full="gh-secret"`,
@@ -395,6 +405,41 @@ func TestSetupPageGitHubSnippet(t *testing.T) {
 	}
 	if strings.Contains(body, "bitbucket-pipelines.yml") {
 		t.Error("github workspace got the Bitbucket snippet")
+	}
+	// The GitHub snippet is the action, not a raw curl install.
+	if strings.Contains(body, "curl -fsSL https://github.com/gocov/gocov/releases") {
+		t.Error("github snippet should use the action, not a raw binary download")
+	}
+}
+
+func TestSetupPageGitLabSnippet(t *testing.T) {
+	st := storemem.New()
+	if err := st.CreateWorkspace(context.Background(),
+		&store.Workspace{Forge: "gitlab", Prefix: "grp/team", Token: "gl-secret", DefaultBranch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	gl := &fakeProvider{name: "gitlab", identity: &auth.Identity{
+		ForgeUUID: "9", DisplayName: "GL Dev", Workspaces: []string{"grp/team"},
+	}}
+	f := &fixture{
+		srv: New(Config{
+			Store:   st,
+			Blobs:   blobmem.New(),
+			Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
+			Forges:  map[string]forge.Factory{"gitlab": forgefake.New().Factory()},
+			BaseURL: "https://gocov.example",
+			Auths:   []auth.Provider{gl},
+		}),
+		store: st,
+	}
+	sess := signInVia(t, f, "gitlab")
+
+	body := get(f, "/workspaces/grp%2Fteam/setup", sess).Body.String()
+	if !strings.Contains(body, ".gitlab-ci.yml") || !strings.Contains(body, "sha256sum") {
+		t.Errorf("gitlab setup page misses the CI snippet with checksum verification:\n%s", body)
+	}
+	if strings.Contains(body, "bitbucket-pipelines.yml") {
+		t.Error("gitlab workspace got the Bitbucket snippet")
 	}
 }
 
@@ -501,13 +546,12 @@ func TestGitLabSubgroupWorkspace(t *testing.T) {
 		t.Errorf("non-member repo page: status = %d, want 404", rec.Code)
 	}
 
-	// The setup page renders the GitLab snippet, not a Bitbucket pipe.
+	// The subgroup already has a repo, so its setup page is the clean
+	// First-upload done state — and it still resolves through the
+	// %2F-encoded prefix. (The forge-specific CI snippet, shown only before
+	// the first upload, is covered by TestSetupPageGitLabSnippet.)
 	rec := get(f, "/workspaces/grp%2Fsub/setup", sess)
-	body := rec.Body.String()
-	if !strings.Contains(body, ".gitlab-ci.yml") || !strings.Contains(body, "sha256sum") {
-		t.Error("setup page must render the GitLab CI snippet with checksum verification")
-	}
-	if strings.Contains(body, "bitbucket-pipelines.yml") {
-		t.Error("setup page must not render the Bitbucket snippet for a gitlab workspace")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Coverage is flowing") {
+		t.Errorf("subgroup setup done page: status %d\n%s", rec.Code, rec.Body)
 	}
 }

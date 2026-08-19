@@ -115,11 +115,21 @@ func TestRegistrationIsHostedOnly(t *testing.T) {
 	}
 }
 
+// TestHostedReauthHonorsPendingInstall locks the callback change behind the
+// GitHub install self-heal: a re-auth aimed at a pending install must reach
+// /github/setup even for a zero-membership user, instead of being forced to
+// /onboarding, so it can connect once the org snapshot refreshes.
+func TestHostedReauthHonorsPendingInstall(t *testing.T) {
+	f := newHostedFixture(t, &fakeProvider{identity: memberIdentity()})
+	next := "/github/setup?installation_id=5"
+	hostedSignIn(t, f, next, next) // asserts the callback honours next verbatim
+}
+
 func TestRegisterPageStates(t *testing.T) {
 	f := newHostedFixture(t, &fakeProvider{identity: memberIdentity()})
 	ctx := context.Background()
-	// "personal" is free; "acme" is taken by a GitHub workspace of the
-	// same name, so it must render unavailable.
+	// "personal" is free; "acme" is taken by a GitHub workspace of the same
+	// name, so it must render unavailable.
 	if err := f.store.CreateWorkspace(ctx,
 		&store.Workspace{Forge: "github", Prefix: "acme", Token: "gh-tok", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
@@ -137,6 +147,14 @@ func TestRegisterPageStates(t *testing.T) {
 	// The collision row must name the forge holding the prefix.
 	if !strings.Contains(body, "Name registered under GitHub") {
 		t.Errorf("cross-forge collision not surfaced:\n%s", body)
+	}
+	// "Sign in again" re-runs OAuth to refresh the snapshot. It must not
+	// point at /logout, which is POST-only and 404s on a link's GET.
+	if strings.Contains(body, `href="/logout"`) {
+		t.Error("pick page links the POST-only /logout, which 404s on GET")
+	}
+	if !strings.Contains(body, "/start?next=/onboarding") {
+		t.Errorf("pick page misses the re-auth 'sign in again' link:\n%s", body)
 	}
 }
 

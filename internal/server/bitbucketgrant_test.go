@@ -149,7 +149,7 @@ func TestBitbucketConnectFlow(t *testing.T) {
 		t.Errorf("redirect_uri = %q, must equal the sign-in callback exactly", got)
 	}
 	stateCk := cookieNamed(t, start, connectStateCookie)
-	state, prefix, _ := strings.Cut(stateCk.Value, "|")
+	state, prefix, _ := splitConnectState(stateCk.Value)
 	if prefix != "acme" {
 		t.Errorf("cookie prefix = %q", prefix)
 	}
@@ -173,6 +173,24 @@ func TestBitbucketConnectFlow(t *testing.T) {
 	}
 	if !strings.Contains(body, "posts will appear") && !strings.Contains(body, "Posts appear") {
 		t.Error("settings page must state the comment identity caveat (D8)")
+	}
+}
+
+// TestBitbucketConnectFromOnboarding: a connect started from the onboarding
+// Workspace-ready card returns there (not the settings page), so "Continue
+// to CI" is right where the user left off.
+func TestBitbucketConnectFromOnboarding(t *testing.T) {
+	f, sess := newBBConnectFixture(t)
+
+	start := get(f.fixture, "/workspaces/acme/bitbucket/connect?from=onboarding", sess)
+	stateCk := cookieNamed(t, start, connectStateCookie)
+	state, _, from := splitConnectState(stateCk.Value)
+	if from != "onboarding" {
+		t.Fatalf("cookie from = %q, want onboarding", from)
+	}
+	cb := get(f.fixture, "/oauth/bitbucket/callback?code=thecode&state="+url.QueryEscape(state), stateCk, sess)
+	if loc := cb.Header().Get("Location"); loc != "/onboarding?ws=acme" {
+		t.Errorf("callback redirect = %q, want the onboarding ready state", loc)
 	}
 }
 

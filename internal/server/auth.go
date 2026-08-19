@@ -334,7 +334,10 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	// A hosted user who belongs to no tracked workspace has nothing to see
 	// yet — land them in the onboarding wizard rather than an empty dashboard.
-	if s.hosted && memberships == 0 {
+	// Only when no explicit destination was requested: a re-auth aimed at a
+	// pending GitHub install (next=/github/setup?...) must be honoured so it
+	// can connect after the org snapshot refreshes.
+	if s.hosted && memberships == 0 && (next == "" || next == "/") {
 		next = "/onboarding"
 	}
 	token, err := newState() // same entropy requirement: 256 random bits

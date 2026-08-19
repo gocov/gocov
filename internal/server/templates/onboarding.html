@@ -13,8 +13,9 @@
     {{if eq .WSState "install"}}{{template "wiz-ws-install" .}}
     {{else if eq .WSState "ready"}}{{template "wiz-ws-ready" .}}
     {{else}}{{template "wiz-ws-pick" .}}{{end}}
-  {{else}}
+  {{else if eq .Active 1}}
     {{template "wiz-ci" .}}
+  {{else}}
     {{template "wiz-firstupload" .}}
   {{end}}
   </div>
@@ -86,7 +87,7 @@
     <div class="empty">Your {{.ForgeLabel}} account reported no {{$noun}}s at sign-in.</div>
     {{end}}
     <p class="hint">Joined a new {{$noun}} since you signed in?
-    <a href="/logout">Sign in again</a> to read your memberships fresh.</p>
+    <a href="/oauth/{{.Forge}}/start?next=/onboarding">Sign in again</a> to read your memberships fresh.</p>
     <div class="foot">
       <span class="hint">Signed in as <strong>{{.Account}}</strong> &middot;
         {{.MembershipCount}} membership{{if ne .MembershipCount 1}}s{{end}} read at sign-in.</span>
@@ -186,6 +187,16 @@
     <code>GOCOV_SERVER</code>{{end}}.</p>
     {{end}}
 
+    {{if not .ServerImplicit}}
+    <div class="secret">
+      <div class="secret-hd"><span class="name">GOCOV_SERVER</span><span class="chip plain">Variable</span>
+        <span class="spacer"></span><span class="muted small">Your gocov instance &mdash; a plain value, not a secret</span></div>
+      <div class="secret-bd">
+        <span class="v" id="srv">{{.BaseURL}}</span>
+        <button class="btn primary" type="button" data-copy="#srv">Copy</button>
+      </div>
+    </div>
+    {{end}}
     <div class="secret">
       <div class="secret-hd"><span class="name">GOCOV_TOKEN</span><span class="chip plain">Secret</span>
         <span class="spacer"></span><span class="muted small">Shown once &mdash; rotate it any time from Settings</span></div>
@@ -196,21 +207,16 @@
         <input type="hidden" id="tok-full" value="{{.Workspace.Token}}">
       </div>
     </div>
-    {{if not .ServerImplicit}}
-    <p class="sub">Also set <code>GOCOV_SERVER</code> to <code>{{.BaseURL}}</code>.</p>
-    {{end}}
 
     {{if eq .Workspace.Forge "github"}}
-    <p class="sub">Then, in your GitHub Actions workflow, upload the profile after your tests run:</p>
+    <p class="sub">Then add the gocov action to your GitHub Actions workflow, after your tests
+    run &mdash; it installs the pinned CLI (with checksum verification) and uploads:</p>
     <pre><code id="snippet">- run: go test ./... -covermode=atomic -coverprofile=coverage.out
-- name: Upload coverage
-  run: |
-    curl -fsSL https://github.com/gocov/gocov/releases/latest/download/gocov-linux-amd64 -o /usr/local/bin/gocov
-    chmod +x /usr/local/bin/gocov
-    gocov upload coverage.out
-  env:
-    GOCOV_TOKEN: ${{"{{"}} secrets.GOCOV_TOKEN {{"}}"}}{{if not .ServerImplicit}}
-    GOCOV_SERVER: ${{"{{"}} vars.GOCOV_SERVER {{"}}"}}{{end}}</code></pre>
+- uses: gocov/gocov-action@v1
+  with:
+    files: coverage.out
+    token: ${{"{{"}} secrets.GOCOV_TOKEN {{"}}"}}{{if not .ServerImplicit}}
+    server: ${{"{{"}} vars.GOCOV_SERVER {{"}}"}}{{end}}</code></pre>
     {{else if eq .Workspace.Forge "gitlab"}}
     <p class="sub">Then add the coverage job to your <code>.gitlab-ci.yml</code> &mdash; the
     <code>workflow</code> rules run it on merge requests and the default branch without
@@ -263,6 +269,8 @@ pipelines:
     <div class="foot">
       <span class="hint">Reporting and CI are independent &mdash; coverage uploads even if
       reporting is off.</span>
+      <span class="spacer"></span>
+      <a class="btn primary" href="/workspaces/{{pathesc .Workspace.Prefix}}/setup?awaiting=1">I&rsquo;ve added these</a>
     </div>
   </div>
 </section>
@@ -286,13 +294,6 @@ pipelines:
       <tr><td>Coverage</td><td><span class="cov"><span class="track"><span class="fill" style="width:{{.Pct}}%"></span></span><span class="pct">{{.Pct}}%</span></span></td></tr>
       <tr><td>Lines covered</td><td>{{.Covered}} / {{.Total}}</td></tr>
     </table>
-    <div class="later">
-      <div class="lhd"><span class="chip plain">Later</span> Not needed for v1 &mdash; the card reads complete without them</div>
-      <table>
-        <tr><td>Statements</td><td>&mdash;</td></tr>
-        <tr><td>Files reported</td><td>&mdash;</td></tr>
-      </table>
-    </div>
   </div>
   {{else}}
   <p class="sub">Coverage is live:
@@ -319,6 +320,9 @@ pipelines:
   opens its dashboard. Nothing else to configure.</p>
   <div class="notice wait"><span class="spin"></span> Waiting for your first upload from
     <strong>{{.Workspace.Prefix}}</strong>&hellip; this page updates by itself.</div>
+  <div class="foot">
+    <a class="btn" href="/workspaces/{{pathesc .Workspace.Prefix}}/setup">Back</a>
+  </div>
 </div>
 {{end}}
 {{end}}

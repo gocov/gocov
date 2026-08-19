@@ -198,6 +198,12 @@ select.input { min-width: 160px; }
 .wiz .head h1 { margin: 0 0 4px; }
 .wiz .head .sub { margin: 0; }
 .wiz #panels, .wiz .panel, .wiz .card { min-width: 0; }
+/* Snippet blocks: a boxed code area (the source view keeps its own .codeline
+   pre styling, so scope this to the wizard). */
+.wiz code { font-family: var(--mono); font-size: 12.5px; }
+.wiz pre { background: var(--surface2); border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm); padding: 12px 14px; margin: 0 0 10px; overflow-x: auto; }
+.wiz pre code { font-size: 12.5px; line-height: 1.65; }
 
 .rail { position: sticky; top: 20px; display: flex; flex-direction: column; gap: 2px;
   border-left: 1px solid var(--border); }
@@ -282,10 +288,6 @@ select.input { min-width: 160px; }
 .cov .track { flex: 1; display: block; height: 8px; border-radius: 4px; background: var(--border-soft); overflow: hidden; }
 .cov .fill { display: block; height: 100%; border-radius: 4px; background: var(--green); }
 .cov .pct { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 13px; color: var(--green); }
-.later { border-top: 1px dashed var(--border); background: var(--surface2); }
-.later .lhd { display: flex; align-items: center; gap: 8px; padding: 8px 14px; font-size: 12px; color: var(--text-3); }
-.later td { color: var(--text-3); border-bottom-color: transparent; }
-.later td:last-child { color: var(--text-3); font-weight: 400; }
 
 /* narrow screens */
 @media (max-width: 760px) {
