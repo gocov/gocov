@@ -258,8 +258,8 @@ func TestGitHubSetupClaimsWorkspaceHosted(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/workspaces/janedev/setup" {
-		t.Errorf("redirect = %q, want the setup page (activation moment)", loc)
+	if loc := rec.Header().Get("Location"); loc != "/onboarding?ws=janedev" {
+		t.Errorf("redirect = %q, want the workspace-ready state (activation moment)", loc)
 	}
 	ws := f.reloadWorkspace(t, "janedev")
 	if ws.GitHubInstallationID != 7 || ws.Forge != "github" {
@@ -461,16 +461,20 @@ func TestSettingsPageBrokenState(t *testing.T) {
 }
 
 func TestSetupPageRecommendsApp(t *testing.T) {
-	f, sess := newGitHubAppFixture(t, false, true)
+	f, sess := newGitHubAppFixture(t, true, true)
 
-	body := get(f.fixture, "/workspaces/acme/setup", sess).Body.String()
-	if !strings.Contains(body, "Install the gocov app") || !strings.Contains(body, f.app.installURL) {
-		t.Error("setup page must recommend the App while not connected")
+	// The reporting capability lives in the Workspace step's ready state.
+	body := get(f.fixture, "/onboarding?ws=acme", sess).Body.String()
+	if !strings.Contains(body, "Grant write access") || !strings.Contains(body, f.app.installURL) {
+		t.Error("ready state must offer the App grant while not connected")
 	}
 
 	f.connectWorkspace(t, 42)
-	body = get(f.fixture, "/workspaces/acme/setup", sess).Body.String()
-	if strings.Contains(body, "Install the gocov app") {
-		t.Error("setup page must drop the recommendation once connected")
+	body = get(f.fixture, "/onboarding?ws=acme", sess).Body.String()
+	if strings.Contains(body, "Grant write access") {
+		t.Error("ready state must drop the grant once connected")
+	}
+	if !strings.Contains(body, "gocov[bot]") {
+		t.Error("connected workspace must show the gocov[bot] identity")
 	}
 }

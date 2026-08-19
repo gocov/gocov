@@ -21,6 +21,26 @@ document.addEventListener("submit", (e) => {
   if (msg && !window.confirm(msg)) e.preventDefault();
 });
 
+// Reveal-a-secret: <button data-reveal="#selector"> swaps a masked value for
+// its full form (kept in the target's data-full) and back. Used by the
+// onboarding upload-token card so the token is not shown by default.
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-reveal]");
+  if (!btn) return;
+  const el = document.querySelector(btn.getAttribute("data-reveal"));
+  if (!el || el.dataset.full === undefined) return;
+  if (el.dataset.shown) {
+    delete el.dataset.shown;
+    el.textContent = el.dataset.masked;
+    btn.textContent = "Reveal";
+  } else {
+    el.dataset.masked = el.textContent;
+    el.dataset.shown = "1";
+    el.textContent = el.dataset.full;
+    btn.textContent = "Hide";
+  }
+});
+
 // Copy-to-clipboard: <button data-copy="#selector">Copy</button> copies the
 // value/text of the referenced element. Falls back to select+execCommand on
 // plain-http deployments where the Clipboard API is unavailable.

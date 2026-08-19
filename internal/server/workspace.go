@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gocov/gocov/internal/hosted"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -241,26 +240,17 @@ func (s *Server) handleWorkspaceSetup(w http.ResponseWriter, r *http.Request) {
 	if ws == nil {
 		return
 	}
-	repos, err := s.workspaceRepos(r, ws)
+	data, err := s.setupViewData(r, ws)
 	if err != nil {
 		s.internalError(w, "listing workspace repos", err)
 		return
 	}
-	baseURL := strings.TrimSuffix(s.baseURL, "/")
-	data := map[string]any{
-		"Workspace":  ws,
-		"ForgeLabel": providerLabel(ws.Forge),
-		"BaseURL":    baseURL,
-		// When this instance is the public hosted service, the CLI already
-		// defaults to it, so onboarding can drop GOCOV_SERVER and ask only
-		// for a token. Self-hosters (any other base URL) still set it.
-		"ServerImplicit": baseURL == hosted.DefaultServer,
-		"Repos":          repos,
-	}
-	s.addGitHubAppData(r, ws, data)
-	s.addBitbucketGrantData(ws, data)
-	s.addGitLabGrantData(ws, data)
-	s.render(w, r, "setup.html", data)
+	repos, _ := data["Repos"].([]*store.Repo)
+	// Wire up CI is rail step 1; First upload (rail 2) shows below it.
+	data["Active"] = 1
+	data["Forge"] = ws.Forge
+	data["Rail"] = onboardingRail(1, ws.Forge, ws.Prefix, len(repos) > 0)
+	s.render(w, r, "onboarding.html", data)
 }
 
 // handleWorkspaceSetupStatus implements GET /workspaces/{prefix}/setup/status,
@@ -271,15 +261,12 @@ func (s *Server) handleWorkspaceSetupStatus(w http.ResponseWriter, r *http.Reque
 	if ws == nil {
 		return
 	}
-	repos, err := s.workspaceRepos(r, ws)
+	data, err := s.setupViewData(r, ws)
 	if err != nil {
 		s.internalError(w, "listing workspace repos", err)
 		return
 	}
-	s.renderPartial(w, "setup.html", "setup-status", map[string]any{
-		"Workspace": ws,
-		"Repos":     repos,
-	})
+	s.renderPartial(w, "onboarding.html", "setup-status", data)
 }
 
 // workspaceRepos lists the repos under the workspace's prefix.

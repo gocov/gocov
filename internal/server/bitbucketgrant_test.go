@@ -81,6 +81,7 @@ func newBBConnectFixture(t *testing.T) (*bbConnectFixture, *http.Cookie) {
 				Parsers:          map[string]profile.Parser{"go": profile.GoParser{}},
 				Forges:           map[string]forge.Factory{"bitbucket": credsForge.Factory()},
 				BaseURL:          "https://gocov.example",
+				Hosted:           true,
 				Auths:            []auth.Provider{&fakeProvider{identity: memberIdentity()}},
 				BitbucketConnect: bb,
 			}),
@@ -337,14 +338,17 @@ func TestSettingsPageBitbucketStates(t *testing.T) {
 func TestSetupPageRecommendsConnect(t *testing.T) {
 	f, sess := newBBConnectFixture(t)
 
-	body := get(f.fixture, "/workspaces/acme/setup", sess).Body.String()
-	if !strings.Contains(body, "Connect workspace") {
-		t.Error("setup page must recommend connecting while not connected")
+	body := get(f.fixture, "/onboarding?ws=acme", sess).Body.String()
+	if !strings.Contains(body, "/workspaces/acme/bitbucket/connect") {
+		t.Error("ready state must offer the connect grant while not connected")
 	}
 
 	f.grant(t, "covbot", "rt-0", false)
-	body = get(f.fixture, "/workspaces/acme/setup", sess).Body.String()
-	if strings.Contains(body, "Recommended: connect the workspace") {
-		t.Error("setup page must drop the recommendation once connected")
+	body = get(f.fixture, "/onboarding?ws=acme", sess).Body.String()
+	if strings.Contains(body, "/workspaces/acme/bitbucket/connect") {
+		t.Error("ready state must drop the connect grant once connected")
+	}
+	if !strings.Contains(body, "@covbot") {
+		t.Error("connected workspace must show the posting account")
 	}
 }

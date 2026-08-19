@@ -1,0 +1,324 @@
+{{define "title"}}gocov — set up coverage{{end}}
+{{define "content"}}
+<div class="wiz">
+  <div class="head">
+    <h1>Set up coverage</h1>
+    <p class="sub">Three steps, about two minutes. You can leave and come back &mdash; progress is saved.</p>
+  </div>
+
+  {{template "wiz-rail" .}}
+
+  <div id="panels">
+  {{if eq .Active 0}}
+    {{if eq .WSState "install"}}{{template "wiz-ws-install" .}}
+    {{else if eq .WSState "ready"}}{{template "wiz-ws-ready" .}}
+    {{else}}{{template "wiz-ws-pick" .}}{{end}}
+  {{else}}
+    {{template "wiz-ci" .}}
+    {{template "wiz-firstupload" .}}
+  {{end}}
+  </div>
+</div>
+{{end}}
+
+{{/* The fixed three-stage rail. The per-forge difference is carried by the
+   Workspace subline, not the shape. */}}
+{{define "wiz-rail"}}
+<nav class="rail" aria-label="Setup steps">
+  {{range .Rail}}
+  {{if and (eq .State "done") .Href}}
+  <a class="step" href="{{.Href}}" data-state="{{.State}}"><span class="dot">&checkmark;</span><span class="t">{{.Label}}{{if .Subline}}<span class="st">{{.Subline}}</span>{{end}}</span></a>
+  {{else}}
+  <div class="step" data-state="{{.State}}"><span class="dot">{{if eq .State "done"}}&checkmark;{{else}}{{.Num}}{{end}}</span><span class="t">{{.Label}}{{if .Subline}}<span class="st">{{.Subline}}</span>{{end}}</span></div>
+  {{end}}
+  {{end}}
+</nav>
+{{end}}
+
+{{/* Workspace · GitHub — the workspace is created by installing the app,
+   which also picks the org and grants the bot identity in one approval. */}}
+{{define "wiz-ws-install"}}
+<section class="panel">
+  <div class="card pad">
+    <h2>Install gocov on your organization</h2>
+    <p class="sub">On GitHub, the workspace is created by installing the gocov app. GitHub&rsquo;s
+    own approval screen is where you pick the organization and which repositories gocov can see
+    &mdash; and the same approval gives gocov its own bot identity for posting back.</p>
+    <div class="notice">You&rsquo;re signed in as <strong>{{.Account}}</strong>. Install to continue.</div>
+    <div class="foot">
+      {{if .GitHubInstallURL}}<a class="btn primary" href="{{.GitHubInstallURL}}">Install the gocov app</a>{{end}}
+      <span class="spacer"></span>
+      <span class="hint">gocov never needs your source code &mdash; only coverage profiles you upload.</span>
+    </div>
+  </div>
+</section>
+{{end}}
+
+{{/* Workspace · Bitbucket/GitLab — pick from the sign-in snapshot. There is
+   no live forge connection to refresh it (the token is dropped at login). */}}
+{{define "wiz-ws-pick"}}
+{{$noun := "workspace"}}{{if eq .Forge "gitlab"}}{{$noun = "group"}}{{end}}
+<section class="panel">
+  <div class="card pad">
+    <h2>Choose a {{$noun}}</h2>
+    <p class="sub">These are the memberships gocov read when you signed in. gocov keeps no live
+    connection to {{.ForgeLabel}} &mdash; the forge token is discarded right after login &mdash;
+    so the list is a snapshot. Coverage, gates and members all live at this level; you can set
+    up more later from Settings.</p>
+    {{if .Rows}}
+    <div class="optlist">
+      {{range .Rows}}
+      <div class="opt">
+        <span class="av">{{slice .Prefix 0 1}}</span>
+        <span><span class="n">{{.Prefix}}</span><br>
+        {{if eq .State "member"}}<span class="m">Registered &mdash; you&rsquo;re a member</span>
+        {{else if eq .State "registered"}}<span class="m">Registered &mdash; join to start uploading</span>
+        {{else if eq .State "taken"}}<span class="m">Name registered under {{.TakenBy}} on this server &mdash; unavailable here</span>
+        {{else}}<span class="m">Not set up</span>{{end}}</span>
+        {{if eq .State "member"}}<a class="btn" href="/">Open dashboard</a>
+        {{else if eq .State "registered"}}<form method="post" action="/register"><input type="hidden" name="prefix" value="{{.Prefix}}"><button class="btn primary" type="submit">Join</button></form>
+        {{else if eq .State "taken"}}<span class="chip plain">Unavailable</span>
+        {{else}}<form method="post" action="/register"><input type="hidden" name="prefix" value="{{.Prefix}}"><button class="btn primary" type="submit">Create the workspace</button></form>{{end}}
+      </div>
+      {{end}}
+    </div>
+    {{else}}
+    <div class="empty">Your {{.ForgeLabel}} account reported no {{$noun}}s at sign-in.</div>
+    {{end}}
+    <p class="hint">Joined a new {{$noun}} since you signed in?
+    <a href="/logout">Sign in again</a> to read your memberships fresh.</p>
+    <div class="foot">
+      <span class="hint">Signed in as <strong>{{.Account}}</strong> &middot;
+        {{.MembershipCount}} membership{{if ne .MembershipCount 1}}s{{end}} read at sign-in.</span>
+    </div>
+  </div>
+</section>
+{{end}}
+
+{{/* Workspace · ready — the created workspace plus the reporting capability
+   card, before continuing to CI. */}}
+{{define "wiz-ws-ready"}}
+<section class="panel">
+  <div class="card pad">
+    <h2>Workspace ready</h2>
+    <p class="sub"><strong>{{.Workspace.Prefix}}</strong> is set up{{if eq .Forge "github"}} from
+    your GitHub install{{else}} &mdash; repositories register themselves on their first upload{{end}}.</p>
+
+    {{template "wiz-reporting" .}}
+
+    <div class="foot">
+      <a class="btn" href="/onboarding">Change {{if eq .Forge "github"}}install{{else}}workspace{{end}}</a>
+      <span class="spacer"></span>
+      <a class="btn primary" href="/workspaces/{{pathesc .Workspace.Prefix}}/setup">Continue to CI</a>
+    </div>
+  </div>
+</section>
+{{end}}
+
+{{/* The reporting capability card — same slot for every forge, connect-only
+   (no manual-token path). Two states: connected, or not connected with a
+   single Grant action. */}}
+{{define "wiz-reporting"}}
+<div class="cap">
+  <div class="cap-hd">
+    <span class="t">Reporting to {{.ForgeLabel}}</span>
+    <span class="spacer"></span>
+    {{if .ReportingConnected}}<span class="chip pass">{{if eq .Forge "github"}}Ready{{else}}Connected{{end}}</span>
+    {{else}}<span class="chip warn">Not connected</span>{{end}}
+  </div>
+  <div class="cap-bd">
+    {{if eq .Forge "github"}}
+      {{if .ReportingConnected}}
+      <p>Commit statuses, check runs and PR comments are live. Granted by the app install &mdash;
+      nothing else to set up.</p>
+      <div class="who"><span class="face bot">g</span>
+        <span><span class="id">gocov[bot]</span><br><span class="m">gocov&rsquo;s own identity on GitHub</span></span>
+        <span class="spacer"></span><span class="chip plain">App install</span></div>
+      {{else}}
+      <p>Coverage shows up in gocov either way. Installing the app turns on commit statuses,
+      check runs and PR comments, posted as <code>gocov[bot]</code> with no tokens to manage.</p>
+      <div class="who"><span class="face bot">g</span>
+        <span><span class="id">gocov[bot]</span><br><span class="m">Not connected yet</span></span></div>
+      {{if .GrantURL}}<div class="row"><a class="btn primary" href="{{.GrantURL}}">Grant write access</a>
+        <span class="hint">Optional &mdash; you can turn this on later from Settings.</span></div>{{end}}
+      {{end}}
+    {{else}}
+      {{$kind := "pull-request"}}{{if eq .Forge "gitlab"}}{{$kind = "merge-request"}}{{end}}
+      {{if .ReportingConnected}}
+      <p>Statuses and {{$kind}} comments post automatically.</p>
+      <div class="who"><span class="face">{{slice .GrantAccount 0 1}}</span>
+        <span><span class="id">@{{.GrantAccount}}</span><br><span class="m">Statuses and comments post under this account</span></span>
+        <span class="spacer"></span><span class="chip plain">Your account</span></div>
+      {{else}}
+      <p>Coverage shows up in gocov either way. Posting statuses and {{$kind}} comments needs
+      write access &mdash; one consent, granted under your own account.</p>
+      <div class="who"><span class="face">{{with .CurrentUser}}{{slice .DisplayName 0 1}}{{end}}</span>
+        <span><span class="id">@{{with .CurrentUser}}{{.DisplayName}}{{end}}</span><br>
+        <span class="m">Comments would appear as you &mdash; there is no bot account here</span></span>
+        <span class="spacer"></span><span class="chip plain">Your account</span></div>
+      {{if .GrantURL}}<div class="row"><a class="btn primary" href="{{.GrantURL}}">Grant write access</a>
+        <span class="hint">Optional &mdash; you can turn this on later from Settings.</span></div>{{end}}
+      {{end}}
+    {{end}}
+  </div>
+</div>
+{{end}}
+
+{{/* Wire up CI — token + forge-appropriate snippet. Reporting is a separate,
+   optional capability set up in the Workspace step, so it isn't here. */}}
+{{define "wiz-ci"}}
+<section class="panel">
+  <div class="card pad">
+    <h2>Wire up CI</h2>
+    {{if eq .Workspace.Forge "github"}}
+    <p class="sub">In your GitHub org or repo: <em>Settings &rarr; Secrets and variables &rarr;
+    Actions</em>. Add <code>GOCOV_TOKEN</code> as a secret{{if not .ServerImplicit}}
+    and <code>GOCOV_SERVER</code> as a variable{{end}}.</p>
+    {{else if eq .Workspace.Forge "gitlab"}}
+    <p class="sub">In your GitLab group or project: <em>Settings &rarr; CI/CD &rarr;
+    Variables</em>. Add <code>GOCOV_TOKEN</code>, marked <strong>masked</strong> but
+    <strong>not protected</strong> &mdash; GitLab checks &ldquo;Protect variable&rdquo; by
+    default, and protected variables never reach merge request
+    pipelines{{if not .ServerImplicit}}. Add <code>GOCOV_SERVER</code> too{{end}}.</p>
+    {{else}}
+    <p class="sub">In Bitbucket: <em>Workspace settings &rarr; Workspace variables</em>.
+    Add <code>GOCOV_TOKEN</code>, marked secured{{if not .ServerImplicit}}, and
+    <code>GOCOV_SERVER</code>{{end}}.</p>
+    {{end}}
+
+    <div class="secret">
+      <div class="secret-hd"><span class="name">GOCOV_TOKEN</span><span class="chip plain">Secret</span>
+        <span class="spacer"></span><span class="muted small">Shown once &mdash; rotate it any time from Settings</span></div>
+      <div class="secret-bd">
+        <span class="v" id="tok" data-full="{{.Workspace.Token}}">{{.TokenMasked}}</span>
+        <button class="btn" type="button" data-reveal="#tok">Reveal</button>
+        <button class="btn primary" type="button" data-copy="#tok-full">Copy</button>
+        <input type="hidden" id="tok-full" value="{{.Workspace.Token}}">
+      </div>
+    </div>
+    {{if not .ServerImplicit}}
+    <p class="sub">Also set <code>GOCOV_SERVER</code> to <code>{{.BaseURL}}</code>.</p>
+    {{end}}
+
+    {{if eq .Workspace.Forge "github"}}
+    <p class="sub">Then, in your GitHub Actions workflow, upload the profile after your tests run:</p>
+    <pre><code id="snippet">- run: go test ./... -covermode=atomic -coverprofile=coverage.out
+- name: Upload coverage
+  run: |
+    curl -fsSL https://github.com/gocov/gocov/releases/latest/download/gocov-linux-amd64 -o /usr/local/bin/gocov
+    chmod +x /usr/local/bin/gocov
+    gocov upload coverage.out
+  env:
+    GOCOV_TOKEN: ${{"{{"}} secrets.GOCOV_TOKEN {{"}}"}}{{if not .ServerImplicit}}
+    GOCOV_SERVER: ${{"{{"}} vars.GOCOV_SERVER {{"}}"}}{{end}}</code></pre>
+    {{else if eq .Workspace.Forge "gitlab"}}
+    <p class="sub">Then add the coverage job to your <code>.gitlab-ci.yml</code> &mdash; the
+    <code>workflow</code> rules run it on merge requests and the default branch without
+    duplicate pipelines, and the checksum line pins the binary:</p>
+    <pre><code id="snippet">workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+coverage:
+  image: golang:1.23
+  script:
+    - go test ./... -covermode=atomic -coverprofile=coverage.out
+    - curl -fsSLO https://github.com/gocov/gocov/releases/download/v0.10.0/gocov-linux-amd64
+    - curl -fsSL https://github.com/gocov/gocov/releases/download/v0.10.0/checksums.txt
+      | grep ' gocov-linux-amd64$' | sha256sum -c -
+    - chmod +x gocov-linux-amd64
+    - ./gocov-linux-amd64 upload coverage.out</code></pre>
+    {{else}}
+    <p class="sub">Then add the step to <code>bitbucket-pipelines.yml</code> &mdash;
+    <code>branches</code> and <code>pull-requests</code> share one step so a PR build runs
+    once, not twice:</p>
+    <pre><code id="snippet">image: golang:1.23
+
+definitions:
+  steps:
+    - step: &amp;coverage
+        name: Test + upload coverage
+        script:
+          - go test ./... -covermode=atomic -coverprofile=coverage.out
+          - pipe: docker://gocov/upload-pipe:0
+            variables:
+              FILES: coverage.out
+              TOKEN: $GOCOV_TOKEN{{if not .ServerImplicit}}
+              SERVER: $GOCOV_SERVER{{end}}
+
+pipelines:
+  branches:
+    main:
+      - step: *coverage
+  pull-requests:
+    '**':
+      - step: *coverage</code></pre>
+    {{end}}
+    <div class="row">
+      <button class="btn" type="button" data-copy="#snippet">Copy snippet</button>
+      <span class="muted small">Commit, branch, repo and PR are auto-detected; other languages
+      can upload lcov, JaCoCo or Cobertura with <code>-format</code>.</span>
+    </div>
+    <div class="foot">
+      <span class="hint">Reporting and CI are independent &mdash; coverage uploads even if
+      reporting is off.</span>
+    </div>
+  </div>
+</section>
+{{end}}
+
+{{/* First upload — the htmx poll flips to the done card once a repo
+   registers under the workspace. */}}
+{{define "wiz-firstupload"}}
+{{template "setup-status" .}}
+{{end}}
+
+{{define "setup-status"}}
+{{if .Repos}}
+<div class="card pad" id="setup-status">
+  <h2>Coverage is flowing</h2>
+  {{with .FirstReport}}
+  <p class="sub">First profile received from <code>{{.Slug}}</code> on <code>{{.Branch}}</code>{{if .CommitShort}} &middot; commit <code>{{.CommitShort}}</code>{{end}}.</p>
+  <div class="mini">
+    <div class="hd">First report</div>
+    <table>
+      <tr><td>Coverage</td><td><span class="cov"><span class="track"><span class="fill" style="width:{{.Pct}}%"></span></span><span class="pct">{{.Pct}}%</span></span></td></tr>
+      <tr><td>Lines covered</td><td>{{.Covered}} / {{.Total}}</td></tr>
+    </table>
+    <div class="later">
+      <div class="lhd"><span class="chip plain">Later</span> Not needed for v1 &mdash; the card reads complete without them</div>
+      <table>
+        <tr><td>Statements</td><td>&mdash;</td></tr>
+        <tr><td>Files reported</td><td>&mdash;</td></tr>
+      </table>
+    </div>
+  </div>
+  {{else}}
+  <p class="sub">Coverage is live:
+    {{range $i, $repo := .Repos}}{{if $i}}, {{end}}<a class="mono" href="/repos/{{$repo.Slug}}">{{$repo.Slug}}</a>{{end}}</p>
+  {{end}}
+  {{if .ReportsPosted}}
+  <div class="notice ok">{{.ReportsPosted}}</div>
+  {{else}}
+  <div class="notice">Reporting is off, so nothing was posted back &mdash;
+    <a href="/onboarding?ws={{pathesc .Workspace.Prefix}}">grant write access</a>
+    to get statuses on every commit.</div>
+  {{end}}
+  <div class="foot">
+    {{with .FirstReport}}<a class="btn primary" href="/repos/{{.Slug}}">Open the dashboard</a>{{else}}<a class="btn primary" href="/">Open the dashboard</a>{{end}}
+    <a class="btn" href="/workspaces/{{pathesc .Workspace.Prefix}}">Set a coverage gate</a>
+  </div>
+</div>
+{{else}}
+<div class="card pad" id="setup-status"
+     hx-get="/workspaces/{{pathesc .Workspace.Prefix}}/setup/status"
+     hx-trigger="every 3s" hx-swap="outerHTML">
+  <h2>Push a commit</h2>
+  <p class="sub">The next pipeline run that reaches the upload step registers the repository and
+  opens its dashboard. Nothing else to configure.</p>
+  <div class="notice wait"><span class="spin"></span> Waiting for your first upload from
+    <strong>{{.Workspace.Prefix}}</strong>&hellip; this page updates by itself.</div>
+</div>
+{{end}}
+{{end}}
