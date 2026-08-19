@@ -3,7 +3,7 @@
 <h1>{{.Heading}}</h1>
 <div class="card pad">
   <p class="sub">{{.Message}}</p>
-  {{with .InstallURL}}<p><a class="btn primary" href="{{.}}">Open the install page</a></p>{{end}}
+  {{with .Action}}{{if .URL}}<p><a class="btn primary" href="{{.URL}}">{{.Label}}</a></p>{{end}}{{end}}
   <p><a href="/">Back to the dashboard</a></p>
 </div>
 {{end}}
