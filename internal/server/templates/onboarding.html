@@ -203,16 +203,14 @@
     {{end}}
 
     {{if eq .Workspace.Forge "github"}}
-    <p class="sub">Then, in your GitHub Actions workflow, upload the profile after your tests run:</p>
+    <p class="sub">Then add the gocov action to your GitHub Actions workflow, after your tests
+    run &mdash; it installs the pinned CLI (with checksum verification) and uploads:</p>
     <pre><code id="snippet">- run: go test ./... -covermode=atomic -coverprofile=coverage.out
-- name: Upload coverage
-  run: |
-    curl -fsSL https://github.com/gocov/gocov/releases/latest/download/gocov-linux-amd64 -o /usr/local/bin/gocov
-    chmod +x /usr/local/bin/gocov
-    gocov upload coverage.out
-  env:
-    GOCOV_TOKEN: ${{"{{"}} secrets.GOCOV_TOKEN {{"}}"}}{{if not .ServerImplicit}}
-    GOCOV_SERVER: ${{"{{"}} vars.GOCOV_SERVER {{"}}"}}{{end}}</code></pre>
+- uses: gocov/gocov-action@v1
+  with:
+    files: coverage.out
+    token: ${{"{{"}} secrets.GOCOV_TOKEN {{"}}"}}{{if not .ServerImplicit}}
+    server: ${{"{{"}} vars.GOCOV_SERVER {{"}}"}}{{end}}</code></pre>
     {{else if eq .Workspace.Forge "gitlab"}}
     <p class="sub">Then add the coverage job to your <code>.gitlab-ci.yml</code> &mdash; the
     <code>workflow</code> rules run it on merge requests and the default branch without

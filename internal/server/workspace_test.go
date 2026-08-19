@@ -386,6 +386,7 @@ func TestSetupPageGitHubSnippet(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"GitHub Actions workflow",
+		"gocov/gocov-action@v1",
 		"${{ vars.GOCOV_SERVER }}",
 		"${{ secrets.GOCOV_TOKEN }}",
 		`data-full="gh-secret"`,
@@ -396,6 +397,10 @@ func TestSetupPageGitHubSnippet(t *testing.T) {
 	}
 	if strings.Contains(body, "bitbucket-pipelines.yml") {
 		t.Error("github workspace got the Bitbucket snippet")
+	}
+	// The GitHub snippet is the action, not a raw curl install.
+	if strings.Contains(body, "curl -fsSL https://github.com/gocov/gocov/releases") {
+		t.Error("github snippet should use the action, not a raw binary download")
 	}
 }
 
