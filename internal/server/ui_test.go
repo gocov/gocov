@@ -242,12 +242,15 @@ func TestUploadPageBeforeAfter(t *testing.T) {
 
 	body := doGet(t, f, "/uploads/2").Body.String()
 	for _, want := range []string{
-		`class="ba"`,   // before -> after column rendered
-		"100.0%",       // a.go coverage at the baseline
-		"75.0%",        // a.go coverage now
-		`class="delta`, // per-file delta
-		"7-9",          // lines newly uncovered by this upload
-		`class="verdict`,
+		`class="ba"`,                // before -> after column rendered
+		"100.0%",                    // a.go coverage at the baseline
+		"75.0%",                     // a.go coverage now
+		`class="delta`,              // per-file delta
+		"7-9",                       // lines newly uncovered by this upload
+		`class="verdict`,            //
+		"Files this commit touched", // only-touched heading
+		`class="xtra"`,              // b.go, unchanged, tucked away
+		"Show all 2 files",          // reveal toggle
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("upload page missing %q\n%s", want, body)

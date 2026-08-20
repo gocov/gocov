@@ -376,6 +376,7 @@ func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
 	// With a baseline, surface the files this upload moved first — biggest
 	// drops at the top — then the rest alphabetically. Without one, keep the
 	// store's path order.
+	changed := 0
 	if base != nil {
 		sort.SliceStable(rows, func(i, j int) bool {
 			if rows[i].Changed != rows[j].Changed {
@@ -386,17 +387,28 @@ func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
 			}
 			return rows[i].Path < rows[j].Path
 		})
+		for _, row := range rows {
+			if row.Changed {
+				changed++
+			}
+		}
 	}
 
 	s.render(w, r, "upload.html", map[string]any{
-		"Upload":      upload,
-		"Repo":        repo,
-		"Files":       rows,
-		"HasBase":     base != nil,
-		"Verdict":     s.uploadVerdict(upload, repo, base, len(files)),
-		"Prov":        s.uploadProvenance(r.Context(), upload),
-		"CanDownload": upload.RawBlobKey != "",
-		"Download":    fmt.Sprintf("/uploads/%d/profile", upload.ID),
+		"Upload":  upload,
+		"Repo":    repo,
+		"Files":   rows,
+		"HasBase": base != nil,
+		// Touched: the commit moved at least one file's coverage, so the
+		// table leads with those. Collapse: there are also unchanged files to
+		// tuck behind a "show all" toggle.
+		"Touched":      base != nil && changed > 0,
+		"Collapse":     base != nil && changed > 0 && changed < len(rows),
+		"ChangedCount": changed,
+		"Verdict":      s.uploadVerdict(upload, repo, base, len(files)),
+		"Prov":         s.uploadProvenance(r.Context(), upload),
+		"CanDownload":  upload.RawBlobKey != "",
+		"Download":     fmt.Sprintf("/uploads/%d/profile", upload.ID),
 	})
 }
 
