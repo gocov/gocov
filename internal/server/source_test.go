@@ -327,3 +327,106 @@ func TestRenderSourceLines(t *testing.T) {
 		t.Errorf("crlf lines = %+v", crlf)
 	}
 }
+
+func TestAnnotateMisses(t *testing.T) {
+	// 10-line file: misses at 2, and a 4–5 run — two blocks, three lines.
+	blocks := []profile.Block{
+		{StartLine: 1, EndLine: 1, NumStmts: 1, Count: 3},
+		{StartLine: 2, EndLine: 2, NumStmts: 1, Count: 0},
+		{StartLine: 4, EndLine: 5, NumStmts: 1, Count: 0},
+	}
+	lines := renderSourceLines([]byte("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n"), blocks)
+	miss, missLines := annotateMisses(lines)
+	if missLines != 3 {
+		t.Errorf("missLines = %d, want 3", missLines)
+	}
+	if len(miss) != 2 {
+		t.Fatalf("blocks = %d, want 2", len(miss))
+	}
+	if miss[0].StartLine != 2 || miss[0].EndLine != 2 || miss[0].Anchor != "L2" {
+		t.Errorf("block 0 = %+v", miss[0])
+	}
+	if miss[1].StartLine != 4 || miss[1].EndLine != 5 || miss[1].Lines != 2 {
+		t.Errorf("block 1 = %+v", miss[1])
+	}
+	// Anchors are set on the first line of each run, and only there.
+	if lines[1].Anchor != "L2" || lines[3].Anchor != "L4" || lines[4].Anchor != "" {
+		t.Errorf("anchors: %q %q %q", lines[1].Anchor, lines[3].Anchor, lines[4].Anchor)
+	}
+	// Rail geometry: the 4–5 run starts at line 4 of 10, spanning 2 lines.
+	if miss[1].Top != 30 || miss[1].Height != 20 {
+		t.Errorf("block 1 geometry: top=%v height=%v", miss[1].Top, miss[1].Height)
+	}
+	// A single-line run in a long file is floored to minMissHeight so it
+	// stays clickable rather than collapsing to a sliver.
+	long := make([]byte, 0, 400)
+	for i := 0; i < 200; i++ {
+		long = append(long, 'x', '\n')
+	}
+	ll := renderSourceLines(long, []profile.Block{{StartLine: 100, EndLine: 100, NumStmts: 1, Count: 0}})
+	lm, _ := annotateMisses(ll)
+	if lm[0].Height != minMissHeight {
+		t.Errorf("floored height = %v, want %v", lm[0].Height, minMissHeight)
+	}
+}
+
+func TestMarkNewlyUncovered(t *testing.T) {
+	// Line 2 is uncovered now; the baseline had it covered → a regression.
+	// Line 4 is uncovered now and was already uncovered → not new.
+	lines := renderSourceLines([]byte("a\nb\nc\nd\n"), []profile.Block{
+		{StartLine: 1, EndLine: 1, NumStmts: 1, Count: 3},
+		{StartLine: 2, EndLine: 2, NumStmts: 1, Count: 0},
+		{StartLine: 4, EndLine: 4, NumStmts: 1, Count: 0},
+	})
+	base := []profile.Block{
+		{StartLine: 2, EndLine: 2, NumStmts: 1, Count: 5}, // was covered
+		{StartLine: 4, EndLine: 4, NumStmts: 1, Count: 0}, // already uncovered
+	}
+	n := markNewlyUncovered(lines, base)
+	if n != 1 {
+		t.Fatalf("newly uncovered = %d, want 1", n)
+	}
+	if !lines[1].NewMiss {
+		t.Errorf("line 2 should be newly uncovered")
+	}
+	if lines[3].NewMiss {
+		t.Errorf("line 4 was already uncovered, not new")
+	}
+}
+
+func TestFoldItems(t *testing.T) {
+	// 14-line file: a covered/neutral run of 10 (lines 1–10) folds; the
+	// short run after the miss does not.
+	src := "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\nm\nn\n"
+	blocks := []profile.Block{
+		{StartLine: 1, EndLine: 10, NumStmts: 1, Count: 2}, // 10 covered lines
+		{StartLine: 11, EndLine: 11, NumStmts: 1, Count: 0},
+	}
+	lines := renderSourceLines([]byte(src), blocks)
+	items := foldItems(lines)
+
+	// First item is a fold bar covering the 10-line run.
+	if items[0].Fold == nil || items[0].Fold.Lines != 10 {
+		t.Fatalf("item 0 = %+v, want a 10-line fold", items[0])
+	}
+	if items[0].Fold.Label != "10 lines, fully covered" {
+		t.Errorf("fold label = %q", items[0].Fold.Label)
+	}
+	// The folded lines carry the fold's id; the miss line does not fold.
+	if items[1].Line == nil || items[1].Line.FoldID != items[0].Fold.ID {
+		t.Errorf("first folded line = %+v", items[1].Line)
+	}
+	for _, it := range items {
+		if it.Line != nil && it.Line.Class == "miss" && it.Line.FoldID != "" {
+			t.Errorf("miss line %d must never fold", it.Line.No)
+		}
+	}
+
+	// A run shorter than the threshold stays inline (no fold bar emitted).
+	short := renderSourceLines([]byte("a\nb\nc\n"), []profile.Block{{StartLine: 1, EndLine: 3, NumStmts: 1, Count: 1}})
+	for _, it := range foldItems(short) {
+		if it.Fold != nil {
+			t.Errorf("short run should not fold: %+v", it.Fold)
+		}
+	}
+}

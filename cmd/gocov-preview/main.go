@@ -135,6 +135,43 @@ func main() {
 		}
 	}
 
+	// One upload carrying real per-file coverage and cached source, so the
+	// source view (miss-map rail, jump-to-miss, uncovered-only filter) is
+	// previewable. Its source is pre-seeded into the blobstore below.
+	blobs := blobmem.New()
+	// A prior baseline upload of the same file, covering three lines the
+	// head commit later regressed — so the source view shows a coverage
+	// delta and "newly uncovered" markers.
+	baseUpload := &store.Upload{
+		RepoID: repo.ID, CommitSHA: "3ab04c17e2f10000000000000000000000000000",
+		Branch: "main", Format: "go",
+		TotalPct: 49.0, CoveredStmts: 15, TotalStmts: 26,
+		CreatedAt: base.Add(44 * 24 * time.Hour),
+	}
+	if err := st.CreateUpload(ctx, baseUpload, []*store.UploadFile{{
+		Path: "internal/billing/charge.go", Pct: 49.0, CoveredStmts: 15, TotalStmts: 26,
+		Blocks: chargeBaseBlocks(),
+	}}); err != nil {
+		log.Fatal(err)
+	}
+	srcUpload := &store.Upload{
+		RepoID: repo.ID, CommitSHA: "9f31c2ab7e5d0000000000000000000000000000",
+		Branch: "main", Format: "go",
+		TotalPct: 46.2, CoveredStmts: 12, TotalStmts: 26,
+		CreatedAt: base.Add(45 * 24 * time.Hour),
+	}
+	file := &store.UploadFile{
+		Path: "internal/billing/charge.go", Pct: 46.2, CoveredStmts: 12, TotalStmts: 26,
+		Blocks: chargeBlocks(),
+	}
+	if err := st.CreateUpload(ctx, srcUpload, []*store.UploadFile{file}); err != nil {
+		log.Fatal(err)
+	}
+	blobKey := fmt.Sprintf("source/%d/%s/%s", repo.ID, srcUpload.CommitSHA, file.Path)
+	if err := blobs.Put(ctx, blobKey, []byte(chargeSource)); err != nil {
+		log.Fatal(err)
+	}
+
 	// GitHub and Bitbucket workspaces in the connection states One-Click
 	// Connect adds, for the settings/setup page cards. The default acme
 	// workspace stays unconnected — that is the Connect-button state.
@@ -180,7 +217,7 @@ func main() {
 		port = "8099"
 	}
 	srv := server.New(server.Config{
-		Store: st, Blobs: blobmem.New(),
+		Store: st, Blobs: blobs,
 		Parsers:          map[string]profile.Parser{"go": profile.GoParser{}},
 		BaseURL:          "http://localhost:" + port,
 		Auths:            auths,
@@ -194,3 +231,104 @@ func main() {
 }
 
 func pctPtr(v float64) *float64 { return &v }
+
+// chargeSource is the synthetic file rendered by the source-view preview.
+const chargeSource = `package billing
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/acme/payments/internal/gateway"
+)
+
+var (
+	ErrNonPositiveAmount = errors.New("amount must be positive")
+	ErrCardDeclined      = errors.New("card declined")
+	ErrAlreadyReversed   = errors.New("transaction already reversed")
+)
+
+// Service settles and charges card transactions against the ledger.
+type Service struct {
+	cards   CardStore
+	gateway *gateway.Client
+	ledger  Ledger
+	metrics *Metrics
+}
+
+func (s *Service) settle(ctx context.Context, tx *gateway.Tx) error {
+	if tx.State == gateway.StateSettled {
+		s.metrics.AlreadySettled.Inc()
+		return nil
+	}
+	if tx.State == gateway.StateReversed {
+		s.metrics.Reversed.Inc()
+		return ErrAlreadyReversed
+	}
+	if err := s.ledger.Reserve(ctx, tx); err != nil {
+		return fmt.Errorf("reserve: %w", err)
+	}
+	return s.ledger.Commit(ctx, tx)
+}
+
+func (s *Service) Charge(ctx context.Context, req ChargeRequest) error {
+	if err := req.Validate(); err != nil {
+		return fmt.Errorf("invalid charge: %w", err)
+	}
+	if req.Amount <= 0 {
+		return ErrNonPositiveAmount
+	}
+	card, err := s.cards.Lookup(ctx, req.CardID)
+	if err != nil {
+		return fmt.Errorf("card lookup: %w", err)
+	}
+	tx, err := s.gateway.Authorize(ctx, card, req.Amount)
+	if errors.Is(err, gateway.ErrDeclined) {
+		s.metrics.Declined.Inc()
+		return ErrCardDeclined
+	}
+	return s.ledger.Record(ctx, tx)
+}
+
+func (s *Service) refund(ctx context.Context, id string) error {
+	tx, err := s.gateway.Lookup(ctx, id)
+	if err != nil {
+		return fmt.Errorf("refund lookup: %w", err)
+	}
+	return s.gateway.Refund(ctx, tx)
+}
+`
+
+// chargeBlocks overlays coverage on chargeSource: hit statement lines carry
+// a positive count, uncovered ones a zero. The zero runs (27–28, 30–32, 35,
+// 45, 53–54, 60–64) are what the miss-map rail and jump-to-miss surface.
+func chargeBlocks() []profile.Block {
+	hit := map[int]bool{
+		26: true, 34: true, 37: true, 41: true, 42: true, 44: true,
+		47: true, 48: true, 49: true, 51: true, 52: true, 56: true,
+	}
+	miss := []int{27, 28, 30, 31, 32, 35, 45, 53, 54, 60, 61, 62, 63, 64}
+	var blocks []profile.Block
+	for ln := range hit {
+		blocks = append(blocks, profile.Block{StartLine: ln, EndLine: ln, NumStmts: 1, Count: 8})
+	}
+	for _, ln := range miss {
+		blocks = append(blocks, profile.Block{StartLine: ln, EndLine: ln, NumStmts: 1, Count: 0})
+	}
+	return blocks
+}
+
+// chargeBaseBlocks is the baseline coverage: like chargeBlocks but with
+// lines 45, 53 and 54 still covered, so the head commit reads as having
+// newly uncovered them.
+func chargeBaseBlocks() []profile.Block {
+	blocks := chargeBlocks()
+	regressed := map[int]bool{45: true, 53: true, 54: true}
+	for i := range blocks {
+		if regressed[blocks[i].StartLine] {
+			blocks[i].Count = 5
+		}
+	}
+	return blocks
+}

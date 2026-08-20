@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -19,10 +20,38 @@ const maxSourceBytes = 1 << 20
 
 // sourceLine is one rendered line of the source view.
 type sourceLine struct {
-	No    int
-	Class string // "hit", "miss" or "" for non-executable lines
-	Hits  string // "3×", "✗" or ""
-	Text  string
+	No      int
+	Class   string // "hit", "miss" or "" for non-executable lines
+	Hits    string // "3×", "✗" or ""
+	Text    string
+	Anchor  string // element id on the first line of a miss run, else ""
+	NewMiss bool   // uncovered now but covered at the baseline commit
+	FoldID  string // set when the line sits inside a collapsed fold
+}
+
+// sourceItem is one row of the rendered source: either a code line or a
+// fold bar standing in for a collapsed run of covered lines.
+type sourceItem struct {
+	Line *sourceLine
+	Fold *foldInfo
+}
+
+// foldInfo is a collapsed run of contiguous non-miss lines.
+type foldInfo struct {
+	ID    string
+	Lines int
+	Label string
+}
+
+// missBlock is one contiguous run of uncovered lines, positioned against
+// the file height for the source view's miss-map rail.
+type missBlock struct {
+	Anchor    string // id of the run's first line, e.g. "L88"
+	StartLine int
+	EndLine   int
+	Lines     int     // uncovered lines in the run
+	Top       float64 // rail offset, percent of file height
+	Height    float64 // rail length, percent of file height
 }
 
 // handleSource implements GET /uploads/{id}/files/{path...} — the file's
@@ -74,16 +103,48 @@ func (s *Server) handleSource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	source, unavailable := s.fetchSource(r, repo, upload, file)
+	dir, base := file.Path, ""
+	if i := strings.LastIndex(file.Path, "/"); i >= 0 {
+		dir, base = file.Path[:i+1], file.Path[i+1:]
+	} else {
+		dir, base = "", file.Path
+	}
 	data := map[string]any{
-		"Repo":        repo,
-		"Upload":      upload,
-		"File":        file,
-		"Uncovered":   uncoveredRanges(file.Blocks),
-		"Unavailable": unavailable, // reason string when no source could be shown
-		"Lines":       nil,
+		"Repo":           repo,
+		"Upload":         upload,
+		"File":           file,
+		"FileDir":        dir,
+		"FileBase":       base,
+		"Uncovered":      uncoveredRanges(file.Blocks),
+		"Unavailable":    unavailable, // reason string when no source could be shown
+		"Lines":          nil,
+		"Items":          nil,
+		"MissBlocks":     nil,
+		"MissLines":      0,
+		"NewlyUncovered": 0,
+		"Delta":          nil,
 	}
 	if unavailable == "" {
-		data["Lines"] = renderSourceLines(source, file.Blocks)
+		lines := renderSourceLines(source, file.Blocks)
+		blocks, missLines := annotateMisses(lines)
+		// Compare against the file at the previous baseline commit to flag
+		// regressions and show a coverage delta.
+		if base := s.baseFileFor(r.Context(), repo, upload, file.Path); base != nil {
+			data["NewlyUncovered"] = markNewlyUncovered(lines, base.Blocks)
+			d := file.Pct - base.Pct
+			cls, arrow := "flat", "→"
+			switch {
+			case d > 0.05:
+				cls, arrow = "up", "▲"
+			case d < -0.05:
+				cls, arrow = "down", "▼"
+			}
+			data["Delta"] = map[string]any{"Class": cls, "Arrow": arrow, "Text": fmt.Sprintf("%+.1f%%", d)}
+		}
+		data["Lines"] = lines
+		data["Items"] = foldItems(lines)
+		data["MissBlocks"] = blocks
+		data["MissLines"] = missLines
 	}
 	s.render(w, r, "source.html", data)
 }
@@ -302,4 +363,152 @@ func renderSourceLines(source []byte, blocks []profile.Block) []sourceLine {
 		lines = append(lines, line)
 	}
 	return lines
+}
+
+// minMissHeight keeps a one- or two-line miss run tall enough to stay a
+// clickable target on the rail even in a long file.
+const minMissHeight = 0.8
+
+// annotateMisses tags the first line of each contiguous uncovered run with
+// a jump anchor and returns those runs positioned against the file height
+// for the miss-map rail, plus the total uncovered-line count. It mutates
+// lines to set the anchors.
+func annotateMisses(lines []sourceLine) ([]missBlock, int) {
+	total := len(lines)
+	var blocks []missBlock
+	missLines := 0
+	for i := 0; i < len(lines); {
+		if lines[i].Class != "miss" {
+			i++
+			continue
+		}
+		j := i
+		for j < len(lines) && lines[j].Class == "miss" {
+			j++
+		}
+		run := j - i
+		missLines += run
+		anchor := fmt.Sprintf("L%d", lines[i].No)
+		lines[i].Anchor = anchor
+		var top, height float64
+		if total > 0 {
+			top = float64(lines[i].No-1) / float64(total) * 100
+			height = float64(run) / float64(total) * 100
+		}
+		if height < minMissHeight {
+			height = minMissHeight
+		}
+		blocks = append(blocks, missBlock{
+			Anchor: anchor, StartLine: lines[i].No, EndLine: lines[j-1].No,
+			Lines: run, Top: top, Height: height,
+		})
+		i = j
+	}
+	return blocks, missLines
+}
+
+// baseBaselineScan bounds how far back the baseline search reads uploads.
+const baseBaselineScan = 60
+
+// baseFileFor returns the same file at the most recent prior baseline
+// upload on the upload's branch — the newest earlier upload that is not a
+// PR build and did not fail the gate. A file absent from that upload is
+// genuinely new, so there is no baseline to compare against.
+func (s *Server) baseFileFor(ctx context.Context, repo *store.Repo, u *store.Upload, path string) *store.UploadFile {
+	ups, err := s.store.ListBranchUploads(ctx, repo.ID, u.Branch, baseBaselineScan)
+	if err != nil {
+		return nil
+	}
+	var base *store.Upload
+	for _, prev := range ups {
+		if prev.ID >= u.ID || prev.PRID != "" || prev.GateFailed {
+			continue
+		}
+		base = prev
+		break
+	}
+	if base == nil {
+		return nil
+	}
+	files, err := s.store.UploadFiles(ctx, base.ID)
+	if err != nil {
+		return nil
+	}
+	for _, f := range files {
+		if f.Path == path {
+			return f
+		}
+	}
+	return nil
+}
+
+// markNewlyUncovered flags each line that is uncovered now but was covered
+// at the baseline, and returns how many. Matching is by line number, so it
+// surfaces regressions on a best-effort basis without a full diff.
+func markNewlyUncovered(lines []sourceLine, baseBlocks []profile.Block) int {
+	baseHit := map[int]bool{}
+	for _, b := range baseBlocks {
+		if b.Count <= 0 {
+			continue
+		}
+		for l := max(b.StartLine, 1); l <= b.EndLine; l++ {
+			baseHit[l] = true
+		}
+	}
+	n := 0
+	for i := range lines {
+		if lines[i].Class == "miss" && baseHit[lines[i].No] {
+			lines[i].NewMiss = true
+			n++
+		}
+	}
+	return n
+}
+
+// foldThreshold is the shortest run of contiguous covered/non-executable
+// lines that collapses into a fold bar. Uncovered lines never fold.
+const foldThreshold = 10
+
+// foldItems lays the rendered lines out as display rows, collapsing long
+// runs of non-miss lines into fold bars. Each folded line keeps a FoldID
+// so the client can reveal exactly that run when its bar is expanded.
+func foldItems(lines []sourceLine) []sourceItem {
+	items := make([]sourceItem, 0, len(lines))
+	folds := 0
+	for i := 0; i < len(lines); {
+		if lines[i].Class == "miss" {
+			ln := lines[i]
+			items = append(items, sourceItem{Line: &ln})
+			i++
+			continue
+		}
+		j := i
+		hasHit := false
+		for j < len(lines) && lines[j].Class != "miss" {
+			hasHit = hasHit || lines[j].Class == "hit"
+			j++
+		}
+		run := j - i
+		if run >= foldThreshold {
+			folds++
+			id := fmt.Sprintf("f%d", folds)
+			label := fmt.Sprintf("%d lines", run)
+			if hasHit {
+				label += ", fully covered"
+			}
+			items = append(items, sourceItem{Fold: &foldInfo{ID: id, Lines: run, Label: label}})
+			for k := i; k < j; k++ {
+				ln := lines[k]
+				ln.FoldID = id
+				items = append(items, sourceItem{Line: &ln})
+			}
+		} else {
+			for k := i; k < j; k++ {
+				ln := lines[k]
+				items = append(items, sourceItem{Line: &ln})
+			}
+		}
+		i = j
+	}
+	return items
 }
