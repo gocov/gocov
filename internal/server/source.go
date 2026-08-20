@@ -410,22 +410,26 @@ func annotateMisses(lines []sourceLine) ([]missBlock, int) {
 // baseBaselineScan bounds how far back the baseline search reads uploads.
 const baseBaselineScan = 60
 
-// baselineUpload returns the most recent prior baseline upload on u's branch
-// — the newest earlier upload that is not a PR build and did not fail the
-// gate — together with its per-file coverage keyed by profile path. Returns
-// (nil, nil) when there is no baseline to compare against.
+// baselineUpload returns the upload this one should be compared against — the
+// newest earlier non-PR, gate-passing upload on the same branch, falling back
+// to the default branch's latest passing upload for PR and feature-branch
+// builds (which usually have no prior upload of their own). This mirrors the
+// gate/delta baseline in recomputeCommitReport, so the page's "before → after"
+// and BASE agree with the commit's delta. Returns (nil, nil) when there is
+// nothing to compare against. The per-file coverage is keyed by profile path.
 func (s *Server) baselineUpload(ctx context.Context, repo *store.Repo, u *store.Upload) (*store.Upload, map[string]*store.UploadFile) {
-	ups, err := s.store.ListBranchUploads(ctx, repo.ID, u.Branch, baseBaselineScan)
-	if err != nil {
-		return nil, nil
-	}
-	var base *store.Upload
-	for _, prev := range ups {
-		if prev.ID >= u.ID || prev.PRID != "" || prev.GateFailed {
-			continue
-		}
-		base = prev
-		break
+	// On the upload's own branch: the newest strictly-earlier passing,
+	// non-PR upload.
+	base := s.pickBaseline(ctx, repo.ID, u.Branch, func(prev *store.Upload) bool {
+		return prev.ID < u.ID && prev.PRID == "" && !prev.GateFailed
+	})
+	// PR and feature branches rarely have such an upload of their own; fall
+	// back to the default branch's latest passing upload — the state this
+	// commit would merge into.
+	if base == nil && u.Branch != repo.DefaultBranch {
+		base = s.pickBaseline(ctx, repo.ID, repo.DefaultBranch, func(prev *store.Upload) bool {
+			return prev.CommitSHA != u.CommitSHA && prev.PRID == "" && !prev.GateFailed
+		})
 	}
 	if base == nil {
 		return nil, nil
@@ -439,6 +443,21 @@ func (s *Server) baselineUpload(ctx context.Context, repo *store.Repo, u *store.
 		byPath[f.Path] = f
 	}
 	return base, byPath
+}
+
+// pickBaseline returns the newest upload on a branch (uploads come newest
+// first) that satisfies ok, or nil. Bounded by baseBaselineScan.
+func (s *Server) pickBaseline(ctx context.Context, repoID int64, branch string, ok func(*store.Upload) bool) *store.Upload {
+	ups, err := s.store.ListBranchUploads(ctx, repoID, branch, baseBaselineScan)
+	if err != nil {
+		return nil
+	}
+	for _, prev := range ups {
+		if ok(prev) {
+			return prev
+		}
+	}
+	return nil
 }
 
 // baseFileFor returns the same file at the most recent prior baseline upload
