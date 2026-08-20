@@ -326,6 +326,27 @@ func TestBuildUploadMetaRejectsBadInput(t *testing.T) {
 	}
 }
 
+func TestUploadPagePRBaselinesAgainstDefaultBranch(t *testing.T) {
+	f := newFixture(t, nil)
+	// A passing baseline on main, then a PR upload on a feature branch with
+	// no prior upload of its own: it must still show before -> after, baselined
+	// against main.
+	doUpload(t, f, "secret-token", map[string]string{"commit": "main1", "branch": "main"}, testProfileFull)
+	doUpload(t, f, "secret-token", map[string]string{"commit": "pr1", "branch": "feature/x", "pr_id": "7"}, testProfile)
+
+	body := doGet(t, f, "/uploads/2").Body.String()
+	for _, want := range []string{
+		"Files this commit touched", // baseline resolved -> touched view
+		`class="ba"`,                // before -> after rendered
+		"100.0%",                    // a.go at the main baseline
+		"75.0%",                     // a.go on the PR
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("PR upload page missing %q\n%s", want, body)
+		}
+	}
+}
+
 func TestUploadProfileDownload(t *testing.T) {
 	f := newFixture(t, nil)
 	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile)
