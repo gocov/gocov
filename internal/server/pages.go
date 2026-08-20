@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gocov/gocov/internal/diffcov"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 )
@@ -244,10 +245,21 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// uploadFileRow decorates a stored file with its uncovered line ranges.
+// uploadFileRow decorates a stored file with its coverage history for the
+// upload detail table: the same file's coverage at the branch baseline, the
+// resulting delta, and the lines this upload newly left uncovered. The
+// baseline fields are empty when there is no baseline to compare against.
 type uploadFileRow struct {
 	*store.UploadFile
-	Uncovered string
+	Dir, Base string     // path split for display (directory prefix, file name)
+	Uncovered string     // all-time uncovered ranges, shown when there is no baseline
+	HasBefore bool       // the file existed at the baseline
+	BeforeStr string     // baseline coverage, preformatted
+	Delta     *deltaView // after − before
+	DeltaVal  float64    // after − before, for ordering
+	NewFile   bool       // absent from the baseline upload
+	NewlyMiss string     // ranges covered at the baseline but uncovered now
+	Changed   bool       // coverage moved, the file is new, or it regressed
 }
 
 // maxUncoveredRanges caps the ranges shown per file in the table.
@@ -295,8 +307,9 @@ func uncoveredRanges(blocks []profile.Block) string {
 	return strings.Join(parts, ", ")
 }
 
-// handleUploadPage implements GET /uploads/{id} — summary stats, diff
-// coverage and the per-file table.
+// handleUploadPage implements GET /uploads/{id} — the coverage verdict for
+// one upload, the files it moved (before → after against the branch
+// baseline) and the upload's provenance.
 func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -329,14 +342,294 @@ func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+
+	// The baseline is the newest earlier gate-passing upload on the same
+	// branch; its per-file coverage feeds the before → after column, and its
+	// total feeds the headline delta — the same baseline the source view uses.
+	base, baseFiles := s.baselineUpload(r.Context(), repo, upload)
+
 	rows := make([]uploadFileRow, 0, len(files))
 	for _, f := range files {
-		rows = append(rows, uploadFileRow{UploadFile: f, Uncovered: uncoveredRanges(f.Blocks)})
+		dir, name := splitPath(f.Path)
+		row := uploadFileRow{UploadFile: f, Dir: dir, Base: name, Uncovered: uncoveredRanges(f.Blocks)}
+		if base != nil {
+			if bf, ok := baseFiles[f.Path]; ok {
+				row.HasBefore = true
+				row.BeforeStr = fmt.Sprintf("%.1f%%", bf.Pct)
+				row.DeltaVal = f.Pct - bf.Pct
+				row.Delta = newDeltaView(row.DeltaVal)
+				if row.Delta.Class != "flat" {
+					row.Changed = true
+				}
+				if nm := newlyUncovered(f.Blocks, bf.Blocks); nm != "" {
+					row.NewlyMiss = nm
+					row.Changed = true
+				}
+			} else {
+				row.NewFile = true
+				row.Changed = true
+			}
+		}
+		rows = append(rows, row)
 	}
+	// With a baseline, surface the files this upload moved first — biggest
+	// drops at the top — then the rest alphabetically. Without one, keep the
+	// store's path order.
+	if base != nil {
+		sort.SliceStable(rows, func(i, j int) bool {
+			if rows[i].Changed != rows[j].Changed {
+				return rows[i].Changed
+			}
+			if rows[i].Changed && rows[i].DeltaVal != rows[j].DeltaVal {
+				return rows[i].DeltaVal < rows[j].DeltaVal
+			}
+			return rows[i].Path < rows[j].Path
+		})
+	}
+
 	s.render(w, r, "upload.html", map[string]any{
-		"Upload":         upload,
-		"Files":          rows,
-		"Repo":           repo,
-		"GateConfigured": repo.Gate.Configured(),
+		"Upload":      upload,
+		"Repo":        repo,
+		"Files":       rows,
+		"HasBase":     base != nil,
+		"Verdict":     s.uploadVerdict(upload, repo, base, len(files)),
+		"Received":    upload.CreatedAt.UTC().Format("2 Jan 2006, 15:04 UTC"),
+		"CanDownload": upload.RawBlobKey != "",
+		"Download":    fmt.Sprintf("/uploads/%d/profile", upload.ID),
 	})
+}
+
+// splitPath separates a file path into its directory prefix (with trailing
+// slash) and file name, so the table can dim the directory.
+func splitPath(p string) (dir, base string) {
+	if i := strings.LastIndex(p, "/"); i >= 0 {
+		return p[:i+1], p[i+1:]
+	}
+	return "", p
+}
+
+// gateRule is one configured coverage requirement with the value this upload
+// measured against it, for the verdict card's rule readout.
+type gateRule struct {
+	Label string
+	Value string
+	OK    bool
+}
+
+// verdictView is the coverage verdict rendered at the top of the upload page.
+type verdictView struct {
+	State      string // "pass", "fail" or "neutral" (no gate configured)
+	Pct        float64
+	CovClass   string
+	Delta      *deltaView // total coverage vs the baseline
+	Statements string     // "1,240 of 1,473"
+	FileCount  int
+	Format     string
+	BaseID     int64
+	BaseSHA    string
+	BasePctStr string
+	Rules      []gateRule
+	Reason     string
+}
+
+// uploadVerdict assembles the verdict card. The headline pass/fail follows the
+// upload's stored gate result; the per-rule readout re-measures each
+// configured threshold against this upload so a reader can see which rule
+// moved the verdict.
+func (s *Server) uploadVerdict(u *store.Upload, repo *store.Repo, base *store.Upload, fileCount int) verdictView {
+	v := verdictView{
+		Pct:        u.TotalPct,
+		CovClass:   covClass(u.TotalPct),
+		Statements: fmt.Sprintf("%s of %s", humanInt(u.CoveredStmts), humanInt(u.TotalStmts)),
+		FileCount:  fileCount,
+		Format:     u.Format,
+	}
+	if base != nil {
+		v.BaseID = base.ID
+		v.BaseSHA = base.CommitSHA
+		v.BasePctStr = fmt.Sprintf("%.1f%%", base.TotalPct)
+		v.Delta = newDeltaView(u.TotalPct - base.TotalPct)
+	}
+	switch {
+	case !repo.Gate.Configured():
+		v.State = "neutral"
+	case u.GateFailed:
+		v.State = "fail"
+	default:
+		v.State = "pass"
+	}
+
+	g := repo.Gate
+	if g.MinCoverage != nil {
+		v.Rules = append(v.Rules, gateRule{
+			Label: fmt.Sprintf("Total coverage ≥ %.4g%%", *g.MinCoverage),
+			Value: fmt.Sprintf("%.1f%%", u.TotalPct),
+			OK:    u.TotalPct >= *g.MinCoverage-gateEpsilon,
+		})
+	}
+	if g.MaxCoverageDrop != nil {
+		rule := gateRule{Label: fmt.Sprintf("Coverage drop ≤ %.4g%%", *g.MaxCoverageDrop)}
+		if base != nil {
+			drop := base.TotalPct - u.TotalPct
+			if drop < 0 {
+				rule.Value = fmt.Sprintf("+%.1f%%", -drop)
+			} else {
+				rule.Value = fmt.Sprintf("−%.1f%%", drop)
+			}
+			rule.OK = drop <= *g.MaxCoverageDrop+gateEpsilon
+		} else {
+			// The gate is fail-open without a baseline; mirror that here.
+			rule.Value = "no base"
+			rule.OK = true
+		}
+		v.Rules = append(v.Rules, rule)
+	}
+	if g.MinDiffCoverage != nil {
+		rule := gateRule{Label: fmt.Sprintf("Diff coverage ≥ %.4g%%", *g.MinDiffCoverage)}
+		if dc := u.DiffCoverage; dc != nil && dc.TotalLines > 0 {
+			rule.Value = fmt.Sprintf("%.1f%%", dc.Percent())
+			rule.OK = dc.Percent() >= *g.MinDiffCoverage-gateEpsilon
+		} else {
+			rule.Value = "no diff"
+			rule.OK = true
+		}
+		v.Rules = append(v.Rules, rule)
+	}
+
+	switch {
+	case v.State == "neutral":
+		v.Reason = fmt.Sprintf("No coverage gate is configured for %s. This upload records %.1f%% total coverage.", repo.Slug, u.TotalPct)
+	case v.State == "fail":
+		v.Reason = "This upload does not meet the coverage gate — the failing rules are marked below."
+	default:
+		v.Reason = "This upload meets every configured coverage rule."
+	}
+	return v
+}
+
+// humanInt formats a statement count with thousands separators.
+func humanInt(n int64) string {
+	s := strconv.FormatInt(n, 10)
+	neg := strings.HasPrefix(s, "-")
+	if neg {
+		s = s[1:]
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteByte(s[i])
+	}
+	if neg {
+		return "-" + b.String()
+	}
+	return b.String()
+}
+
+// lineCoverage returns the executable and hit line sets for a file's blocks:
+// a line is executable when a statement block spans it, and hit when any such
+// block ran. The same rule the source view overlays.
+func lineCoverage(blocks []profile.Block) (exec, hit map[int]bool) {
+	exec = map[int]bool{}
+	hit = map[int]bool{}
+	for _, b := range blocks {
+		if b.NumStmts == 0 {
+			continue
+		}
+		for l := max(b.StartLine, 1); l <= b.EndLine; l++ {
+			exec[l] = true
+			if b.Count > 0 {
+				hit[l] = true
+			}
+		}
+	}
+	return exec, hit
+}
+
+// newlyUncovered lists the lines a file executes-but-misses now that were hit
+// at the baseline — the regressions this upload introduced, matched by line
+// number. Best effort without a line-level diff, the same basis the source
+// view uses to flag newly uncovered lines.
+func newlyUncovered(cur, base []profile.Block) string {
+	exec, hit := lineCoverage(cur)
+	_, baseHit := lineCoverage(base)
+	var lines []int
+	for l := range exec {
+		if !hit[l] && baseHit[l] {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	sort.Ints(lines)
+	return diffcov.Ranges(lines)
+}
+
+// profileFilenames maps a profile format to the conventional filename of the
+// raw report, used for the download's Content-Disposition.
+var profileFilenames = map[string]string{
+	"go":        "coverage.out",
+	"lcov":      "lcov.info",
+	"jacoco":    "jacoco.xml",
+	"cobertura": "cobertura.xml",
+}
+
+func profileFilename(format string) string {
+	if n, ok := profileFilenames[format]; ok {
+		return n
+	}
+	if format == "" {
+		return "coverage.txt"
+	}
+	return "coverage." + format
+}
+
+// handleUploadProfile implements GET /uploads/{id}/profile — the raw coverage
+// profile the upload was built from, served as an attachment. Same visibility
+// rule as the upload page.
+func (s *Server) handleUploadProfile(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	upload, err := s.store.Upload(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.internalError(w, "loading upload", err)
+		return
+	}
+	repo, err := s.store.RepoByID(r.Context(), upload.RepoID)
+	if err != nil {
+		s.internalError(w, "loading repo for upload", err)
+		return
+	}
+	if ok, err := s.canView(r, repo.Slug); err != nil {
+		s.internalError(w, "checking access", err)
+		return
+	} else if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if upload.RawBlobKey == "" {
+		http.NotFound(w, r)
+		return
+	}
+	raw, err := s.blobs.Get(r.Context(), upload.RawBlobKey)
+	if err != nil {
+		s.internalError(w, "loading raw profile", err)
+		return
+	}
+	name := fmt.Sprintf("%s-%s", shortSHA(upload.CommitSHA), profileFilename(upload.Format))
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
+	if _, err := w.Write(raw); err != nil {
+		s.log.Warn("writing raw profile", "upload", id, "err", err)
+	}
 }

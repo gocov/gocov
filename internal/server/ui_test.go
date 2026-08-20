@@ -222,3 +222,52 @@ func TestUploadPageShowsUncoveredRanges(t *testing.T) {
 		t.Errorf("uncovered ranges missing: %s", body)
 	}
 }
+
+// testProfileFull covers a.go's 7-9 block that testProfile leaves uncovered,
+// so a following testProfile upload reads as a regression: a.go drops
+// 100% -> 75% and lines 7-9 become newly uncovered.
+const testProfileFull = `mode: set
+example.com/m/a.go:1.1,5.2 6 1
+example.com/m/a.go:7.1,9.2 2 1
+example.com/m/b.go:1.1,3.2 2 1
+`
+
+func TestUploadPageBeforeAfter(t *testing.T) {
+	f := newFixture(t, nil)
+	// A passing baseline on main, then a regressing head upload.
+	doUpload(t, f, "secret-token", map[string]string{"commit": "base1", "branch": "main"}, testProfileFull)
+	doUpload(t, f, "secret-token", map[string]string{"commit": "head1", "branch": "main"}, testProfile)
+
+	body := doGet(t, f, "/uploads/2").Body.String()
+	for _, want := range []string{
+		`class="ba"`,   // before -> after column rendered
+		"100.0%",       // a.go coverage at the baseline
+		"75.0%",        // a.go coverage now
+		`class="delta`, // per-file delta
+		"7-9",          // lines newly uncovered by this upload
+		`class="verdict`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("upload page missing %q\n%s", want, body)
+		}
+	}
+}
+
+func TestUploadProfileDownload(t *testing.T) {
+	f := newFixture(t, nil)
+	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile)
+
+	rec := doGet(t, f, "/uploads/1/profile")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("download status = %d", rec.Code)
+	}
+	if cd := rec.Header().Get("Content-Disposition"); !strings.Contains(cd, "attachment") || !strings.Contains(cd, "coverage.out") {
+		t.Errorf("content-disposition = %q", cd)
+	}
+	if rec.Body.String() != testProfile {
+		t.Errorf("download body does not match the uploaded profile:\n%s", rec.Body.String())
+	}
+	if rec := doGet(t, f, "/uploads/999/profile"); rec.Code != http.StatusNotFound {
+		t.Errorf("missing upload profile: code = %d, want 404", rec.Code)
+	}
+}

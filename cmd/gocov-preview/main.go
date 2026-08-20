@@ -123,13 +123,15 @@ func main() {
 			Branch:    "main",
 			Format:    "go",
 			TotalPct:  pct, CoveredStmts: int64(pct * 10), TotalStmts: 1000,
-			GateFailed: pct < 70,
-			CreatedAt:  base.Add(time.Duration(i) * 24 * time.Hour),
+			CreatedAt: base.Add(time.Duration(i) * 24 * time.Hour),
 		}
 		if i%15 == 7 {
 			u.PRID = "9"
 			u.TotalPct = 20 // would be an obvious outlier if it leaked in
 		}
+		// Derive the gate result from the final total so the verdict card
+		// and the coverage it shows never disagree.
+		u.GateFailed = u.TotalPct < 70
 		if err := st.CreateUpload(ctx, u, nil); err != nil {
 			log.Fatal(err)
 		}
@@ -145,7 +147,7 @@ func main() {
 	baseUpload := &store.Upload{
 		RepoID: repo.ID, CommitSHA: "3ab04c17e2f10000000000000000000000000000",
 		Branch: "main", Format: "go",
-		TotalPct: 49.0, CoveredStmts: 15, TotalStmts: 26,
+		TotalPct: 84.0, CoveredStmts: 210, TotalStmts: 250,
 		CreatedAt: base.Add(44 * 24 * time.Hour),
 	}
 	if err := st.CreateUpload(ctx, baseUpload, []*store.UploadFile{{
@@ -157,7 +159,7 @@ func main() {
 	srcUpload := &store.Upload{
 		RepoID: repo.ID, CommitSHA: "9f31c2ab7e5d0000000000000000000000000000",
 		Branch: "main", Format: "go",
-		TotalPct: 46.2, CoveredStmts: 12, TotalStmts: 26,
+		TotalPct: 82.0, CoveredStmts: 205, TotalStmts: 250,
 		CreatedAt: base.Add(45 * 24 * time.Hour),
 	}
 	file := &store.UploadFile{

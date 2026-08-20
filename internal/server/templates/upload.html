@@ -1,62 +1,103 @@
 {{define "title"}}gocov — {{.Repo.Slug}} @ {{short .Upload.CommitSHA}}{{end}}
 {{define "content"}}
-<div class="crumbs"><a href="/">Repos</a> / <a href="/repos/{{.Repo.Slug}}"><code>{{.Repo.Slug}}</code></a> / <code>{{short .Upload.CommitSHA}}</code></div>
-<h1>{{pct .Upload.TotalPct}} <small>&middot; {{.Upload.CoveredStmts}}/{{.Upload.TotalStmts}} statements &middot; {{.Upload.Format}} profile</small></h1>
+{{$u := .Upload}}
+<div class="crumbs"><a href="/">Repos</a> / <a href="/repos/{{.Repo.Slug}}"><code>{{.Repo.Slug}}</code></a> / <code>{{short $u.CommitSHA}}</code></div>
 
-<div class="stats">
-  <div class="stat"><div class="k">Total</div>
-    <div class="v"><span class="pct {{covclass .Upload.TotalPct}}">{{pct .Upload.TotalPct}}</span></div></div>
+<div class="uphead">
+  <h1 class="mono">{{short $u.CommitSHA}}</h1>
+  <p class="sub">on <code class="mono">{{$u.Branch}}</code>{{if $u.PRID}} <span class="chip info">PR #{{$u.PRID}}</span>{{end}} &middot; uploaded {{timeago $u.CreatedAt}} &middot; {{$u.Format}} profile</p>
+</div>
+
+{{with .Verdict}}
+<div class="verdict {{.State}}">
+  <div class="main">
+    {{if eq .State "pass"}}<div class="t">&#10003; Gate passing</div>
+    {{else if eq .State "fail"}}<div class="t">&#10007; Gate failing</div>
+    {{else}}<div class="t">Coverage recorded</div>{{end}}
+    <div class="big"><span class="pct {{.CovClass}}">{{pct .Pct}}</span>{{with .Delta}}<span class="d delta {{.Class}}">{{.Arrow}} {{.Text}}</span>{{end}}</div>
+    <p class="r">{{.Reason}}</p>
+    {{if .Rules}}
+    <div class="rules">
+      {{range .Rules}}<span class="rule {{if .OK}}ok{{else}}no{{end}}"><span class="ic">{{if .OK}}&#10003;{{else}}&#10007;{{end}}</span> <span class="lbl">{{.Label}}</span> &middot; <span class="val">{{.Value}}</span></span>{{end}}
+    </div>
+    {{end}}
+  </div>
+  <div class="meta">
+    <span><span class="k">Statements</span><br><span class="v">{{.Statements}} <span class="muted small">covered</span></span></span>
+    <span><span class="k">Base</span><br><span class="v">{{if .BaseSHA}}<a class="mono" href="/uploads/{{.BaseID}}">{{short .BaseSHA}}</a> <span class="muted small">&middot; {{.BasePctStr}}</span>{{else}}<span class="muted">&mdash;</span>{{end}}</span></span>
+    <span><span class="k">Report</span><br><span class="v">{{.FileCount}} file{{if ne .FileCount 1}}s{{end}} <span class="muted small">&middot; {{.Format}} profile</span></span></span>
+  </div>
+</div>
+{{end}}
+
+{{with $u.DiffCoverage}}{{if .TotalLines}}
+<div class="stats cols-3">
   <div class="stat"><div class="k">Diff coverage</div>
-    <div class="v">{{with .Upload.DiffCoverage}}{{if .TotalLines}}{{pct .Percent}} <small>{{.CoveredLines}}/{{.TotalLines}} lines</small>{{else}}<span class="muted small">no executable changes</span>{{end}}{{else}}<span class="muted">&mdash;</span>{{end}}</div></div>
-  <div class="stat"><div class="k">Gate</div>
-    <div class="v chips">{{if .GateConfigured}}{{if .Upload.GateFailed}}<span class="chip fail">&#10007; failed</span>{{else}}<span class="chip pass">&#10003; passed</span>{{end}}{{else}}<span class="muted small">not configured</span>{{end}}</div></div>
-  <div class="stat"><div class="k">Branch</div>
-    <div class="v mono chips">{{.Upload.Branch}} {{if .Upload.PRID}}<span class="chip info">PR #{{.Upload.PRID}}</span>{{end}}</div></div>
+    <div class="v"><span class="pct {{covclass .Percent}}">{{pct .Percent}}</span> <small>{{.CoveredLines}} of {{.TotalLines}} new lines</small></div></div>
+  <div class="stat"><div class="k">Uncovered lines added</div>
+    <div class="v">{{sub .TotalLines .CoveredLines}}</div></div>
+  <div class="stat"><div class="k">Changed files</div>
+    <div class="v">{{len .Files}}{{with .UnmatchedFiles}} <small>+{{len .}} without data</small>{{end}}</div></div>
 </div>
+{{end}}{{end}}
 
-{{with .Upload.DiffCoverage}}
-{{if .Files}}
-<h2>Diff coverage: {{if .TotalLines}}{{pct .Percent}} <small>({{.CoveredLines}}/{{.TotalLines}} changed lines)</small>{{else}}no executable lines changed{{end}}</h2>
+<div class="sec">
+  <h2>Files</h2>
+  <span class="spacer"></span>
+  {{if .HasBase}}<span class="note">Coverage before &rarr; after this upload; changed files first</span>{{end}}
+</div>
 <div class="card">
+{{if .Files}}
+{{if .HasBase}}
 <table>
-<thead><tr><th>Changed file</th><th class="num">Covered</th><th>Uncovered lines</th></tr></thead>
+<thead><tr><th>File</th><th>Coverage</th><th>Before &rarr; after</th><th class="num">&Delta;</th><th>Newly uncovered</th></tr></thead>
 <tbody>
 {{range .Files}}
 <tr>
-<td class="path"><code>{{.Path}}</code></td>
-<td class="num muted small">{{.CoveredLines}}/{{.TotalLines}}</td>
-<td>{{with .UncoveredLines}}<span class="uncov">{{ranges .}}</span>{{else}}<span class="muted small">&mdash;</span>{{end}}</td>
-</tr>
-{{end}}
-</tbody>
-</table>
-</div>
-{{end}}
-{{if .UnmatchedFiles}}
-<p class="sub small">Changed files without coverage data:
-{{range $i, $p := .UnmatchedFiles}}{{if $i}}, {{end}}<code>{{$p}}</code>{{end}}</p>
-{{end}}
-{{end}}
-
-<h2>Files</h2>
-<div class="card">
-{{if .Files}}
-<table>
-<thead><tr><th>File</th><th>Coverage</th><th class="num">Statements</th><th>Uncovered lines</th></tr></thead>
-<tbody>
-{{$upload := .Upload}}
-{{range .Files}}
-<tr>
-<td class="path"><a class="mono" href="/uploads/{{$upload.ID}}/files/{{.Path}}">{{.Path}}</a></td>
+<td class="path"><a class="mono path" href="/uploads/{{$u.ID}}/files/{{.Path}}">{{with .Dir}}<span class="dir">{{.}}</span>{{end}}{{.Base}}</a></td>
 <td>{{template "covbar" .Pct}}</td>
-<td class="num muted small">{{.CoveredStmts}}/{{.TotalStmts}}</td>
-<td>{{with .Uncovered}}<span class="uncov">{{.}}</span>{{else}}<span class="muted small">&mdash;</span>{{end}}</td>
+<td>{{if .NewFile}}<span class="ba"><span class="from">&mdash;</span><span class="arw">&rarr;</span><span class="to {{covclass .Pct}}">{{pct .Pct}}</span></span>
+    {{else if .HasBefore}}<span class="ba"><span class="from">{{.BeforeStr}}</span><span class="arw">&rarr;</span><span class="to {{covclass .Pct}}">{{pct .Pct}}</span></span>
+    {{else}}<span class="muted small">&mdash;</span>{{end}}</td>
+<td class="num">{{if .NewFile}}<span class="delta flat">new file</span>{{else}}{{template "delta" .Delta}}{{end}}</td>
+<td>{{if .NewlyMiss}}<span class="uncov">{{.NewlyMiss}}</span>{{else}}<span class="muted small">&mdash;</span>{{end}}</td>
 </tr>
 {{end}}
 </tbody>
 </table>
 {{else}}
+<table>
+<thead><tr><th>File</th><th>Coverage</th><th class="num">Statements</th><th>Uncovered lines</th></tr></thead>
+<tbody>
+{{range .Files}}
+<tr>
+<td class="path"><a class="mono path" href="/uploads/{{$u.ID}}/files/{{.Path}}">{{with .Dir}}<span class="dir">{{.}}</span>{{end}}{{.Base}}</a></td>
+<td>{{template "covbar" .Pct}}</td>
+<td class="num muted small">{{.CoveredStmts}}/{{.TotalStmts}}</td>
+<td>{{if .Uncovered}}<span class="uncov">{{.Uncovered}}</span>{{else}}<span class="muted small">&mdash;</span>{{end}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{end}}
+{{else}}
 <div class="empty">No per-file data.</div>
 {{end}}
+</div>
+
+<div class="sec">
+  <h2>Upload</h2>
+  <span class="spacer"></span>
+  {{if .CanDownload}}<a class="btn sm" href="{{.Download}}">Download profile</a>{{end}}
+</div>
+<div class="card">
+  <div class="prov">
+    <span class="row"><span class="k">Received</span><span class="v">{{.Received}} <span class="muted small">&middot; {{timeago $u.CreatedAt}}</span></span></span>
+    <span class="row"><span class="k">Commit</span><span class="v mono">{{$u.CommitSHA}}</span></span>
+    <span class="row"><span class="k">Branch</span><span class="v"><span class="mono">{{$u.Branch}}</span>{{if $u.PRID}} <span class="chip info">PR #{{$u.PRID}}</span>{{end}}</span></span>
+    <span class="row"><span class="k">Format</span><span class="v"><span class="chip plain">{{$u.Format}}</span></span></span>
+    <span class="row"><span class="k">Part</span><span class="v">{{if or (eq $u.Part "default") (eq $u.Part "")}}<span class="muted">single profile</span>{{else}}<span class="chip plain">{{$u.Part}}</span>{{end}}</span></span>
+    <span class="row"><span class="k">Base</span><span class="v">{{if .Verdict.BaseSHA}}<a class="mono" href="/uploads/{{.Verdict.BaseID}}">{{short .Verdict.BaseSHA}}</a> <span class="muted small">&middot; {{.Verdict.BasePctStr}}</span>{{else}}<span class="muted">first tracked upload on this branch</span>{{end}}</span></span>
+  </div>
 </div>
 {{end}}
