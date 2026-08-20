@@ -130,12 +130,21 @@ td.path { min-width: 220px; }
 .fill.good { background: var(--green); } .fill.warn { background: var(--yellow); } .fill.bad { background: var(--red); }
 .pct.good { color: var(--green); } .pct.warn { color: var(--yellow); } .pct.bad { color: var(--red); }
 
+/* repo detail head: title + branch selector + settings, on one baseline */
+.repohead { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin: 4px 0 18px; }
+.repohead h1 { margin: 6px 0 2px; letter-spacing: -.01em; }
+.repohead h1 .mono { font-family: var(--mono); }
+.repohead .sub { margin: 0; font-size: 13px; }
+.repohead .spacer { flex: 1; }
+
 /* trend chart */
 .trend-card { margin-bottom: 14px; padding: 8px 6px 2px; }
 .trend { display: block; width: 100%; height: auto; }
 .trend .line { fill: none; stroke: var(--accent); stroke-width: 2;
   stroke-linejoin: round; stroke-linecap: round; }
 .trend .grid { stroke: var(--border-soft); stroke-dasharray: 3 4; }
+.trend .thresh { stroke: var(--yellow); stroke-width: 1.5; stroke-dasharray: 6 4; opacity: .8; }
+.trend .thresh-lbl { fill: var(--yellow); font-weight: 600; }
 .trend .pt { fill: var(--accent); }
 .trend .pt.fail { fill: var(--red); }
 .trend a:hover .pt { stroke: var(--accent-strong); stroke-width: 3; }

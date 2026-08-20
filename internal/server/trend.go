@@ -33,6 +33,13 @@ type trendGridLine struct {
 	Label string
 }
 
+// trendThreshold marks the gate minimum on the chart, so the reader sees how
+// the series sits against the line that decides pass/fail.
+type trendThreshold struct {
+	Y     float64
+	Label string
+}
+
 // trendView is the fully computed chart handed to the repo template.
 type trendView struct {
 	W, H       int
@@ -41,7 +48,8 @@ type trendView struct {
 	Path       string // the polyline through every point
 	Points     []trendPoint
 	Grid       []trendGridLine
-	CurLabel   string // current (latest) percentage, drawn at the last point
+	Thresh     *trendThreshold // gate minimum line; nil when no gate is set
+	CurLabel   string          // current (latest) percentage, drawn at the last point
 	CurX, CurY float64
 	FirstDate  string
 	LastDate   string
@@ -55,8 +63,10 @@ func round1(v float64) float64 { return math.Round(v*10) / 10 }
 // reports, given newest-first as ListBranchCommitReports returns them. PR
 // reports are excluded: the branch trend reflects the branch's own commits.
 // Each report carries the upload id it links to (UploadID). Returns nil when
-// fewer than two points remain — the page then omits the section.
-func newTrendView(branch string, reports []*store.CommitReport) *trendView {
+// fewer than two points remain — the page then omits the section. An optional
+// gate minimum, when passed, is drawn as a dashed threshold line and folded
+// into the plotted range so it is always visible.
+func newTrendView(branch string, reports []*store.CommitReport, min ...float64) *trendView {
 	var series []*store.CommitReport // chronological
 	for i := len(reports) - 1; i >= 0; i-- {
 		if reports[i].PRID == "" {
@@ -78,6 +88,21 @@ func newTrendView(branch string, reports []*store.CommitReport) *trendView {
 	pad := math.Max((hi-lo)*0.1, 0.5)
 	yLo := math.Max(0, lo-pad)
 	yHi := math.Min(100, hi+pad)
+
+	// A configured gate minimum widens the plotted range so its line always
+	// lands on the canvas — the grid labels still read the series min/max, so
+	// the gate line reads as a separate reference, not a data point.
+	var minCov *float64
+	if len(min) > 0 {
+		m := min[0]
+		minCov = &m
+		if m < yLo {
+			yLo = math.Max(0, m)
+		}
+		if m > yHi {
+			yHi = math.Min(100, m)
+		}
+	}
 
 	plotW := float64(trendW - trendPadL - trendPadR)
 	plotH := float64(trendH - trendPadT - trendPadB)
@@ -119,6 +144,10 @@ func newTrendView(branch string, reports []*store.CommitReport) *trendView {
 	v.Grid = []trendGridLine{{Y: y(hi), Label: fmt.Sprintf("%.1f%%", hi)}}
 	if lo != hi {
 		v.Grid = append(v.Grid, trendGridLine{Y: y(lo), Label: fmt.Sprintf("%.1f%%", lo)})
+	}
+
+	if minCov != nil {
+		v.Thresh = &trendThreshold{Y: y(*minCov), Label: fmt.Sprintf("gate %.4g%%", *minCov)}
 	}
 
 	last := v.Points[len(v.Points)-1]

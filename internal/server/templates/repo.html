@@ -1,17 +1,21 @@
 {{define "title"}}gocov — {{.Repo.Slug}}{{end}}
 {{define "content"}}
 <div class="crumbs"><a href="/">Repos</a> / <code>{{.Repo.Slug}}</code></div>
-<h1>{{.Repo.Slug}} <small>&middot; default branch <code class="mono">{{.Repo.DefaultBranch}}</code></small></h1>
 
-<div class="stats">
-  <div class="stat"><div class="k">Coverage</div>
-    <div class="v">{{if .Latest}}<span class="pct {{covclass .Latest.TotalPct}}">{{pct .Latest.TotalPct}}</span>{{else}}<span class="muted">&mdash;</span>{{end}}</div></div>
-  <div class="stat"><div class="k">Delta</div>
-    <div class="v">{{if .Delta}}{{template "delta" .Delta}}{{else}}<span class="muted">&mdash;</span>{{end}} <small>vs previous</small></div></div>
-  <div class="stat"><div class="k">Gate</div>
-    <div class="v chips">{{if .GateSummary}}<span class="chip {{if eq .Gate "fail"}}fail{{else}}pass{{end}}">{{.GateSummary}}</span>{{else}}<span class="muted small">not configured</span>{{end}}</div></div>
-  <div class="stat"><div class="k">Last upload</div>
-    <div class="v" style="font-size: 15px; padding-top: 8px">{{if .Latest}}{{timeago .Latest.CreatedAt}}{{else}}<span class="muted">never</span>{{end}}</div></div>
+<div class="repohead">
+  <div>
+    <h1><span class="mono">{{.Repo.Slug}}</span></h1>
+    <p class="sub">default branch <code class="mono">{{.Repo.DefaultBranch}}</code>{{if .Latest}} &middot; {{humanint .Latest.TotalStmts}} statements{{end}}</p>
+  </div>
+  <span class="spacer"></span>
+  <select class="input" name="branch"
+          hx-get="/repos/{{.Repo.Slug}}" hx-target="#uploads" hx-select="#uploads"
+          hx-swap="outerHTML" hx-push-url="true">
+    <option value="">All branches</option>
+    {{$sel := .Branch}}
+    {{range .Branches}}<option value="{{.}}"{{if eq . $sel}} selected{{end}}>{{.}}</option>{{end}}
+  </select>
+  {{if .WSPrefix}}<a class="btn" href="/repo-settings/{{pathesc .Repo.Slug}}">Settings</a>{{end}}
 </div>
 
 <div class="badgebox">
@@ -22,22 +26,44 @@
   <button class="btn" data-copy="#badge-md">Copy</button>
 </div>
 
-<div class="toolbar">
-  <select class="input" name="branch"
-          hx-get="/repos/{{.Repo.Slug}}" hx-target="#uploads" hx-select="#uploads"
-          hx-swap="outerHTML" hx-push-url="true">
-    <option value="">All branches</option>
-    {{$sel := .Branch}}
-    {{range .Branches}}<option value="{{.}}"{{if eq . $sel}} selected{{end}}>{{.}}</option>{{end}}
-  </select>
+<div id="uploads">
+{{with .Verdict}}
+<div class="verdict {{.State}}">
+  <div class="main">
+    {{if eq .State "pass"}}<div class="t">&#10003; Gate passing</div>
+    {{else if eq .State "fail"}}<div class="t">&#10007; Gate failing</div>
+    {{else}}<div class="t">Coverage recorded</div>{{end}}
+    <div class="big"><span class="pct {{.CovClass}}">{{pct .Pct}}</span>{{with .Delta}}<span class="d delta {{.Class}}">{{.Arrow}} {{.Text}}</span>{{end}}</div>
+    <p class="r">{{.Reason}}</p>
+  </div>
+  <div class="meta">
+    <span><span class="k">Commit</span><br><span class="v"><a class="mono" href="/uploads/{{.CommitID}}">{{short .CommitSHA}}</a> <span class="muted small">&middot; {{.CommitAgo}}</span></span></span>
+    <span><span class="k">Branch</span><br><span class="v"><span class="mono">{{.Branch}}</span> {{if .PRID}}<span class="chip info">PR #{{.PRID}}</span>{{else if .IsDefault}}<span class="chip plain">default</span>{{end}}</span></span>
+    <span><span class="k">Compared to</span><br><span class="v">{{if .BaseSHA}}<a class="mono" href="/uploads/{{.BaseID}}">{{short .BaseSHA}}</a> <span class="muted small">&middot; {{.BasePctStr}}</span>{{else}}<span class="muted">&mdash;</span>{{end}}</span></span>
+  </div>
 </div>
 
-<div id="uploads">
+<div class="stats cols-3">
+  <div class="stat"><div class="k">Uncovered statements</div>
+    <div class="v">{{humanint $.Uncovered}} <small>of {{humanint $.Latest.TotalStmts}}</small></div></div>
+  <div class="stat"><div class="k">Gate</div>
+    <div class="v chips">{{if $.GateSummary}}<span class="mono small muted">{{$.GateSummary}}</span>{{else}}<span class="muted small">not configured</span>{{end}}</div></div>
+  <div class="stat"><div class="k">Last upload</div>
+    <div class="v" style="font-size: 15px; padding-top: 6px">{{with $.LastUpload}}{{.Ago}}{{with .CILabel}} <small>&middot; {{.}}</small>{{end}}{{else}}<span class="muted">&mdash;</span>{{end}}</div></div>
+</div>
+{{end}}
 {{with .Trend}}
+<div class="sec">
+  <h2>Coverage over time</h2>
+  <span class="spacer"></span>
+  <span class="note">Total coverage on <span class="mono">{{.Branch}}</span></span>
+</div>
 <div class="card trend-card">
 <svg class="trend" viewBox="0 0 {{.W}} {{.H}}" role="img"
      aria-label="Coverage trend on {{.Branch}}, latest {{.CurLabel}}">
-  {{range .Grid}}<line class="grid" x1="{{$.Trend.X0}}" y1="{{.Y}}" x2="{{$.Trend.X1}}" y2="{{.Y}}"></line>
+  {{with .Thresh}}<line class="thresh" x1="{{$.Trend.X0}}" y1="{{.Y}}" x2="{{$.Trend.X1}}" y2="{{.Y}}"></line>
+  <text class="lbl thresh-lbl" x="{{$.Trend.X1}}" y="{{.Y}}" dy="-5" text-anchor="end">{{.Label}}</text>
+  {{end}}{{range .Grid}}<line class="grid" x1="{{$.Trend.X0}}" y1="{{.Y}}" x2="{{$.Trend.X1}}" y2="{{.Y}}"></line>
   <text class="lbl" x="{{$.Trend.X0}}" dx="-6" y="{{.Y}}" text-anchor="end" dominant-baseline="middle">{{.Label}}</text>
   {{end}}<path class="line" d="{{.Path}}"></path>
   {{range .Points}}{{if .ID}}<a href="/uploads/{{.ID}}"><circle class="pt{{if .GateFailed}} fail{{end}}" cx="{{.X}}" cy="{{.Y}}" r="3.5"><title>{{.Title}}</title></circle></a>{{else}}<circle class="pt{{if .GateFailed}} fail{{end}}" cx="{{.X}}" cy="{{.Y}}" r="3.5"><title>{{.Title}}</title></circle>{{end}}
@@ -46,20 +72,48 @@
   <text class="lbl" x="{{.X1}}" y="{{.H}}" dy="-6" text-anchor="end">{{.LastDate}}</text>
 </svg>
 </div>
+{{if .Thresh}}<p class="hint" style="margin:8px 0 0">Red points failed the gate. The dashed line is the current minimum, {{.Thresh.Label}}.</p>{{end}}
 {{end}}
+
+{{with .Miss}}
+<div class="sec">
+  <h2>Where coverage is missing</h2>
+  <span class="spacer"></span>
+  <span class="note">Files on <span class="mono">{{.Branch}}</span>, most uncovered first</span>
+</div>
+<div class="card">
+<table>
+<thead><tr><th>File</th><th>Coverage</th><th class="num">Uncovered</th><th>Uncovered ranges</th></tr></thead>
+<tbody>
+{{range .Files}}
+<tr>
+<td class="path"><a class="mono path" href="/uploads/{{$.Miss.UploadID}}/files/{{.Path}}">{{with .Dir}}<span class="dir">{{.}}</span>{{end}}{{.Base}}</a></td>
+<td>{{template "covbar" .Pct}}</td>
+<td class="num">{{.Uncovered}}</td>
+<td>{{if .Ranges}}<span class="mono muted small">{{.Ranges}}</span>{{else}}<span class="muted small">&mdash;</span>{{end}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+</div>
+<p class="hint" style="margin:8px 0 0">{{if .Projection}}Fully covering the top {{if eq .ProjFiles 1}}file{{else}}two files{{end}} would take total coverage to about {{.Projection}}. {{end}}{{if gt .Total (len .Files)}}<a href="/uploads/{{.UploadID}}">See all {{.Total}} files</a>{{end}}</p>
+{{end}}
+
+<div class="sec">
+  <h2>Uploads</h2>
+  <span class="spacer"></span>
+  <span class="note">{{if .Branch}}On <span class="mono">{{.Branch}}</span>, newest first{{else}}All branches, newest first{{end}}</span>
+</div>
 <div class="card">
 {{if .Uploads}}
 <table>
-<thead><tr><th>Commit</th><th>Branch</th><th>PR</th><th>Gate</th><th>Coverage</th><th class="num">Statements</th><th>Uploaded</th></tr></thead>
+<thead><tr><th>Commit</th><th>Coverage</th><th>Gate</th><th>Uploaded</th></tr></thead>
 <tbody>
 {{range .Uploads}}
 <tr>
-<td><a href="/uploads/{{.ID}}"><code>{{short .CommitSHA}}</code></a></td>
-<td class="mono small">{{.Branch}}</td>
-<td>{{if .PRID}}<span class="chip info">PR #{{.PRID}}</span>{{end}}</td>
-<td>{{if .GateFailed}}<span class="chip fail">&#10007;</span>{{end}}</td>
+<td><a href="/uploads/{{.ID}}"><code>{{short .CommitSHA}}</code></a><br><span class="hint mono">{{.Branch}}{{if .PRID}} &middot; <span class="chip info">PR #{{.PRID}}</span>{{end}}</span></td>
 <td>{{template "covbar" .TotalPct}}</td>
-<td class="num muted small">{{.CoveredStmts}}/{{.TotalStmts}}</td>
+<td>{{if .GateFailed}}<span class="chip fail">&#10007; Failed</span>{{else}}<span class="chip pass">&#10003; Passed</span>{{end}}</td>
 <td class="muted small">{{timeago .CreatedAt}}</td>
 </tr>
 {{end}}
