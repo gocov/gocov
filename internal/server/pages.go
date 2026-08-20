@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -40,17 +41,29 @@ func newDeltaView(d float64) *deltaView {
 // that failed the gate. Lookback is bounded; a branch whose last 50 reports
 // all failed shows no delta.
 func (s *Server) branchDelta(r *http.Request, repoID int64, branch string) *deltaView {
-	reports, err := s.store.ListBranchCommitReports(r.Context(), repoID, branch, 50)
-	if err != nil || len(reports) < 2 {
+	current, base := s.branchBaseReport(r.Context(), repoID, branch)
+	if current == nil || base == nil {
 		return nil
 	}
-	current := reports[0]
+	return newDeltaView(current.TotalPct - base.TotalPct)
+}
+
+// branchBaseReport returns a branch's newest merged report and the report it
+// should be compared against — the most recent gate-passing report before it,
+// within a bounded lookback. base is nil when the branch has no earlier
+// passing report (a single report, or a run of failures fills the window).
+func (s *Server) branchBaseReport(ctx context.Context, repoID int64, branch string) (current, base *store.CommitReport) {
+	reports, err := s.store.ListBranchCommitReports(ctx, repoID, branch, 50)
+	if err != nil || len(reports) == 0 {
+		return nil, nil
+	}
+	current = reports[0]
 	for _, cr := range reports[1:] {
 		if !cr.GateFailed {
-			return newDeltaView(current.TotalPct - cr.TotalPct)
+			return current, cr
 		}
 	}
-	return nil
+	return current, nil
 }
 
 type indexRow struct {
@@ -139,6 +152,159 @@ func gateSummary(g store.Gate) string {
 	return strings.Join(parts, ", ")
 }
 
+// repoVerdictView is the coverage verdict at the top of the repo page: the
+// default branch's current standing against its gate, stated once. It mirrors
+// the upload page's verdict but reads a merged commit report.
+type repoVerdictView struct {
+	State      string // "pass", "fail" or "neutral" (no gate configured)
+	Pct        float64
+	CovClass   string
+	Delta      *deltaView // total coverage vs the branch baseline
+	Reason     string     // prose walk-through of the gate rules and their outcome
+	CommitID   int64      // upload id of the latest commit, for the detail link
+	CommitSHA  string
+	CommitAgo  string
+	Branch     string
+	IsDefault  bool
+	PRID       string
+	BaseID     int64
+	BaseSHA    string
+	BasePctStr string
+}
+
+// repoVerdict assembles the verdict card from the branch's newest merged
+// report and the report it is compared against (nil when there is none).
+func (s *Server) repoVerdict(latest *store.CommitReport, repo *store.Repo, base *store.CommitReport) *repoVerdictView {
+	v := &repoVerdictView{
+		Pct:       latest.TotalPct,
+		CovClass:  covClass(latest.TotalPct),
+		CommitID:  latest.UploadID,
+		CommitSHA: latest.CommitSHA,
+		CommitAgo: timeAgo(latest.CreatedAt),
+		Branch:    latest.Branch,
+		IsDefault: latest.Branch == repo.DefaultBranch,
+		PRID:      latest.PRID,
+	}
+	var baseTotal float64
+	if base != nil {
+		v.Delta = newDeltaView(latest.TotalPct - base.TotalPct)
+		v.BaseID = base.UploadID
+		v.BaseSHA = base.CommitSHA
+		v.BasePctStr = fmt.Sprintf("%.1f%%", base.TotalPct)
+		baseTotal = base.TotalPct
+	}
+	switch {
+	case !repo.Gate.Configured():
+		v.State = "neutral"
+	case latest.GateFailed:
+		v.State = "fail"
+	default:
+		v.State = "pass"
+	}
+	v.Reason = gateReason(latest.TotalPct, latest.DiffCoverage, repo.Gate, baseTotal, base != nil, "The latest commit")
+	return v
+}
+
+// missFile is one file in the "where coverage is missing" table.
+type missFile struct {
+	Dir, Base, Path string
+	Pct             float64
+	Uncovered       int64 // uncovered statements
+	Ranges          string
+}
+
+// missView lists the files with the most uncovered statements for a branch's
+// latest upload, so a reader sees where to aim next.
+type missView struct {
+	UploadID   int64
+	Branch     string
+	Files      []missFile // top offenders, most uncovered first
+	Total      int        // files with any uncovered statement
+	Projection string     // total coverage if the top files were fully covered
+	ProjFiles  int        // how many top files that projection assumes (1 or 2)
+}
+
+// missTop caps the rows shown in the table.
+const missTop = 6
+
+// buildMissView ranks an upload's files by uncovered statements and projects
+// where total coverage would land if the worst were fully covered. Returns nil
+// when the upload has no per-file data or nothing is uncovered.
+func (s *Server) buildMissView(ctx context.Context, u *store.Upload) *missView {
+	files, err := s.store.UploadFiles(ctx, u.ID)
+	if err != nil || len(files) == 0 {
+		return nil
+	}
+	type ranked struct {
+		f   *store.UploadFile
+		unc int64
+	}
+	var offenders []ranked
+	for _, f := range files {
+		if unc := f.TotalStmts - f.CoveredStmts; unc > 0 {
+			offenders = append(offenders, ranked{f, unc})
+		}
+	}
+	if len(offenders) == 0 {
+		return nil
+	}
+	sort.Slice(offenders, func(i, j int) bool {
+		if offenders[i].unc != offenders[j].unc {
+			return offenders[i].unc > offenders[j].unc
+		}
+		return offenders[i].f.Path < offenders[j].f.Path
+	})
+
+	mv := &missView{UploadID: u.ID, Branch: u.Branch, Total: len(offenders)}
+	for i, o := range offenders {
+		if i == missTop {
+			break
+		}
+		dir, base := splitPath(o.f.Path)
+		mv.Files = append(mv.Files, missFile{
+			Dir: dir, Base: base, Path: o.f.Path,
+			Pct: o.f.Pct, Uncovered: o.unc, Ranges: uncoveredRanges(o.f.Blocks),
+		})
+	}
+
+	// Projection: cover the top one or two offenders completely and see where
+	// the total lands. Only shown when it moves the needle.
+	if u.TotalStmts > 0 {
+		n := 2
+		if len(offenders) < 2 {
+			n = 1
+		}
+		var recovered int64
+		for i := 0; i < n; i++ {
+			recovered += offenders[i].unc
+		}
+		proj := float64(u.CoveredStmts+recovered) / float64(u.TotalStmts) * 100
+		if proj-u.TotalPct >= 0.1 {
+			mv.Projection = fmt.Sprintf("%.0f%%", math.Floor(proj))
+			mv.ProjFiles = n
+		}
+	}
+	return mv
+}
+
+// repoWorkspacePrefix resolves the tracked workspace a repo belongs to — its
+// most specific registered slug prefix on the same forge — so the page can
+// link to that workspace's settings. Returns "" when none is tracked.
+func (s *Server) repoWorkspacePrefix(ctx context.Context, repo *store.Repo) string {
+	workspaces, err := s.store.ListWorkspaces(ctx)
+	if err != nil {
+		return ""
+	}
+	for _, prefix := range slugPrefixes(repo.Slug) { // longest (most specific) first
+		for _, ws := range workspaces {
+			if ws.Forge == repo.Forge && ws.Prefix == prefix {
+				return prefix
+			}
+		}
+	}
+	return ""
+}
+
 // handleRepo implements GET /repos/{workspace}/{repo} — stats, badge embed,
 // branch filter and the upload list.
 func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
@@ -213,30 +379,55 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The verdict, stats and "where coverage is missing" all describe the
+	// selected branch's current standing (the default branch when "All
+	// branches" is chosen); they ride inside the branch-filtered region so the
+	// selector moves them together with the trend and history.
 	var latest *store.CommitReport
-	if l, err := s.store.LatestCommitReport(r.Context(), repo.ID, repo.DefaultBranch); err == nil {
+	if l, err := s.store.LatestCommitReport(r.Context(), repo.ID, trendBranch); err == nil {
 		latest = l
 	} else if !errors.Is(err, store.ErrNotFound) {
 		s.internalError(w, "loading latest report", err)
 		return
 	}
-	gate := ""
-	if repo.Gate.Configured() && latest != nil {
-		gate = "pass"
-		if latest.GateFailed {
-			gate = "fail"
+
+	var (
+		verdict   *repoVerdictView
+		lastProv  *provView
+		miss      *missView
+		uncovered int64
+	)
+	if latest != nil {
+		_, base := s.branchBaseReport(r.Context(), repo.ID, trendBranch)
+		verdict = s.repoVerdict(latest, repo, base)
+		uncovered = latest.TotalStmts - latest.CoveredStmts
+		if lu, err := s.store.Upload(r.Context(), latest.UploadID); err == nil {
+			p := s.uploadProvenance(r.Context(), lu)
+			lastProv = &p
+			miss = s.buildMissView(r.Context(), lu)
 		}
+	}
+
+	var trend *trendView
+	if repo.Gate.MinCoverage != nil {
+		trend = newTrendView(trendBranch, trendReports, *repo.Gate.MinCoverage)
+	} else {
+		trend = newTrendView(trendBranch, trendReports)
 	}
 
 	s.render(w, r, "repo.html", map[string]any{
 		"Repo":        repo,
 		"Latest":      latest,
-		"Delta":       s.branchDelta(r, repo.ID, repo.DefaultBranch),
-		"Gate":        gate,
+		"Verdict":     verdict,
+		"Uncovered":   uncovered,
+		"LastUpload":  lastProv,
+		"Miss":        miss,
+		"WSPrefix":    s.repoWorkspacePrefix(r.Context(), repo),
 		"GateSummary": gateSummary(repo.Gate),
 		"Branches":    branches,
 		"Branch":      branch,
-		"Trend":       newTrendView(trendBranch, trendReports),
+		"TrendBranch": trendBranch,
+		"Trend":       trend,
 		"Uploads":     uploads,
 		"Page":        page,
 		"PrevPage":    page - 1,
@@ -447,11 +638,13 @@ func (s *Server) uploadVerdict(u *store.Upload, repo *store.Repo, base *store.Up
 		FileCount:  fileCount,
 		Format:     u.Format,
 	}
+	var baseTotal float64
 	if base != nil {
 		v.BaseID = base.ID
 		v.BaseSHA = base.CommitSHA
 		v.BasePctStr = fmt.Sprintf("%.1f%%", base.TotalPct)
 		v.Delta = newDeltaView(u.TotalPct - base.TotalPct)
+		baseTotal = base.TotalPct
 	}
 	switch {
 	case !repo.Gate.Configured():
@@ -461,7 +654,7 @@ func (s *Server) uploadVerdict(u *store.Upload, repo *store.Repo, base *store.Up
 	default:
 		v.State = "pass"
 	}
-	v.Reason = gateReason(u, repo.Gate, base)
+	v.Reason = gateReason(u.TotalPct, u.DiffCoverage, repo.Gate, baseTotal, base != nil, "This upload")
 	return v
 }
 
@@ -469,20 +662,25 @@ func (s *Server) uploadVerdict(u *store.Upload, repo *store.Repo, base *store.Up
 // upload's measured value to the threshold, joined into a sentence. It reads
 // the same whether the gate passed or failed — the clauses themselves say
 // which rule is the problem.
-func gateReason(u *store.Upload, g store.Gate, base *store.Upload) string {
+// subject names the thing being described in the fallback sentences (e.g.
+// "This upload", "The latest commit on this branch") so the same narration
+// serves both the upload page and the repo page. totalPct/diff are the
+// measured values; baseTotal is the baseline's total coverage, valid only
+// when hasBase is true.
+func gateReason(totalPct float64, diff *diffcov.Result, g store.Gate, baseTotal float64, hasBase bool, subject string) string {
 	if !g.Configured() {
-		return fmt.Sprintf("No coverage gate is configured for this repo. This upload records %.1f%% total coverage.", u.TotalPct)
+		return fmt.Sprintf("No coverage gate is configured for this repo. %s records %.1f%% total coverage.", subject, totalPct)
 	}
 	var parts []string
 	if g.MinCoverage != nil {
 		rel := "is above"
-		if u.TotalPct < *g.MinCoverage-gateEpsilon {
+		if totalPct < *g.MinCoverage-gateEpsilon {
 			rel = "is below"
 		}
 		parts = append(parts, fmt.Sprintf("total coverage %s the minimum of %.4g%%", rel, *g.MinCoverage))
 	}
-	if g.MaxCoverageDrop != nil && base != nil {
-		drop := base.TotalPct - u.TotalPct
+	if g.MaxCoverageDrop != nil && hasBase {
+		drop := baseTotal - totalPct
 		if drop <= gateEpsilon {
 			parts = append(parts, "coverage held or rose against the base")
 		} else {
@@ -493,15 +691,15 @@ func gateReason(u *store.Upload, g store.Gate, base *store.Upload) string {
 			parts = append(parts, fmt.Sprintf("the drop against the base is %.4g%% — %s the %.4g%% allowed", drop, rel, *g.MaxCoverageDrop))
 		}
 	}
-	if g.MinDiffCoverage != nil && u.DiffCoverage != nil && u.DiffCoverage.TotalLines > 0 {
+	if g.MinDiffCoverage != nil && diff != nil && diff.TotalLines > 0 {
 		rel := "meets"
-		if u.DiffCoverage.Percent() < *g.MinDiffCoverage-gateEpsilon {
+		if diff.Percent() < *g.MinDiffCoverage-gateEpsilon {
 			rel = "is below"
 		}
 		parts = append(parts, fmt.Sprintf("diff coverage %s the %.4g%% minimum", rel, *g.MinDiffCoverage))
 	}
 	if len(parts) == 0 {
-		return fmt.Sprintf("This upload records %.1f%% total coverage.", u.TotalPct)
+		return fmt.Sprintf("%s records %.1f%% total coverage.", subject, totalPct)
 	}
 	sentence := strings.ToUpper(parts[0][:1]) + parts[0][1:]
 	if len(parts) > 1 {

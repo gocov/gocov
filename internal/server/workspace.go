@@ -225,26 +225,10 @@ func (s *Server) handleWorkspaceSettings(w http.ResponseWriter, r *http.Request)
 		s.settingsError(w, r, ws, "Default branch cannot be empty.")
 		return
 	}
-	gate := store.Gate{}
-	for _, f := range []struct {
-		name  string
-		field **float64
-		label string
-	}{
-		{"min_coverage", &gate.MinCoverage, "Min coverage"},
-		{"min_diff_coverage", &gate.MinDiffCoverage, "Min diff coverage"},
-		{"max_coverage_drop", &gate.MaxCoverageDrop, "Max coverage drop"},
-	} {
-		raw := strings.TrimSpace(r.FormValue(f.name))
-		if raw == "" {
-			continue
-		}
-		v, err := strconv.ParseFloat(raw, 64)
-		if err != nil || v < 0 || v > 100 {
-			s.settingsError(w, r, ws, f.label+" must be a percentage between 0 and 100.")
-			return
-		}
-		*f.field = &v
+	gate, errLabel := parseGateForm(r)
+	if errLabel != "" {
+		s.settingsError(w, r, ws, errLabel)
+		return
 	}
 	retention := ws.ReportRetentionDays
 	if raw := strings.TrimSpace(r.FormValue("report_retention_days")); raw != "" {
@@ -263,6 +247,33 @@ func (s *Server) handleWorkspaceSettings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	http.Redirect(w, r, workspaceURL(ws.Prefix, "?saved=1"), http.StatusSeeOther)
+}
+
+// parseGateForm reads the three coverage-gate percentages from a settings
+// form (workspace or repo), returning the assembled gate. A non-empty second
+// result is a human-readable validation message; the gate is then zero.
+func parseGateForm(r *http.Request) (store.Gate, string) {
+	gate := store.Gate{}
+	for _, f := range []struct {
+		name  string
+		field **float64
+		label string
+	}{
+		{"min_coverage", &gate.MinCoverage, "Min coverage"},
+		{"min_diff_coverage", &gate.MinDiffCoverage, "Min diff coverage"},
+		{"max_coverage_drop", &gate.MaxCoverageDrop, "Max coverage drop"},
+	} {
+		raw := strings.TrimSpace(r.FormValue(f.name))
+		if raw == "" {
+			continue
+		}
+		v, err := strconv.ParseFloat(raw, 64)
+		if err != nil || v < 0 || v > 100 {
+			return store.Gate{}, f.label + " must be a percentage between 0 and 100."
+		}
+		*f.field = &v
+	}
+	return gate, ""
 }
 
 // validRetention accepts the retention windows the Defaults selector

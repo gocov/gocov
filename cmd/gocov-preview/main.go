@@ -109,6 +109,19 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// reportFor mirrors an upload into a single-part merged commit report, the
+	// row the repo page reads for its verdict, trend and per-file breakdown.
+	// The real upload pipeline builds these; the preview seeds uploads
+	// directly, so it seeds the matching reports here.
+	reportFor := func(u *store.Upload) *store.CommitReport {
+		return &store.CommitReport{
+			RepoID: u.RepoID, CommitSHA: u.CommitSHA, Branch: u.Branch, PRID: u.PRID,
+			TotalPct: u.TotalPct, CoveredStmts: u.CoveredStmts, TotalStmts: u.TotalStmts,
+			GateFailed: u.GateFailed, PartCount: 1, UploadID: u.ID,
+			CreatedAt: u.CreatedAt, UpdatedAt: u.CreatedAt,
+		}
+	}
+
 	// ~45 uploads drifting between ~68% and ~85%, a few gate failures,
 	// a couple of PR uploads that must not appear in the trend.
 	rnd := rand.New(rand.NewSource(42))
@@ -135,6 +148,9 @@ func main() {
 		if err := st.CreateUpload(ctx, u, nil); err != nil {
 			log.Fatal(err)
 		}
+		if err := st.UpsertCommitReport(ctx, reportFor(u)); err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	// One upload carrying real per-file coverage and cached source, so the
@@ -155,6 +171,9 @@ func main() {
 		Blocks: chargeBaseBlocks(),
 	}}, steadyFiles()...)
 	if err := st.CreateUpload(ctx, baseUpload, baseFiles); err != nil {
+		log.Fatal(err)
+	}
+	if err := st.UpsertCommitReport(ctx, reportFor(baseUpload)); err != nil {
 		log.Fatal(err)
 	}
 	srcUpload := &store.Upload{
@@ -178,6 +197,9 @@ func main() {
 	// so the upload page tucks them behind "show all".
 	srcFiles := append([]*store.UploadFile{file}, steadyFiles()...)
 	if err := st.CreateUpload(ctx, srcUpload, srcFiles); err != nil {
+		log.Fatal(err)
+	}
+	if err := st.UpsertCommitReport(ctx, reportFor(srcUpload)); err != nil {
 		log.Fatal(err)
 	}
 	blobKey := fmt.Sprintf("source/%d/%s/%s", repo.ID, srcUpload.CommitSHA, file.Path)

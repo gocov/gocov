@@ -164,6 +164,7 @@ func New(cfg Config) *Server {
 		"pct":      func(v float64) string { return fmt.Sprintf("%.1f%%", v) },
 		"short":    shortSHA,
 		"sub":      func(a, b int64) int64 { return a - b },
+		"humanint": humanInt,
 		"ranges":   diffcov.Ranges,
 		"covclass": covClass,
 		"timeago":  timeAgo,
@@ -196,8 +197,8 @@ func New(cfg Config) *Server {
 	// Every page is its own template set sharing the layout and partials,
 	// so pages can define "content" without colliding.
 	pages := map[string]*template.Template{}
-	for _, name := range []string{"index.html", "repo.html", "upload.html", "source.html", "login.html",
-		"workspace.html", "onboarding.html", "connect.html"} {
+	for _, name := range []string{"index.html", "repo.html", "repo-settings.html", "upload.html", "source.html",
+		"login.html", "workspace.html", "onboarding.html", "connect.html"} {
 		pages[name] = template.Must(template.New(name).Funcs(funcs).ParseFS(templatesFS,
 			"templates/layout.html", "templates/partials.html", "templates/"+name))
 	}
@@ -260,6 +261,10 @@ func (s *Server) routes() {
 		s.mux.HandleFunc("POST /github/webhook", s.handleGitHubWebhook)
 	}
 	s.mux.HandleFunc("GET /{$}", s.handleIndex)
+	s.mux.HandleFunc("GET /repo-settings/{slug}", s.handleRepoSettings)
+	s.mux.HandleFunc("POST /repo-settings/{slug}/save", s.handleRepoSettingsSave)
+	s.mux.HandleFunc("POST /repo-settings/{slug}/rotate-token", s.handleRepoRotateToken)
+	s.mux.HandleFunc("POST /repo-settings/{slug}/delete", s.handleRepoDelete)
 	s.mux.HandleFunc("GET /repos/{slug...}", s.handleRepo)
 	s.mux.HandleFunc("GET /uploads/{id}", s.handleUploadPage)
 	s.mux.HandleFunc("GET /uploads/{id}/profile", s.handleUploadProfile)

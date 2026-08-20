@@ -1,0 +1,135 @@
+{{define "title"}}gocov — {{.Repo.Slug}} settings{{end}}
+{{define "content"}}
+{{$slug := .SlugEsc}}
+<div class="ws">
+
+<div class="ws-head">
+  <div class="crumbs"><a href="/">Repos</a> /
+    <a href="/workspaces/{{.WSPrefixEsc}}">{{.WSPrefix}}</a> /
+    <a href="/repos/{{.Repo.Slug}}"><code>{{.Repo.Slug}}</code></a> / Settings</div>
+  <h1>Settings <span class="mono">{{.Repo.Slug}}</span></h1>
+  <p class="sub">In workspace <a href="/workspaces/{{.WSPrefixEsc}}">{{.WSPrefix}}</a>
+    &middot; <a href="/repos/{{.Repo.Slug}}">Back to coverage</a></p>
+</div>
+
+<nav class="side">
+  <span class="grp">Repository</span>
+  <a href="#general">General</a>
+  <a href="#gates">Coverage gates</a>
+  <a href="#uploads">Uploads</a>
+  <a href="#badge">Badge</a>
+  <span class="grp">Danger zone</span>
+  <a href="#remove">Remove repository</a>
+</nav>
+
+<div class="ws-main">
+
+{{with .Notice}}<p class="notice">{{.}}</p>{{end}}
+{{with .Error}}<p class="notice fail">{{.}}</p>{{end}}
+
+{{if .NewToken}}
+<div class="card"><div class="card-bd">
+  <h2 style="margin:14px 0 6px">New upload token</h2>
+  <p><strong>Save it now — it is shown only this once</strong> in this banner. The previous
+  token stopped working the moment it was rotated.</p>
+  <div class="secret"><div class="secret-bd">
+    <span class="v" id="rs-newtoken">{{.NewToken}}</span>
+    <button class="btn" type="button" data-copy="#rs-newtoken">Copy</button>
+  </div></div>
+</div></div>
+{{end}}
+
+<form method="post" action="/repo-settings/{{$slug}}/save">
+<div class="card" id="general">
+  <div class="card-hd"><h2>General</h2></div>
+  <div class="card-bd">
+    <p>The base branch is what every other branch is compared against — trends and gate
+    baselines are measured from it.</p>
+    <div class="fields">
+      <span class="f"><label for="db">Base branch</label>
+        <input class="input" id="db" name="default_branch" type="text" value="{{.Repo.DefaultBranch}}">
+        <span class="h">Defaults to the branch detected at registration.</span></span>
+    </div>
+  </div>
+  <div class="card-ft"><button class="btn primary" type="submit">Save</button>
+    <span class="hint">Applies to the next upload.</span></div>
+</div>
+
+<div class="card" id="gates">
+  <div class="card-hd"><h2>Coverage gates</h2><span class="spacer"></span>
+    <span class="chip info" id="gatecount">{{if .GateActive}}{{.GateActive}} active{{else}}None active{{end}}</span></div>
+  <div class="card-bd">
+    <p>Gates decide whether a commit passes. They apply to this repository only. Leave a gate
+    off to disable that rule.</p>
+    {{template "gate" dict "Name" "min_coverage" "Label" "Minimum total coverage"
+       "Help" "Fails when the whole repository drops below this figure."
+       "Value" .Repo.Gate.MinCoverage}}
+    {{template "gate" dict "Name" "min_diff_coverage" "Label" "Minimum diff coverage"
+       "Help" "Fails when the lines changed in a pull/merge request are covered below this figure."
+       "Value" .Repo.Gate.MinDiffCoverage}}
+    {{template "gate" dict "Name" "max_coverage_drop" "Label" "Maximum coverage drop"
+       "Help" "Fails when total coverage falls by more than this against the base branch."
+       "Value" .Repo.Gate.MaxCoverageDrop}}
+  </div>
+  <div class="card-ft"><button class="btn primary" type="submit">Save</button>
+    <span class="hint">Applies to uploads received from now on. Past verdicts are not recalculated.</span></div>
+</div>
+</form>
+
+<div class="card" id="uploads">
+  <div class="card-hd"><h2>Uploads</h2></div>
+  <div class="card-bd">
+    <p>Builds for <code>{{.Repo.Slug}}</code> can upload with this repository token. Rotating it
+    takes effect immediately — CI has to be updated in the same change.</p>
+    <div class="secret">
+      <div class="secret-hd"><span class="name">GOCOV_TOKEN</span><span class="chip plain">Secret</span>
+        <span class="spacer"></span><span class="muted small">Shown to workspace members only</span></div>
+      <div class="secret-bd">
+        <span class="v" id="rs-token" data-full="{{.Token}}">{{.MaskedToken}}</span>
+        <button class="btn" type="button" data-reveal="#rs-token">Reveal</button>
+        <button class="btn" type="button" data-copy="#rs-tokenval">Copy</button>
+        <input type="hidden" id="rs-tokenval" value="{{.Token}}">
+      </div>
+    </div>
+  </div>
+  <div class="card-ft">
+    <form method="post" action="/repo-settings/{{$slug}}/rotate-token"
+          data-confirm="Rotate the upload token? The current token stops working immediately and CI must be updated.">
+      <button class="btn" type="submit">Rotate token</button></form>
+    <span class="hint">The old token stops working the moment you rotate.</span>
+  </div>
+</div>
+
+<div class="card" id="badge">
+  <div class="card-hd"><h2>Badge</h2><span class="spacer"></span><span class="chip pass">Public</span></div>
+  <div class="card-bd">
+    <p>The badge shows total coverage on the base branch. Anyone with the link can load it,
+    without seeing the reports behind it.</p>
+    <div class="badgebox">
+      <img alt="coverage badge" src="/badge/{{.Repo.Slug}}.svg">
+      <input id="rs-badge" class="input mono" readonly onfocus="this.select()"
+             style="flex:1;min-width:0;font-size:12px" value="{{.BadgeMarkdown}}">
+      <button class="btn sm" type="button" data-copy="#rs-badge">Copy Markdown</button>
+    </div>
+  </div>
+</div>
+
+<div class="card danger-card" id="remove">
+  <div class="card-hd"><h2>Remove repository</h2></div>
+  <div class="card-bd">
+    <p>Removes <code>{{.Repo.Slug}}</code> from gocov along with its uploads and every report
+    behind them. Uploads with its token start failing immediately. Nothing is changed on the
+    forge — the repository itself, and any branch protection referring to the gocov check,
+    stay as they are.</p>
+  </div>
+  <div class="card-ft">
+    <form method="post" action="/repo-settings/{{$slug}}/delete"
+          data-confirm="Remove {{.Repo.Slug}} and all of its coverage data? This cannot be undone.">
+      <button class="btn danger" type="submit">Remove this repository</button></form>
+    <span class="hint">This cannot be undone.</span>
+  </div>
+</div>
+
+</div>
+</div>
+{{end}}
