@@ -327,7 +327,8 @@ body[data-only="miss"] .fold { display: none; }
 .who .m { color: var(--text-2); font-size: 12.5px; }
 .who .spacer { flex: 1; }
 
-/* first report */
+/* first report — the onboarding success bar is always green; scope these to
+   .mini so they don't override the threshold colors on other coverage bars */
 .mini { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; margin: 4px 0 16px; }
 .mini .hd { background: var(--surface2); padding: 8px 14px; font-size: 12px; font-weight: 600;
   color: var(--text-2); text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid var(--border-soft); }
@@ -335,10 +336,10 @@ body[data-only="miss"] .fold { display: none; }
 .mini td { padding: 10px 14px; border-bottom: 1px solid var(--border-soft); }
 .mini tr:last-child td { border-bottom: none; }
 .mini td:last-child { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; color: var(--green); }
-.cov { display: inline-flex; align-items: center; gap: 10px; min-width: 180px; }
-.cov .track { flex: 1; display: block; height: 8px; border-radius: 4px; background: var(--border-soft); overflow: hidden; }
-.cov .fill { display: block; height: 100%; border-radius: 4px; background: var(--green); }
-.cov .pct { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 13px; color: var(--green); }
+.mini .cov { display: inline-flex; align-items: center; gap: 10px; min-width: 180px; }
+.mini .cov .track { flex: 1; display: block; height: 8px; border-radius: 4px; background: var(--border-soft); overflow: hidden; }
+.mini .cov .fill { display: block; height: 100%; border-radius: 4px; background: var(--green); }
+.mini .cov .pct { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 13px; color: var(--green); }
 
 /* narrow screens */
 @media (max-width: 760px) {
