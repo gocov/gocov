@@ -122,6 +122,26 @@ type Upload struct {
 	// part replaces it rather than accumulating.
 	Part      string
 	CreatedAt time.Time
+	// Meta carries optional provenance captured at upload time — who
+	// uploaded, from which CI run, how the profile arrived. Every field is
+	// best-effort: uploads made before it was recorded, or through the raw
+	// API, leave it empty.
+	Meta UploadMeta
+}
+
+// UploadMeta is the optional provenance of an upload, stored as JSON. The
+// CLI fills the source fields from the CI environment and git; the server
+// fills the profile size, filename and its own processing time.
+type UploadMeta struct {
+	Uploader      string `json:"uploader,omitempty"`       // e.g. "gocov v0.9.2"
+	UploaderKind  string `json:"uploader_kind,omitempty"`  // "cli" or "action"
+	CIProvider    string `json:"ci_provider,omitempty"`    // "github", "gitlab", "bitbucket"
+	CIRunURL      string `json:"ci_run_url,omitempty"`     // link to the CI run
+	CommitMessage string `json:"commit_message,omitempty"` // first line of the commit message
+	CommitAuthor  string `json:"commit_author,omitempty"`  // commit author display name
+	ProfileName   string `json:"profile_name,omitempty"`   // original uploaded filename
+	ProfileBytes  int64  `json:"profile_bytes,omitempty"`  // raw profile size
+	ProcessMillis int64  `json:"process_millis,omitempty"` // server processing time
 }
 
 // User is a web UI account, identified by the forge account it signed in

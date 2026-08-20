@@ -12,13 +12,17 @@ import (
 )
 
 type uploadRequest struct {
-	Server      string
-	Token       string
-	Format      string
-	PathPrefix  string
-	Part        string
-	ProfileData []byte
-	Build       buildInfo
+	Server       string
+	Token        string
+	Format       string
+	PathPrefix   string
+	Part         string
+	ProfileData  []byte
+	ProfileName  string
+	Uploader     string
+	UploaderKind string
+	Build        buildInfo
+	Meta         metaInfo
 }
 
 // uploadResponse mirrors the server's POST /api/v1/upload response.
@@ -44,13 +48,19 @@ func upload(req uploadRequest) (*uploadResponse, error) {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	fields := map[string]string{
-		"repo":        req.Build.Repo,
-		"commit":      req.Build.Commit,
-		"branch":      req.Build.Branch,
-		"pr_id":       req.Build.PRID,
-		"format":      req.Format,
-		"path_prefix": req.PathPrefix,
-		"part":        req.Part,
+		"repo":           req.Build.Repo,
+		"commit":         req.Build.Commit,
+		"branch":         req.Build.Branch,
+		"pr_id":          req.Build.PRID,
+		"format":         req.Format,
+		"path_prefix":    req.PathPrefix,
+		"part":           req.Part,
+		"uploader":       req.Uploader,
+		"uploader_kind":  req.UploaderKind,
+		"ci_provider":    req.Meta.CIProvider,
+		"ci_run_url":     req.Meta.CIRunURL,
+		"commit_message": req.Meta.CommitMessage,
+		"commit_author":  req.Meta.CommitAuthor,
 	}
 	for k, v := range fields {
 		if v == "" {
@@ -60,7 +70,11 @@ func upload(req uploadRequest) (*uploadResponse, error) {
 			return nil, err
 		}
 	}
-	fw, err := mw.CreateFormFile("profile", "coverage.out")
+	filename := req.ProfileName
+	if filename == "" {
+		filename = "coverage.out"
+	}
+	fw, err := mw.CreateFormFile("profile", filename)
 	if err != nil {
 		return nil, err
 	}

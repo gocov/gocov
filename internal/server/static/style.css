@@ -447,15 +447,6 @@ body[data-only="miss"] .fold { display: none; }
 .verdict .meta .k { color: var(--text-3); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
 .verdict .meta .v { font-size: 13px; font-variant-numeric: tabular-nums; }
 
-/* per-rule gate readout inside the verdict */
-.rules { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 12px 0 0; }
-.rule { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
-.rule .ic { font-weight: 700; }
-.rule.ok .ic { color: var(--green); }
-.rule.no .ic { color: var(--red); }
-.rule .lbl { color: var(--text-2); }
-.rule .val { font-variant-numeric: tabular-nums; font-weight: 600; }
-
 /* before -> after cell */
 td .path .dir, td a.path .dir { color: var(--text-3); }
 .ba { display: flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; white-space: nowrap; }

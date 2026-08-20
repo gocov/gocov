@@ -4,8 +4,8 @@
 <div class="crumbs"><a href="/">Repos</a> / <a href="/repos/{{.Repo.Slug}}"><code>{{.Repo.Slug}}</code></a> / <code>{{short $u.CommitSHA}}</code></div>
 
 <div class="uphead">
-  <h1 class="mono">{{short $u.CommitSHA}}</h1>
-  <p class="sub">on <code class="mono">{{$u.Branch}}</code>{{if $u.PRID}} <span class="chip info">PR #{{$u.PRID}}</span>{{end}} &middot; uploaded {{timeago $u.CreatedAt}} &middot; {{$u.Format}} profile</p>
+  <h1>{{if $u.Meta.CommitMessage}}{{$u.Meta.CommitMessage}}{{else}}<span class="mono">{{short $u.CommitSHA}}</span>{{end}}</h1>
+  <p class="sub"><a class="mono" href="/uploads/{{$u.ID}}">{{short $u.CommitSHA}}</a> on <code class="mono">{{$u.Branch}}</code>{{if $u.PRID}} <span class="chip info">PR #{{$u.PRID}}</span>{{end}}{{with $u.Meta.CommitAuthor}} &middot; by <span class="mono">{{.}}</span>{{end}} &middot; {{timeago $u.CreatedAt}}</p>
 </div>
 
 {{with .Verdict}}
@@ -16,11 +16,6 @@
     {{else}}<div class="t">Coverage recorded</div>{{end}}
     <div class="big"><span class="pct {{.CovClass}}">{{pct .Pct}}</span>{{with .Delta}}<span class="d delta {{.Class}}">{{.Arrow}} {{.Text}}</span>{{end}}</div>
     <p class="r">{{.Reason}}</p>
-    {{if .Rules}}
-    <div class="rules">
-      {{range .Rules}}<span class="rule {{if .OK}}ok{{else}}no{{end}}"><span class="ic">{{if .OK}}&#10003;{{else}}&#10007;{{end}}</span> <span class="lbl">{{.Label}}</span> &middot; <span class="val">{{.Value}}</span></span>{{end}}
-    </div>
-    {{end}}
   </div>
   <div class="meta">
     <span><span class="k">Statements</span><br><span class="v">{{.Statements}} <span class="muted small">covered</span></span></span>
@@ -92,12 +87,15 @@
 </div>
 <div class="card">
   <div class="prov">
-    <span class="row"><span class="k">Received</span><span class="v">{{.Received}} <span class="muted small">&middot; {{timeago $u.CreatedAt}}</span></span></span>
-    <span class="row"><span class="k">Commit</span><span class="v mono">{{$u.CommitSHA}}</span></span>
-    <span class="row"><span class="k">Branch</span><span class="v"><span class="mono">{{$u.Branch}}</span>{{if $u.PRID}} <span class="chip info">PR #{{$u.PRID}}</span>{{end}}</span></span>
-    <span class="row"><span class="k">Format</span><span class="v"><span class="chip plain">{{$u.Format}}</span></span></span>
-    <span class="row"><span class="k">Part</span><span class="v">{{if or (eq $u.Part "default") (eq $u.Part "")}}<span class="muted">single profile</span>{{else}}<span class="chip plain">{{$u.Part}}</span>{{end}}</span></span>
-    <span class="row"><span class="k">Base</span><span class="v">{{if .Verdict.BaseSHA}}<a class="mono" href="/uploads/{{.Verdict.BaseID}}">{{short .Verdict.BaseSHA}}</a> <span class="muted small">&middot; {{.Verdict.BasePctStr}}</span>{{else}}<span class="muted">first tracked upload on this branch</span>{{end}}</span></span>
+    {{with .Prov}}
+    <span class="row"><span class="k">Received</span><span class="v">{{.Received}} <span class="muted small">&middot; {{.Ago}}</span></span></span>
+    <span class="row"><span class="k">Profile</span><span class="v"><span class="mono">{{.ProfileName}}</span> <span class="chip plain">{{.Format}}</span>{{with .ProfileSize}} <span class="muted small">&middot; {{.}}</span>{{end}}</span></span>
+    {{if .CILabel}}<span class="row"><span class="k">CI run</span><span class="v">{{.CILabel}}{{with .CIRunURL}} &middot; <a href="{{.}}" rel="nofollow noopener">view run</a>{{end}}</span></span>{{end}}
+    {{if .Uploader}}<span class="row"><span class="k">Uploader</span><span class="v"><span class="mono">{{.Uploader}}</span>{{with .UploaderKind}} <span class="muted small">&middot; {{.}}</span>{{end}}</span></span>{{end}}
+    <span class="row"><span class="k">Flags</span><span class="v">{{with .Part}}<span class="chip plain">{{.}}</span> {{end}}<span class="muted small">{{.PartsNote}}</span></span></span>
+    {{with .Processed}}<span class="row"><span class="k">Processed in</span><span class="v">{{.}}</span></span>{{end}}
+    {{end}}
   </div>
 </div>
+{{if .Verdict.BaseSHA}}<p class="hint" style="margin:8px 0 0">Compared against baseline <a class="mono" href="/uploads/{{.Verdict.BaseID}}">{{short .Verdict.BaseSHA}}</a> ({{.Verdict.BasePctStr}}), the last gate-passing upload on this branch.</p>{{end}}
 {{end}}

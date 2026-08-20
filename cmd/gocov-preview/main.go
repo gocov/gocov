@@ -161,6 +161,13 @@ func main() {
 		Branch: "main", Format: "go",
 		TotalPct: 82.0, CoveredStmts: 205, TotalStmts: 250,
 		CreatedAt: base.Add(45 * 24 * time.Hour),
+		Meta: store.UploadMeta{
+			Uploader: "gocov v0.9.2", UploaderKind: "action",
+			CIProvider: "github", CIRunURL: "https://github.com/acme/widgets/actions/runs/2481",
+			CommitMessage: "Reconcile ledger entries before posting",
+			CommitAuthor:  "devuser",
+			ProfileName:   "coverage.out", ProfileBytes: 118 * 1024, ProcessMillis: 1800,
+		},
 	}
 	file := &store.UploadFile{
 		Path: "internal/billing/charge.go", Pct: 46.2, CoveredStmts: 12, TotalStmts: 26,

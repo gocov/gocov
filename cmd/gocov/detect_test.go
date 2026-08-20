@@ -188,6 +188,60 @@ func TestDetectBuild(t *testing.T) {
 	}
 }
 
+func TestDetectMeta(t *testing.T) {
+	git := func(args ...string) (string, error) {
+		switch strings.Join(args, " ") {
+		case "show -s --format=%s abc123":
+			return "Add retries with backoff\n\nbody ignored", nil
+		case "show -s --format=%an abc123":
+			return "Ada Lovelace\n", nil
+		}
+		return "", fmt.Errorf("git failed")
+	}
+
+	t.Run("github", func(t *testing.T) {
+		env := func(k string) string {
+			return map[string]string{
+				"GITHUB_ACTIONS":    "true",
+				"GITHUB_SERVER_URL": "https://github.com",
+				"GITHUB_REPOSITORY": "acme/widgets",
+				"GITHUB_RUN_ID":     "42",
+			}[k]
+		}
+		got := detectMeta(env, git, "abc123")
+		want := metaInfo{
+			CommitMessage: "Add retries with backoff",
+			CommitAuthor:  "Ada Lovelace",
+			CIProvider:    "github",
+			CIRunURL:      "https://github.com/acme/widgets/actions/runs/42",
+		}
+		if got != want {
+			t.Errorf("detectMeta() = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("gitlab uses job url", func(t *testing.T) {
+		env := func(k string) string {
+			return map[string]string{
+				"GITLAB_CI":  "true",
+				"CI_JOB_URL": "https://gitlab.com/acme/widgets/-/jobs/9",
+			}[k]
+		}
+		got := detectMeta(env, git, "abc123")
+		if got.CIProvider != "gitlab" || got.CIRunURL != "https://gitlab.com/acme/widgets/-/jobs/9" {
+			t.Errorf("detectMeta() = %+v", got)
+		}
+	})
+
+	t.Run("no ci still reads git", func(t *testing.T) {
+		env := func(string) string { return "" }
+		got := detectMeta(env, git, "abc123")
+		if got.CommitMessage != "Add retries with backoff" || got.CIProvider != "" {
+			t.Errorf("detectMeta() = %+v", got)
+		}
+	})
+}
+
 func TestSlugFromRemote(t *testing.T) {
 	tests := []struct {
 		remote string

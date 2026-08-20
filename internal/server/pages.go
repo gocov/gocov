@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -393,7 +394,7 @@ func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
 		"Files":       rows,
 		"HasBase":     base != nil,
 		"Verdict":     s.uploadVerdict(upload, repo, base, len(files)),
-		"Received":    upload.CreatedAt.UTC().Format("2 Jan 2006, 15:04 UTC"),
+		"Prov":        s.uploadProvenance(r.Context(), upload),
 		"CanDownload": upload.RawBlobKey != "",
 		"Download":    fmt.Sprintf("/uploads/%d/profile", upload.ID),
 	})
@@ -408,14 +409,6 @@ func splitPath(p string) (dir, base string) {
 	return "", p
 }
 
-// gateRule is one configured coverage requirement with the value this upload
-// measured against it, for the verdict card's rule readout.
-type gateRule struct {
-	Label string
-	Value string
-	OK    bool
-}
-
 // verdictView is the coverage verdict rendered at the top of the upload page.
 type verdictView struct {
 	State      string // "pass", "fail" or "neutral" (no gate configured)
@@ -428,14 +421,12 @@ type verdictView struct {
 	BaseID     int64
 	BaseSHA    string
 	BasePctStr string
-	Rules      []gateRule
-	Reason     string
+	Reason     string // prose walk-through of the gate rules and their outcome
 }
 
 // uploadVerdict assembles the verdict card. The headline pass/fail follows the
-// upload's stored gate result; the per-rule readout re-measures each
-// configured threshold against this upload so a reader can see which rule
-// moved the verdict.
+// upload's stored gate result; the reason narrates each configured rule
+// against the values this upload measured, so a reader sees why it stands.
 func (s *Server) uploadVerdict(u *store.Upload, repo *store.Repo, base *store.Upload, fileCount int) verdictView {
 	v := verdictView{
 		Pct:        u.TotalPct,
@@ -458,53 +449,129 @@ func (s *Server) uploadVerdict(u *store.Upload, repo *store.Repo, base *store.Up
 	default:
 		v.State = "pass"
 	}
-
-	g := repo.Gate
-	if g.MinCoverage != nil {
-		v.Rules = append(v.Rules, gateRule{
-			Label: fmt.Sprintf("Total coverage ≥ %.4g%%", *g.MinCoverage),
-			Value: fmt.Sprintf("%.1f%%", u.TotalPct),
-			OK:    u.TotalPct >= *g.MinCoverage-gateEpsilon,
-		})
-	}
-	if g.MaxCoverageDrop != nil {
-		rule := gateRule{Label: fmt.Sprintf("Coverage drop ≤ %.4g%%", *g.MaxCoverageDrop)}
-		if base != nil {
-			drop := base.TotalPct - u.TotalPct
-			if drop < 0 {
-				rule.Value = fmt.Sprintf("+%.1f%%", -drop)
-			} else {
-				rule.Value = fmt.Sprintf("−%.1f%%", drop)
-			}
-			rule.OK = drop <= *g.MaxCoverageDrop+gateEpsilon
-		} else {
-			// The gate is fail-open without a baseline; mirror that here.
-			rule.Value = "no base"
-			rule.OK = true
-		}
-		v.Rules = append(v.Rules, rule)
-	}
-	if g.MinDiffCoverage != nil {
-		rule := gateRule{Label: fmt.Sprintf("Diff coverage ≥ %.4g%%", *g.MinDiffCoverage)}
-		if dc := u.DiffCoverage; dc != nil && dc.TotalLines > 0 {
-			rule.Value = fmt.Sprintf("%.1f%%", dc.Percent())
-			rule.OK = dc.Percent() >= *g.MinDiffCoverage-gateEpsilon
-		} else {
-			rule.Value = "no diff"
-			rule.OK = true
-		}
-		v.Rules = append(v.Rules, rule)
-	}
-
-	switch {
-	case v.State == "neutral":
-		v.Reason = fmt.Sprintf("No coverage gate is configured for %s. This upload records %.1f%% total coverage.", repo.Slug, u.TotalPct)
-	case v.State == "fail":
-		v.Reason = "This upload does not meet the coverage gate — the failing rules are marked below."
-	default:
-		v.Reason = "This upload meets every configured coverage rule."
-	}
+	v.Reason = gateReason(u, repo.Gate, base)
 	return v
+}
+
+// gateReason narrates the gate: one clause per configured rule, comparing this
+// upload's measured value to the threshold, joined into a sentence. It reads
+// the same whether the gate passed or failed — the clauses themselves say
+// which rule is the problem.
+func gateReason(u *store.Upload, g store.Gate, base *store.Upload) string {
+	if !g.Configured() {
+		return fmt.Sprintf("No coverage gate is configured for this repo. This upload records %.1f%% total coverage.", u.TotalPct)
+	}
+	var parts []string
+	if g.MinCoverage != nil {
+		rel := "is above"
+		if u.TotalPct < *g.MinCoverage-gateEpsilon {
+			rel = "is below"
+		}
+		parts = append(parts, fmt.Sprintf("total coverage %s the minimum of %.4g%%", rel, *g.MinCoverage))
+	}
+	if g.MaxCoverageDrop != nil && base != nil {
+		drop := base.TotalPct - u.TotalPct
+		if drop <= gateEpsilon {
+			parts = append(parts, "coverage held or rose against the base")
+		} else {
+			rel := "under"
+			if drop > *g.MaxCoverageDrop+gateEpsilon {
+				rel = "over"
+			}
+			parts = append(parts, fmt.Sprintf("the drop against the base is %.4g%% — %s the %.4g%% allowed", drop, rel, *g.MaxCoverageDrop))
+		}
+	}
+	if g.MinDiffCoverage != nil && u.DiffCoverage != nil && u.DiffCoverage.TotalLines > 0 {
+		rel := "meets"
+		if u.DiffCoverage.Percent() < *g.MinDiffCoverage-gateEpsilon {
+			rel = "is below"
+		}
+		parts = append(parts, fmt.Sprintf("diff coverage %s the %.4g%% minimum", rel, *g.MinDiffCoverage))
+	}
+	if len(parts) == 0 {
+		return fmt.Sprintf("This upload records %.1f%% total coverage.", u.TotalPct)
+	}
+	sentence := strings.ToUpper(parts[0][:1]) + parts[0][1:]
+	if len(parts) > 1 {
+		sentence += ", and " + strings.Join(parts[1:], ", and ")
+	}
+	return sentence + "."
+}
+
+// provView is the Upload provenance card: what we recorded about how this
+// upload arrived. Every field degrades to empty for uploads made before the
+// metadata was captured or through the raw API.
+type provView struct {
+	Received     string
+	Ago          string
+	ProfileName  string
+	ProfileSize  string
+	Format       string
+	CILabel      string // "GitHub Actions", "GitLab CI", "Bitbucket Pipelines"
+	CIRunURL     string
+	Uploader     string
+	UploaderKind string // "CLI" or "Action"
+	Part         string // the upload's part, "" for the default single profile
+	PartsNote    string // "single profile, no merge" or "merged from N parts"
+	Processed    string // server processing time, "" when not recorded
+}
+
+var ciLabels = map[string]string{
+	"github":    "GitHub Actions",
+	"gitlab":    "GitLab CI",
+	"bitbucket": "Bitbucket Pipelines",
+}
+
+var uploaderKindLabels = map[string]string{"cli": "CLI", "action": "Action"}
+
+// uploadProvenance builds the Upload card from the upload's captured metadata,
+// resolving how many parts merged into the commit for the flags line.
+func (s *Server) uploadProvenance(ctx context.Context, u *store.Upload) provView {
+	m := u.Meta
+	p := provView{
+		Received:     u.CreatedAt.UTC().Format("2 Jan 2006, 15:04 UTC"),
+		Ago:          timeAgo(u.CreatedAt),
+		ProfileName:  m.ProfileName,
+		Format:       u.Format,
+		CILabel:      ciLabels[m.CIProvider],
+		CIRunURL:     m.CIRunURL,
+		Uploader:     m.Uploader,
+		UploaderKind: uploaderKindLabels[m.UploaderKind],
+	}
+	if p.ProfileName == "" {
+		p.ProfileName = profileFilename(u.Format)
+	}
+	if m.ProfileBytes > 0 {
+		p.ProfileSize = humanBytes(m.ProfileBytes)
+	}
+	if u.Part != "" && u.Part != "default" {
+		p.Part = u.Part
+	}
+	switch ms := m.ProcessMillis; {
+	case ms >= 1000:
+		p.Processed = fmt.Sprintf("%.1f s", float64(ms)/1000)
+	case ms > 0:
+		p.Processed = fmt.Sprintf("%d ms", ms)
+	}
+	// Count the parts that fed the commit for the flags line.
+	if parts, err := s.store.CommitParts(ctx, u.RepoID, u.CommitSHA); err == nil && len(parts) > 1 {
+		p.PartsNote = fmt.Sprintf("merged from %d parts", len(parts))
+	} else {
+		p.PartsNote = "single profile, no merge"
+	}
+	return p
+}
+
+// humanBytes formats a byte count as a compact size.
+func humanBytes(n int64) string {
+	switch {
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.0f KB", float64(n)/(1<<10))
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
 }
 
 // humanInt formats a statement count with thousands separators.
