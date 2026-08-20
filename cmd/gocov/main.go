@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/gocov/gocov/internal/hosted"
@@ -95,14 +96,24 @@ func run(args []string) error {
 		prefix = moduleFromGoMod("go.mod")
 	}
 
+	// Uploader kind defaults to the bare CLI; the gocov-action sets
+	// GOCOV_UPLOADER_KIND=action so the upload page can tell them apart.
+	kind := os.Getenv("GOCOV_UPLOADER_KIND")
+	if kind != "action" {
+		kind = "cli"
+	}
 	resp, err := upload(uploadRequest{
-		Server:      *server,
-		Token:       *token,
-		Format:      resolvedFormat,
-		PathPrefix:  prefix,
-		Part:        *part,
-		ProfileData: profileData,
-		Build:       build,
+		Server:       *server,
+		Token:        *token,
+		Format:       resolvedFormat,
+		PathPrefix:   prefix,
+		Part:         *part,
+		ProfileData:  profileData,
+		ProfileName:  filepath.Base(profilePath),
+		Uploader:     "gocov " + version,
+		UploaderKind: kind,
+		Build:        build,
+		Meta:         detectMeta(osEnv, runGit, build.Commit),
 	})
 	if err != nil {
 		return err

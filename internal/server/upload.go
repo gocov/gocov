@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -58,6 +59,67 @@ type uploadResponse struct {
 	DiffTotalLines   *int64   `json:"diff_total_lines,omitempty"`
 	DiffStatus       string   `json:"diff_status,omitempty"` // "computed", "skipped: ..." or "error: ..."
 	PRComment        string   `json:"pr_comment,omitempty"`  // "posted", "updated", "skipped" or "error: ..."
+}
+
+// knownCIProviders bounds the ci_provider field to the forges gocov knows,
+// so the value is safe to key display labels off.
+var knownCIProviders = map[string]bool{"github": true, "gitlab": true, "bitbucket": true}
+
+// buildUploadMeta assembles the upload's provenance from the request. The CLI
+// sends the source fields (uploader, CI run, commit subject and author) from
+// the CI environment; the server measures the profile size and its own
+// processing time. Every field is optional and bounded — the values are
+// attacker-influencable by any token holder and end up rendered on the
+// upload page.
+func buildUploadMeta(r *http.Request, filename string, rawLen int, elapsed time.Duration) store.UploadMeta {
+	m := store.UploadMeta{
+		Uploader:      clip(r.FormValue("uploader"), 60),
+		CommitMessage: clip(firstLine(r.FormValue("commit_message")), 200),
+		CommitAuthor:  clip(r.FormValue("commit_author"), 120),
+		ProfileName:   clip(baseName(filename), 200),
+		ProfileBytes:  int64(rawLen),
+		ProcessMillis: elapsed.Milliseconds(),
+	}
+	if kind := r.FormValue("uploader_kind"); kind == "cli" || kind == "action" {
+		m.UploaderKind = kind
+	}
+	if p := strings.ToLower(r.FormValue("ci_provider")); knownCIProviders[p] {
+		m.CIProvider = p
+	}
+	// Only keep an http(s) run URL; anything else could smuggle a
+	// javascript: or data: link into the page's href.
+	if raw := clip(r.FormValue("ci_run_url"), 500); raw != "" {
+		if u, err := url.Parse(raw); err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" {
+			m.CIRunURL = raw
+		}
+	}
+	return m
+}
+
+// clip trims surrounding space and caps a string to n runes.
+func clip(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if r := []rune(s); len(r) > n {
+		return strings.TrimSpace(string(r[:n]))
+	}
+	return s
+}
+
+// firstLine returns the first line of s, so a multi-line commit message
+// contributes only its subject.
+func firstLine(s string) string {
+	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
+// baseName strips any directory part a client put on the profile filename.
+func baseName(p string) string {
+	if i := strings.LastIndexAny(p, `/\`); i >= 0 {
+		return p[i+1:]
+	}
+	return p
 }
 
 // gateResult is the evaluated coverage gate for one upload.
@@ -111,6 +173,7 @@ func evaluateGate(gate store.Gate, totalPct float64, dropDelta *float64, diff *d
 // field "profile"; value fields repo, commit (required), branch (defaults
 // to the repo's default branch), pr_id (optional), format (default "go").
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if !ok || token == "" {
 		httpError(w, http.StatusUnauthorized, "missing bearer token")
@@ -183,7 +246,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	file, _, err := r.FormFile("profile")
+	file, fileHdr, err := r.FormFile("profile")
 	if err != nil {
 		httpError(w, http.StatusBadRequest, "missing file field: profile")
 		return
@@ -272,6 +335,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		GateFailed:   gate.failed(),
 		PathPrefix:   pathPrefix,
 		Part:         part,
+		Meta:         buildUploadMeta(r, fileHdr.Filename, len(raw), time.Since(start)),
 	}
 	files := make([]*store.UploadFile, 0, len(prof.Files))
 	for i := range prof.Files {

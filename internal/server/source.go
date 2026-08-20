@@ -410,14 +410,14 @@ func annotateMisses(lines []sourceLine) ([]missBlock, int) {
 // baseBaselineScan bounds how far back the baseline search reads uploads.
 const baseBaselineScan = 60
 
-// baseFileFor returns the same file at the most recent prior baseline
-// upload on the upload's branch — the newest earlier upload that is not a
-// PR build and did not fail the gate. A file absent from that upload is
-// genuinely new, so there is no baseline to compare against.
-func (s *Server) baseFileFor(ctx context.Context, repo *store.Repo, u *store.Upload, path string) *store.UploadFile {
+// baselineUpload returns the most recent prior baseline upload on u's branch
+// — the newest earlier upload that is not a PR build and did not fail the
+// gate — together with its per-file coverage keyed by profile path. Returns
+// (nil, nil) when there is no baseline to compare against.
+func (s *Server) baselineUpload(ctx context.Context, repo *store.Repo, u *store.Upload) (*store.Upload, map[string]*store.UploadFile) {
 	ups, err := s.store.ListBranchUploads(ctx, repo.ID, u.Branch, baseBaselineScan)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	var base *store.Upload
 	for _, prev := range ups {
@@ -428,18 +428,25 @@ func (s *Server) baseFileFor(ctx context.Context, repo *store.Repo, u *store.Upl
 		break
 	}
 	if base == nil {
-		return nil
+		return nil, nil
 	}
 	files, err := s.store.UploadFiles(ctx, base.ID)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
+	byPath := make(map[string]*store.UploadFile, len(files))
 	for _, f := range files {
-		if f.Path == path {
-			return f
-		}
+		byPath[f.Path] = f
 	}
-	return nil
+	return base, byPath
+}
+
+// baseFileFor returns the same file at the most recent prior baseline upload
+// on the upload's branch. A file absent from that upload is genuinely new, so
+// there is no baseline to compare against.
+func (s *Server) baseFileFor(ctx context.Context, repo *store.Repo, u *store.Upload, path string) *store.UploadFile {
+	_, byPath := s.baselineUpload(ctx, repo, u)
+	return byPath[path]
 }
 
 // markNewlyUncovered flags each line that is uncovered now but was covered

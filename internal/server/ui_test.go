@@ -3,8 +3,10 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
@@ -220,5 +222,125 @@ func TestUploadPageShowsUncoveredRanges(t *testing.T) {
 	body := doGet(t, f, "/uploads/1").Body.String()
 	if !strings.Contains(body, `class="uncov"`) || !strings.Contains(body, "7-9") {
 		t.Errorf("uncovered ranges missing: %s", body)
+	}
+}
+
+// testProfileFull covers a.go's 7-9 block that testProfile leaves uncovered,
+// so a following testProfile upload reads as a regression: a.go drops
+// 100% -> 75% and lines 7-9 become newly uncovered.
+const testProfileFull = `mode: set
+example.com/m/a.go:1.1,5.2 6 1
+example.com/m/a.go:7.1,9.2 2 1
+example.com/m/b.go:1.1,3.2 2 1
+`
+
+func TestUploadPageBeforeAfter(t *testing.T) {
+	f := newFixture(t, nil)
+	// A passing baseline on main, then a regressing head upload.
+	doUpload(t, f, "secret-token", map[string]string{"commit": "base1", "branch": "main"}, testProfileFull)
+	doUpload(t, f, "secret-token", map[string]string{"commit": "head1", "branch": "main"}, testProfile)
+
+	body := doGet(t, f, "/uploads/2").Body.String()
+	for _, want := range []string{
+		`class="ba"`,                // before -> after column rendered
+		"100.0%",                    // a.go coverage at the baseline
+		"75.0%",                     // a.go coverage now
+		`class="delta`,              // per-file delta
+		"7-9",                       // lines newly uncovered by this upload
+		`class="verdict`,            //
+		"Files this commit touched", // only-touched heading
+		`class="xtra"`,              // b.go, unchanged, tucked away
+		"Show all 2 files",          // reveal toggle
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("upload page missing %q\n%s", want, body)
+		}
+	}
+}
+
+func TestUploadPageShowsProvenance(t *testing.T) {
+	f := newFixture(t, nil)
+	doUpload(t, f, "secret-token", map[string]string{
+		"commit": "c1", "branch": "main",
+		"commit_message": "Fix the ledger reconcile",
+		"commit_author":  "Ada Lovelace",
+		"uploader":       "gocov v1.2.3",
+		"uploader_kind":  "action",
+		"ci_provider":    "github",
+		"ci_run_url":     "https://github.com/acme/widgets/actions/runs/7",
+	}, testProfile)
+
+	body := doGet(t, f, "/uploads/1").Body.String()
+	for _, want := range []string{
+		"Fix the ledger reconcile", // commit subject as the heading
+		"Ada Lovelace",             // author
+		"GitHub Actions",           // CI provider label
+		"view run",                 // CI run link
+		"gocov v1.2.3",             // uploader
+		"coverage.out",             // profile filename
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("upload page missing %q\n%s", want, body)
+		}
+	}
+}
+
+func TestBuildUploadMeta(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/upload", nil)
+	r.Form = url.Values{
+		"uploader":       {"gocov v1.0.0"},
+		"uploader_kind":  {"action"},
+		"ci_provider":    {"GitHub"},
+		"ci_run_url":     {"https://github.com/acme/widgets/actions/runs/9"},
+		"commit_message": {"Fix the thing\n\nlong body dropped"},
+		"commit_author":  {"  Ada  "},
+	}
+	m := buildUploadMeta(r, "ci/tmp/coverage.out", 2048, 1500*time.Millisecond)
+	if m.ProfileName != "coverage.out" || m.ProfileBytes != 2048 || m.ProcessMillis != 1500 {
+		t.Errorf("server-measured fields wrong: %+v", m)
+	}
+	if m.CommitMessage != "Fix the thing" || m.CommitAuthor != "Ada" {
+		t.Errorf("commit fields not normalized: %+v", m)
+	}
+	if m.UploaderKind != "action" || m.CIProvider != "github" || m.CIRunURL == "" {
+		t.Errorf("ci fields wrong: %+v", m)
+	}
+}
+
+func TestBuildUploadMetaRejectsBadInput(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/upload", nil)
+	r.Form = url.Values{
+		"uploader_kind": {"hacker"},
+		"ci_provider":   {"evil"},
+		"ci_run_url":    {"javascript:alert(1)"},
+	}
+	m := buildUploadMeta(r, "", 0, 0)
+	if m.UploaderKind != "" {
+		t.Errorf("unknown uploader_kind kept: %q", m.UploaderKind)
+	}
+	if m.CIProvider != "" {
+		t.Errorf("unknown ci_provider kept: %q", m.CIProvider)
+	}
+	if m.CIRunURL != "" {
+		t.Errorf("non-http ci_run_url kept: %q", m.CIRunURL)
+	}
+}
+
+func TestUploadProfileDownload(t *testing.T) {
+	f := newFixture(t, nil)
+	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile)
+
+	rec := doGet(t, f, "/uploads/1/profile")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("download status = %d", rec.Code)
+	}
+	if cd := rec.Header().Get("Content-Disposition"); !strings.Contains(cd, "attachment") || !strings.Contains(cd, "coverage.out") {
+		t.Errorf("content-disposition = %q", cd)
+	}
+	if rec.Body.String() != testProfile {
+		t.Errorf("download body does not match the uploaded profile:\n%s", rec.Body.String())
+	}
+	if rec := doGet(t, f, "/uploads/999/profile"); rec.Code != http.StatusNotFound {
+		t.Errorf("missing upload profile: code = %d, want 404", rec.Code)
 	}
 }

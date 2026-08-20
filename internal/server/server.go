@@ -161,13 +161,9 @@ func New(cfg Config) *Server {
 	}
 	assetVer := staticVersion()
 	funcs := template.FuncMap{
-		"pct": func(v float64) string { return fmt.Sprintf("%.1f%%", v) },
-		"short": func(sha string) string {
-			if len(sha) > 12 {
-				return sha[:12]
-			}
-			return sha
-		},
+		"pct":      func(v float64) string { return fmt.Sprintf("%.1f%%", v) },
+		"short":    shortSHA,
+		"sub":      func(a, b int64) int64 { return a - b },
 		"ranges":   diffcov.Ranges,
 		"covclass": covClass,
 		"timeago":  timeAgo,
@@ -266,6 +262,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /{$}", s.handleIndex)
 	s.mux.HandleFunc("GET /repos/{slug...}", s.handleRepo)
 	s.mux.HandleFunc("GET /uploads/{id}", s.handleUploadPage)
+	s.mux.HandleFunc("GET /uploads/{id}/profile", s.handleUploadProfile)
 	s.mux.HandleFunc("GET /uploads/{id}/files/{path...}", s.handleSource)
 }
 
@@ -346,6 +343,14 @@ func (s *Server) renderPartial(w http.ResponseWriter, page, block string, data a
 	if err := t.ExecuteTemplate(w, block, data); err != nil {
 		s.log.Error("render partial", "template", page, "block", block, "err", err)
 	}
+}
+
+// shortSHA abbreviates a commit identifier for display.
+func shortSHA(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
 }
 
 // covClass maps a percentage to the badge threshold classes.

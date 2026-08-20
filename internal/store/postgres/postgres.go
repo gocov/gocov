@@ -623,13 +623,17 @@ func (s *Store) CreateUpload(ctx context.Context, u *store.Upload, files []*stor
 			return err
 		}
 	}
+	meta, err := marshalUploadMeta(u.Meta)
+	if err != nil {
+		return err
+	}
 	err = tx.QueryRow(ctx, `
 		INSERT INTO uploads (repo_id, commit_sha, branch, pr_id, format,
-			total_pct, covered_stmts, total_stmts, raw_blob_key, diff_coverage, gate_failed, path_prefix, part)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			total_pct, covered_stmts, total_stmts, raw_blob_key, diff_coverage, gate_failed, path_prefix, part, meta)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING id, created_at`,
 		u.RepoID, u.CommitSHA, u.Branch, u.PRID, u.Format,
-		u.TotalPct, u.CoveredStmts, u.TotalStmts, u.RawBlobKey, diffCov, u.GateFailed, u.PathPrefix, u.Part,
+		u.TotalPct, u.CoveredStmts, u.TotalStmts, u.RawBlobKey, diffCov, u.GateFailed, u.PathPrefix, u.Part, meta,
 	).Scan(&u.ID, &u.CreatedAt)
 	if err != nil {
 		return err
@@ -653,7 +657,16 @@ func (s *Store) CreateUpload(ctx context.Context, u *store.Upload, files []*stor
 }
 
 const uploadCols = `id, repo_id, commit_sha, branch, pr_id, format,
-	total_pct, covered_stmts, total_stmts, raw_blob_key, diff_coverage, gate_failed, path_prefix, part, created_at`
+	total_pct, covered_stmts, total_stmts, raw_blob_key, diff_coverage, gate_failed, path_prefix, part, created_at, meta`
+
+// marshalUploadMeta encodes upload provenance for storage, returning nil
+// (SQL NULL) when nothing was captured so empty uploads stay compact.
+func marshalUploadMeta(m store.UploadMeta) ([]byte, error) {
+	if (m == store.UploadMeta{}) {
+		return nil, nil
+	}
+	return json.Marshal(m)
+}
 
 func (s *Store) Upload(ctx context.Context, id int64) (*store.Upload, error) {
 	return s.scanUpload(s.pool.QueryRow(ctx,
@@ -710,9 +723,9 @@ func (s *Store) ListBranchUploads(ctx context.Context, repoID int64, branch stri
 
 func (s *Store) scanUpload(row rowScanner) (*store.Upload, error) {
 	var u store.Upload
-	var diffCov []byte
+	var diffCov, meta []byte
 	err := row.Scan(&u.ID, &u.RepoID, &u.CommitSHA, &u.Branch, &u.PRID, &u.Format,
-		&u.TotalPct, &u.CoveredStmts, &u.TotalStmts, &u.RawBlobKey, &diffCov, &u.GateFailed, &u.PathPrefix, &u.Part, &u.CreatedAt)
+		&u.TotalPct, &u.CoveredStmts, &u.TotalStmts, &u.RawBlobKey, &diffCov, &u.GateFailed, &u.PathPrefix, &u.Part, &u.CreatedAt, &meta)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -722,6 +735,11 @@ func (s *Store) scanUpload(row rowScanner) (*store.Upload, error) {
 	if len(diffCov) > 0 {
 		if err := json.Unmarshal(diffCov, &u.DiffCoverage); err != nil {
 			return nil, fmt.Errorf("upload %d: bad diff_coverage: %w", u.ID, err)
+		}
+	}
+	if len(meta) > 0 {
+		if err := json.Unmarshal(meta, &u.Meta); err != nil {
+			return nil, fmt.Errorf("upload %d: bad meta: %w", u.ID, err)
 		}
 	}
 	return &u, nil

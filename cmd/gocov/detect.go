@@ -67,6 +67,61 @@ func detectBuild(env envFunc, git gitFunc, readFile readFileFunc) buildInfo {
 	return b
 }
 
+// metaInfo is the upload provenance the CLI gathers from the CI environment
+// and git — the commit subject and author, and a link back to the CI run.
+type metaInfo struct {
+	CommitMessage string
+	CommitAuthor  string
+	CIProvider    string
+	CIRunURL      string
+}
+
+// detectMeta collects provenance for the resolved commit: its subject and
+// author from git, and the CI provider and run URL from the environment.
+// Every field is best-effort — a shallow clone or an unknown CI just yields
+// empty strings.
+func detectMeta(env envFunc, git gitFunc, commit string) metaInfo {
+	ref := commit
+	if ref == "" {
+		ref = "HEAD"
+	}
+	m := metaInfo{}
+	if out, err := git("show", "-s", "--format=%s", ref); err == nil {
+		m.CommitMessage = firstLine(out)
+	}
+	if out, err := git("show", "-s", "--format=%an", ref); err == nil {
+		m.CommitAuthor = strings.TrimSpace(out)
+	}
+	switch {
+	case env("GITHUB_ACTIONS") != "":
+		m.CIProvider = "github"
+		if srv, repo, run := env("GITHUB_SERVER_URL"), env("GITHUB_REPOSITORY"), env("GITHUB_RUN_ID"); srv != "" && repo != "" && run != "" {
+			m.CIRunURL = srv + "/" + repo + "/actions/runs/" + run
+		}
+	case env("GITLAB_CI") != "":
+		m.CIProvider = "gitlab"
+		if u := env("CI_JOB_URL"); u != "" {
+			m.CIRunURL = u
+		} else {
+			m.CIRunURL = env("CI_PIPELINE_URL")
+		}
+	case env("BITBUCKET_BUILD_NUMBER") != "":
+		m.CIProvider = "bitbucket"
+		if origin, num := env("BITBUCKET_GIT_HTTP_ORIGIN"), env("BITBUCKET_BUILD_NUMBER"); origin != "" && num != "" {
+			m.CIRunURL = origin + "/pipelines/results/" + num
+		}
+	}
+	return m
+}
+
+// firstLine returns the trimmed first line of s.
+func firstLine(s string) string {
+	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
+		return strings.TrimSpace(s[:i])
+	}
+	return strings.TrimSpace(s)
+}
+
 // githubPRRefRe extracts the PR number from GITHUB_REF, which is
 // "refs/pull/{n}/merge" for pull_request workflow runs.
 var githubPRRefRe = regexp.MustCompile(`^refs/pull/(\d+)/`)

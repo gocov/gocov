@@ -412,3 +412,66 @@ body[data-only="miss"] .fold { display: none; }
   .side { position: static; flex-direction: row; overflow-x: auto; gap: 4px; }
   .side .grp { display: none; }
 }
+
+/* upload detail (v2): verdict card, before -> after table, provenance */
+.uphead { margin: 6px 0 4px; }
+.uphead h1 { font-size: 20px; margin: 10px 0 3px; letter-spacing: -.01em; }
+.uphead .sub { margin: 0; font-size: 13px; }
+
+/* section header: heading with a right-aligned note or action */
+.sec { display: flex; align-items: baseline; gap: 12px; margin: 28px 0 10px; flex-wrap: wrap; }
+.sec h2 { margin: 0; }
+.sec .spacer { flex: 1; }
+.sec .note { color: var(--text-3); font-size: 12.5px; }
+
+.stats.cols-3 { grid-template-columns: repeat(3, 1fr); }
+
+/* verdict — the one reading this page is for */
+.verdict { display: grid; grid-template-columns: minmax(0, 1fr) 220px; background: var(--surface);
+  border: 1px solid var(--border); border-left: 3px solid var(--green); border-radius: var(--radius);
+  box-shadow: var(--shadow); overflow: hidden; margin: 14px 0 4px; }
+.verdict.fail { border-left-color: var(--red); }
+.verdict.neutral { border-left-color: var(--text-3); }
+.verdict .main { padding: 18px 22px; min-width: 0; }
+.verdict .t { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 13px;
+  letter-spacing: .02em; text-transform: uppercase; color: var(--green); }
+.verdict.fail .t { color: var(--red); }
+.verdict.neutral .t { color: var(--text-2); }
+.verdict .big { display: flex; align-items: baseline; gap: 10px; font-size: 34px; font-weight: 600;
+  font-variant-numeric: tabular-nums; line-height: 1.15; margin: 4px 0 6px; letter-spacing: -.02em; }
+.verdict .big .pct { font-size: inherit; }
+.verdict .big .d { font-size: 13px; font-weight: 600; }
+.verdict .r { color: var(--text-2); font-size: 13.5px; max-width: 62ch; margin: 0; text-wrap: pretty; }
+.verdict .meta { border-left: 1px solid var(--border-soft); padding: 16px 20px; display: flex;
+  flex-direction: column; gap: 11px; }
+.verdict .meta .k { color: var(--text-3); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+.verdict .meta .v { font-size: 13px; font-variant-numeric: tabular-nums; }
+
+/* files table: hide unchanged rows until "show all" */
+table.files-collapsed tbody tr.xtra { display: none; }
+
+/* before -> after cell */
+td .path .dir, td a.path .dir { color: var(--text-3); }
+.ba { display: flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ba .from { color: var(--text-3); font-size: 12.5px; }
+.ba .arw { color: var(--text-3); }
+.ba .to { font-weight: 600; font-size: 13px; }
+.ba .to.good { color: var(--green); } .ba .to.warn { color: var(--yellow); } .ba .to.bad { color: var(--red); }
+
+/* provenance — what you check when a number looks wrong */
+.prov { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.prov .row { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 14px; padding: 11px 18px;
+  border-bottom: 1px solid var(--border-soft); font-size: 13px; align-items: baseline; }
+.prov .row:nth-child(odd) { border-right: 1px solid var(--border-soft); }
+.prov .k { color: var(--text-2); font-size: 12.5px; }
+.prov .v { overflow-wrap: anywhere; }
+
+@media (max-width: 820px) {
+  .verdict { grid-template-columns: 1fr; }
+  .verdict .meta { border-left: none; border-top: 1px solid var(--border-soft); }
+  .prov { grid-template-columns: 1fr; }
+  .prov .row:nth-child(odd) { border-right: none; }
+}
+@media (max-width: 720px) {
+  .stats.cols-3 { grid-template-columns: repeat(2, 1fr); }
+}

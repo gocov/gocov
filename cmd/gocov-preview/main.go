@@ -123,13 +123,15 @@ func main() {
 			Branch:    "main",
 			Format:    "go",
 			TotalPct:  pct, CoveredStmts: int64(pct * 10), TotalStmts: 1000,
-			GateFailed: pct < 70,
-			CreatedAt:  base.Add(time.Duration(i) * 24 * time.Hour),
+			CreatedAt: base.Add(time.Duration(i) * 24 * time.Hour),
 		}
 		if i%15 == 7 {
 			u.PRID = "9"
 			u.TotalPct = 20 // would be an obvious outlier if it leaked in
 		}
+		// Derive the gate result from the final total so the verdict card
+		// and the coverage it shows never disagree.
+		u.GateFailed = u.TotalPct < 70
 		if err := st.CreateUpload(ctx, u, nil); err != nil {
 			log.Fatal(err)
 		}
@@ -145,26 +147,37 @@ func main() {
 	baseUpload := &store.Upload{
 		RepoID: repo.ID, CommitSHA: "3ab04c17e2f10000000000000000000000000000",
 		Branch: "main", Format: "go",
-		TotalPct: 49.0, CoveredStmts: 15, TotalStmts: 26,
+		TotalPct: 84.0, CoveredStmts: 210, TotalStmts: 250,
 		CreatedAt: base.Add(44 * 24 * time.Hour),
 	}
-	if err := st.CreateUpload(ctx, baseUpload, []*store.UploadFile{{
+	baseFiles := append([]*store.UploadFile{{
 		Path: "internal/billing/charge.go", Pct: 49.0, CoveredStmts: 15, TotalStmts: 26,
 		Blocks: chargeBaseBlocks(),
-	}}); err != nil {
+	}}, steadyFiles()...)
+	if err := st.CreateUpload(ctx, baseUpload, baseFiles); err != nil {
 		log.Fatal(err)
 	}
 	srcUpload := &store.Upload{
 		RepoID: repo.ID, CommitSHA: "9f31c2ab7e5d0000000000000000000000000000",
 		Branch: "main", Format: "go",
-		TotalPct: 46.2, CoveredStmts: 12, TotalStmts: 26,
+		TotalPct: 82.0, CoveredStmts: 205, TotalStmts: 250,
 		CreatedAt: base.Add(45 * 24 * time.Hour),
+		Meta: store.UploadMeta{
+			Uploader: "gocov v0.9.2", UploaderKind: "action",
+			CIProvider: "github", CIRunURL: "https://github.com/acme/widgets/actions/runs/2481",
+			CommitMessage: "Reconcile ledger entries before posting",
+			CommitAuthor:  "devuser",
+			ProfileName:   "coverage.out", ProfileBytes: 118 * 1024, ProcessMillis: 1800,
+		},
 	}
 	file := &store.UploadFile{
 		Path: "internal/billing/charge.go", Pct: 46.2, CoveredStmts: 12, TotalStmts: 26,
 		Blocks: chargeBlocks(),
 	}
-	if err := st.CreateUpload(ctx, srcUpload, []*store.UploadFile{file}); err != nil {
+	// charge.go is the only file this commit moved; the rest are unchanged
+	// so the upload page tucks them behind "show all".
+	srcFiles := append([]*store.UploadFile{file}, steadyFiles()...)
+	if err := st.CreateUpload(ctx, srcUpload, srcFiles); err != nil {
 		log.Fatal(err)
 	}
 	blobKey := fmt.Sprintf("source/%d/%s/%s", repo.ID, srcUpload.CommitSHA, file.Path)
@@ -231,6 +244,25 @@ func main() {
 }
 
 func pctPtr(v float64) *float64 { return &v }
+
+// steadyFiles are files whose coverage this commit did not move — seeded
+// identically into the baseline and head uploads so the upload page can
+// demonstrate the "show all files" toggle over the one file that did change.
+func steadyFiles() []*store.UploadFile {
+	mk := func(path string, covered, total int64) *store.UploadFile {
+		return &store.UploadFile{
+			Path: path, Pct: 100 * float64(covered) / float64(total),
+			CoveredStmts: covered, TotalStmts: total,
+			Blocks: []profile.Block{{StartLine: 1, EndLine: 8, NumStmts: int(covered), Count: 1}},
+		}
+	}
+	return []*store.UploadFile{
+		mk("internal/api/handler.go", 64, 70),
+		mk("internal/api/middleware.go", 43, 50),
+		mk("internal/ledger/posting.go", 51, 75),
+		mk("internal/util/strings.go", 20, 20),
+	}
+}
 
 // chargeSource is the synthetic file rendered by the source-view preview.
 const chargeSource = `package billing
