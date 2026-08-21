@@ -60,13 +60,13 @@ type missBlock struct {
 func (s *Server) handleSource(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		http.NotFound(w, r)
+		s.renderNotFound(w, r)
 		return
 	}
 	path := r.PathValue("path")
 	upload, err := s.store.Upload(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
-		http.NotFound(w, r)
+		s.renderNotFound(w, r)
 		return
 	}
 	if err != nil {
@@ -86,7 +86,7 @@ func (s *Server) handleSource(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if file == nil {
-		http.NotFound(w, r)
+		s.renderNotFound(w, r)
 		return
 	}
 	repo, err := s.store.RepoByID(r.Context(), upload.RepoID)
@@ -98,7 +98,7 @@ func (s *Server) handleSource(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "checking access", err)
 		return
 	} else if !ok {
-		http.NotFound(w, r)
+		s.renderNotFound(w, r)
 		return
 	}
 
