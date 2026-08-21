@@ -258,6 +258,12 @@ body[data-only="miss"] .fold { display: none; }
 .wiz .head h1 { margin: 0 0 4px; }
 .wiz .head .sub { margin: 0; }
 .wiz #panels, .wiz .panel, .wiz .card { min-width: 0; }
+/* The wizard step wrapper reuses the class name .panel, which the source view
+   styles as a two-column grid card. Keep it a plain transparent block here so
+   the inner .card.pad is the visible card (otherwise the content collapses into
+   the grid's 26px first column). */
+.wiz .panel { display: block; background: none; border: none; border-radius: 0;
+  box-shadow: none; overflow: visible; }
 /* Snippet blocks: a boxed code area (the source view keeps its own .codeline
    pre styling, so scope this to the wizard). */
 .wiz code { font-family: var(--mono); font-size: 12.5px; }
