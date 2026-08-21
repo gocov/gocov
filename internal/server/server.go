@@ -261,10 +261,14 @@ func (s *Server) routes() {
 		s.mux.HandleFunc("POST /github/webhook", s.handleGitHubWebhook)
 	}
 	s.mux.HandleFunc("GET /{$}", s.handleIndex)
-	s.mux.HandleFunc("GET /repo-settings/{slug}", s.handleRepoSettings)
-	s.mux.HandleFunc("POST /repo-settings/{slug}/save", s.handleRepoSettingsSave)
-	s.mux.HandleFunc("POST /repo-settings/{slug}/rotate-token", s.handleRepoRotateToken)
-	s.mux.HandleFunc("POST /repo-settings/{slug}/delete", s.handleRepoDelete)
+	// Repo slugs contain a slash (workspace/repo), so the slug must ride as a
+	// trailing {slug...} wildcard — a single {slug} segment cannot match it on
+	// a live server (only httptest preserves the %2F). The mutating actions
+	// therefore carry their verb before the slug rather than after it.
+	s.mux.HandleFunc("GET /repo-settings/{slug...}", s.handleRepoSettings)
+	s.mux.HandleFunc("POST /repo-settings/save/{slug...}", s.handleRepoSettingsSave)
+	s.mux.HandleFunc("POST /repo-settings/rotate-token/{slug...}", s.handleRepoRotateToken)
+	s.mux.HandleFunc("POST /repo-settings/delete/{slug...}", s.handleRepoDelete)
 	s.mux.HandleFunc("GET /repos/{slug...}", s.handleRepo)
 	s.mux.HandleFunc("GET /uploads/{id}", s.handleUploadPage)
 	s.mux.HandleFunc("GET /uploads/{id}/profile", s.handleUploadProfile)

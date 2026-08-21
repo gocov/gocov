@@ -15,7 +15,7 @@
     {{$sel := .Branch}}
     {{range .Branches}}<option value="{{.}}"{{if eq . $sel}} selected{{end}}>{{.}}</option>{{end}}
   </select>
-  {{if .WSPrefix}}<a class="btn" href="/repo-settings/{{pathesc .Repo.Slug}}">Settings</a>{{end}}
+  {{if .WSPrefix}}<a class="btn" href="/repo-settings/{{.Repo.Slug}}">Settings</a>{{end}}
 </div>
 
 <div class="badgebox">

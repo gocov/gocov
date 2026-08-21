@@ -109,6 +109,9 @@ func TestDashboardNeedsAttention(t *testing.T) {
 		"below the 60% minimum",
 		`No uploads from <span class="mono">mobile</span> in 20 days`,
 		`<span class="mono">android</span> has no coverage gate`,
+		// repo-settings takes the slug as a trailing {slug...} wildcard, so the
+		// slash rides bare — a %2F-escaped single segment 404s on a live server.
+		`/repo-settings/acme/android`,
 		`Failing<span class="n">1</span>`,
 		`Stale<span class="n">1</span>`,
 		// android has no gate; widgets has no gate and no report — both count.

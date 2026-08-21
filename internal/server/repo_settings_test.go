@@ -13,7 +13,7 @@ import (
 func TestRepoSettingsAccess(t *testing.T) {
 	f, sess := newWorkspaceFixture(t, true) // workspace acme + repo acme/widgets, member signed in
 
-	rec := get(f, "/repo-settings/acme%2Fwidgets", sess)
+	rec := get(f, "/repo-settings/acme/widgets", sess)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("member settings page: status = %d", rec.Code)
 	}
@@ -36,11 +36,11 @@ func TestRepoSettingsAccess(t *testing.T) {
 		&store.Repo{Forge: "bitbucket", Slug: "beta/thing", Token: "x", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
-	if rec := get(f, "/repo-settings/beta%2Fthing", sess); rec.Code != http.StatusNotFound {
+	if rec := get(f, "/repo-settings/beta/thing", sess); rec.Code != http.StatusNotFound {
 		t.Errorf("non-member settings page: status = %d, want 404", rec.Code)
 	}
 	// Anonymous is redirected to login by the auth middleware.
-	if rec := get(f, "/repo-settings/acme%2Fwidgets"); rec.Code != http.StatusFound {
+	if rec := get(f, "/repo-settings/acme/widgets"); rec.Code != http.StatusFound {
 		t.Errorf("anonymous settings page: status = %d, want login redirect", rec.Code)
 	}
 }
@@ -50,7 +50,7 @@ func TestRepoSettingsSaveRotateDelete(t *testing.T) {
 	ctx := context.Background()
 
 	// Save base branch + a min-coverage gate.
-	rec := postForm(f, "/repo-settings/acme%2Fwidgets/save", url.Values{
+	rec := postForm(f, "/repo-settings/save/acme/widgets", url.Values{
 		"default_branch": {"develop"}, "min_coverage": {"85"},
 	}, sess)
 	if rec.Code != http.StatusSeeOther {
@@ -68,14 +68,14 @@ func TestRepoSettingsSaveRotateDelete(t *testing.T) {
 	}
 
 	// A bad gate value is rejected.
-	if rec := postForm(f, "/repo-settings/acme%2Fwidgets/save", url.Values{
+	if rec := postForm(f, "/repo-settings/save/acme/widgets", url.Values{
 		"default_branch": {"main"}, "min_coverage": {"250"},
 	}, sess); rec.Code != http.StatusBadRequest {
 		t.Errorf("bad gate: status = %d, want 400", rec.Code)
 	}
 
 	// Rotate the token: a new one is issued and shown once.
-	rec = postForm(f, "/repo-settings/acme%2Fwidgets/rotate-token", url.Values{}, sess)
+	rec = postForm(f, "/repo-settings/rotate-token/acme/widgets", url.Values{}, sess)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("rotate: status = %d", rec.Code)
 	}
@@ -88,7 +88,7 @@ func TestRepoSettingsSaveRotateDelete(t *testing.T) {
 	}
 
 	// Delete removes the repo and redirects to the workspace.
-	rec = postForm(f, "/repo-settings/acme%2Fwidgets/delete", url.Values{}, sess)
+	rec = postForm(f, "/repo-settings/delete/acme/widgets", url.Values{}, sess)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("delete: status = %d, want 303", rec.Code)
 	}

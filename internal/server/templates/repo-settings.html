@@ -1,6 +1,6 @@
 {{define "title"}}gocov — {{.Repo.Slug}} settings{{end}}
 {{define "content"}}
-{{$slug := .SlugEsc}}
+{{$slug := .Repo.Slug}}
 <div class="ws">
 
 <div class="ws-head">
@@ -39,7 +39,7 @@
 </div></div>
 {{end}}
 
-<form method="post" action="/repo-settings/{{$slug}}/save">
+<form method="post" action="/repo-settings/save/{{$slug}}">
 <div class="card" id="general">
   <div class="card-hd"><h2>General</h2></div>
   <div class="card-bd">
@@ -93,7 +93,7 @@
     </div>
   </div>
   <div class="card-ft">
-    <form method="post" action="/repo-settings/{{$slug}}/rotate-token"
+    <form method="post" action="/repo-settings/rotate-token/{{$slug}}"
           data-confirm="Rotate the upload token? The current token stops working immediately and CI must be updated.">
       <button class="btn" type="submit">Rotate token</button></form>
     <span class="hint">The old token stops working the moment you rotate.</span>
@@ -123,7 +123,7 @@
     stay as they are.</p>
   </div>
   <div class="card-ft">
-    <form method="post" action="/repo-settings/{{$slug}}/delete"
+    <form method="post" action="/repo-settings/delete/{{$slug}}"
           data-confirm="Remove {{.Repo.Slug}} and all of its coverage data? This cannot be undone.">
       <button class="btn danger" type="submit">Remove this repository</button></form>
     <span class="hint">This cannot be undone.</span>
