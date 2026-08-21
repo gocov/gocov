@@ -1,0 +1,28 @@
+{{define "title"}}gocov — page not found{{end}}
+{{define "content"}}
+<div class="notfound">
+  <div class="nf-code"><span class="nf-dot"></span>404 · not found</div>
+  <h1 class="nf-title">We couldn&rsquo;t find that page.</h1>
+  <p class="nf-lede">The link may be out of date, or the repository it pointed to is no
+  longer visible to your account.</p>
+
+  {{if .RequestedPath}}
+  <div class="nf-path">
+    <span class="nf-k">Requested</span>
+    <code>{{.RequestedPath}}</code>
+  </div>
+  {{end}}
+
+  <h2 class="nf-h2">Common reasons</h2>
+  <ul class="nf-causes">
+    <li>The repository was renamed or removed on the forge, so its
+    <span class="nf-mono">gocov</span> path changed.</li>
+    <li>The upload was deleted, or belongs to a workspace you&rsquo;re not a member of.</li>
+    <li>The commit was force-pushed away and its reports were pruned.</li>
+  </ul>
+
+  <div class="nf-actions">
+    <a class="btn primary" href="/">Back to repositories</a>
+  </div>
+</div>
+{{end}}

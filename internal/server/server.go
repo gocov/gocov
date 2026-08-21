@@ -198,7 +198,7 @@ func New(cfg Config) *Server {
 	// so pages can define "content" without colliding.
 	pages := map[string]*template.Template{}
 	for _, name := range []string{"index.html", "repo.html", "repo-settings.html", "upload.html", "source.html",
-		"login.html", "workspace.html", "onboarding.html", "connect.html"} {
+		"login.html", "workspace.html", "onboarding.html", "connect.html", "not-found.html"} {
 		pages[name] = template.Must(template.New(name).Funcs(funcs).ParseFS(templatesFS,
 			"templates/layout.html", "templates/partials.html", "templates/"+name))
 	}
@@ -261,6 +261,10 @@ func (s *Server) routes() {
 		s.mux.HandleFunc("POST /github/webhook", s.handleGitHubWebhook)
 	}
 	s.mux.HandleFunc("GET /{$}", s.handleIndex)
+	// Least-specific pattern: anything no route above claims lands here. A
+	// browser GET gets the styled 404 page; other methods/clients keep the
+	// plain-text 404 (so an unmatched path 404s rather than 405s).
+	s.mux.HandleFunc("/", s.handleNotFound)
 	// Repo slugs contain a slash (workspace/repo), so the slug must ride as a
 	// trailing {slug...} wildcard — a single {slug} segment cannot match it on
 	// a live server (only httptest preserves the %2F). The mutating actions
@@ -336,6 +340,42 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := t.ExecuteTemplate(w, "layout", data); err != nil {
 		s.log.Error("render template", "template", name, "err", err)
+	}
+}
+
+// handleNotFound is the catch-all for paths no route claims. Browser
+// navigations (a GET that accepts HTML) get the styled 404 page; everything
+// else — API clients, other methods — keeps the plain-text 404.
+func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet && strings.Contains(r.Header.Get("Accept"), "text/html") {
+		s.renderNotFound(w, r)
+		return
+	}
+	http.NotFound(w, r)
+}
+
+// renderNotFound writes the styled 404 page with a 404 status. It is the
+// HTML-page counterpart to http.NotFound: use it from browser-facing GET
+// handlers so a missing (or access-hidden) repo, upload or source view lands
+// on the same page as a mistyped URL. The requested path is shown verbatim
+// (auto-escaped by html/template).
+func (s *Server) renderNotFound(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.pages["not-found.html"]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	data := map[string]any{
+		"RequestedPath": r.URL.Path,
+		"AuthOpen":      !s.authEnabled(),
+		"CurrentUser":   currentUser(r),
+	}
+	// Content-Type must precede WriteHeader; after the status is written the
+	// header map is frozen.
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusNotFound)
+	if err := t.ExecuteTemplate(w, "layout", data); err != nil {
+		s.log.Error("render template", "template", "not-found.html", "err", err)
 	}
 }
 

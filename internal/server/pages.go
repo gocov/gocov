@@ -270,7 +270,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	repo, err := s.store.RepoBySlug(r.Context(), slug)
 	if errors.Is(err, store.ErrNotFound) {
-		http.NotFound(w, r)
+		s.renderNotFound(w, r)
 		return
 	}
 	if err != nil {
@@ -281,7 +281,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "checking access", err)
 		return
 	} else if !ok {
-		http.NotFound(w, r)
+		s.renderNotFound(w, r)
 		return
 	}
 
@@ -464,12 +464,12 @@ func uncoveredRanges(blocks []profile.Block) string {
 func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		http.NotFound(w, r)
+		s.renderNotFound(w, r)
 		return
 	}
 	upload, err := s.store.Upload(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
-		http.NotFound(w, r)
+		s.renderNotFound(w, r)
 		return
 	}
 	if err != nil {
@@ -490,7 +490,7 @@ func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "checking access", err)
 		return
 	} else if !ok {
-		http.NotFound(w, r)
+		s.renderNotFound(w, r)
 		return
 	}
 
