@@ -1,39 +1,191 @@
 {{define "title"}}gocov — repositories{{end}}
 {{define "content"}}
-<h1>Repositories</h1>
-<p class="sub">{{len .Rows}} {{if eq (len .Rows) 1}}repo{{else}}repos{{end}}{{with .Query}} matching &ldquo;{{.}}&rdquo;{{end}}</p>
-{{if .Workspaces}}
-<p class="muted small">Your workspaces:
-{{range $i, $ws := .Workspaces}}{{if $i}} &middot; {{end}}<a class="mono" href="/workspaces/{{pathesc $ws.Prefix}}">{{$ws.Prefix}}</a>{{end}}
-&mdash; token, credentials &amp; gate settings</p>
+{{with .Dash}}
+<div class="head">
+  <div>
+    <h1 class="wsw" id="wsw">
+      <button class="trg" type="button" aria-expanded="false" aria-haspopup="true">
+        <span class="mono">{{.Current.Prefix}}</span>
+        {{if .Current.ForgeName}}<span class="chip plain forge {{.Current.ForgeCls}}">{{with forgeicon .Current.Forge}}{{.}}{{end}}{{.Current.ForgeName}}</span>{{end}}
+        {{if gt (len .Switcher) 1}}<span class="car">&#9662;</span>{{end}}
+      </button>
+      <span class="pop" role="menu">
+        <span class="srch"><input class="input" type="search" placeholder="Find a workspace" aria-label="Find a workspace" id="wsq"></span>
+        <span class="lst" id="wslst">
+          <span class="gl">Your workspaces</span>
+          {{range .Switcher}}
+          <a class="wsi" href="{{.Href}}"{{if .Current}} aria-current="true"{{end}} data-n="{{.Prefix}}">
+            <span class="av {{.ForgeCls}}">{{with forgeicon .Forge}}{{.}}{{else}}{{.Initial}}{{end}}</span>
+            <span><span class="n">{{.Prefix}}</span><span class="m">{{.RepoCount}} {{if eq .RepoCount 1}}repository{{else}}repositories{{end}}{{if .Failing}} &middot; {{.Failing}} failing{{else if .HasCov}} &middot; all passing{{else}} &middot; no uploads yet{{end}}</span></span>
+            <span class="r">{{if .HasCov}}<span class="pct {{.PctClass}}">{{pct .Pct}}</span>{{else}}<span class="pct muted">&mdash;</span>{{end}}{{if .Current}}<span class="tick">&#10003;</span>{{end}}</span>
+          </a>
+          {{end}}
+        </span>
+        {{if $.CanOnboard}}
+        <span class="ft"><a class="wsi" href="/onboarding"><span class="av">+</span><span><span class="n" style="font-family:inherit;font-size:13.5px">Connect a workspace</span><span class="m">GitHub, Bitbucket or GitLab</span></span><span class="r"></span></a></span>
+        {{end}}
+      </span>
+    </h1>
+    <p class="sub">{{.Current.RepoCount}} {{if eq .Current.RepoCount 1}}repository{{else}}repositories{{end}}{{if .Stats.HasCoverage}} &middot; {{pct .Stats.CoveragePct}} covered{{end}}</p>
+  </div>
+  <span class="spacer"></span>
+  {{if .Current.Tracked}}<a class="btn" href="/workspaces/{{pathesc .Current.Prefix}}">Workspace settings</a>{{end}}
+  {{if $.CanOnboard}}<a class="btn primary" href="{{if .Current.Tracked}}/workspaces/{{pathesc .Current.Prefix}}/setup{{else}}/onboarding{{end}}">Add a repository</a>{{end}}
+</div>
+
+<div class="stats cols-3">
+  <div class="stat"><div class="k">Workspace coverage</div><div class="v">{{if .Stats.HasCoverage}}{{pct .Stats.CoveragePct}} <small>weighted by statements</small>{{else}}<span class="muted">&mdash;</span> <small>no uploads yet</small>{{end}}</div></div>
+  <div class="stat"><div class="k">Gates passing</div><div class="v">{{.Stats.GatesPassing}} <small>of {{.Stats.GatesTotal}} with a gate{{if .Stats.StaleCount}} &middot; {{.Stats.StaleCount}} stale{{end}}</small></div></div>
+  <div class="stat"><div class="k">Reporting</div><div class="v chips">{{.Stats.Reporting}}{{if .Stats.ReportingSub}} <small>&middot; as <span class="mono">{{.Stats.ReportingSub}}</span></small>{{end}}</div></div>
+</div>
+
+{{if .Attention}}
+<div class="sec">
+  <h2>Needs attention</h2>
+  <span class="spacer"></span>
+  <span class="note">{{len .Attention}} {{if eq (len .Attention) 1}}thing{{else}}things{{end}}</span>
+</div>
+<div class="attn">
+  {{range .Attention}}
+  <div class="row">
+    <span class="ic{{if eq .Kind "bad"}} bad{{else if eq .Kind "info"}} info{{end}}">{{.Icon}}</span>
+    <span><span class="t">{{.Pre}}<span class="mono">{{.Repo}}</span>{{.Post}}</span><br><span class="m">{{.Msg}}</span></span>
+    <a class="btn sm" href="{{.Href}}">{{.Action}}</a>
+  </div>
+  {{end}}
+</div>
 {{end}}
+
+<div class="sec">
+  <h2>Repositories</h2>
+  <span class="spacer"></span>
+  <span class="seg" role="group" aria-label="Filter" id="filters">
+    <button type="button" aria-pressed="true" data-filter="all">All<span class="n">{{.Counts.All}}</span></button>
+    <button type="button" aria-pressed="false" data-filter="failing">Failing<span class="n">{{.Counts.Failing}}</span></button>
+    <button type="button" aria-pressed="false" data-filter="stale">Stale<span class="n">{{.Counts.Stale}}</span></button>
+    <button type="button" aria-pressed="false" data-filter="nogate">No gate<span class="n">{{.Counts.NoGate}}</span></button>
+  </span>
+</div>
 <div class="toolbar">
-  <input class="input" type="search" name="q" value="{{.Query}}" placeholder="Search repos&hellip;"
-         hx-get="/" hx-trigger="input changed delay:300ms, search" hx-target="#repo-list"
-         hx-select="#repo-list" hx-swap="outerHTML" hx-push-url="true">
+  <input class="input" type="search" id="repo-search" placeholder="Search repositories&hellip;" aria-label="Search repositories">
+  <span class="spacer"></span>
+  <select class="input" id="repo-sort" aria-label="Sort by">
+    <option value="cov">Sort: lowest coverage</option>
+    <option value="drop">Sort: biggest drop</option>
+    <option value="recent">Sort: recently uploaded</option>
+    <option value="name">Sort: name</option>
+  </select>
 </div>
-<div class="card" id="repo-list">
-{{if .Rows}}
-<table>
-<thead><tr><th>Repository</th><th>Coverage</th><th class="num">&Delta;</th><th>Gate</th><th>Last upload</th></tr></thead>
-<tbody>
-{{range .Rows}}
-<tr>
-<td><a class="mono" href="/repos/{{.Repo.Slug}}">{{.Repo.Slug}}</a></td>
-<td>{{if .Latest}}{{template "covbar" .Latest.TotalPct}}{{else}}<span class="muted">&mdash;</span>{{end}}</td>
-<td class="num">{{template "delta" .Delta}}</td>
-<td>{{template "gatechip" .Gate}}</td>
-<td class="muted small">{{if .Latest}}{{timeago .Latest.CreatedAt}}{{else}}never{{end}}</td>
-</tr>
-{{end}}
-</tbody>
-</table>
-{{else}}
-{{if .CanOnboard}}
-<div class="empty">No repositories yet. <a href="/onboarding">Register a workspace</a> for an upload token, then push coverage from CI &mdash; repos register themselves on their first upload.</div>
-{{else}}
-<div class="empty">No repositories yet. Enable sign-in so a member can register a workspace and get an upload token; repos then register themselves on their first upload.</div>
-{{end}}
-{{end}}
+<div class="card">
+  {{if .Repos}}
+  <table id="repo-table">
+    <thead><tr><th>Repository</th><th>Coverage</th><th class="num">&Delta;</th><th>30 days</th><th>Gate</th><th>Last upload</th></tr></thead>
+    <tbody>
+      {{range .Repos}}
+      <tr data-state="{{.State}}" data-name="{{.Name}}" data-hasreport="{{.HasReport}}" data-cov="{{printf "%.4f" .CovVal}}" data-hasdelta="{{.HasDelta}}" data-drop="{{printf "%.4f" .DropVal}}" data-uploaded="{{.UpUnix}}">
+        <td><a href="/repos/{{.Slug}}" class="repo">{{.Name}}</a></td>
+        <td>{{if .Latest}}{{template "covbar" .Latest.TotalPct}}{{else}}<span class="muted">&mdash;</span>{{end}}</td>
+        <td class="num">{{if .Delta}}<span class="delta {{.Delta.Class}}">{{.Delta.Arrow}} {{.Delta.Text}}</span>{{else}}<span class="muted small">&mdash;</span>{{end}}</td>
+        <td>{{if .Spark}}<svg class="spark" viewBox="0 0 76 22" aria-hidden="true"><path class="{{.Spark.Class}}" d="{{.Spark.Path}}"></path>{{if .Spark.Tail}}<path d="{{.Spark.Tail}}" stroke-dasharray="3 3" opacity=".5"></path>{{end}}</svg>{{else}}<span class="muted small">&mdash;</span>{{end}}</td>
+        <td>
+          {{if eq .Gate "pass"}}<span class="chip pass">&#10003; Passing</span>{{else if eq .Gate "fail"}}<span class="chip fail">&#10007; Failing</span>{{else}}<a href="/repo-settings/{{.Slug}}" class="chip plain">Set a gate</a>{{end}}
+          {{if .Stale}} <span class="chip warn">Stale</span>{{end}}
+        </td>
+        <td class="muted small">{{if .Latest}}{{.LastAgo}}{{else}}never{{end}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  <div class="empty" id="repo-empty" hidden>No repositories match.</div>
+  {{else}}
+  {{if $.CanOnboard}}
+  <div class="empty">No repositories in this workspace yet. Push coverage from CI and repos register themselves on their first upload. <a href="{{if .Current.Tracked}}/workspaces/{{pathesc .Current.Prefix}}/setup{{else}}/onboarding{{end}}">Setup instructions</a></div>
+  {{else}}
+  <div class="empty">No repositories yet. Enable sign-in so a member can register a workspace and get an upload token; repos then register themselves on their first upload.</div>
+  {{end}}
+  {{end}}
 </div>
+{{if .Repos}}<p class="hint" style="margin:10px 0 0">Repositories appear here automatically on their first upload. <a href="{{if .Current.Tracked}}/workspaces/{{pathesc .Current.Prefix}}/setup{{else}}/onboarding{{end}}">Setup instructions</a></p>{{end}}
+
+<script>
+(function(){
+  var body=document.body;
+  var filters=document.getElementById('filters');
+  if(filters)filters.addEventListener('click',function(e){
+    var b=e.target.closest('button');if(!b)return;
+    body.dataset.filter=b.dataset.filter;
+    filters.querySelectorAll('button').forEach(function(x){x.setAttribute('aria-pressed',String(x===b))});
+    applySearch();
+  });
+
+  // Search, sort and filter all operate on the already-rendered rows so the
+  // dashboard slices its workspace instantly, without a round-trip.
+  var tbody=document.querySelector('#repo-table tbody');
+  var search=document.getElementById('repo-search');
+  var sort=document.getElementById('repo-sort');
+  var empty=document.getElementById('repo-empty');
+  function rows(){return tbody?Array.prototype.slice.call(tbody.querySelectorAll('tr')):[]}
+  function applySearch(){
+    if(!tbody)return;
+    var q=(search?search.value:'').trim().toLowerCase();
+    var f=body.dataset.filter||'all';
+    var shown=0;
+    rows().forEach(function(tr){
+      var okName=!q||tr.dataset.name.toLowerCase().indexOf(q)>=0;
+      var okFilter=f==='all'||(' '+tr.dataset.state+' ').indexOf(' '+f+' ')>=0;
+      var show=okName&&okFilter;
+      tr.style.display=show?'':'none';
+      if(show)shown++;
+    });
+    if(empty)empty.hidden=shown>0;
+  }
+  function applySort(){
+    if(!tbody)return;
+    var mode=sort?sort.value:'cov';
+    var r=rows();
+    r.sort(function(a,b){
+      var ar=a.dataset.hasreport==='true',br=b.dataset.hasreport==='true';
+      if(ar!==br)return ar?-1:1; // repos without a report always sink
+      switch(mode){
+        case 'drop':{
+          var ad=a.dataset.hasdelta==='true'?parseFloat(a.dataset.drop):Infinity;
+          var bd=b.dataset.hasdelta==='true'?parseFloat(b.dataset.drop):Infinity;
+          return ad-bd; // most negative (biggest drop) first
+        }
+        case 'recent':return parseInt(b.dataset.uploaded||0,10)-parseInt(a.dataset.uploaded||0,10);
+        case 'name':return a.dataset.name.localeCompare(b.dataset.name);
+        default:return parseFloat(a.dataset.cov)-parseFloat(b.dataset.cov); // lowest coverage first
+      }
+    });
+    r.forEach(function(tr){tbody.appendChild(tr)});
+  }
+  if(search)search.addEventListener('input',applySearch);
+  if(sort)sort.addEventListener('change',applySort);
+
+  // Workspace switcher popover.
+  var wsw=document.getElementById('wsw');
+  if(wsw){
+    var trg=wsw.querySelector('.trg'),wsq=document.getElementById('wsq');
+    var closeWs=function(){wsw.removeAttribute('data-open');trg.setAttribute('aria-expanded','false')};
+    trg.addEventListener('click',function(e){
+      e.stopPropagation();
+      if(wsw.hasAttribute('data-open')){closeWs();}
+      else{wsw.setAttribute('data-open','');trg.setAttribute('aria-expanded','true');if(wsq)wsq.focus();}
+    });
+    document.addEventListener('click',function(e){if(!wsw.contains(e.target))closeWs()});
+    document.addEventListener('keydown',function(e){if(e.key==='Escape')closeWs()});
+    if(wsq)wsq.addEventListener('input',function(){
+      var q=wsq.value.trim().toLowerCase();
+      wsw.querySelectorAll('#wslst .wsi').forEach(function(a){a.style.display=a.dataset.n.toLowerCase().indexOf(q)>=0?'':'none'});
+    });
+  }
+})();
+</script>
+{{else}}
+<div class="head"><div><h1>Repositories</h1><p class="sub">No repositories yet.</p></div></div>
+<div class="card"><div class="empty">
+  {{if .CanOnboard}}No repositories yet. <a href="/onboarding">Register a workspace</a> for an upload token, then push coverage from CI &mdash; repos register themselves on their first upload.
+  {{else}}No repositories yet. Enable sign-in so a member can register a workspace and get an upload token; repos then register themselves on their first upload.{{end}}
+</div></div>
+{{end}}
 {{end}}

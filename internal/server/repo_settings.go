@@ -64,7 +64,6 @@ func (s *Server) repoSettingsData(repo *store.Repo, wsPrefix, newToken, notice, 
 	baseURL := strings.TrimSuffix(s.baseURL, "/")
 	return map[string]any{
 		"Repo":          repo,
-		"SlugEsc":       url.PathEscape(repo.Slug),
 		"WSPrefix":      wsPrefix,
 		"WSPrefixEsc":   url.PathEscape(wsPrefix),
 		"Token":         repo.Token,
@@ -113,7 +112,7 @@ func (s *Server) handleRepoSettingsSave(w http.ResponseWriter, r *http.Request) 
 		s.internalError(w, "updating repo", err)
 		return
 	}
-	http.Redirect(w, r, "/repo-settings/"+url.PathEscape(repo.Slug)+"?saved=1", http.StatusSeeOther)
+	http.Redirect(w, r, "/repo-settings/"+repo.Slug+"?saved=1", http.StatusSeeOther)
 }
 
 // handleRepoRotateToken implements POST /repo-settings/{slug}/rotate-token.
