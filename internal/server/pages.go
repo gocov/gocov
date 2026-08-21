@@ -66,21 +66,10 @@ func (s *Server) branchBaseReport(ctx context.Context, repoID int64, branch stri
 	return current, nil
 }
 
-type indexRow struct {
-	Repo   *store.Repo
-	Latest *store.CommitReport // nil when the default branch has no reports
-	Delta  *deltaView
-	Gate   string // "pass", "fail" or ""
-}
-
-// handleIndex implements GET / — the repo dashboard with search.
+// handleIndex implements GET / — the workspace-scoped repo dashboard: a
+// switcher over the viewer's workspaces, a stat rollup, the needs-attention
+// list and the repositories table. See dashboard.go for the assembly.
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	query := strings.TrimSpace(r.FormValue("q"))
-	repos, err := s.store.ListRepos(r.Context())
-	if err != nil {
-		s.internalError(w, "listing repos", err)
-		return
-	}
 	scope, err := s.userScope(r)
 	if err != nil {
 		s.internalError(w, "scoping repos", err)
@@ -93,43 +82,13 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/onboarding", http.StatusFound)
 		return
 	}
-	// The settings pages hang off the index as a workspace strip — the
-	// only workspace navigation until the P1 switcher.
-	var workspaces []*store.Workspace
-	if u := currentUser(r); u != nil {
-		if workspaces, err = s.store.ListWorkspacesForUser(r.Context(), u.ID); err != nil {
-			s.internalError(w, "listing memberships", err)
-			return
-		}
-	}
-	rows := make([]indexRow, 0, len(repos))
-	for _, repo := range repos {
-		if !scope.allows(repo.Slug) {
-			continue
-		}
-		if query != "" && !strings.Contains(strings.ToLower(repo.Slug), strings.ToLower(query)) {
-			continue
-		}
-		row := indexRow{Repo: repo}
-		latest, err := s.store.LatestCommitReport(r.Context(), repo.ID, repo.DefaultBranch)
-		if err != nil && !errors.Is(err, store.ErrNotFound) {
-			s.internalError(w, "loading latest report", err)
-			return
-		}
-		if latest != nil {
-			row.Latest = latest
-			row.Delta = s.branchDelta(r, repo.ID, repo.DefaultBranch)
-			if repo.Gate.Configured() {
-				row.Gate = "pass"
-				if latest.GateFailed {
-					row.Gate = "fail"
-				}
-			}
-		}
-		rows = append(rows, row)
+	dash, err := s.buildDashboard(r, strings.TrimSpace(r.FormValue("ws")))
+	if err != nil {
+		s.internalError(w, "building dashboard", err)
+		return
 	}
 	s.render(w, r, "index.html", map[string]any{
-		"Rows": rows, "Query": query, "Workspaces": workspaces,
+		"Dash": dash,
 		// A signed-in user can register a workspace from the onboarding
 		// wizard (hosted and private mode alike); an open instance has no
 		// identity to register from and points at sign-in instead.

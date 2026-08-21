@@ -52,21 +52,73 @@ func TestUncoveredRanges(t *testing.T) {
 	}
 }
 
-func TestIndexSearchFilter(t *testing.T) {
+// TestIndexListsWorkspaceRepos checks that both repos of a workspace render on
+// the dashboard, each carrying the data-name hook the client-side search/sort
+// operate on. (Search, filter and sort run in the browser over these rows, so
+// there is no server-side ?q filter to assert.)
+func TestIndexListsWorkspaceRepos(t *testing.T) {
 	f := newFixture(t, nil)
 	second := &store.Repo{Forge: "bitbucket", Slug: "acme/gadgets", Token: "tok2", DefaultBranch: "main"}
 	if err := f.store.CreateRepo(t.Context(), second); err != nil {
 		t.Fatal(err)
 	}
 
-	body := doGet(t, f, "/?q=widg").Body.String()
-	if !strings.Contains(body, "acme/widgets") || strings.Contains(body, "acme/gadgets") {
-		t.Errorf("search filter failed: %s", body)
+	body := doGet(t, f, "/").Body.String()
+	for _, want := range []string{
+		`href="/repos/acme/widgets"`, `href="/repos/acme/gadgets"`,
+		`data-name="widgets"`, `data-name="gadgets"`,
+		`id="repo-search"`, `id="repo-sort"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dashboard missing %q:\n%s", want, body)
+		}
 	}
-	// Case-insensitive.
-	body = doGet(t, f, "/?q=GADG").Body.String()
-	if strings.Contains(body, "acme/widgets") || !strings.Contains(body, "acme/gadgets") {
-		t.Errorf("case-insensitive search failed")
+}
+
+// TestDashboardNeedsAttention seeds a workspace with a failing gate, a stale
+// feed and a gated-but-unwatched repo, then checks the rollups the preview
+// data cannot show: the needs-attention list, the filter counts and the
+// statement-weighted workspace coverage.
+func TestDashboardNeedsAttention(t *testing.T) {
+	f := newFixture(t, nil) // acme/widgets exists but has no reports
+	report := func(slug string, min *float64, pct float64, failed bool, age time.Duration) {
+		repo := &store.Repo{Forge: "bitbucket", Slug: slug, Token: slug, DefaultBranch: "main"}
+		if min != nil {
+			repo.Gate = store.Gate{MinCoverage: min}
+		}
+		if err := f.store.CreateRepo(t.Context(), repo); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.store.UpsertCommitReport(t.Context(), &store.CommitReport{
+			RepoID: repo.ID, CommitSHA: slug + "-c1", Branch: "main",
+			TotalPct: pct, CoveredStmts: int64(pct), TotalStmts: 100,
+			GateFailed: failed, CreatedAt: time.Now().Add(-age),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	min60 := 60.0
+	report("acme/importer", &min60, 40, true, time.Hour)      // failing gate
+	report("acme/mobile", &min60, 80, false, 20*24*time.Hour) // passing but stale
+	report("acme/android", nil, 70, false, time.Hour)         // no gate
+
+	body := doGet(t, f, "/").Body.String()
+	for _, want := range []string{
+		"Needs attention",
+		`<span class="mono">importer</span> is failing its coverage gate`,
+		"below the 60% minimum",
+		`No uploads from <span class="mono">mobile</span> in 20 days`,
+		`<span class="mono">android</span> has no coverage gate`,
+		`Failing<span class="n">1</span>`,
+		`Stale<span class="n">1</span>`,
+		// android has no gate; widgets has no gate and no report — both count.
+		`No gate<span class="n">2</span>`,
+		// weighted: (40+80+70)/300 = 63.3%
+		"63.3%",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dashboard missing %q:\n%s", want, body)
+		}
 	}
 }
 
@@ -173,7 +225,7 @@ func TestRepoTrendChart(t *testing.T) {
 	if !strings.Contains(body, `class="trend"`) {
 		t.Fatalf("trend chart missing: %s", body)
 	}
-	if got := strings.Count(body, `<circle`); got != 2 {
+	if got := strings.Count(body, `<circle class="pt`); got != 2 {
 		t.Errorf("marker count = %d, want 2 (PR upload excluded)", got)
 	}
 	if !strings.Contains(body, `<a href="/uploads/1"><circle`) {

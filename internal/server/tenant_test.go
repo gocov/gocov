@@ -91,8 +91,13 @@ func TestOpenModeIgnoresScoping(t *testing.T) {
 	f := newAuthFixture(t, nil, nil) // auth disabled -> open mode
 	_, betaUp := seedRepoUpload(t, f, "beta/gizmos")
 
-	if body := get(f, "/").Body.String(); !strings.Contains(body, "acme/widgets") || !strings.Contains(body, "beta/gizmos") {
-		t.Errorf("open mode must list every repo:\n%s", body)
+	// The dashboard is workspace-scoped, but open mode hides nothing: every
+	// workspace is offered in the switcher and every repo stays reachable.
+	if body := get(f, "/").Body.String(); !strings.Contains(body, `data-n="acme"`) || !strings.Contains(body, `data-n="beta"`) {
+		t.Errorf("open mode must offer every workspace in the switcher:\n%s", body)
+	}
+	if body := get(f, "/?ws=beta").Body.String(); !strings.Contains(body, `href="/repos/beta/gizmos"`) {
+		t.Errorf("open mode must list the selected workspace's repos:\n%s", body)
 	}
 	if rec := get(f, "/repos/beta/gizmos"); rec.Code != http.StatusOK {
 		t.Errorf("open mode repo page = %d, want 200", rec.Code)
