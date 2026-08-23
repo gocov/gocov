@@ -51,16 +51,21 @@ func LoadServer() (Server, error) { return LoadServerFrom(nil) }
 // LoadServerFrom reads the server configuration from an explicit
 // environment map. A nil map means the process environment; a non-nil
 // one is used as given, which is how the tests supply an environment.
+//
+// A validation failure still returns the parsed config alongside the
+// error, because its Warnings remain worth reporting: an operator whose
+// GOCOV_MODE is a typo should hear about a half-configured OAuth pair in
+// the same boot, not after fixing the first problem and restarting. The
+// config is not usable in that state — callers must check the error
+// before wiring anything up, and may use only Warnings until they have.
 func LoadServerFrom(environ map[string]string) (Server, error) {
 	cfg, err := parse[Server](environ)
 	if err != nil {
+		// Nothing parsed, so there is nothing to warn about either.
 		return Server{}, err
 	}
 	cfg.normalize()
-	if err := cfg.validate(); err != nil {
-		return Server{}, err
-	}
-	return cfg, nil
+	return cfg, cfg.validate()
 }
 
 // normalize trims the values where surrounding whitespace is a paste

@@ -284,3 +284,32 @@ func TestServerWarnings(t *testing.T) {
 		})
 	}
 }
+
+// A fatal misconfiguration must not swallow the survivable ones: the
+// caller logs Warnings before it reports the error, so a single boot
+// surfaces every problem instead of one per restart.
+func TestLoadServerWarningsSurviveValidationFailure(t *testing.T) {
+	cfg, err := LoadServerFrom(minimal(map[string]string{
+		"GOCOV_MODE":             "hostd",  // typo: fatal
+		"GOCOV_OAUTH_GITHUB_KEY": "gh-key", // half a pair: survivable
+	}))
+	if err == nil {
+		t.Fatal("LoadServerFrom: want an error for GOCOV_MODE=hostd")
+	}
+	got := cfg.Warnings()
+	if len(got) != 1 || !strings.Contains(got[0], "GOCOV_OAUTH_GITHUB_KEY") {
+		t.Errorf("Warnings() = %q, want the half-configured GitHub pair reported alongside the error", got)
+	}
+}
+
+// A parse failure is different: nothing was read, so there is nothing to
+// warn about and the zero config must stay quiet.
+func TestLoadServerNoWarningsWhenParseFails(t *testing.T) {
+	cfg, err := LoadServerFrom(map[string]string{"GOCOV_OAUTH_GITHUB_KEY": "gh-key"})
+	if err == nil {
+		t.Fatal("LoadServerFrom: want an error for the missing DATABASE_URL")
+	}
+	if got := cfg.Warnings(); len(got) != 0 {
+		t.Errorf("Warnings() = %q, want none from a config that never parsed", got)
+	}
+}

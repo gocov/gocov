@@ -97,13 +97,16 @@ func serve() error {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	// The whole environment contract is read and validated here, once,
-	// before anything is wired up; see internal/config.
+	// before anything is wired up; see internal/config. Warnings are
+	// logged ahead of the error check on purpose: a fatal misconfiguration
+	// should not hide a second, survivable one that the operator would
+	// otherwise only meet on the next restart.
 	cfg, err := config.LoadServer()
-	if err != nil {
-		return err
-	}
 	for _, warning := range cfg.Warnings() {
 		log.Warn(warning)
+	}
+	if err != nil {
+		return err
 	}
 
 	st, err := connect(ctx, cfg)
