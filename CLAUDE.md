@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-gocov is a self-hostable coverage-tracking service (Coveralls/Codecov alternative): a single Go binary + Postgres, AGPL-3.0. Sole direct dependency is pgx; everything else is stdlib.
+gocov is a self-hostable coverage-tracking service (Coveralls/Codecov alternative): a single Go binary + Postgres, AGPL-3.0. Direct dependencies are pgx and caarlos0/env (tag-based env parsing, itself dependency-free); everything else is stdlib.
 
 ## Commands
 
@@ -28,7 +28,7 @@ CI (`.github/workflows/ci.yml`) runs vet + tests with a Postgres service; there 
 ## Architecture
 
 Three binaries in `cmd/`:
-- `gocov-server` — API + web UI. Configured entirely via environment variables; the authoritative list is the doc comment at the top of `cmd/gocov-server/main.go` (`DATABASE_URL`, `GOCOV_MODE=hosted`, OAuth keys per forge, `GOCOV_SECRET_KEY`, GitHub App vars, …).
+- `gocov-server` — API + web UI. Configured entirely via environment variables (`DATABASE_URL`, `GOCOV_MODE=hosted`, OAuth keys per forge, `GOCOV_SECRET_KEY`, GitHub App vars, …).
 - `gocov` — the upload CLI users run in CI. Detects the coverage format from file content (`detect.go`); defaults to the hosted server URL in `internal/hosted`.
 - `gocov-preview` — throwaway dev harness, not part of the product.
 
@@ -44,6 +44,8 @@ Everything hangs off four interfaces, each with a production implementation and 
 New formats, forges, or storage backends slot in behind these interfaces; no forge-specific types or URLs may leak out of the concrete forge implementations.
 
 `internal/server` is the bulk of the app: HTTP API, SVG badge, and an htmx-based web UI with Go templates and static assets embedded via `go:embed`. `upload.go` is the core flow: authenticate by workspace token → parse profile → store normalized report → merge "parts" (multiple uploads per commit) into a per-commit merged report → evaluate the coverage gate → push status/PR comment/check run to the forge. `internal/diffcov` computes diff coverage against forge-fetched diffs. `internal/auth` handles OAuth sign-in per forge; `internal/secretbox` encrypts stored grant refresh tokens (requires `GOCOV_SECRET_KEY`).
+
+Every environment variable each binary reads is declared as a tagged struct field in `internal/config` (`Server`, `CLI`, `Preview`) — that package is the authoritative list, and `TestConfigurationDocIsInSync` fails the build if `docs/configuration.md` drifts from it (added, removed or re-defaulted variables). `main` parses and validates once at boot (`config.LoadServer`) and then only touches the struct; add new variables there, never as a fresh `os.Getenv` at the point of use. Tags cover reading, defaults, types and presence (`DATABASE_URL` is `required,notEmpty` — `required` alone would admit an empty string); what the tag vocabulary cannot say lives beside them, in `validate` for fatal rules (secret-key shape, mode/provider interlock) and `Warnings` for survivable ones (half a credential pair). `LoadServerFrom` takes an explicit environment map, so the whole contract is unit-testable.
 
 SQL migrations live in `internal/store/postgres/migrations/` as numbered `00NN_name.sql` files, embedded and applied automatically at boot. New schema changes get the next number.
 

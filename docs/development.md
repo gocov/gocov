@@ -22,6 +22,30 @@ docker stop gocov-test-db
 `GET /healthz` reports readiness (checks database connectivity) for load balancers and container orchestrators; the
 server shuts down gracefully on SIGINT/SIGTERM.
 
+## Configuration
+
+Every environment variable the binaries read is declared as a tagged struct field in `internal/config`:
+
+```go
+type Server struct {
+	DatabaseURL       string   `env:"DATABASE_URL,required,notEmpty"`
+	Addr              string   `env:"GOCOV_ADDR" envDefault:":8080"`
+	AllowedWorkspaces []string `env:"GOCOV_ALLOWED_WORKSPACES" envSeparator:","`
+	GitHub            OAuthApp `envPrefix:"GOCOV_OAUTH_GITHUB_"`
+	...
+}
+```
+
+That package is the authoritative list, and a test enforces it: `TestConfigurationDocIsInSync` walks the struct tags
+with `env.GetFieldParams` and fails if a variable has no row in [configuration](configuration.md), if a row survives a
+variable that was removed, or if a documented default no longer matches the tag. `main` parses and validates
+once at start-up and then only reads the struct, so a new setting means a new field there, not another `os.Getenv` at
+the point of use. Presence is the tags' job — `required,notEmpty`, because `required` alone
+would accept a variable passed through as `""`. Only what the tag vocabulary cannot say is written out: `validate` for
+what must stop the process (a malformed `GOCOV_SECRET_KEY`, `GOCOV_MODE=hosted` with no sign-in provider) and
+`Warnings` for what is survivable (half a credential pair — logged, feature left off). `LoadServerFrom` parses an explicit environment map
+instead of the process environment, so the whole contract is covered by ordinary table tests.
+
 ## Extending gocov
 
 Coverage formats sit behind `profile.Parser`, forges behind

@@ -11,11 +11,11 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
-	"os"
 	"time"
 
 	"github.com/gocov/gocov/internal/auth"
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
+	"github.com/gocov/gocov/internal/config"
 	"github.com/gocov/gocov/internal/forge"
 	"github.com/gocov/gocov/internal/forge/bitbucket"
 	forgefake "github.com/gocov/gocov/internal/forge/fake"
@@ -234,9 +234,13 @@ func main() {
 		}
 	}
 
+	cfg, err := config.LoadPreview()
+	if err != nil {
+		log.Fatal(err)
+	}
 	var auths []auth.Provider
 	hosted := false
-	if os.Getenv("GOCOV_PREVIEW_AUTH") == "1" {
+	if cfg.Auth {
 		auths = []auth.Provider{
 			devAuth{forge: "bitbucket", workspaces: []string{"acme", "personal", "bb-connected", "bb-broken"}},
 			devAuth{forge: "github", workspaces: []string{"gh-new", "gh-connected", "gh-broken"}},
@@ -245,24 +249,18 @@ func main() {
 		hosted = true
 		log.Println("preview auth on: sign-in via bitbucket lands in acme, via github in the gh-* workspaces, via gitlab in gl-group/platform")
 	}
-	// Port is overridable so several sessions can run their own preview
-	// side by side (default :8099 to match launch.json).
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8099"
-	}
 	srv := server.New(server.Config{
 		Store: st, Blobs: blobs,
 		Parsers:          map[string]profile.Parser{"go": profile.GoParser{}},
-		BaseURL:          "http://localhost:" + port,
+		BaseURL:          "http://localhost:" + cfg.Port,
 		Auths:            auths,
 		Hosted:           hosted,
 		GitHubApp:        devGitHubApp{fg: forgefake.New()},
 		BitbucketConnect: devBBConnect{fg: forgefake.New()},
 		GitLabConnect:    devGLConnect{fg: forgefake.New()},
 	})
-	log.Println("preview on :" + port)
-	log.Fatal(http.ListenAndServe(":"+port, srv))
+	log.Println("preview on :" + cfg.Port)
+	log.Fatal(http.ListenAndServe(":"+cfg.Port, srv))
 }
 
 func pctPtr(v float64) *float64 { return &v }
