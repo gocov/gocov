@@ -28,10 +28,44 @@ with `GOCOV_SERVER` and `GOCOV_TOKEN` set as repository variables.
 
 ## GitHub Actions
 
-Commit, branch, repo and PR number are auto-detected, including the PR head SHA on `pull_request` runs:
+Use [`gocov/gocov-action`](https://github.com/marketplace/actions/gocov-coverage-upload). It downloads the pinned CLI
+binary for the runner and verifies its checksum, so **no Go toolchain is needed** — the same three lines work whatever
+your tests are written in. Commit, branch, repo and PR number are auto-detected, including the PR head SHA on
+`pull_request` runs.
 
 ```yaml
+# Go
 - run: go test ./... -covermode=atomic -coverprofile=coverage.out
+- uses: gocov/gocov-action@v1
+  with:
+    files: coverage.out
+    token: ${{ secrets.GOCOV_TOKEN }}
+```
+
+```yaml
+# JavaScript/TypeScript — Jest, Vitest, nyc, c8
+- run: npx jest --coverage
+- uses: gocov/gocov-action@v1
+  with:
+    files: coverage/lcov.info
+    token: ${{ secrets.GOCOV_TOKEN }}
+```
+
+```yaml
+# Java/Kotlin — Maven with the jacoco-maven-plugin
+- run: mvn verify
+- uses: gocov/gocov-action@v1
+  with:
+    files: target/site/jacoco/jacoco.xml
+    token: ${{ secrets.GOCOV_TOKEN }}
+```
+
+`files` takes a comma-separated list and globs. When self-hosting, add `server: https://gocov.example`; the default is
+the hosted service. `part:` labels one slice of a matrix build — see [Parts](parts.md).
+
+On a runner that already has Go, the CLI also runs straight from source, no action involved:
+
+```yaml
 - run: go run github.com/gocov/gocov/cmd/gocov@latest upload coverage.out
   env:
     GOCOV_SERVER: ${{ vars.GOCOV_SERVER }}
