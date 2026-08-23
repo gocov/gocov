@@ -12,6 +12,7 @@ first coverage upload.
 | [Sign-in](sign-in.md)                     | Enabling web UI sign-in with Bitbucket, GitHub and/or GitLab; the access model      |
 | [Forge connections](forge-connections.md) | GitHub App, Bitbucket and GitLab one-click connect — setup and behavior             |
 | [Uploading from CI](ci-upload.md)         | Bitbucket Pipelines, GitHub Actions, GitLab CI, prebuilt binaries, other ecosystems |
+| [Cloudflare CI](cloudflare-ci.md)         | Uploading from Cloudflare CI (Workflows) pipelines — setup, example, limits         |
 | [Coverage gate](coverage-gate.md)         | Minimum/diff/drop rules and making them block merges                                |
 | [Parts](parts.md)                         | Combining multiple reports per commit from separate CI jobs                         |
 | [API & badge](api.md)                     | The upload API and the SVG badge                                                    |

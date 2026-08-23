@@ -26,6 +26,13 @@ with `GOCOV_TOKEN` set as a secured repository variable (add
 
 with `GOCOV_SERVER` and `GOCOV_TOKEN` set as repository variables.
 
+## Cloudflare CI
+
+[Cloudflare CI](https://github.com/cloudflare/ci) pipelines are TypeScript, not YAML, and their steps run as shell
+commands in a sandbox container, so the CLI works unmodified. Repo, commit and branch must be passed explicitly and the
+token travels as a step-scoped Worker secret — see [Cloudflare CI](cloudflare-ci.md) for the pipeline, the Dockerfile
+and what applies (per-commit coverage; Artifacts has no PRs, so no PR comments or diff annotations).
+
 ## GitHub Actions
 
 Use [`gocov/gocov-action`](https://github.com/marketplace/actions/gocov-coverage-upload). It downloads the pinned CLI
