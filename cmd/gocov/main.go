@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gocov/gocov/internal/config"
 	"github.com/gocov/gocov/internal/hosted"
 	"github.com/gocov/gocov/internal/profile"
 )
@@ -44,20 +45,25 @@ func run(args []string) error {
 		return fmt.Errorf("usage: gocov upload [flags] <profile file> | gocov version")
 	}
 
-	fs := flag.NewFlagSet("upload", flag.ExitOnError)
-	serverDefault := os.Getenv("GOCOV_SERVER")
-	if serverDefault == "" {
-		serverDefault = defaultServer
+	// The environment only supplies flag defaults here; see internal/config.
+	cfg, err := config.LoadCLI()
+	if err != nil {
+		return err
 	}
-	server := fs.String("server", serverDefault, "gocov server URL (or $GOCOV_SERVER)")
-	token := fs.String("token", os.Getenv("GOCOV_TOKEN"), "per-repo upload token (or $GOCOV_TOKEN)")
+	if cfg.Server == "" {
+		cfg.Server = defaultServer
+	}
+
+	fs := flag.NewFlagSet("upload", flag.ExitOnError)
+	server := fs.String("server", cfg.Server, "gocov server URL (or $GOCOV_SERVER)")
+	token := fs.String("token", cfg.Token, "per-repo upload token (or $GOCOV_TOKEN)")
 	repo := fs.String("repo", "", "repo slug workspace/repo (default: auto-detect)")
 	commit := fs.String("commit", "", "commit SHA (default: auto-detect)")
 	branch := fs.String("branch", "", "branch name (default: auto-detect)")
 	pr := fs.String("pr", "", "pull request id (default: auto-detect)")
 	format := fs.String("format", "", "coverage profile format: go, lcov, jacoco, cobertura, clover or simplecov (default: detect from content)")
 	pathPrefix := fs.String("path-prefix", "", "prefix mapping profile paths to repo paths, e.g. the Go module path (default: from go.mod)")
-	part := fs.String("part", os.Getenv("GOCOV_PART"), "name this slice of the commit's coverage (e.g. backend, frontend) when uploading from separate CI jobs (or $GOCOV_PART)")
+	part := fs.String("part", cfg.Part, "name this slice of the commit's coverage (e.g. backend, frontend) when uploading from separate CI jobs (or $GOCOV_PART)")
 	failOnGate := fs.Bool("fail-on-gate", false, "exit with a non-zero code when the server reports a failed coverage gate")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
@@ -96,12 +102,6 @@ func run(args []string) error {
 		prefix = moduleFromGoMod("go.mod")
 	}
 
-	// Uploader kind defaults to the bare CLI; the gocov-action sets
-	// GOCOV_UPLOADER_KIND=action so the upload page can tell them apart.
-	kind := os.Getenv("GOCOV_UPLOADER_KIND")
-	if kind != "action" {
-		kind = "cli"
-	}
 	resp, err := upload(uploadRequest{
 		Server:       *server,
 		Token:        *token,
@@ -111,7 +111,7 @@ func run(args []string) error {
 		ProfileData:  profileData,
 		ProfileName:  filepath.Base(profilePath),
 		Uploader:     "gocov " + version,
-		UploaderKind: kind,
+		UploaderKind: cfg.Kind(),
 		Build:        build,
 		Meta:         detectMeta(osEnv, runGit, build.Commit),
 	})
