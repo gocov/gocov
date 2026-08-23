@@ -443,7 +443,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 // self-healing: because every upload recomputes the whole commit, a partial
 // early state (only the backend part in, say) is corrected in place as the
 // remaining parts arrive. The trade-off is a window in which the merged
-// numbers are incomplete — see the README's note on merged reports.
+// numbers are incomplete — see the note on merged reports in docs/parts.md.
 //
 // The returned upload is synthetic: it carries the merged totals and diff
 // coverage to the existing push helpers, with the triggering upload's id so
