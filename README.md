@@ -39,15 +39,16 @@ This starts Postgres and the server on http://localhost:8080 (migrations apply a
 Upload from CI (GitHub Actions shown; [Bitbucket Pipelines and GitLab CI here](docs/ci-upload.md)):
 
 ```yaml
-- run: go test ./... -covermode=atomic -coverprofile=coverage.out
-- run: go run github.com/gocov/gocov/cmd/gocov@latest upload coverage.out
-  env:
-    GOCOV_SERVER: ${{ vars.GOCOV_SERVER }}
-    GOCOV_TOKEN: ${{ secrets.GOCOV_TOKEN }}
+- run: npx jest --coverage        # or go test -coverprofile, mvn verify, pytest --cov, ...
+- uses: gocov/gocov-action@v1
+  with:
+    files: coverage/lcov.info
+    token: ${{ secrets.GOCOV_TOKEN }}
 ```
 
-Any supported format uploads the same way — `gocov upload lcov.info`,
-`gocov upload jacoco.xml`, … — and the badge is one line of markdown:
+The action downloads the CLI binary and checks its sha256, so there is no toolchain to install — the same three lines
+work whatever your tests are written in. Every supported format uploads this way; point `files` at whatever your test
+runner produced. The badge is one line of markdown:
 
 ```markdown
 ![coverage](https://gocov.example/badge/myworkspace/myrepo.svg)
