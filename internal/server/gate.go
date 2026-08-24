@@ -54,3 +54,53 @@ func evaluateGate(gate store.Gate, totalPct float64, dropDelta *float64, diff *d
 	}
 	return res
 }
+
+// gateReason narrates the gate: one clause per configured rule, comparing this
+// upload's measured value to the threshold, joined into a sentence. It reads
+// the same whether the gate passed or failed — the clauses themselves say
+// which rule is the problem.
+// subject names the thing being described in the fallback sentences (e.g.
+// "This upload", "The latest commit on this branch") so the same narration
+// serves both the upload page and the repo page. totalPct/diff are the
+// measured values; baseTotal is the baseline's total coverage, valid only
+// when hasBase is true.
+func gateReason(totalPct float64, diff *diffcov.Result, g store.Gate, baseTotal float64, hasBase bool, subject string) string {
+	if !g.Configured() {
+		return fmt.Sprintf("No coverage gate is configured for this repo. %s records %.1f%% total coverage.", subject, totalPct)
+	}
+	var parts []string
+	if g.MinCoverage != nil {
+		rel := "is above"
+		if totalPct < *g.MinCoverage-gateEpsilon {
+			rel = "is below"
+		}
+		parts = append(parts, fmt.Sprintf("total coverage %s the minimum of %.4g%%", rel, *g.MinCoverage))
+	}
+	if g.MaxCoverageDrop != nil && hasBase {
+		drop := baseTotal - totalPct
+		if drop <= gateEpsilon {
+			parts = append(parts, "coverage held or rose against the base")
+		} else {
+			rel := "under"
+			if drop > *g.MaxCoverageDrop+gateEpsilon {
+				rel = "over"
+			}
+			parts = append(parts, fmt.Sprintf("the drop against the base is %.4g%% — %s the %.4g%% allowed", drop, rel, *g.MaxCoverageDrop))
+		}
+	}
+	if g.MinDiffCoverage != nil && diff != nil && diff.TotalLines > 0 {
+		rel := "meets"
+		if diff.Percent() < *g.MinDiffCoverage-gateEpsilon {
+			rel = "is below"
+		}
+		parts = append(parts, fmt.Sprintf("diff coverage %s the %.4g%% minimum", rel, *g.MinDiffCoverage))
+	}
+	if len(parts) == 0 {
+		return fmt.Sprintf("%s records %.1f%% total coverage.", subject, totalPct)
+	}
+	sentence := strings.ToUpper(parts[0][:1]) + parts[0][1:]
+	if len(parts) > 1 {
+		sentence += ", and " + strings.Join(parts[1:], ", and ")
+	}
+	return sentence + "."
+}

@@ -109,6 +109,36 @@ type attnItem struct {
 
 type filterCounts struct{ All, Failing, Stale, NoGate int }
 
+// handleIndex implements GET / — the workspace-scoped repo dashboard: a
+// switcher over the viewer's workspaces, a stat rollup, the needs-attention
+// list and the repositories table. See dashboard.go for the assembly.
+func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	scope, err := s.userScope(r)
+	if err != nil {
+		s.internalError(w, "scoping repos", err)
+		return
+	}
+	// A hosted user without a single workspace membership would see a
+	// permanently empty dashboard; registration is the only useful page
+	// for them (M3/R1).
+	if s.hosted && scope.scoped && len(scope.prefixes) == 0 && currentUser(r) != nil {
+		http.Redirect(w, r, "/onboarding", http.StatusFound)
+		return
+	}
+	dash, err := s.buildDashboard(r, strings.TrimSpace(r.FormValue("ws")))
+	if err != nil {
+		s.internalError(w, "building dashboard", err)
+		return
+	}
+	s.render(w, r, "index.html", map[string]any{
+		"Dash": dash,
+		// A signed-in user can register a workspace from the onboarding
+		// wizard (hosted and private mode alike); an open instance has no
+		// identity to register from and points at sign-in instead.
+		"CanOnboard": currentUser(r) != nil,
+	})
+}
+
 // buildDashboard assembles the dashboard for the given ?ws selection. Returns a
 // nil view when the viewer has no repos and no tracked workspaces at all (the
 // template then shows the empty state).

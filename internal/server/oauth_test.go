@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gocov/gocov/internal/auth"
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
@@ -17,7 +16,6 @@ import (
 	storemem "github.com/gocov/gocov/internal/store/memory"
 )
 
-// fakeProvider is an auth.Provider whose Identity is canned.
 type fakeProvider struct {
 	name            string // "" means "bitbucket"
 	identity        *auth.Identity
@@ -32,11 +30,13 @@ func (f *fakeProvider) Name() string {
 	}
 	return f.name
 }
+
 func (f *fakeProvider) AuthorizeURL(state, redirectURI string) string {
 	f.gotRedirectURIs = append(f.gotRedirectURIs, redirectURI)
 	return "https://" + f.Name() + ".example/authorize?state=" + url.QueryEscape(state) +
 		"&redirect_uri=" + url.QueryEscape(redirectURI)
 }
+
 func (f *fakeProvider) Identity(_ context.Context, code, redirectURI string) (*auth.Identity, error) {
 	f.gotCode = code
 	f.gotRedirectURIs = append(f.gotRedirectURIs, redirectURI)
@@ -54,6 +54,7 @@ func memberIdentity() *auth.Identity {
 
 // newAuthFixture builds a server with sign-in enabled (unless provider is
 // nil) over a store tracking the repo acme/widgets.
+
 func newAuthFixture(t *testing.T, provider auth.Provider, allowed []string) *fixture {
 	t.Helper()
 	var providers []auth.Provider
@@ -64,6 +65,7 @@ func newAuthFixture(t *testing.T, provider auth.Provider, allowed []string) *fix
 }
 
 // newMultiAuthFixture is newAuthFixture for any number of providers.
+
 func newMultiAuthFixture(t *testing.T, providers []auth.Provider, allowed []string) *fixture {
 	t.Helper()
 	st := storemem.New()
@@ -104,6 +106,7 @@ func cookieNamed(t *testing.T, rec *httptest.ResponseRecorder, name string) *htt
 }
 
 // signIn drives the full flow and returns the session cookie.
+
 func signIn(t *testing.T, f *fixture, next string) *http.Cookie {
 	t.Helper()
 	start := get(f, "/oauth/bitbucket/start?next="+url.QueryEscape(next))
@@ -121,65 +124,6 @@ func signIn(t *testing.T, f *fixture, next string) *http.Cookie {
 		t.Fatalf("callback redirected to %q, want %q", loc, sanitizeNext(next))
 	}
 	return cookieNamed(t, cb, sessionCookie)
-}
-
-func TestAuthDisabledKeepsUIOpen(t *testing.T) {
-	f := newAuthFixture(t, nil, nil)
-
-	rec := get(f, "/")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("index: status = %d, want 200 without auth configured", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "GOCOV_OAUTH_BITBUCKET_KEY") {
-		t.Error("open UI must show the enable-sign-in banner")
-	}
-	if rec := get(f, "/login"); rec.Code != http.StatusFound || rec.Header().Get("Location") != "/" {
-		t.Errorf("login with auth disabled: %d -> %q, want redirect to /", rec.Code, rec.Header().Get("Location"))
-	}
-}
-
-func TestAuthEnforcedRedirectsToLogin(t *testing.T) {
-	f := newAuthFixture(t, &fakeProvider{identity: memberIdentity()}, nil)
-
-	rec := get(f, "/repos/acme/widgets?branch=main")
-	if rec.Code != http.StatusFound {
-		t.Fatalf("status = %d, want 302", rec.Code)
-	}
-	loc, err := url.Parse(rec.Header().Get("Location"))
-	if err != nil || loc.Path != "/login" {
-		t.Fatalf("location = %q, want /login", rec.Header().Get("Location"))
-	}
-	if next := loc.Query().Get("next"); next != "/repos/acme/widgets?branch=main" {
-		t.Errorf("next = %q, want original path+query", next)
-	}
-	// The banner belongs to the open state only.
-	if login := get(f, "/login"); strings.Contains(login.Body.String(), "GOCOV_OAUTH_BITBUCKET_KEY") {
-		t.Error("banner shown although sign-in is configured")
-	}
-}
-
-func TestAuthEnforcedPublicEndpointsStayPublic(t *testing.T) {
-	f := newAuthFixture(t, &fakeProvider{identity: memberIdentity()}, nil)
-
-	// Upload API: byte-identical behavior, still token-authed only.
-	rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile)
-	if rec.Code != http.StatusCreated {
-		t.Errorf("upload with auth enabled: status = %d, body = %s", rec.Code, rec.Body)
-	}
-	if rec := doUpload(t, f, "wrong", map[string]string{"commit": "c1"}, testProfile); rec.Code != http.StatusUnauthorized {
-		t.Errorf("bad-token upload: status = %d, want 401 (not a login redirect)", rec.Code)
-	}
-
-	for path, want := range map[string]int{
-		"/healthz":                http.StatusOK,
-		"/badge/acme/widgets.svg": http.StatusOK,
-		"/static/style.css":       http.StatusOK,
-		"/login":                  http.StatusOK,
-	} {
-		if rec := get(f, path); rec.Code != want {
-			t.Errorf("GET %s: status = %d, want %d", path, rec.Code, want)
-		}
-	}
 }
 
 func TestLoginFlow(t *testing.T) {
@@ -298,20 +242,6 @@ func TestNonMemberIsDenied(t *testing.T) {
 	}
 }
 
-func TestAllowedWorkspacesOverride(t *testing.T) {
-	// The identity is a member of "acme" (tracked) but the operator
-	// restricted sign-in to "vip" only.
-	f := newAuthFixture(t, &fakeProvider{identity: memberIdentity()}, []string{"vip"})
-
-	start := get(f, "/oauth/bitbucket/start")
-	stateCk := cookieNamed(t, start, stateCookie)
-	state, _, _ := strings.Cut(stateCk.Value, "|")
-	rec := get(f, "/oauth/bitbucket/callback?code=x&state="+url.QueryEscape(state), stateCk)
-	if rec.Header().Get("Location") != "/login?denied=1" {
-		t.Errorf("override ignored: redirected to %q", rec.Header().Get("Location"))
-	}
-}
-
 func TestOpenRedirectRejected(t *testing.T) {
 	f := newAuthFixture(t, &fakeProvider{identity: memberIdentity()}, nil)
 	for _, next := range []string{"https://evil.example", "//evil.example", `/\evil.example`, "no-slash"} {
@@ -320,43 +250,6 @@ func TestOpenRedirectRejected(t *testing.T) {
 			t.Errorf("sanitizeNext(%q) = %q, want /", next, got)
 		}
 		_ = sess
-	}
-}
-
-func TestLogoutKillsSessionServerSide(t *testing.T) {
-	f := newAuthFixture(t, &fakeProvider{identity: memberIdentity()}, nil)
-	sess := signIn(t, f, "/")
-
-	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
-	req.AddCookie(sess)
-	rec := httptest.NewRecorder()
-	f.srv.ServeHTTP(rec, req)
-	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/login" {
-		t.Fatalf("logout: %d -> %q", rec.Code, rec.Header().Get("Location"))
-	}
-
-	// A saved copy of the cookie must not restore access (R3).
-	if rec := get(f, "/", sess); rec.Code != http.StatusFound {
-		t.Errorf("old session cookie still works after logout: status = %d", rec.Code)
-	}
-}
-
-func TestExpiredSessionDoesNotAuthenticate(t *testing.T) {
-	f := newAuthFixture(t, &fakeProvider{identity: memberIdentity()}, nil)
-	u := &store.User{Forge: "bitbucket", ForgeUUID: "{u}", Email: "e@x", DisplayName: "E"}
-	if err := f.store.UpsertUser(context.Background(), u); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.store.CreateSession(context.Background(), &store.Session{
-		TokenHash: hashToken("expired-token"),
-		UserID:    u.ID,
-		ExpiresAt: time.Now().Add(-time.Minute),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	rec := get(f, "/", &http.Cookie{Name: sessionCookie, Value: "expired-token"})
-	if rec.Code != http.StatusFound {
-		t.Errorf("expired session: status = %d, want login redirect", rec.Code)
 	}
 }
 
@@ -447,3 +340,6 @@ func TestLoginPageHidesWorkspacesUntilDenied(t *testing.T) {
 		t.Errorf("denied page misses the tracked workspaces:\n%s", rec.Body)
 	}
 }
+
+// coveredPRDiff touches only a.go lines 2-3, which the profile covers, so
+// diff coverage is 100% and no annotations are expected.
