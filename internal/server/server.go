@@ -4,6 +4,7 @@ package server
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"html/template"
@@ -437,4 +438,15 @@ func timeAgo(t time.Time) string {
 	default:
 		return t.Format("2006-01-02")
 	}
+}
+
+func httpError(w http.ResponseWriter, code int, format string, args ...any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf(format, args...)})
+}
+
+func (s *Server) internalError(w http.ResponseWriter, msg string, err error) {
+	s.log.Error(msg, "err", err)
+	httpError(w, http.StatusInternalServerError, "internal error")
 }

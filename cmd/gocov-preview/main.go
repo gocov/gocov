@@ -98,7 +98,7 @@ func main() {
 	st := storemem.New()
 	repo := &store.Repo{
 		Forge: "bitbucket", Slug: "acme/widgets", Token: "tok",
-		DefaultBranch: "main", Gate: store.Gate{MinCoverage: pctPtr(70)},
+		DefaultBranch: "main", Gate: store.Gate{MinCoverage: new(float64(70))},
 	}
 	if err := st.CreateRepo(ctx, repo); err != nil {
 		log.Fatal(err)
@@ -264,7 +264,6 @@ func main() {
 }
 
 //go:fix inline
-func pctPtr(v float64) *float64 { return new(v) }
 
 // steadyFiles are files whose coverage this commit did not move — seeded
 // identically into the baseline and head uploads so the upload page can
