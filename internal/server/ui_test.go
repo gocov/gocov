@@ -186,7 +186,7 @@ func TestRepoBranchFilterAndPagination(t *testing.T) {
 	}
 
 	// 26 more uploads on main force pagination.
-	for i := 0; i < 26; i++ {
+	for i := range 26 {
 		doUpload(t, f, "secret-token", map[string]string{
 			"commit": "bulk" + strings.Repeat("x", i%3) + string(rune('a'+i%26)), "branch": "main",
 		}, testProfile)

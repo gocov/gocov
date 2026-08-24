@@ -65,7 +65,7 @@ func TestConfigurationDocIsInSync(t *testing.T) {
 	}
 	// Each documented variable mapped to the rest of its row.
 	documented := map[string]string{}
-	for _, line := range strings.Split(string(doc), "\n") {
+	for line := range strings.SplitSeq(string(doc), "\n") {
 		if m := docRow.FindStringSubmatch(line); m != nil {
 			documented[m[1]] = line
 		}

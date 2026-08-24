@@ -127,7 +127,7 @@ func main() {
 	rnd := rand.New(rand.NewSource(42))
 	base := time.Now().Add(-45 * 24 * time.Hour)
 	pct := 74.0
-	for i := 0; i < 45; i++ {
+	for i := range 45 {
 		pct += rnd.Float64()*4 - 2 + 0.1*math.Sin(float64(i)/4)
 		pct = math.Max(66, math.Min(88, pct))
 		u := &store.Upload{
@@ -263,7 +263,8 @@ func main() {
 	log.Fatal(http.ListenAndServe(":"+cfg.Port, srv))
 }
 
-func pctPtr(v float64) *float64 { return &v }
+//go:fix inline
+func pctPtr(v float64) *float64 { return new(v) }
 
 // steadyFiles are files whose coverage this commit did not move — seeded
 // identically into the baseline and head uploads so the upload page can

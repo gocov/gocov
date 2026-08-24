@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 
 	"github.com/gocov/gocov/internal/forge"
@@ -204,12 +205,7 @@ func inForgeWorkspaces(u *store.User, login string) bool {
 	if u.Forge != "github" {
 		return false
 	}
-	for _, ws := range u.ForgeWorkspaces {
-		if ws == login {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(u.ForgeWorkspaces, login)
 }
 
 // renderConnect renders the connect flow's terminal states that have no

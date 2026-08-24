@@ -220,7 +220,7 @@ func (p *Provider) orgs(ctx context.Context, token string) ([]string, error) {
 // nextLink extracts the rel="next" URL from a Link response header, or ""
 // when there is no next page.
 func nextLink(header string) string {
-	for _, part := range strings.Split(header, ",") {
+	for part := range strings.SplitSeq(header, ",") {
 		u, rel, ok := strings.Cut(part, ";")
 		if !ok || !strings.Contains(rel, `rel="next"`) {
 			continue

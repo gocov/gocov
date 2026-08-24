@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/gocov/gocov/internal/store"
@@ -68,9 +69,9 @@ func round1(v float64) float64 { return math.Round(v*10) / 10 }
 // into the plotted range so it is always visible.
 func newTrendView(branch string, reports []*store.CommitReport, min ...float64) *trendView {
 	var series []*store.CommitReport // chronological
-	for i := len(reports) - 1; i >= 0; i-- {
-		if reports[i].PRID == "" {
-			series = append(series, reports[i])
+	for _, report := range slices.Backward(reports) {
+		if report.PRID == "" {
+			series = append(series, report)
 		}
 	}
 	if len(series) < 2 {

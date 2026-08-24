@@ -360,7 +360,7 @@ func TestAnnotateMisses(t *testing.T) {
 	// A single-line run in a long file is floored to minMissHeight so it
 	// stays clickable rather than collapsing to a sliver.
 	long := make([]byte, 0, 400)
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		long = append(long, 'x', '\n')
 	}
 	ll := renderSourceLines(long, []profile.Block{{StartLine: 100, EndLine: 100, NumStmts: 1, Count: 0}})
