@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -440,9 +441,9 @@ func deltaValFromReports(reports []*store.CommitReport) (float64, bool) {
 // dashed tail, signalling that the series simply stopped.
 func newSparkView(reports []*store.CommitReport, stale bool) *sparkView {
 	var series []float64 // chronological
-	for i := len(reports) - 1; i >= 0; i-- {
-		if reports[i].PRID == "" {
-			series = append(series, reports[i].TotalPct)
+	for _, report := range slices.Backward(reports) {
+		if report.PRID == "" {
+			series = append(series, report.TotalPct)
 		}
 	}
 	if len(series) > 12 { // keep the last dozen points; older ones crowd the glyph

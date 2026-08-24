@@ -4,6 +4,7 @@ package fake
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -113,8 +114,8 @@ func (f *Forge) FindPRComment(_ context.Context, repoSlug, prID, prefix string) 
 	if f.FindErr != nil {
 		return "", f.FindErr
 	}
-	for i := len(f.comments) - 1; i >= 0; i-- {
-		if strings.HasPrefix(f.comments[i], prefix) {
+	for i, v := range slices.Backward(f.comments) {
+		if strings.HasPrefix(v, prefix) {
 			return strconv.Itoa(i), nil
 		}
 	}

@@ -16,6 +16,9 @@
 // on top of a pair enables Bitbucket or GitLab workspace connect, while
 // the GitHub equivalent rides GOCOV_GITHUB_APP_ID and its private key;
 // GOCOV_MODE=hosted opens self-service registration to any forge account.
+//
+// This file is the process: parse the command line, boot, serve, shut
+// down. What the environment turns into is next door in wiring.go.
 package main
 
 import (
@@ -25,22 +28,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/gocov/gocov/internal/auth"
-	authbb "github.com/gocov/gocov/internal/auth/bitbucket"
-	authgh "github.com/gocov/gocov/internal/auth/github"
-	authgl "github.com/gocov/gocov/internal/auth/gitlab"
 	blobpg "github.com/gocov/gocov/internal/blobstore/postgres"
 	"github.com/gocov/gocov/internal/config"
-	"github.com/gocov/gocov/internal/forge/bitbucket"
-	"github.com/gocov/gocov/internal/forge/github"
-	"github.com/gocov/gocov/internal/forge/gitlab"
-	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/secretbox"
 	"github.com/gocov/gocov/internal/server"
 	storepg "github.com/gocov/gocov/internal/store/postgres"
@@ -115,81 +109,18 @@ func serve() error {
 	}
 	defer st.Pool().Close()
 
-	app, err := githubApp(cfg, log)
+	srvCfg, err := buildServerConfig(cfg, deps{
+		Store:  st,
+		Blobs:  blobpg.New(st.Pool()),
+		Health: st.Pool().Ping,
+	}, log)
 	if err != nil {
 		return err
 	}
 
-	callback := func(forge string) string {
-		return strings.TrimSuffix(cfg.BaseURL, "/") + "/oauth/" + forge + "/callback"
-	}
-	var authProviders []auth.Provider
-	if cfg.Bitbucket.Configured() {
-		authProviders = append(authProviders, authbb.New(cfg.Bitbucket.Key, cfg.Bitbucket.Secret))
-		log.Info("bitbucket sign-in enabled", "callback", callback("bitbucket"))
-	}
-	if cfg.GitHub.Configured() {
-		authProviders = append(authProviders, authgh.New(cfg.GitHub.Key, cfg.GitHub.Secret))
-		log.Info("github sign-in enabled", "callback", callback("github"))
-	}
-	if cfg.GitLab.Configured() {
-		authProviders = append(authProviders, authgl.New(cfg.GitLab.Key, cfg.GitLab.Secret))
-		log.Info("gitlab sign-in enabled", "callback", callback("gitlab"))
-	}
-	if len(authProviders) == 0 {
-		log.Info("no sign-in provider configured; web UI stays open")
-	}
-	if cfg.Hosted() {
-		log.Info("hosted mode: self-service workspace registration enabled")
-	}
-
-	srvCfg := server.Config{
-		Store: st,
-		Blobs: blobpg.New(st.Pool()),
-		Parsers: map[string]profile.Parser{
-			"go":        profile.GoParser{},
-			"lcov":      profile.LCOVParser{},
-			"jacoco":    profile.JaCoCoParser{},
-			"cobertura": profile.CoberturaParser{},
-			"clover":    profile.CloverParser{},
-			"simplecov": profile.SimpleCovParser{},
-		},
-		BaseURL: cfg.BaseURL,
-		Logger:  log,
-		Health:  st.Pool().Ping,
-
-		Auths:             authProviders,
-		AllowedWorkspaces: cfg.AllowedWorkspaces,
-		Hosted:            cfg.Hosted(),
-	}
-	// Assigned conditionally: a typed-nil *github.App in the interface
-	// field would read as "configured".
-	if app != nil {
-		srvCfg.GitHubApp = app
-	}
-	if cfg.GitHubWebhookSecret != "" {
-		srvCfg.GitHubWebhookSecret = cfg.GitHubWebhookSecret
-		log.Info("github webhook endpoint enabled")
-	}
-	switch {
-	case cfg.BitbucketConnectEnabled():
-		srvCfg.BitbucketConnect = &bitbucket.Consumer{Key: cfg.Bitbucket.Key, Secret: cfg.Bitbucket.Secret}
-		log.Info("bitbucket workspace connect enabled")
-	case cfg.Bitbucket.Configured():
-		log.Info("GOCOV_SECRET_KEY not set; Bitbucket workspace connect stays disabled")
-	}
-	switch {
-	case cfg.GitLabConnectEnabled():
-		srvCfg.GitLabConnect = &gitlab.Application{Key: cfg.GitLab.Key, Secret: cfg.GitLab.Secret}
-		log.Info("gitlab workspace connect enabled")
-	case cfg.GitLab.Configured():
-		log.Info("GOCOV_SECRET_KEY not set; GitLab workspace connect stays disabled")
-	}
-	srv := server.New(srvCfg)
-
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           srv,
+		Handler:           server.New(srvCfg),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -213,30 +144,4 @@ func serve() error {
 		}
 		return nil
 	}
-}
-
-// githubApp builds the deployment's GitHub App identity from the
-// configured id and private key. The key holds either the PEM itself or a
-// path to a PEM file — key files are how GitHub hands the secret out, but
-// container setups often prefer the content in the environment. A
-// half-configured pair is already reported by config.Server.Warnings, so
-// it just leaves the integration off here.
-func githubApp(cfg config.Server, log *slog.Logger) (*github.App, error) {
-	if !cfg.GitHubAppEnabled() {
-		return nil, nil
-	}
-	pemData := []byte(cfg.GitHubAppPrivateKey)
-	if !strings.Contains(cfg.GitHubAppPrivateKey, "-----BEGIN") {
-		data, err := os.ReadFile(cfg.GitHubAppPrivateKey)
-		if err != nil {
-			return nil, fmt.Errorf("reading GOCOV_GITHUB_APP_PRIVATE_KEY file: %w", err)
-		}
-		pemData = data
-	}
-	app, err := github.NewApp(cfg.GitHubAppID, pemData)
-	if err != nil {
-		return nil, fmt.Errorf("GOCOV_GITHUB_APP_PRIVATE_KEY: %w", err)
-	}
-	log.Info("github app configured", "app_id", cfg.GitHubAppID)
-	return app, nil
 }

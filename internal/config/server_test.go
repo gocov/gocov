@@ -1,6 +1,7 @@
 package config
 
 import (
+	"maps"
 	"strings"
 	"testing"
 )
@@ -11,9 +12,7 @@ const validKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd
 // minimal is the smallest environment that boots the server.
 func minimal(extra map[string]string) map[string]string {
 	environ := map[string]string{"DATABASE_URL": "postgres://localhost/gocov"}
-	for k, v := range extra {
-		environ[k] = v
-	}
+	maps.Copy(environ, extra)
 	return environ
 }
 

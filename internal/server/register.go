@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"net/http"
+	"slices"
 	"sort"
 
 	"github.com/gocov/gocov/internal/store"
@@ -110,13 +111,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 	// D2, enforced server-side: only workspaces the forge reported at
 	// login are claimable, no matter what the form posts.
-	inForgeList := false
-	for _, ws := range u.ForgeWorkspaces {
-		if ws == prefix {
-			inForgeList = true
-			break
-		}
-	}
+	inForgeList := slices.Contains(u.ForgeWorkspaces, prefix)
 	if prefix == "" || !inForgeList {
 		http.Error(w, "workspace is not in your forge account (sign in again if it is new)", http.StatusForbidden)
 		return

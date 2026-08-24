@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -233,13 +234,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "counting commit parts", err)
 		return
 	} else if len(parts) >= maxPartsPerCommit {
-		isNew := true
-		for _, p := range parts {
-			if p == part {
-				isNew = false
-				break
-			}
-		}
+		isNew := !slices.Contains(parts, part)
 		if isNew {
 			httpError(w, http.StatusBadRequest, "commit %s already has %d coverage parts (the maximum); check that the upload's part name is stable across CI jobs", commit, len(parts))
 			return

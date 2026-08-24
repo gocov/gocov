@@ -380,7 +380,7 @@ func TestMergedReportConcurrentParts(t *testing.T) {
 		ct   string
 	}
 	reqs := make([]req, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		// Each part covers its own file, 1/1, so the merged commit is n/n.
 		prof := fmt.Sprintf("mode: set\nexample.com/m/f%d.go:1.1,2.2 1 1\n", i)
 		body, ct := multipartUpload(t, map[string]string{
@@ -391,7 +391,7 @@ func TestMergedReportConcurrentParts(t *testing.T) {
 
 	codes := make([]int, n)
 	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -421,7 +421,7 @@ func TestMergedReportConcurrentParts(t *testing.T) {
 
 func TestUploadPartsCap(t *testing.T) {
 	f := newFixture(t, nil)
-	for i := 0; i < maxPartsPerCommit; i++ {
+	for i := range maxPartsPerCommit {
 		rec := doUpload(t, f, "secret-token", map[string]string{
 			"commit": "c1", "part": fmt.Sprintf("p%d", i),
 		}, testProfile)
@@ -979,7 +979,8 @@ func TestUploadDiffCoverage(t *testing.T) {
 	}
 }
 
-func pctPtr(v float64) *float64 { return &v }
+//go:fix inline
+func pctPtr(v float64) *float64 { return new(v) }
 
 func TestCoverageGate(t *testing.T) {
 	// testProfile is 80% overall.
