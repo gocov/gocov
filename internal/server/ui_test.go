@@ -130,7 +130,7 @@ func TestIndexShowsGateAndDelta(t *testing.T) {
 	// 80% baseline first; the gate arrives afterwards so the baseline
 	// remains usable for the delta.
 	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile)
-	f.repo.Gate = store.Gate{MinCoverage: pctPtr(90)}
+	f.repo.Gate = store.Gate{MinCoverage: new(float64(90))}
 	if err := f.store.UpdateRepo(t.Context(), f.repo); err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestIndexDeltaSkipsGateFailedBaselines(t *testing.T) {
 	f := newFixture(t, nil)
 	// 80% baseline before any gate exists.
 	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile)
-	f.repo.Gate = store.Gate{MinCoverage: pctPtr(90)}
+	f.repo.Gate = store.Gate{MinCoverage: new(float64(90))}
 	if err := f.store.UpdateRepo(t.Context(), f.repo); err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestRepoTrendChart(t *testing.T) {
 	}
 
 	// A gate-failing upload gets the red marker.
-	f.repo.Gate = store.Gate{MinCoverage: pctPtr(90)}
+	f.repo.Gate = store.Gate{MinCoverage: new(float64(90))}
 	if err := f.store.UpdateRepo(t.Context(), f.repo); err != nil {
 		t.Fatal(err)
 	}

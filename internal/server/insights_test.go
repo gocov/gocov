@@ -43,7 +43,7 @@ func insightsUpload(t *testing.T, f *fixture, fields map[string]string) uploadRe
 
 func TestCodeInsightsPRUpload(t *testing.T) {
 	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
-	f.repo.Gate = store.Gate{MinCoverage: pctPtr(50)}
+	f.repo.Gate = store.Gate{MinCoverage: new(float64(50))}
 	if err := f.store.UpdateRepo(context.Background(), f.repo); err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestCodeInsightsPRUpload(t *testing.T) {
 
 func TestCodeInsightsFullyCoveredDiff(t *testing.T) {
 	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
-	f.repo.Gate = store.Gate{MinDiffCoverage: pctPtr(100)}
+	f.repo.Gate = store.Gate{MinDiffCoverage: new(float64(100))}
 	if err := f.store.UpdateRepo(context.Background(), f.repo); err != nil {
 		t.Fatal(err)
 	}

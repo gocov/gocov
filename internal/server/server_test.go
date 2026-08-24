@@ -484,7 +484,7 @@ func TestUploadStatusPushSuperseded(t *testing.T) {
 func TestMergedGateSelfHeals(t *testing.T) {
 	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
 	ctx := context.Background()
-	f.repo.Gate = store.Gate{MinCoverage: pctPtr(50)}
+	f.repo.Gate = store.Gate{MinCoverage: new(float64(50))}
 	if err := f.store.UpdateRepo(ctx, f.repo); err != nil {
 		t.Fatal(err)
 	}
@@ -980,7 +980,6 @@ func TestUploadDiffCoverage(t *testing.T) {
 }
 
 //go:fix inline
-func pctPtr(v float64) *float64 { return new(v) }
 
 func TestCoverageGate(t *testing.T) {
 	// testProfile is 80% overall.
@@ -1017,12 +1016,12 @@ func TestCoverageGate(t *testing.T) {
 
 	t.Run("min coverage pass and fail", func(t *testing.T) {
 		f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
-		setGate(t, f, store.Gate{MinCoverage: pctPtr(75)})
+		setGate(t, f, store.Gate{MinCoverage: new(float64(75))})
 		if resp := upload(t, f, map[string]string{"commit": "c1"}, testProfile); resp.Gate != "passed" {
 			t.Errorf("gate = %q, want passed (80%% >= 75%%)", resp.Gate)
 		}
 
-		setGate(t, f, store.Gate{MinCoverage: pctPtr(90)})
+		setGate(t, f, store.Gate{MinCoverage: new(float64(90))})
 		resp := upload(t, f, map[string]string{"commit": "c2"}, testProfile)
 		if !strings.HasPrefix(resp.Gate, "failed: total coverage 80% is below the minimum 90%") {
 			t.Errorf("gate = %q", resp.Gate)
@@ -1039,7 +1038,7 @@ func TestCoverageGate(t *testing.T) {
 
 	t.Run("max drop", func(t *testing.T) {
 		f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
-		setGate(t, f, store.Gate{MaxCoverageDrop: pctPtr(1)})
+		setGate(t, f, store.Gate{MaxCoverageDrop: new(float64(1))})
 		upload(t, f, map[string]string{"commit": "c1", "branch": "main"}, testProfile) // 80%
 
 		worse := "mode: set\nexample.com/m/a.go:1.1,5.2 1 1\nexample.com/m/a.go:6.1,7.2 1 0\n" // 50%
@@ -1056,7 +1055,7 @@ func TestCoverageGate(t *testing.T) {
 		}
 
 		// A drop within tolerance passes (still measured against c1).
-		setGate(t, f, store.Gate{MaxCoverageDrop: pctPtr(50)})
+		setGate(t, f, store.Gate{MaxCoverageDrop: new(float64(50))})
 		if resp := upload(t, f, map[string]string{"commit": "c3", "branch": "main"}, worse); resp.Gate != "passed" {
 			t.Errorf("gate = %q, want passed within tolerance", resp.Gate)
 		}
@@ -1064,7 +1063,7 @@ func TestCoverageGate(t *testing.T) {
 
 	t.Run("drop rule cannot be ratcheted on a feature branch", func(t *testing.T) {
 		f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
-		setGate(t, f, store.Gate{MaxCoverageDrop: pctPtr(25)})
+		setGate(t, f, store.Gate{MaxCoverageDrop: new(float64(25))})
 		upload(t, f, map[string]string{"commit": "m1", "branch": "main"}, testProfile) // 80%
 
 		// First branch push: 60%, drop 20 vs main — within tolerance.
@@ -1083,7 +1082,7 @@ func TestCoverageGate(t *testing.T) {
 
 	t.Run("coverage exactly at the minimum passes", func(t *testing.T) {
 		f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
-		setGate(t, f, store.Gate{MinCoverage: pctPtr(57)})
+		setGate(t, f, store.Gate{MinCoverage: new(float64(57))})
 		// 57 of 100 statements: float division yields 56.999999999999993.
 		exact := "mode: set\nexample.com/m/a.go:1.1,5.2 57 1\nexample.com/m/a.go:6.1,7.2 43 0\n"
 		if resp := upload(t, f, map[string]string{"commit": "c1"}, exact); resp.Gate != "passed" {
@@ -1093,7 +1092,7 @@ func TestCoverageGate(t *testing.T) {
 
 	t.Run("min diff coverage on PR uploads", func(t *testing.T) {
 		f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
-		setGate(t, f, store.Gate{MinDiffCoverage: pctPtr(90)})
+		setGate(t, f, store.Gate{MinDiffCoverage: new(float64(90))})
 		f.forge.DiffText = testPRDiff // 2/3 changed lines covered = 66.7%
 		resp := upload(t, f, map[string]string{"commit": "c1", "branch": "f", "pr_id": "3"}, testProfile)
 		if !strings.HasPrefix(resp.Gate, "failed: diff coverage 66.67% is below the minimum 90%") {
@@ -1108,7 +1107,7 @@ func TestCoverageGate(t *testing.T) {
 
 	t.Run("diff rule is fail-open without diff data", func(t *testing.T) {
 		f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
-		setGate(t, f, store.Gate{MinDiffCoverage: pctPtr(90)})
+		setGate(t, f, store.Gate{MinDiffCoverage: new(float64(90))})
 		// No DiffText: the fake forge reports diff as not supported.
 		resp := upload(t, f, map[string]string{"commit": "c1", "pr_id": "3"}, testProfile)
 		if resp.Gate != "passed" {
@@ -1125,7 +1124,7 @@ func TestCoverageGate(t *testing.T) {
 		// Establish a passing 80% baseline before the gate exists, then
 		// tighten the gate: the next upload violates both rules.
 		upload(t, f, map[string]string{"commit": "c1", "branch": "main"}, testProfile)
-		setGate(t, f, store.Gate{MinCoverage: pctPtr(90), MaxCoverageDrop: pctPtr(0)})
+		setGate(t, f, store.Gate{MinCoverage: new(float64(90)), MaxCoverageDrop: new(float64(0))})
 		worse := "mode: set\nexample.com/m/a.go:1.1,5.2 1 1\nexample.com/m/a.go:6.1,7.2 1 0\n"
 		resp := upload(t, f, map[string]string{"commit": "c2", "branch": "main"}, worse)
 		if !strings.Contains(resp.Gate, "below the minimum") || !strings.Contains(resp.Gate, "dropped") {
@@ -1139,7 +1138,7 @@ func TestWorkspaceGateInheritedByAutoCreatedRepos(t *testing.T) {
 	st := storemem.New()
 	ws := &store.Workspace{
 		Forge: "bitbucket", Prefix: "acme", Token: "ws-token", DefaultBranch: "main",
-		Gate: store.Gate{MinCoverage: pctPtr(85)},
+		Gate: store.Gate{MinCoverage: new(float64(85))},
 	}
 	if err := st.CreateWorkspace(ctx, ws); err != nil {
 		t.Fatal(err)

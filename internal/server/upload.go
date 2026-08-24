@@ -1,3 +1,9 @@
+// The upload endpoint: the one write path into gocov. A CI job posts a
+// coverage profile here, and this file runs it end to end — authenticate,
+// read and validate the request, parse the profile, store it, merge the
+// commit's parts, then report back to the uploader. The steps it delegates
+// live next door: gate.go, merge.go, forgepush.go and uploadrepo.go.
+
 package server
 
 import (
@@ -13,7 +19,6 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -123,49 +128,6 @@ func baseName(p string) string {
 	return p
 }
 
-// gateResult is the evaluated coverage gate for one upload.
-type gateResult struct {
-	configured bool
-	failures   []string
-}
-
-func (g gateResult) failed() bool { return len(g.failures) > 0 }
-
-func (g gateResult) String() string {
-	if g.failed() {
-		return "failed: " + strings.Join(g.failures, "; ")
-	}
-	return "passed"
-}
-
-// gateEpsilon absorbs float64 division error so coverage exactly at the
-// configured threshold never fails the gate (57 of 100 statements is
-// 56.999999999999993 in float arithmetic).
-const gateEpsilon = 1e-9
-
-// evaluateGate checks the repo's coverage requirements. dropDelta is the
-// difference to the latest gate-passing upload on the default branch —
-// never a gate-failing upload, so re-running CI cannot launder a failure,
-// and never the branch's own history, so a PR cannot ratchet coverage
-// down within tolerance push by push. The drop and diff rules are
-// fail-open when their inputs are unavailable.
-func evaluateGate(gate store.Gate, totalPct float64, dropDelta *float64, diff *diffcov.Result) gateResult {
-	res := gateResult{configured: gate.Configured()}
-	if gate.MinCoverage != nil && totalPct < *gate.MinCoverage-gateEpsilon {
-		res.failures = append(res.failures,
-			fmt.Sprintf("total coverage %.4g%% is below the minimum %.4g%%", totalPct, *gate.MinCoverage))
-	}
-	if gate.MaxCoverageDrop != nil && dropDelta != nil && *dropDelta < -*gate.MaxCoverageDrop-gateEpsilon {
-		res.failures = append(res.failures,
-			fmt.Sprintf("coverage dropped %.4g%% (allowed %.4g%%)", -*dropDelta, *gate.MaxCoverageDrop))
-	}
-	if gate.MinDiffCoverage != nil && diff != nil && diff.TotalLines > 0 && diff.Percent() < *gate.MinDiffCoverage-gateEpsilon {
-		res.failures = append(res.failures,
-			fmt.Sprintf("diff coverage %.4g%% is below the minimum %.4g%%", diff.Percent(), *gate.MinDiffCoverage))
-	}
-	return res
-}
-
 // handleUpload implements POST /api/v1/upload.
 //
 // Auth: Bearer token — either a per-repo token or a workspace token.
@@ -173,6 +135,10 @@ func evaluateGate(gate store.Gate, totalPct float64, dropDelta *float64, diff *d
 // the workspace prefix are registered automatically. Multipart form: file
 // field "profile"; value fields repo, commit (required), branch (defaults
 // to the repo's default branch), pr_id (optional), format (default "go").
+//
+// The body below is the flow and nothing else — authenticate, read the
+// request, store what arrived, merge the commit's parts, answer the
+// uploader, tell the forge — with each step's detail one call away.
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -186,118 +152,18 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
-	if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
-		httpError(w, http.StatusBadRequest, "invalid multipart form: %v", err)
-		return
-	}
-
-	repo, repoCreated, ok := s.resolveUploadRepo(w, r, authedRepo, ws, r.FormValue("repo"))
+	req, ok := s.readUploadRequest(w, r, authedRepo, ws)
 	if !ok {
 		return
 	}
-	commit := r.FormValue("commit")
-	if commit == "" {
-		httpError(w, http.StatusBadRequest, "missing field: commit")
-		return
-	}
-	if !commitRe.MatchString(commit) {
-		httpError(w, http.StatusBadRequest, "invalid commit %q: want up to 64 alphanumeric, dot, dash or underscore characters", commit)
-		return
-	}
-	branch := r.FormValue("branch")
-	if branch == "" {
-		branch = repo.DefaultBranch
-	}
-	prID := r.FormValue("pr_id")
+	repo := req.repo
 
-	// A part names one slice of the commit's coverage (backend, frontend,
-	// e2e, ...) uploaded from a separate CI job. It is normalized (trimmed
-	// and lowercased) before validation so the same logical part from
-	// different callers keys the same bucket; the API is called directly,
-	// not only through the CLI, so normalization lives here on the server.
-	// Omitting it keeps the historical single-upload behaviour: everything
-	// lands in "default".
-	part := strings.ToLower(strings.TrimSpace(r.FormValue("part")))
-	if part == "" {
-		part = "default"
-	} else if !partRe.MatchString(part) {
-		httpError(w, http.StatusBadRequest, "invalid part %q: want up to 64 alphanumeric, dot, dash or underscore characters starting with a letter or digit", part)
-		return
-	}
-
-	// Cap the distinct parts per commit before doing any work, so a runaway
-	// part name (e.g. -part $CI_JOB_ID) can't accumulate parts unbounded.
-	// Re-uploading an existing part is always allowed — it replaces.
-	if parts, err := s.store.CommitParts(r.Context(), repo.ID, commit); err != nil {
-		s.internalError(w, "counting commit parts", err)
-		return
-	} else if len(parts) >= maxPartsPerCommit {
-		isNew := !slices.Contains(parts, part)
-		if isNew {
-			httpError(w, http.StatusBadRequest, "commit %s already has %d coverage parts (the maximum); check that the upload's part name is stable across CI jobs", commit, len(parts))
-			return
-		}
-	}
-
-	file, fileHdr, err := r.FormFile("profile")
-	if err != nil {
-		httpError(w, http.StatusBadRequest, "missing file field: profile")
-		return
-	}
-	defer file.Close()
-	raw, err := io.ReadAll(file)
-	if err != nil {
-		httpError(w, http.StatusBadRequest, "reading profile: %v", err)
-		return
-	}
-
-	// An explicit format wins; otherwise sniff the content, keeping "go"
-	// as the historical default for unrecognizable input.
-	format := r.FormValue("format")
-	if format == "" {
-		if detected := profile.Detect(raw); detected != "" {
-			format = detected
-		} else {
-			format = "go"
-		}
-	}
-	parser, ok := s.parsers[format]
+	dropDelta, ok := s.gateDropBaseline(w, r, req)
 	if !ok {
-		httpError(w, http.StatusBadRequest, "unsupported format %q", format)
 		return
 	}
 
-	prof, err := parser.Parse(bytes.NewReader(raw))
-	if err != nil {
-		httpError(w, http.StatusUnprocessableEntity, "parsing %s profile: %v", format, err)
-		return
-	}
-
-	covered, total := prof.Coverage()
-	totalPct := profile.Percent(covered, total)
-
-	// The upload row keeps its own single-part gate result (its gate_failed
-	// column still feeds the per-upload web views); the response, forge
-	// status, gate and PR comment are driven by the merged report computed
-	// after the row is stored. The drop rule always compares against the
-	// default branch, so a PR cannot lower coverage step by step within
-	// tolerance.
-	var dropDelta *float64
-	if repo.Gate.MaxCoverageDrop != nil {
-		base, err := s.store.LatestPassedCommitReport(r.Context(), repo.ID, repo.DefaultBranch, commit)
-		if err != nil && !errors.Is(err, store.ErrNotFound) {
-			s.internalError(w, "loading gate baseline", err)
-			return
-		}
-		if base != nil {
-			d := totalPct - base.TotalPct
-			dropDelta = &d
-		}
-	}
-
-	blobKey, err := s.storeRawProfile(r, repo.ID, raw)
+	blobKey, err := s.storeRawProfile(r, repo.ID, req.raw)
 	if err != nil {
 		s.internalError(w, "storing raw profile", err)
 		return
@@ -307,43 +173,14 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// the repo has no credentials configured.
 	fg, fgErr := s.forgeFor(r.Context(), repo)
 
-	pathPrefix := strings.TrimSuffix(r.FormValue("path_prefix"), "/")
 	var diffResult *diffcov.Result
 	var diffStatus string
-	if prID != "" {
-		diffResult, diffStatus = s.computeDiffCoverage(r.Context(), fg, fgErr, repo, prID, prof, format, pathPrefix)
+	if req.prID != "" {
+		diffResult, diffStatus = s.computeDiffCoverage(r.Context(), fg, fgErr, repo, req.prID, req.prof, req.format, req.pathPrefix)
 	}
 
-	gate := evaluateGate(repo.Gate, totalPct, dropDelta, diffResult)
-
-	upload := &store.Upload{
-		RepoID:       repo.ID,
-		CommitSHA:    commit,
-		Branch:       branch,
-		PRID:         prID,
-		Format:       format,
-		TotalPct:     totalPct,
-		CoveredStmts: covered,
-		TotalStmts:   total,
-		RawBlobKey:   blobKey,
-		DiffCoverage: diffResult,
-		GateFailed:   gate.failed(),
-		PathPrefix:   pathPrefix,
-		Part:         part,
-		Meta:         buildUploadMeta(r, fileHdr.Filename, len(raw), time.Since(start)),
-	}
-	files := make([]*store.UploadFile, 0, len(prof.Files))
-	for i := range prof.Files {
-		f := &prof.Files[i]
-		c, t := f.Coverage()
-		files = append(files, &store.UploadFile{
-			Path:         f.Path,
-			Pct:          profile.Percent(c, t),
-			CoveredStmts: c,
-			TotalStmts:   t,
-			Blocks:       f.Blocks,
-		})
-	}
+	gate := evaluateGate(repo.Gate, req.totalPct, dropDelta, diffResult)
+	upload, files := req.rows(blobKey, diffResult, gate, buildUploadMeta(r, req.filename, len(req.raw), time.Since(start)))
 	if err := s.store.CreateUpload(r.Context(), upload, files); err != nil {
 		// The raw profile was already written; don't leave it orphaned.
 		if delErr := s.blobs.Delete(r.Context(), blobKey); delErr != nil {
@@ -365,63 +202,22 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "computing merged report", err)
 		return
 	}
-	merged, mergedDelta, mergedGate := rc.upload, rc.delta, rc.gate
 
 	resp := uploadResponse{
 		ID:           upload.ID,
-		TotalPct:     merged.TotalPct,
-		CoveredStmts: merged.CoveredStmts,
-		TotalStmts:   merged.TotalStmts,
-		DeltaPct:     mergedDelta,
-		RepoCreated:  repoCreated,
+		TotalPct:     rc.upload.TotalPct,
+		CoveredStmts: rc.upload.CoveredStmts,
+		TotalStmts:   rc.upload.TotalStmts,
+		DeltaPct:     rc.delta,
+		RepoCreated:  req.repoCreated,
 		DiffStatus:   diffStatus,
 		Warnings:     rc.warnings,
 	}
-	if mergedGate.configured {
-		resp.Gate = mergedGate.String()
+	if rc.gate.configured {
+		resp.Gate = rc.gate.String()
 	}
-
-	// Forge status/insights/comment push after the locked recompute. Two
-	// parts of one commit can push concurrently, and forge latency could let
-	// an older push land last and pin the commit to a stale status. Serialize
-	// the push per commit and gate it on this upload's version (its id, which
-	// rises with the most-complete merged state): TryPushStatus runs the push
-	// only if it is not older than the last successful one, and records the
-	// version only after the push succeeds — so a failed push doesn't burn the
-	// version and a later part retries.
-	pushCtx, cancel := context.WithTimeout(r.Context(), statusPushTimeout)
-	defer cancel()
-	pushed, err := s.store.TryPushStatus(pushCtx, repo.ID, upload.CommitSHA, upload.ID, func(ctx context.Context) error {
-		resp.BuildStatus = s.pushBuildStatus(ctx, fg, fgErr, repo, merged, mergedDelta, mergedGate)
-		resp.CodeInsights = s.pushCodeInsights(ctx, fg, fgErr, repo, merged, mergedDelta, mergedGate)
-		resp.PRComment = s.pushPRComment(ctx, fg, fgErr, repo, merged, mergedDelta, mergedGate)
-		// The build status gates merges; if it didn't post, signal failure so
-		// the version isn't advanced and a later part retries. Insights and
-		// PR comment are best effort and don't hold back the version.
-		if strings.HasPrefix(resp.BuildStatus, "error") {
-			return errStatusPushFailed
-		}
-		return nil
-	})
-	switch {
-	case errors.Is(err, errStatusPushFailed):
-		// resp fields already carry the per-surface outcome; nothing to do.
-	case err != nil:
-		// Lock/tx failure: the push may not have run. Report it rather than
-		// leaving the fields blank.
-		s.log.Warn("status push lock", "repo", repo.Slug, "commit", upload.CommitSHA, "err", err)
-		if resp.BuildStatus == "" {
-			resp.BuildStatus = "error: " + err.Error()
-			resp.CodeInsights = "error: " + err.Error()
-		}
-	case !pushed:
-		resp.BuildStatus = "skipped: superseded"
-		resp.CodeInsights = "skipped: superseded"
-		if merged.PRID != "" {
-			resp.PRComment = "skipped: superseded"
-		}
-	}
-	if md := merged.DiffCoverage; md != nil {
+	s.pushToForge(r.Context(), fg, fgErr, repo, upload, rc, &resp)
+	if md := rc.upload.DiffCoverage; md != nil {
 		pct := md.Percent()
 		resp.DiffPct = &pct
 		resp.DiffCoveredLines = &md.CoveredLines
@@ -432,214 +228,188 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// recomputeCommitReport rebuilds the merged report for the upload's commit
-// from the latest upload of every part, persists it, and returns the merged
-// view that drives the response and the forge side effects. It is
-// self-healing: because every upload recomputes the whole commit, a partial
-// early state (only the backend part in, say) is corrected in place as the
-// remaining parts arrive. The trade-off is a window in which the merged
-// numbers are incomplete — see the note on merged reports in docs/parts.md.
-//
-// The returned upload is synthetic: it carries the merged totals and diff
-// coverage to the existing push helpers, with the triggering upload's id so
-// the report card and PR comment link back to it.
-type mergedRecompute struct {
-	upload   *store.Upload
-	delta    *float64
-	gate     gateResult
-	warnings []string // surfaced to the uploader, e.g. conservative diff merges
+// uploadRequest is one accepted upload: the multipart form's fields after
+// validation and normalization, the repo they resolved to, and the parsed
+// profile with its totals. Everything the flow needs from the request is
+// read once, here, so the handler never reaches back into r.
+type uploadRequest struct {
+	repo        *store.Repo
+	repoCreated bool // the workspace token registered it just now
+
+	commit     string
+	branch     string
+	prID       string
+	part       string
+	format     string
+	pathPrefix string
+
+	filename string // as the client named it, for provenance
+	raw      []byte
+	prof     *profile.Profile
+
+	covered, total int64
+	totalPct       float64
 }
 
-// recomputeTimeout bounds a single recompute so a saturated connection pool
-// fails the upload fast instead of hanging a CI client indefinitely.
-const recomputeTimeout = 30 * time.Second
+// readUploadRequest parses the multipart body and validates every field,
+// writing the error response itself; a false second return means the
+// response is already written. It also resolves the target repo (which a
+// workspace token may register on the spot) and rejects a commit that has
+// accumulated too many parts, because both answer the same question the
+// validation does: is this upload one we accept at all?
+func (s *Server) readUploadRequest(w http.ResponseWriter, r *http.Request, authedRepo *store.Repo, ws *store.Workspace) (*uploadRequest, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
+	if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
+		httpError(w, http.StatusBadRequest, "invalid multipart form: %v", err)
+		return nil, false
+	}
 
-// statusPushTimeout bounds the serialized forge push: TryPushStatus holds a
-// per-commit lock (and its connection) across the forge HTTP calls, so a
-// hung forge must not pin them.
-const statusPushTimeout = 20 * time.Second
+	repo, repoCreated, ok := s.resolveUploadRepo(w, r, authedRepo, ws, r.FormValue("repo"))
+	if !ok {
+		return nil, false
+	}
+	req := &uploadRequest{
+		repo:        repo,
+		repoCreated: repoCreated,
+		commit:      r.FormValue("commit"),
+		branch:      r.FormValue("branch"),
+		prID:        r.FormValue("pr_id"),
+		pathPrefix:  strings.TrimSuffix(r.FormValue("path_prefix"), "/"),
+	}
+	if req.commit == "" {
+		httpError(w, http.StatusBadRequest, "missing field: commit")
+		return nil, false
+	}
+	if !commitRe.MatchString(req.commit) {
+		httpError(w, http.StatusBadRequest, "invalid commit %q: want up to 64 alphanumeric, dot, dash or underscore characters", req.commit)
+		return nil, false
+	}
+	if req.branch == "" {
+		req.branch = repo.DefaultBranch
+	}
 
-// errStatusPushFailed signals TryPushStatus that the build-status push did
-// not post, so the status version must not advance and a later part retries.
-// It never surfaces as an upload error — the response carries the per-surface
-// outcome.
-var errStatusPushFailed = errors.New("build status push failed")
+	// A part names one slice of the commit's coverage (backend, frontend,
+	// e2e, ...) uploaded from a separate CI job. It is normalized (trimmed
+	// and lowercased) before validation so the same logical part from
+	// different callers keys the same bucket; the API is called directly,
+	// not only through the CLI, so normalization lives here on the server.
+	// Omitting it keeps the historical single-upload behaviour: everything
+	// lands in "default".
+	req.part = strings.ToLower(strings.TrimSpace(r.FormValue("part")))
+	if req.part == "" {
+		req.part = "default"
+	} else if !partRe.MatchString(req.part) {
+		httpError(w, http.StatusBadRequest, "invalid part %q: want up to 64 alphanumeric, dot, dash or underscore characters starting with a letter or digit", req.part)
+		return nil, false
+	}
 
-func (s *Server) recomputeCommitReport(ctx context.Context, repo *store.Repo, u *store.Upload) (*mergedRecompute, error) {
-	ctx, cancel := context.WithTimeout(ctx, recomputeTimeout)
-	defer cancel()
-
-	// The whole recompute — read every part, merge, upsert — runs inside one
-	// locked transaction, serialized per commit against concurrent uploads
-	// (parallel CI jobs are the point) so it cannot interleave with or
-	// clobber a newer recompute and drop a part.
-	var result *mergedRecompute
-	err := s.store.WithCommitReportTx(ctx, repo.ID, u.CommitSHA, func(ctx context.Context, tx store.CommitTx) error {
-		parts, err := tx.LatestUploadsPerPart(ctx, repo.ID, u.CommitSHA)
-		if err != nil {
-			return fmt.Errorf("loading commit parts: %w", err)
+	// Cap the distinct parts per commit before doing any work, so a runaway
+	// part name (e.g. -part $CI_JOB_ID) can't accumulate parts unbounded.
+	// Re-uploading an existing part is always allowed — it replaces.
+	if parts, err := s.store.CommitParts(r.Context(), repo.ID, req.commit); err != nil {
+		s.internalError(w, "counting commit parts", err)
+		return nil, false
+	} else if len(parts) >= maxPartsPerCommit {
+		isNew := !slices.Contains(parts, req.part)
+		if isNew {
+			httpError(w, http.StatusBadRequest, "commit %s already has %d coverage parts (the maximum); check that the upload's part name is stable across CI jobs", req.commit, len(parts))
+			return nil, false
 		}
+	}
 
-		profiles := make([]*profile.Profile, 0, len(parts))
-		diffs := make([]*diffcov.Result, 0, len(parts))
-		for _, p := range parts {
-			files, err := tx.UploadFiles(ctx, p.ID)
-			if err != nil {
-				return fmt.Errorf("loading part files: %w", err)
-			}
-			prof := &profile.Profile{Files: make([]profile.File, 0, len(files))}
-			for _, f := range files {
-				prof.Files = append(prof.Files, profile.File{Path: f.Path, Blocks: f.Blocks})
-			}
-			profiles = append(profiles, prof)
-			if p.DiffCoverage != nil {
-				diffs = append(diffs, p.DiffCoverage)
-			}
-		}
-
-		merged := profile.Merge(profiles...)
-		covered, total := merged.Coverage()
-		totalPct := profile.Percent(covered, total)
-		mergedDiff, diffConflicts := diffcov.Merge(diffs...)
-		var warnings []string
-		if len(diffConflicts) > 0 {
-			warnings = append(warnings, fmt.Sprintf(
-				"diff coverage merged conservatively for %d changed file(s) whose parts disagree on their changed lines (%s); merged coverage is a safe lower bound",
-				len(diffConflicts), strings.Join(diffConflicts, ", ")))
-		}
-
-		// Delta vs the previous gate-passing merged report on the branch,
-		// falling back to the default branch for first-time feature branches.
-		// The commit's own report is skipped so an earlier part is never its
-		// own baseline.
-		var deltaPct *float64
-		prev, err := tx.LatestPassedCommitReport(ctx, repo.ID, u.Branch, u.CommitSHA)
-		if errors.Is(err, store.ErrNotFound) && u.Branch != repo.DefaultBranch {
-			prev, err = tx.LatestPassedCommitReport(ctx, repo.ID, repo.DefaultBranch, u.CommitSHA)
-		}
-		if err != nil && !errors.Is(err, store.ErrNotFound) {
-			return fmt.Errorf("loading baseline report: %w", err)
-		}
-		if prev != nil {
-			d := totalPct - prev.TotalPct
-			deltaPct = &d
-		}
-
-		// The gate drop rule always compares against the default branch's
-		// latest passing merged report, so a PR cannot ratchet coverage down
-		// part by part within tolerance.
-		var dropDelta *float64
-		if repo.Gate.MaxCoverageDrop != nil {
-			base, err := tx.LatestPassedCommitReport(ctx, repo.ID, repo.DefaultBranch, u.CommitSHA)
-			if err != nil && !errors.Is(err, store.ErrNotFound) {
-				return fmt.Errorf("loading gate baseline report: %w", err)
-			}
-			if base != nil {
-				d := totalPct - base.TotalPct
-				dropDelta = &d
-			}
-		}
-
-		gate := evaluateGate(repo.Gate, totalPct, dropDelta, mergedDiff)
-
-		cr := &store.CommitReport{
-			RepoID:       repo.ID,
-			CommitSHA:    u.CommitSHA,
-			Branch:       u.Branch,
-			PRID:         u.PRID,
-			TotalPct:     totalPct,
-			CoveredStmts: covered,
-			TotalStmts:   total,
-			GateFailed:   gate.failed(),
-			DiffCoverage: mergedDiff,
-			PartCount:    len(parts),
-			UploadID:     u.ID,
-		}
-		if err := tx.UpsertCommitReport(ctx, cr); err != nil {
-			return fmt.Errorf("saving merged report: %w", err)
-		}
-
-		mergedUpload := &store.Upload{
-			ID:           u.ID,
-			RepoID:       repo.ID,
-			CommitSHA:    u.CommitSHA,
-			Branch:       u.Branch,
-			PRID:         u.PRID,
-			TotalPct:     totalPct,
-			CoveredStmts: covered,
-			TotalStmts:   total,
-			DiffCoverage: mergedDiff,
-		}
-		result = &mergedRecompute{upload: mergedUpload, delta: deltaPct, gate: gate, warnings: warnings}
-		return nil
-	})
+	file, fileHdr, err := r.FormFile("profile")
 	if err != nil {
-		return nil, err
+		httpError(w, http.StatusBadRequest, "missing file field: profile")
+		return nil, false
 	}
-	return result, nil
-}
+	defer file.Close()
+	if req.raw, err = io.ReadAll(file); err != nil {
+		httpError(w, http.StatusBadRequest, "reading profile: %v", err)
+		return nil, false
+	}
+	req.filename = fileHdr.Filename
 
-// forgeFor builds a forge client for the repo through the workspace's
-// one-click connection (GitHub App installation, Bitbucket grant or
-// GitLab grant). Returns (nil, nil) when the repo's workspace has no
-// connection — there is no manual-credential fallback.
-func (s *Server) forgeFor(ctx context.Context, repo *store.Repo) (forge.Forge, error) {
-	// The workspace is looked up lazily: only when a connection could
-	// apply, so a forge that supports no one-click connect skips the
-	// query entirely.
-	if s.oneClickCapable(repo.Forge) {
-		ws := s.repoWorkspace(ctx, repo.Slug, repo.Forge)
-		if fg := s.connectedForge(ctx, ws, repo.Forge); fg != nil {
-			return fg, nil
+	// An explicit format wins; otherwise sniff the content, keeping "go"
+	// as the historical default for unrecognizable input.
+	req.format = r.FormValue("format")
+	if req.format == "" {
+		if detected := profile.Detect(req.raw); detected != "" {
+			req.format = detected
+		} else {
+			req.format = "go"
 		}
 	}
-	return nil, nil
+	parser, ok := s.parsers[req.format]
+	if !ok {
+		httpError(w, http.StatusBadRequest, "unsupported format %q", req.format)
+		return nil, false
+	}
+	if req.prof, err = parser.Parse(bytes.NewReader(req.raw)); err != nil {
+		httpError(w, http.StatusUnprocessableEntity, "parsing %s profile: %v", req.format, err)
+		return nil, false
+	}
+	req.covered, req.total = req.prof.Coverage()
+	req.totalPct = profile.Percent(req.covered, req.total)
+	return req, true
 }
 
-// oneClickCapable reports whether a one-click connection could supply
-// credentials for the forge — the gate for the extra workspace lookup.
-func (s *Server) oneClickCapable(forgeName string) bool {
-	return (s.githubApp != nil && forgeName == "github") ||
-		(s.bbConnect != nil && forgeName == "bitbucket") ||
-		(s.glConnect != nil && forgeName == "gitlab")
+// gateDropBaseline returns this upload's coverage difference to the gate's
+// baseline, or nil when the drop rule is off or has nothing to compare
+// against. The rule always compares against the default branch, so a PR
+// cannot lower coverage step by step within tolerance. A false second
+// return means the error response is already written.
+func (s *Server) gateDropBaseline(w http.ResponseWriter, r *http.Request, req *uploadRequest) (*float64, bool) {
+	if req.repo.Gate.MaxCoverageDrop == nil {
+		return nil, true
+	}
+	base, err := s.store.LatestPassedCommitReport(r.Context(), req.repo.ID, req.repo.DefaultBranch, req.commit)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.internalError(w, "loading gate baseline", err)
+		return nil, false
+	}
+	if base == nil {
+		return nil, true
+	}
+	d := req.totalPct - base.TotalPct
+	return &d, true
 }
 
-// connectedForge returns the workspace's one-click-connected client —
-// GitHub App installation, Bitbucket grant or GitLab grant — or nil,
-// the top link of the credential chain (D4/D7).
-func (s *Server) connectedForge(ctx context.Context, ws *store.Workspace, forgeName string) forge.Forge {
-	if fg := s.installationForge(ctx, ws, forgeName); fg != nil {
-		return fg
+// rows turns the request into the upload row and its per-file rows.
+//
+// The upload row keeps its own single-part gate result (its gate_failed
+// column still feeds the per-upload web views); the response, forge
+// status, gate and PR comment are driven by the merged report computed
+// after the row is stored.
+func (req *uploadRequest) rows(blobKey string, diff *diffcov.Result, gate gateResult, meta store.UploadMeta) (*store.Upload, []*store.UploadFile) {
+	upload := &store.Upload{
+		RepoID:       req.repo.ID,
+		CommitSHA:    req.commit,
+		Branch:       req.branch,
+		PRID:         req.prID,
+		Format:       req.format,
+		TotalPct:     req.totalPct,
+		CoveredStmts: req.covered,
+		TotalStmts:   req.total,
+		RawBlobKey:   blobKey,
+		DiffCoverage: diff,
+		GateFailed:   gate.failed(),
+		PathPrefix:   req.pathPrefix,
+		Part:         req.part,
+		Meta:         meta,
 	}
-	if fg := s.grantForge(ctx, ws, forgeName); fg != nil {
-		return fg
+	files := make([]*store.UploadFile, 0, len(req.prof.Files))
+	for i := range req.prof.Files {
+		f := &req.prof.Files[i]
+		c, t := f.Coverage()
+		files = append(files, &store.UploadFile{
+			Path:         f.Path,
+			Pct:          profile.Percent(c, t),
+			CoveredStmts: c,
+			TotalStmts:   t,
+			Blocks:       f.Blocks,
+		})
 	}
-	return s.gitlabGrantForge(ctx, ws, forgeName)
-}
-
-// repoWorkspace returns the workspace owning the slug's prefix, nil when
-// there is none. Prefixes are tried longest first, so a repo below a
-// registered GitLab subgroup resolves to that subgroup's workspace, not a
-// same-named ancestor. A lookup failure only degrades down the credential
-// chain — forge surfaces are best-effort everywhere else too. The forge
-// must match: prefixes are globally unique, and a same-named workspace
-// on another forge must not lend its secrets or its installation.
-func (s *Server) repoWorkspace(ctx context.Context, slug, forgeName string) *store.Workspace {
-	for _, prefix := range slugPrefixes(slug) {
-		ws, err := s.store.WorkspaceByPrefix(ctx, prefix)
-		if errors.Is(err, store.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			s.log.Error("workspace lookup", "repo", slug, "err", err)
-			return nil
-		}
-		if ws.Forge != forgeName {
-			return nil
-		}
-		return ws
-	}
-	return nil
+	return upload, files
 }
 
 // sourceExts maps a profile format to the extensions of source files whose
@@ -698,61 +468,6 @@ func (s *Server) computeDiffCoverage(ctx context.Context, fg forge.Forge, fgErr 
 	return result, "computed"
 }
 
-// lookupUploadToken authenticates the Bearer token as either a per-repo
-// token or a workspace token, writing the error response itself. Runs
-// before the request body is parsed.
-func (s *Server) lookupUploadToken(w http.ResponseWriter, r *http.Request, token string) (*store.Repo, *store.Workspace, bool) {
-	ctx := r.Context()
-	repo, err := s.store.RepoByToken(ctx, token)
-	if err == nil {
-		return repo, nil, true
-	}
-	if !errors.Is(err, store.ErrNotFound) {
-		s.internalError(w, "looking up token", err)
-		return nil, nil, false
-	}
-	ws, err := s.store.WorkspaceByToken(ctx, token)
-	if err == nil {
-		return nil, ws, true
-	}
-	if errors.Is(err, store.ErrNotFound) {
-		httpError(w, http.StatusUnauthorized, "invalid token")
-		return nil, nil, false
-	}
-	s.internalError(w, "looking up workspace token", err)
-	return nil, nil, false
-}
-
-// repoNameRe bounds the repo part of auto-registered slugs: one path
-// segment, conservative charset, sane length.
-var repoNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}$`)
-
-// maxRepoNameSegments bounds a GitLab repo name's depth below the
-// workspace; GitLab itself caps group nesting at 20 levels.
-const maxRepoNameSegments = 21
-
-// validRepoName validates the repo part of a workspace-token slug.
-// GitLab projects can sit in subgroups below the registered namespace, so
-// a gitlab name may span several path segments; other forges take exactly
-// one.
-func validRepoName(forgeName, name string) bool {
-	segments := strings.Split(name, "/")
-	if forgeName != "gitlab" && len(segments) != 1 {
-		return false
-	}
-	if len(segments) > maxRepoNameSegments {
-		return false
-	}
-	for _, s := range segments {
-		// repoNameRe's charset admits "." and ".." — as path segments they
-		// are traversal, not names.
-		if s == "." || s == ".." || !repoNameRe.MatchString(s) {
-			return false
-		}
-	}
-	return true
-}
-
 // commitRe bounds commit identifiers: they appear in forge API paths and
 // in blobstore cache keys, so separators are not welcome.
 var commitRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
@@ -764,114 +479,6 @@ var commitRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 // the same "backend" and can't split one commit into two parts.
 var partRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
-// resolveUploadRepo maps the authenticated token to the target repo,
-// writing the error response itself on failure. Workspace tokens require
-// the repo slug, must match the workspace prefix, and register unknown
-// repos on the fly.
-func (s *Server) resolveUploadRepo(w http.ResponseWriter, r *http.Request, repo *store.Repo, ws *store.Workspace, slug string) (_ *store.Repo, created, ok bool) {
-	ctx := r.Context()
-	if repo != nil {
-		if slug != "" && slug != repo.Slug {
-			httpError(w, http.StatusForbidden, "token is for repo %q, not %q", repo.Slug, slug)
-			return nil, false, false
-		}
-		return repo, false, true
-	}
-
-	if slug == "" {
-		httpError(w, http.StatusBadRequest, "workspace tokens require the repo field")
-		return nil, false, false
-	}
-	name, matched := strings.CutPrefix(slug, ws.Prefix+"/")
-	if !matched {
-		httpError(w, http.StatusForbidden, "token is for workspace %q, not %q", ws.Prefix, slug)
-		return nil, false, false
-	}
-	if !validRepoName(ws.Forge, name) {
-		httpError(w, http.StatusBadRequest, "invalid repo name %q under workspace %q", slug, ws.Prefix)
-		return nil, false, false
-	}
-
-	repo, err := s.store.RepoBySlug(ctx, slug)
-	if err == nil {
-		return repo, false, true
-	}
-	if !errors.Is(err, store.ErrNotFound) {
-		s.internalError(w, "looking up repo", err)
-		return nil, false, false
-	}
-	repo, err = s.autoCreateRepo(ctx, ws, slug)
-	if errors.Is(err, forge.ErrRepoNotFound) {
-		httpError(w, http.StatusNotFound, "repo %q not found on %s", slug, ws.Forge)
-		return nil, false, false
-	}
-	if err != nil {
-		s.internalError(w, "auto-registering repo", err)
-		return nil, false, false
-	}
-	return repo, true, true
-}
-
-// autoCreateRepo registers a repo first seen through a workspace token.
-// The default branch is asked from the forge when the workspace has a
-// one-click connection, then falls back to the workspace default and
-// finally to "main". A forge that positively says the repo does not
-// exist aborts the registration (ErrRepoNotFound), so a leaked workspace
-// token cannot fill the dashboard with invented repos.
-func (s *Server) autoCreateRepo(ctx context.Context, ws *store.Workspace, slug string) (*store.Repo, error) {
-	branch := ""
-	fg := s.connectedForge(ctx, ws, ws.Forge)
-	if fg != nil {
-		b, err := fg.GetDefaultBranch(ctx, slug)
-		switch {
-		case err == nil && b != "":
-			branch = b
-		case errors.Is(err, forge.ErrRepoNotFound):
-			return nil, err
-		case err != nil && !errors.Is(err, forge.ErrNotImplemented):
-			// Transient forge trouble must not block a legitimate first
-			// upload; fall back to the workspace default branch.
-			s.log.Warn("get default branch", "repo", slug, "err", err)
-		}
-	}
-	if branch == "" {
-		branch = ws.DefaultBranch
-	}
-	if branch == "" {
-		branch = "main"
-	}
-
-	token, err := newToken()
-	if err != nil {
-		return nil, err
-	}
-	repo := &store.Repo{
-		Forge:         ws.Forge,
-		Slug:          slug,
-		Token:         token,
-		DefaultBranch: branch,
-		Gate:          ws.Gate,
-	}
-	if err := s.store.CreateRepo(ctx, repo); err != nil {
-		// A concurrent first upload may have won the race; use its repo.
-		if existing, lookupErr := s.store.RepoBySlug(ctx, slug); lookupErr == nil {
-			return existing, nil
-		}
-		return nil, err
-	}
-	s.log.Info("auto-registered repo", "slug", slug, "default_branch", branch, "workspace", ws.Prefix)
-	return repo, nil
-}
-
-// newToken generates an upload token for auto-registered repos.
-func newToken() (string, error) {
-	buf := make([]byte, 24)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(buf), nil
-}
-
 func (s *Server) storeRawProfile(r *http.Request, repoID int64, raw []byte) (string, error) {
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
@@ -882,351 +489,4 @@ func (s *Server) storeRawProfile(r *http.Request, repoID int64, raw []byte) (str
 		return "", err
 	}
 	return key, nil
-}
-
-// pushBuildStatus posts a "coverage: X% (±Y)" build status to the repo's
-// forge; a failed coverage gate turns the state into FAILED so the forge
-// can block the merge. Best effort: push failures are reported in the
-// response but do not fail the upload.
-func (s *Server) pushBuildStatus(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, u *store.Upload, deltaPct *float64, gate gateResult) string {
-	if fgErr != nil {
-		return "error: " + fgErr.Error()
-	}
-	if fg == nil {
-		return "skipped"
-	}
-
-	desc := fmt.Sprintf("coverage: %.1f%%", u.TotalPct)
-	if deltaPct != nil {
-		desc += fmt.Sprintf(" (%+.1f%%)", *deltaPct)
-	}
-	state := forge.StateSuccessful
-	if gate.failed() {
-		state = forge.StateFailed
-		// Forge description fields are short; one reason has to do.
-		desc += " — " + gate.failures[0]
-	}
-	status := forge.BuildStatus{
-		Key:         "gocov/coverage",
-		State:       state,
-		Name:        "gocov",
-		Description: desc,
-		URL:         s.uploadURL(u),
-	}
-	if err := fg.PostBuildStatus(ctx, repo.Slug, u.CommitSHA, status); err != nil {
-		s.log.Error("post build status", "repo", repo.Slug, "commit", u.CommitSHA, "err", err)
-		return "error: " + err.Error()
-	}
-	return "posted"
-}
-
-// insightsMaxAnnotations caps report annotations at the forge API's
-// per-request limit, keeping the whole publish to one bulk request.
-const insightsMaxAnnotations = 100
-
-// pushCodeInsights attaches a coverage report card to the commit and, for
-// PR uploads, annotates uncovered changed lines inline in the diff. Best
-// effort like the build status: failures land in the response field and
-// the log, never in the upload result.
-func (s *Server) pushCodeInsights(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, u *store.Upload, deltaPct *float64, gate gateResult) string {
-	if fgErr != nil {
-		return "error: " + fgErr.Error()
-	}
-	if fg == nil {
-		s.log.Debug("code insights skipped: no forge connection", "repo", repo.Slug)
-		return "skipped"
-	}
-	report, annotations := s.insightsReport(u, deltaPct, gate)
-	err := fg.PublishReport(ctx, repo.Slug, u.CommitSHA, report, annotations)
-	if errors.Is(err, forge.ErrNotImplemented) {
-		// A wrapped sentinel carries the forge's reason (e.g. GitHub
-		// check runs being closed to the credential type) — worth
-		// surfacing, unlike the bare "this forge has no such surface".
-		if err == forge.ErrNotImplemented {
-			return "skipped"
-		}
-		s.log.Info("code insights unavailable", "repo", repo.Slug, "reason", err)
-		return "skipped: " + err.Error()
-	}
-	if err != nil {
-		s.log.Warn("publish code insights report", "repo", repo.Slug, "commit", u.CommitSHA, "err", err)
-		return "error: " + err.Error()
-	}
-	return "posted"
-}
-
-// insightsReport builds the report card and its annotations. The data
-// fields stay well under the forge API's cap of ten; annotations exist
-// only for PR uploads, and only on uncovered changed lines.
-func (s *Server) insightsReport(u *store.Upload, deltaPct *float64, gate gateResult) (forge.Report, []forge.Annotation) {
-	data := []forge.ReportData{
-		{Title: "Total coverage", Type: forge.DataPercentage, Value: u.TotalPct},
-	}
-	if deltaPct != nil {
-		data = append(data, forge.ReportData{
-			Title: "Change vs base", Type: forge.DataText, Value: fmt.Sprintf("%+.1f%%", *deltaPct)})
-	}
-
-	details := "Test coverage uploaded by gocov."
-	var annotations []forge.Annotation
-	if dc := u.DiffCoverage; dc != nil {
-		if dc.TotalLines == 0 {
-			details = "No executable lines were changed."
-		} else {
-			data = append(data,
-				forge.ReportData{Title: "Diff coverage", Type: forge.DataPercentage, Value: dc.Percent()},
-				forge.ReportData{Title: "Uncovered changed lines", Type: forge.DataNumber,
-					Value: float64(dc.TotalLines - dc.CoveredLines)},
-			)
-			var dropped int
-			annotations, dropped = insightsAnnotations(dc)
-			details = fmt.Sprintf("%d of %d changed lines are covered by tests.", dc.CoveredLines, dc.TotalLines)
-			if dropped > 0 {
-				details += fmt.Sprintf(" +%d more uncovered ranges are not annotated — the PR comment lists them all.", dropped)
-			}
-		}
-	}
-	data = append(data, forge.ReportData{
-		Title: "Statements", Type: forge.DataText, Value: fmt.Sprintf("%d / %d", u.CoveredStmts, u.TotalStmts)})
-
-	result := ""
-	if gate.configured {
-		data = append(data, forge.ReportData{Title: "Gate", Type: forge.DataText, Value: gate.String()})
-		if gate.failed() {
-			result = forge.ReportFailed
-		} else {
-			result = forge.ReportPassed
-		}
-	}
-	if dc := u.DiffCoverage; dc != nil {
-		data = appendPerFileData(data, dc)
-	}
-
-	return forge.Report{
-		Title:   "gocov coverage",
-		Details: details,
-		Result:  result,
-		Link:    s.uploadURL(u),
-		Data:    data,
-	}, annotations
-}
-
-// insightsMaxDataFields is the forge API's cap on report data fields.
-const insightsMaxDataFields = 10
-
-// appendPerFileData fills the remaining data-field budget with a per-file
-// summary of the worst-covered changed files, lowest diff coverage first.
-// Fully covered files say nothing a reviewer needs, so they never claim
-// a field.
-func appendPerFileData(data []forge.ReportData, dc *diffcov.Result) []forge.ReportData {
-	var files []diffcov.FileCoverage
-	for _, f := range dc.Files {
-		if len(f.UncoveredLines) > 0 {
-			files = append(files, f)
-		}
-	}
-	sort.Slice(files, func(i, j int) bool {
-		pi := float64(files[i].CoveredLines) * float64(files[j].TotalLines)
-		pj := float64(files[j].CoveredLines) * float64(files[i].TotalLines)
-		if pi != pj {
-			return pi < pj
-		}
-		return files[i].Path < files[j].Path
-	})
-	for _, f := range files {
-		if len(data) >= insightsMaxDataFields {
-			break
-		}
-		data = append(data, forge.ReportData{
-			Title: dataFieldPath(f.Path),
-			Type:  forge.DataPercentage,
-			Value: 100 * float64(f.CoveredLines) / float64(f.TotalLines),
-		})
-	}
-	return data
-}
-
-// dataFieldPath keeps report data titles readable for deep paths: long
-// ones keep their tail, which carries the file name.
-func dataFieldPath(p string) string {
-	const max = 60
-	r := []rune(p)
-	if len(r) <= max {
-		return p
-	}
-	return "…" + string(r[len(r)-max+1:])
-}
-
-// insightsAnnotations turns the diff-coverage result into one annotation
-// per contiguous uncovered range, anchored at the range start and ordered
-// by file path (dc.Files is path-sorted). Ranges beyond the cap are
-// counted, not annotated.
-func insightsAnnotations(dc *diffcov.Result) (anns []forge.Annotation, dropped int) {
-	// Whole-file findings first — a changed source file with no coverage
-	// data at all. File-level (no line), so the forge pins them to the
-	// file header in the diff. They are few and salient, which is why
-	// they get the budget before line ranges.
-	for _, p := range dc.UnmatchedFiles {
-		if len(anns) == insightsMaxAnnotations {
-			dropped++
-			continue
-		}
-		anns = append(anns, forge.Annotation{
-			Path:    p,
-			Summary: "This changed file has no coverage data — nothing in it appears to be tested",
-		})
-	}
-	for _, f := range dc.Files {
-		lines := f.UncoveredLines
-		for i := 0; i < len(lines); {
-			j := i
-			for j+1 < len(lines) && lines[j+1] == lines[j]+1 {
-				j++
-			}
-			if len(anns) == insightsMaxAnnotations {
-				dropped++
-			} else {
-				summary := fmt.Sprintf("Line %d of this change is not covered by tests", lines[i])
-				if j > i {
-					summary = fmt.Sprintf("Lines %d–%d of this change are not covered by tests", lines[i], lines[j])
-				}
-				anns = append(anns, forge.Annotation{Path: f.Path, Line: lines[i], EndLine: lines[j], Summary: summary})
-			}
-			i = j + 1
-		}
-	}
-	return anns, dropped
-}
-
-// prCommentMarker identifies gocov's own comment on a PR; every body
-// built by prCommentBody starts with it, so repeated uploads update the
-// existing comment instead of stacking new ones.
-const prCommentMarker = "**gocov**"
-
-// pushPRComment posts or updates the coverage summary comment on the pull
-// request. Returns "" for non-PR uploads so the field is omitted from the
-// response.
-func (s *Server) pushPRComment(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, u *store.Upload, deltaPct *float64, gate gateResult) string {
-	if u.PRID == "" {
-		return ""
-	}
-	if fgErr != nil {
-		return "error: " + fgErr.Error()
-	}
-	if fg == nil {
-		return "skipped"
-	}
-	body := s.prCommentBody(u, deltaPct, gate)
-
-	// Best effort update-in-place: any failure falls back to posting a
-	// fresh comment, which is never worse than the old behavior.
-	commentID, err := fg.FindPRComment(ctx, repo.Slug, u.PRID, prCommentMarker)
-	if err != nil && !errors.Is(err, forge.ErrNotImplemented) {
-		s.log.Warn("find PR comment", "repo", repo.Slug, "pr", u.PRID, "err", err)
-	}
-	if commentID != "" {
-		if err := fg.UpdatePRComment(ctx, repo.Slug, u.PRID, commentID, body); err == nil {
-			return "updated"
-		} else {
-			s.log.Warn("update PR comment", "repo", repo.Slug, "pr", u.PRID, "comment", commentID, "err", err)
-		}
-	}
-
-	if err := fg.PostPRComment(ctx, repo.Slug, u.PRID, body); err != nil {
-		s.log.Error("post PR comment", "repo", repo.Slug, "pr", u.PRID, "err", err)
-		return "error: " + err.Error()
-	}
-	return "posted"
-}
-
-// prCommentMaxFiles caps the uncovered-lines table in PR comments.
-const prCommentMaxFiles = 20
-
-func (s *Server) prCommentBody(u *store.Upload, deltaPct *float64, gate gateResult) string {
-	var sb strings.Builder
-	short := u.CommitSHA
-	if len(short) > 12 {
-		short = short[:12]
-	}
-	fmt.Fprintf(&sb, "**gocov** report for `%s`\n\n", short)
-	fmt.Fprintf(&sb, "- Total coverage: **%.1f%%**", u.TotalPct)
-	if deltaPct != nil {
-		fmt.Fprintf(&sb, " (%+.1f%%)", *deltaPct)
-	}
-	sb.WriteString("\n")
-	if gate.configured {
-		if gate.failed() {
-			fmt.Fprintf(&sb, "- Gate: ❌ %s\n", strings.Join(gate.failures, "; "))
-		} else {
-			sb.WriteString("- Gate: ✅ passed\n")
-		}
-	}
-
-	if dc := u.DiffCoverage; dc != nil {
-		if dc.TotalLines == 0 {
-			sb.WriteString("- Diff coverage: no executable lines changed\n")
-		} else {
-			fmt.Fprintf(&sb, "- Diff coverage: **%.1f%%** (%d/%d changed lines covered)\n",
-				dc.Percent(), dc.CoveredLines, dc.TotalLines)
-		}
-
-		var uncovered []diffcov.FileCoverage
-		for _, f := range dc.Files {
-			if len(f.UncoveredLines) > 0 {
-				uncovered = append(uncovered, f)
-			}
-		}
-		if len(uncovered) > 0 {
-			sb.WriteString("\nUncovered changed lines:\n\n| File | Lines |\n| --- | --- |\n")
-			for i, f := range uncovered {
-				if i == prCommentMaxFiles {
-					fmt.Fprintf(&sb, "| … | and %d more files |\n", len(uncovered)-prCommentMaxFiles)
-					break
-				}
-				fmt.Fprintf(&sb, "| `%s` | %s |\n", mdPath(f.Path), diffcov.Ranges(f.UncoveredLines))
-			}
-		}
-		if n := len(dc.UnmatchedFiles); n > 0 {
-			shown := dc.UnmatchedFiles
-			if n > prCommentMaxFiles {
-				shown = shown[:prCommentMaxFiles]
-			}
-			escaped := make([]string, len(shown))
-			for i, p := range shown {
-				escaped[i] = mdPath(p)
-			}
-			fmt.Fprintf(&sb, "\nChanged files without coverage data: `%s`",
-				strings.Join(escaped, "`, `"))
-			if n > prCommentMaxFiles {
-				fmt.Fprintf(&sb, " and %d more", n-prCommentMaxFiles)
-			}
-			sb.WriteString("\n")
-		}
-	}
-
-	fmt.Fprintf(&sb, "\n[Full report](%s)\n", s.uploadURL(u))
-	return sb.String()
-}
-
-func (s *Server) uploadURL(u *store.Upload) string {
-	return fmt.Sprintf("%s/uploads/%d", strings.TrimSuffix(s.baseURL, "/"), u.ID)
-}
-
-// mdPath neutralizes characters that would break the markdown table or the
-// surrounding code span in PR comments. Paths come from the PR diff.
-var mdPathReplacer = strings.NewReplacer("`", "'", "|", "\\|", "\n", " ", "\r", " ")
-
-func mdPath(p string) string {
-	return mdPathReplacer.Replace(p)
-}
-
-func httpError(w http.ResponseWriter, code int, format string, args ...any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf(format, args...)})
-}
-
-func (s *Server) internalError(w http.ResponseWriter, msg string, err error) {
-	s.log.Error(msg, "err", err)
-	httpError(w, http.StatusInternalServerError, "internal error")
 }
