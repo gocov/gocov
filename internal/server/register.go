@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sort"
 
+	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -158,7 +159,7 @@ func (s *Server) claimWorkspace(r *http.Request, u *store.User, prefix string) (
 	if !errors.Is(err, store.ErrNotFound) {
 		return nil, nil, err
 	}
-	token, err := newToken()
+	token, err := core.NewToken()
 	if err != nil {
 		return nil, nil, err
 	}

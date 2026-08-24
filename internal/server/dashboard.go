@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -224,7 +225,7 @@ func (s *Server) viewerWorkspaces(r *http.Request) ([]*store.Workspace, error) {
 // groupPrefix resolves the switcher group a repo belongs to: its most specific
 // tracked workspace prefix, or the leading slug segment when none is tracked.
 func (s *Server) groupPrefix(repo *store.Repo, tracked []*store.Workspace) string {
-	for _, prefix := range slugPrefixes(repo.Slug) { // longest first
+	for _, prefix := range core.SlugPrefixes(repo.Slug) { // longest first
 		for _, ws := range tracked {
 			if ws.Forge == repo.Forge && ws.Prefix == prefix {
 				return prefix

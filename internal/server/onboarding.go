@@ -108,7 +108,7 @@ func (s *Server) handleOnboarding(w http.ResponseWriter, r *http.Request) {
 
 	// GitHub with an App configured creates the workspace by installing the
 	// app; the token forges pick from the sign-in snapshot.
-	ghApp := s.githubApp != nil && u.Forge == "github"
+	ghApp := s.forges.GitHubApp != nil && u.Forge == "github"
 	data := map[string]any{
 		"Active":          0,
 		"Forge":           u.Forge,
@@ -119,7 +119,7 @@ func (s *Server) handleOnboarding(w http.ResponseWriter, r *http.Request) {
 	}
 	if ghApp {
 		data["WSState"] = "install"
-		data["GitHubInstallURL"] = s.githubInstallURL(r.Context())
+		data["GitHubInstallURL"] = s.forges.InstallURL(r.Context())
 	} else {
 		data["WSState"] = "pick"
 		rows, err := s.registerRows(r, u)

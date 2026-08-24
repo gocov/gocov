@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -46,7 +47,7 @@ func (s *Server) memberRepo(w http.ResponseWriter, r *http.Request) (*store.Repo
 		return nil, ""
 	}
 	// The most specific workspace the user belongs to that owns this repo.
-	for _, prefix := range slugPrefixes(repo.Slug) { // longest first
+	for _, prefix := range core.SlugPrefixes(repo.Slug) { // longest first
 		for _, ws := range memberOf {
 			if ws.Forge == repo.Forge && ws.Prefix == prefix {
 				return repo, prefix
@@ -123,7 +124,7 @@ func (s *Server) handleRepoRotateToken(w http.ResponseWriter, r *http.Request) {
 	if repo == nil {
 		return
 	}
-	token, err := newToken()
+	token, err := core.NewToken()
 	if err != nil {
 		s.internalError(w, "generating repo token", err)
 		return

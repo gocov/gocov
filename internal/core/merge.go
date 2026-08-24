@@ -3,7 +3,8 @@
 // rebuilds the commit's merged report from the latest upload of every
 // part — that merged view, not the individual upload, is what the
 // response, the gate and every forge surface are driven from.
-package server
+
+package core
 
 import (
 	"context"
@@ -17,7 +18,7 @@ import (
 	"github.com/gocov/gocov/internal/store"
 )
 
-// recomputeCommitReport rebuilds the merged report for the upload's commit
+// Recompute rebuilds the merged report for the upload's commit
 // from the latest upload of every part, persists it, and returns the merged
 // view that drives the response and the forge side effects. It is
 // self-healing: because every upload recomputes the whole commit, a partial
@@ -28,18 +29,18 @@ import (
 // The returned upload is synthetic: it carries the merged totals and diff
 // coverage to the existing push helpers, with the triggering upload's id so
 // the report card and PR comment link back to it.
-type mergedRecompute struct {
-	upload   *store.Upload
-	delta    *float64
-	gate     gateResult
-	warnings []string // surfaced to the uploader, e.g. conservative diff merges
+type Merged struct {
+	Upload   *store.Upload
+	Delta    *float64
+	Verdict  Verdict
+	Warnings []string // surfaced to the uploader, e.g. conservative diff merges
 }
 
 // recomputeTimeout bounds a single recompute so a saturated connection pool
 // fails the upload fast instead of hanging a CI client indefinitely.
 const recomputeTimeout = 30 * time.Second
 
-func (s *Server) recomputeCommitReport(ctx context.Context, repo *store.Repo, u *store.Upload) (*mergedRecompute, error) {
+func (p *Pipeline) Recompute(ctx context.Context, repo *store.Repo, u *store.Upload) (*Merged, error) {
 	ctx, cancel := context.WithTimeout(ctx, recomputeTimeout)
 	defer cancel()
 
@@ -47,8 +48,8 @@ func (s *Server) recomputeCommitReport(ctx context.Context, repo *store.Repo, u 
 	// locked transaction, serialized per commit against concurrent uploads
 	// (parallel CI jobs are the point) so it cannot interleave with or
 	// clobber a newer recompute and drop a part.
-	var result *mergedRecompute
-	err := s.store.WithCommitReportTx(ctx, repo.ID, u.CommitSHA, func(ctx context.Context, tx store.CommitTx) error {
+	var result *Merged
+	err := p.Store.WithCommitReportTx(ctx, repo.ID, u.CommitSHA, func(ctx context.Context, tx store.CommitTx) error {
 		parts, err := tx.LatestUploadsPerPart(ctx, repo.ID, u.CommitSHA)
 		if err != nil {
 			return fmt.Errorf("loading commit parts: %w", err)
@@ -114,7 +115,7 @@ func (s *Server) recomputeCommitReport(ctx context.Context, repo *store.Repo, u 
 			}
 		}
 
-		gate := evaluateGate(repo.Gate, totalPct, dropDelta, mergedDiff)
+		gate := EvaluateGate(repo.Gate, totalPct, dropDelta, mergedDiff)
 
 		cr := &store.CommitReport{
 			RepoID:       repo.ID,
@@ -124,7 +125,7 @@ func (s *Server) recomputeCommitReport(ctx context.Context, repo *store.Repo, u 
 			TotalPct:     totalPct,
 			CoveredStmts: covered,
 			TotalStmts:   total,
-			GateFailed:   gate.failed(),
+			GateFailed:   gate.Failed(),
 			DiffCoverage: mergedDiff,
 			PartCount:    len(parts),
 			UploadID:     u.ID,
@@ -144,7 +145,12 @@ func (s *Server) recomputeCommitReport(ctx context.Context, repo *store.Repo, u 
 			TotalStmts:   total,
 			DiffCoverage: mergedDiff,
 		}
-		result = &mergedRecompute{upload: mergedUpload, delta: deltaPct, gate: gate, warnings: warnings}
+		result = &Merged{
+			Upload:   mergedUpload,
+			Delta:    deltaPct,
+			Verdict:  gate,
+			Warnings: warnings,
+		}
 		return nil
 	})
 	if err != nil {

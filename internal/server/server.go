@@ -17,10 +17,8 @@ import (
 
 	"github.com/gocov/gocov/internal/auth"
 	"github.com/gocov/gocov/internal/blobstore"
+	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/diffcov"
-	"github.com/gocov/gocov/internal/forge"
-	"github.com/gocov/gocov/internal/forge/bitbucket"
-	"github.com/gocov/gocov/internal/forge/gitlab"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 )
@@ -77,53 +75,14 @@ type Config struct {
 	GitHubWebhookSecret string
 }
 
-// BitbucketConnect runs the Bitbucket OAuth grants for workspace
-// connect. Errors wrapping forge.ErrCredentialsRevoked mean the grant
-// is gone (revoked, or the refresh token aged out unused).
-type BitbucketConnect interface {
-	// AuthorizeURL is the consent page for the connect grant.
-	AuthorizeURL(state, redirectURI string) string
-	// Exchange trades the consent code for the grant, including the
-	// granting account's username.
-	Exchange(ctx context.Context, code, redirectURI string) (*bitbucket.Grant, error)
-	// Refresh trades a refresh token for a fresh access token and — the
-	// tokens rotate — a new refresh token to persist.
-	Refresh(ctx context.Context, refreshToken string) (*bitbucket.Grant, error)
-	// ForgeClient returns a forge client acting through the access token.
-	ForgeClient(accessToken string) forge.Forge
-}
-
-// GitLabConnect runs the GitLab OAuth grants for workspace connect —
-// BitbucketConnect's twin. Errors wrapping forge.ErrCredentialsRevoked
-// mean the grant is gone (revoked on the account's applications page).
-type GitLabConnect interface {
-	// AuthorizeURL is the consent page for the connect grant (scope api).
-	AuthorizeURL(state, redirectURI string) string
-	// Exchange trades the consent code for the grant, including the
-	// granting account's username.
-	Exchange(ctx context.Context, code, redirectURI string) (*gitlab.Grant, error)
-	// Refresh trades a refresh token for a fresh access token and — the
-	// tokens rotate — a new refresh token to persist. GitLab's token
-	// endpoint wants the redirect URI on refreshes too.
-	Refresh(ctx context.Context, refreshToken, redirectURI string) (*gitlab.Grant, error)
-	// ForgeClient returns a forge client acting through the access token.
-	ForgeClient(accessToken string) forge.Forge
-}
-
-// GitHubApp mints installation-scoped forge clients and answers the two
-// questions the connect flow needs. Errors wrapping
-// forge.ErrCredentialsRevoked mean the installation (or the app's own
-// credentials) no longer exists on GitHub.
-type GitHubApp interface {
-	// ForgeClient returns a forge client authenticated as the given
-	// installation.
-	ForgeClient(ctx context.Context, installationID int64) (forge.Forge, error)
-	// InstallationAccount returns the login of the org or user account
-	// the installation lives on.
-	InstallationAccount(ctx context.Context, installationID int64) (string, error)
-	// InstallURL is the app's public install page on GitHub.
-	InstallURL(ctx context.Context) (string, error)
-}
+// The forge connectors a deployment can configure. They are declared in
+// internal/core, which owns the connections and their upkeep; the aliases
+// keep this package's Config the one place a caller has to look.
+type (
+	GitHubApp        = core.GitHubApp
+	BitbucketConnect = core.BitbucketConnect
+	GitLabConnect    = core.GitLabConnect
+)
 
 // Server is the gocov HTTP server.
 type Server struct {
@@ -136,12 +95,10 @@ type Server struct {
 	mux           *http.ServeMux
 	handler       http.Handler // mux wrapped in the auth middleware
 	health        func(ctx context.Context) error
-	githubApp     GitHubApp
-	bbConnect     BitbucketConnect
-	bbTokens      *bbTokenCache
-	glConnect     GitLabConnect
-	glTokens      *bbTokenCache // same cache/locking shape, separate tokens
+	forges        *core.Forges
 	webhookSecret string
+	// pipeline is the coverage logic proper: gate, merge, forge report.
+	pipeline *core.Pipeline
 
 	// auths holds the sign-in providers by forge name; authOrder keeps
 	// the configured order for the login-page buttons.
@@ -213,11 +170,7 @@ func New(cfg Config) *Server {
 		pages:         pages,
 		mux:           http.NewServeMux(),
 		health:        cfg.Health,
-		githubApp:     cfg.GitHubApp,
-		bbConnect:     cfg.BitbucketConnect,
-		bbTokens:      newBBTokenCache(),
-		glConnect:     cfg.GitLabConnect,
-		glTokens:      newBBTokenCache(),
+		forges:        core.NewForges(cfg.Store, log, cfg.BaseURL, cfg.GitHubApp, cfg.BitbucketConnect, cfg.GitLabConnect),
 		webhookSecret: cfg.GitHubWebhookSecret,
 
 		auths:             map[string]auth.Provider{},
@@ -226,6 +179,9 @@ func New(cfg Config) *Server {
 		hosted:            cfg.Hosted,
 		secureCookies:     strings.HasPrefix(cfg.BaseURL, "https://"),
 	}
+	// Everything that decides rather than transports lives in core; the
+	// server holds one handle to it.
+	s.pipeline = &core.Pipeline{Store: cfg.Store, Blobs: cfg.Blobs, Log: log, BaseURL: cfg.BaseURL, Forges: s.forges}
 	for _, p := range cfg.Auths {
 		s.auths[p.Name()] = p
 	}

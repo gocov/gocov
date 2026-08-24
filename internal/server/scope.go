@@ -6,9 +6,10 @@
 package server
 
 import (
+	"github.com/gocov/gocov/internal/core"
+
 	"net/http"
 	"sort"
-	"strings"
 )
 
 // userScope resolves the request user's workspace membership into a scope.
@@ -49,7 +50,7 @@ func (rs repoScope) allows(slug string) bool {
 	if !rs.scoped {
 		return true
 	}
-	for _, prefix := range slugPrefixes(slug) {
+	for _, prefix := range core.SlugPrefixes(slug) {
 		if rs.prefixes[prefix] {
 			return true
 		}
@@ -91,7 +92,7 @@ func (s *Server) allowedWorkspaceSet(r *http.Request) (map[string]bool, error) {
 		return nil, err
 	}
 	for _, repo := range repos {
-		for _, prefix := range slugPrefixes(repo.Slug) {
+		for _, prefix := range core.SlugPrefixes(repo.Slug) {
 			set[prefix] = true
 		}
 	}
@@ -106,23 +107,6 @@ func (s *Server) trackedWorkspaces(r *http.Request) []string {
 		return nil
 	}
 	return sortedKeys(set)
-}
-
-// slugPrefixes returns every slash-boundary prefix of a repo slug,
-// longest first: "a/b/c" → ["a/b", "a"]. GitLab namespaces nest, so a
-// repo's workspace can sit at any depth (a registered subgroup path is a
-// workspace of its own); Bitbucket and GitHub slugs only ever have the
-// single-segment prefix.
-func slugPrefixes(slug string) []string {
-	var out []string
-	for i := len(slug); ; {
-		j := strings.LastIndex(slug[:i], "/")
-		if j < 0 {
-			return out
-		}
-		out = append(out, slug[:j])
-		i = j
-	}
 }
 
 func sortedKeys(set map[string]bool) []string {
