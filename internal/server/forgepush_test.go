@@ -15,8 +15,130 @@ import (
 	"github.com/gocov/gocov/internal/store"
 )
 
-// coveredPRDiff touches only a.go lines 2-3, which the profile covers, so
-// diff coverage is 100% and no annotations are expected.
+var errFake = errors.New("fake forge failure")
+
+func TestUploadWithoutForgeCredentialsSkipsStatus(t *testing.T) {
+	f := newFixture(t, nil)
+	rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c"}, testProfile)
+	var resp uploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.BuildStatus != "skipped" {
+		t.Errorf("build_status = %q, want skipped", resp.BuildStatus)
+	}
+	if len(f.forge.StatusCalls) != 0 {
+		t.Errorf("forge was called despite missing credentials")
+	}
+}
+
+// testPRDiff touches a.go: adds covered lines 2-3 (block 1.1,5.2 count 1),
+// uncovered line 8 (block 7.1,9.2 count 0), non-executable line 20,
+// plus an unmatched Go file and a doc file.
+
+func TestUploadStatusPushSuperseded(t *testing.T) {
+	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+	ctx := context.Background()
+
+	// First upload creates the report and pushes its status.
+	doUpload(t, f, "secret-token", map[string]string{"commit": "c1"}, testProfile)
+	if len(f.forge.StatusCalls) != 1 {
+		t.Fatalf("first upload: %d status calls, want 1", len(f.forge.StatusCalls))
+	}
+
+	// Simulate a newer concurrent recompute having already pushed a higher
+	// version. A subsequent upload (lower version) must not overwrite the
+	// forge status with its now-stale view.
+	if pushed, err := f.store.TryPushStatus(ctx, f.repo.ID, "c1", 1<<30, func(context.Context) error { return nil }); err != nil || !pushed {
+		t.Fatalf("setup push = %v, %v", pushed, err)
+	}
+
+	better := "mode: set\nexample.com/m/a.go:1.1,5.2 10 3\n" // 100%
+	rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c1"}, better)
+	var resp uploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.BuildStatus != "skipped: superseded" {
+		t.Errorf("build_status = %q, want skipped: superseded", resp.BuildStatus)
+	}
+	if len(f.forge.StatusCalls) != 1 {
+		t.Errorf("forge pushed a superseded status: %d calls, want still 1", len(f.forge.StatusCalls))
+	}
+	// The merged report itself still updated — only the forge push was held.
+	if cr, err := f.store.CommitReport(ctx, f.repo.ID, "c1"); err != nil || cr.TotalPct != 100 {
+		t.Errorf("report = %+v, %v (want recompute persisted 100%%)", cr, err)
+	}
+}
+
+func TestPRCommentUpdatedInPlace(t *testing.T) {
+	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+
+	// First upload: no existing comment -> posted.
+	rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "pr_id": "7"}, testProfile)
+	var resp uploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.PRComment != "posted" {
+		t.Fatalf("first pr_comment = %q, want posted", resp.PRComment)
+	}
+
+	// Second upload on the same PR: the existing comment is updated.
+	better := "mode: set\nexample.com/m/a.go:1.1,5.2 10 3\n"
+	rec = doUpload(t, f, "secret-token", map[string]string{"commit": "c2", "pr_id": "7"}, better)
+	var resp2 uploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp2); err != nil {
+		t.Fatal(err)
+	}
+	if resp2.PRComment != "updated" {
+		t.Fatalf("second pr_comment = %q, want updated; body = %s", resp2.PRComment, rec.Body)
+	}
+	if len(f.forge.CommentCalls) != 1 {
+		t.Errorf("got %d posted comments, want 1 (no stacking)", len(f.forge.CommentCalls))
+	}
+	if len(f.forge.UpdateCalls) != 1 {
+		t.Fatalf("got %d update calls, want 1", len(f.forge.UpdateCalls))
+	}
+	upd := f.forge.UpdateCalls[0]
+	if upd.PRID != "7" || !strings.Contains(upd.Body, "c2") || !strings.Contains(upd.Body, "100.0%") {
+		t.Errorf("update call = %+v", upd)
+	}
+	if !strings.HasPrefix(upd.Body, prCommentMarker) {
+		t.Errorf("comment body must keep the marker prefix: %q", upd.Body[:40])
+	}
+}
+
+func TestPRCommentUpdateFallsBackToPost(t *testing.T) {
+	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "pr_id": "7"}, testProfile)
+
+	t.Run("update failure posts a fresh comment", func(t *testing.T) {
+		f.forge.UpdateErr = errFake
+		rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c2", "pr_id": "7"}, testProfile)
+		var resp uploadResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if resp.PRComment != "posted" {
+			t.Errorf("pr_comment = %q, want posted fallback", resp.PRComment)
+		}
+		f.forge.UpdateErr = nil
+	})
+
+	t.Run("find failure posts a fresh comment", func(t *testing.T) {
+		f.forge.FindErr = errFake
+		rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c3", "pr_id": "7"}, testProfile)
+		var resp uploadResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if resp.PRComment != "posted" {
+			t.Errorf("pr_comment = %q, want posted fallback", resp.PRComment)
+		}
+	})
+}
+
 const coveredPRDiff = `diff --git a/m/a.go b/m/a.go
 --- a/m/a.go
 +++ b/m/a.go
@@ -198,6 +320,7 @@ func TestCodeInsightsSkippedWithoutCredentials(t *testing.T) {
 // ErrNotImplemented with an explanation — e.g. GitHub check runs being
 // closed to the credential type — which the response surfaces instead
 // of a bare "skipped".
+
 func TestCodeInsightsSkippedWithReason(t *testing.T) {
 	f := newFixture(t, map[string]string{"token": "t"})
 	f.forge.ReportErr = fmt.Errorf("github: %w: this GitHub credential cannot write check runs", forge.ErrNotImplemented)
@@ -212,6 +335,7 @@ func TestCodeInsightsSkippedWithReason(t *testing.T) {
 // TestCodeInsightsFailureIsolation stubs the insights push to fail and
 // verifies the rest of the upload — response, build status, PR comment —
 // is identical to a healthy run.
+
 func TestCodeInsightsFailureIsolation(t *testing.T) {
 	fields := map[string]string{"commit": "prcommit1", "branch": "feature/x", "pr_id": "42"}
 
@@ -352,3 +476,6 @@ func TestInsightsFullyCoveredFilesClaimNoDataFields(t *testing.T) {
 		t.Errorf("per-file field = %+v, want bad.go at 0%%", last)
 	}
 }
+
+// seedRepoUpload registers a repo and one upload with a single file, so the
+// repo, upload and source pages all have something to render.

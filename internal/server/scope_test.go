@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -12,8 +13,20 @@ import (
 	"github.com/gocov/gocov/internal/store"
 )
 
-// seedRepoUpload registers a repo and one upload with a single file, so the
-// repo, upload and source pages all have something to render.
+func TestAllowedWorkspacesOverride(t *testing.T) {
+	// The identity is a member of "acme" (tracked) but the operator
+	// restricted sign-in to "vip" only.
+	f := newAuthFixture(t, &fakeProvider{identity: memberIdentity()}, []string{"vip"})
+
+	start := get(f, "/oauth/bitbucket/start")
+	stateCk := cookieNamed(t, start, stateCookie)
+	state, _, _ := strings.Cut(stateCk.Value, "|")
+	rec := get(f, "/oauth/bitbucket/callback?code=x&state="+url.QueryEscape(state), stateCk)
+	if rec.Header().Get("Location") != "/login?denied=1" {
+		t.Errorf("override ignored: redirected to %q", rec.Header().Get("Location"))
+	}
+}
+
 func seedRepoUpload(t *testing.T, f *fixture, slug string) (*store.Repo, *store.Upload) {
 	t.Helper()
 	ctx := context.Background()
@@ -34,6 +47,7 @@ func seedRepoUpload(t *testing.T, f *fixture, slug string) (*store.Repo, *store.
 // TestTwoTenantIsolation is the demo the milestone exists for: two users in
 // different workspaces on one instance see disjoint repos, and a non-member
 // deep link 404s rather than leaking existence (D3).
+
 func TestTwoTenantIsolation(t *testing.T) {
 	prov := &fakeProvider{identity: memberIdentity()}
 	f := newAuthFixture(t, prov, nil) // already tracks acme/widgets
@@ -87,6 +101,7 @@ func TestTwoTenantIsolation(t *testing.T) {
 
 // TestOpenModeIgnoresScoping locks in D5: with no sign-in configured the UI
 // stays fully open — every repo listed, every deep link reachable.
+
 func TestOpenModeIgnoresScoping(t *testing.T) {
 	f := newAuthFixture(t, nil, nil) // auth disabled -> open mode
 	_, betaUp := seedRepoUpload(t, f, "beta/gizmos")
@@ -106,3 +121,6 @@ func TestOpenModeIgnoresScoping(t *testing.T) {
 		t.Errorf("open mode upload page = %d, want 200", rec.Code)
 	}
 }
+
+// getAccept issues a GET carrying the given Accept header, so the catch-all
+// can tell a browser navigation from an API client.
