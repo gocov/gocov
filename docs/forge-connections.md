@@ -63,9 +63,9 @@ enable it, the deployment needs the sign-in OAuth consumer plus an encryption ke
 GOCOV_SECRET_KEY=...   # 64 hex characters (`openssl rand -hex 32`); encrypts the stored grant at rest
 ```
 
-The AES key is derived from this value with a plain SHA-256, so the value itself must carry the full 256 bits of
-entropy. The server requires exactly 64 hex characters and refuses to boot on anything else — generate it with
-`openssl rand -hex 32` rather than inventing a passphrase.
+The value is hex-decoded straight into the AES key, so it must itself carry the full 256 bits of entropy: there is no
+key-stretching step behind it. The server requires exactly 64 hex characters and refuses to boot on anything else —
+generate it with `openssl rand -hex 32` rather than inventing a passphrase.
 
 The consumer's permissions must also be extended beyond sign-in:
 **Account: Read**, **Email**, **Repositories: Write**, **Pull requests: Write**. (Bitbucket scopes live on the consumer,

@@ -1,6 +1,6 @@
 // Package secretbox seals short secrets for at-rest storage with
-// AES-256-GCM (One-Click Connect D6). The key is derived from an
-// operator-supplied passphrase; sealed values are self-describing
+// AES-256-GCM (One-Click Connect D6). The key is the operator's
+// GOCOV_SECRET_KEY, hex-decoded; sealed values are self-describing
 // strings safe for TEXT columns.
 package secretbox
 
@@ -8,8 +8,8 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"strings"
 )
@@ -17,20 +17,28 @@ import (
 // prefix versions the sealed format so a future scheme can coexist.
 const prefix = "v1:"
 
+// keyLen is the AES-256 key length in bytes; the operator supplies it
+// as hex, so a well-formed key is exactly twice this many characters.
+const keyLen = 32
+
 // Box seals and opens secrets. Safe for concurrent use.
 type Box struct {
 	aead cipher.AEAD
 }
 
-// New derives the AES-256 key from the passphrase via SHA-256 — the
-// passphrase is an operator secret of arbitrary shape (GOCOV_SECRET_KEY),
-// not a low-entropy password, so a KDF with a work factor buys nothing.
-func New(passphrase string) (*Box, error) {
-	if passphrase == "" {
-		return nil, fmt.Errorf("secretbox: empty key")
+// New builds a Box from a 64-hex-character key (`openssl rand -hex 32`).
+// The hex decodes straight into the AES-256 key: the value is uniform
+// key material, not a memorable passphrase, so there is no low-entropy
+// input for a KDF's work factor to stretch. Anything of another shape
+// is refused here rather than silently sealing under a weak key.
+func New(hexKey string) (*Box, error) {
+	// The key itself never reaches the error string — hex.DecodeString's
+	// own message quotes the offending byte.
+	key, err := hex.DecodeString(hexKey)
+	if err != nil || len(key) != keyLen {
+		return nil, fmt.Errorf("secretbox: key must be %d hex characters", 2*keyLen)
 	}
-	sum := sha256.Sum256([]byte(passphrase))
-	block, err := aes.NewCipher(sum[:])
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
 	}

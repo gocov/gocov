@@ -936,9 +936,16 @@ func TestRegisterWorkspace(t *testing.T) {
 	}
 }
 
+// secretbox.New takes the key as 64 hex characters, so the grant tests
+// use fixed ones rather than a memorable string.
+const (
+	testSecretKey  = "4b1d0f8a2c6e59d3a7f014b8e2c95d36a8b7c40e1f2a3b4c5d6e7f8091a2b3c4"
+	otherSecretKey = "9f3e2d1c0b9a8776655443322110ffeeddccbbaa99887766554433221100aabb"
+)
+
 func TestBitbucketGrantEncryptedAtRest(t *testing.T) {
 	st := newTestStore(t)
-	box, err := secretbox.New("test-secret-key")
+	box, err := secretbox.New(testSecretKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -995,7 +1002,7 @@ func TestBitbucketGrantEncryptedAtRest(t *testing.T) {
 
 	// A different (rotated-away) key cannot brick reads: the token comes
 	// back empty and the connection reads as broken -> reconnect.
-	otherBox, _ := secretbox.New("some-other-key")
+	otherBox, _ := secretbox.New(otherSecretKey)
 	st2 := postgres.New(st.Pool())
 	st2.SetCipher(otherBox)
 	got, err = st2.WorkspaceByPrefix(ctx, "acme")
@@ -1019,7 +1026,7 @@ func TestBitbucketGrantEncryptedAtRest(t *testing.T) {
 
 func TestGitLabGrantEncryptedAtRest(t *testing.T) {
 	st := newTestStore(t)
-	box, err := secretbox.New("test-secret-key")
+	box, err := secretbox.New(testSecretKey)
 	if err != nil {
 		t.Fatal(err)
 	}
