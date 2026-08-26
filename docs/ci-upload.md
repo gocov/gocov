@@ -86,8 +86,8 @@ coverage:
   image: golang:1.23
   script:
     - go test ./... -covermode=atomic -coverprofile=coverage.out
-    - curl -fsSLO https://github.com/gocov/gocov/releases/download/v0.11.0/gocov-linux-amd64
-    - curl -fsSL https://github.com/gocov/gocov/releases/download/v0.11.0/checksums.txt
+    - curl -fsSLO https://github.com/gocov/gocov/releases/download/v0.12.0/gocov-linux-amd64
+    - curl -fsSL https://github.com/gocov/gocov/releases/download/v0.12.0/checksums.txt
       | grep ' gocov-linux-amd64$' | sha256sum -c -
     - chmod +x gocov-linux-amd64
     - ./gocov-linux-amd64 upload coverage.out
@@ -106,7 +106,7 @@ On runners without a Go toolchain, use the prebuilt binaries from
 included). Pin a version and cache the download on self-hosted runners:
 
 ```sh
-ver=v0.11.0
+ver=v0.12.0
 arch=$(uname -m); case "$arch" in x86_64) arch=amd64;; aarch64|arm64) arch=arm64;; esac
 bin="$HOME/.cache/gocov/gocov-$ver-linux-$arch"
 if [ ! -x "$bin" ]; then
