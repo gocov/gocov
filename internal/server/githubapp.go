@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strconv"
 
-	"github.com/gocov/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -26,7 +26,7 @@ import (
 
 // handleGitHubSetup implements GET /github/setup.
 func (s *Server) handleGitHubSetup(w http.ResponseWriter, r *http.Request) {
-	if s.githubApp == nil || !s.authEnabled() {
+	if s.forges.GitHubApp == nil || !s.authEnabled() {
 		http.NotFound(w, r)
 		return
 	}
@@ -52,10 +52,10 @@ func (s *Server) handleGitHubSetup(w http.ResponseWriter, r *http.Request) {
 		s.renderConnect(w, r, http.StatusBadRequest, "Missing installation",
 			"This page is where GitHub returns after installing the gocov app; it cannot be "+
 				"used on its own. Start from the install page instead.",
-			connectAction{URL: s.githubInstallURL(r.Context()), Label: "Open the install page"})
+			connectAction{URL: s.forges.InstallURL(r.Context()), Label: "Open the install page"})
 		return
 	}
-	login, err := s.githubApp.InstallationAccount(r.Context(), id)
+	login, err := s.forges.GitHubApp.InstallationAccount(r.Context(), id)
 	if err != nil {
 		s.log.Error("github app installation lookup", "installation", id, "err", err)
 		s.renderConnect(w, r, http.StatusBadGateway, "GitHub did not confirm the installation",
@@ -140,7 +140,7 @@ func (s *Server) connectNew(w http.ResponseWriter, r *http.Request, u *store.Use
 			connectAction{URL: githubReauthURL(installationID), Label: "Sign in again"})
 		return
 	}
-	token, err := newToken()
+	token, err := core.NewToken()
 	if err != nil {
 		s.internalError(w, "generating workspace token", err)
 		return
@@ -245,68 +245,4 @@ func githubReauthURL(installationID int64) string {
 // helps. This links an owner straight to the setting to allow gocov.
 func githubOrgPolicyURL(login string) string {
 	return "https://github.com/organizations/" + url.PathEscape(login) + "/settings/oauth_application_policy"
-}
-
-// githubInstallURL resolves the app's public install page, best effort: a
-// GitHub hiccup must not take a settings page down with it. Empty string
-// when unavailable; templates then render the state without a link.
-func (s *Server) githubInstallURL(ctx context.Context) string {
-	if s.githubApp == nil {
-		return ""
-	}
-	u, err := s.githubApp.InstallURL(ctx)
-	if err != nil {
-		s.log.Warn("github app install url", "err", err)
-		return ""
-	}
-	return u
-}
-
-// installationForge returns the App-backed client when the workspace is
-// connected to a GitHub App installation — the top link of the credential
-// chain (D4), which also makes check runs first-class (the App is never
-// hit by the classic-PAT 403). A refused mint marks the connection broken
-// (lazy uninstall detection, D3) and returns nil, so the upload degrades
-// exactly like missing credentials: skipped, never failed, with stored
-// tokens still honored further down the chain. A transient mint failure
-// only logs and falls through the same way.
-func (s *Server) installationForge(ctx context.Context, ws *store.Workspace, forgeName string) forge.Forge {
-	if s.githubApp == nil || ws == nil || forgeName != "github" ||
-		ws.Forge != "github" || ws.GitHubInstallationID == 0 {
-		return nil
-	}
-	fg, err := s.githubApp.ForgeClient(ctx, ws.GitHubInstallationID)
-	if err != nil {
-		if errors.Is(err, forge.ErrCredentialsRevoked) {
-			s.markAppBroken(ctx, ws, err)
-		} else {
-			s.log.Warn("github app installation token", "workspace", ws.Prefix, "err", err)
-		}
-		return nil
-	}
-	if ws.GitHubAppBroken {
-		// Minting works again (a lifted suspension, a restored key) —
-		// heal the flag so settings stops asking for a reconnect.
-		ws.GitHubAppBroken = false
-		if err := s.store.UpdateWorkspace(ctx, ws); err != nil {
-			s.log.Error("clearing github app broken flag", "workspace", ws.Prefix, "err", err)
-		}
-	}
-	return fg
-}
-
-// markAppBroken records that the workspace's installation stopped
-// working so the settings page can show "reconnect" (D3). The id is
-// kept — only flagged — since a reinstall arrives through the setup
-// redirect and overwrites it anyway.
-func (s *Server) markAppBroken(ctx context.Context, ws *store.Workspace, cause error) {
-	s.log.Warn("github app installation revoked", "workspace", ws.Prefix,
-		"installation", ws.GitHubInstallationID, "err", cause)
-	if ws.GitHubAppBroken {
-		return
-	}
-	ws.GitHubAppBroken = true
-	if err := s.store.UpdateWorkspace(ctx, ws); err != nil {
-		s.log.Error("marking github app broken", "workspace", ws.Prefix, "err", err)
-	}
 }

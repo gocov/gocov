@@ -1,3 +1,9 @@
+// The coverage gate as an uploader meets it: POST a profile, read the
+// verdict off the response and off what the forge was told. The gate's
+// own rules are unit-tested in internal/core (gate_test.go); these are
+// the endpoint's tests, which is why they are named for upload.go rather
+// than for a file of their own.
+
 package server
 
 import (

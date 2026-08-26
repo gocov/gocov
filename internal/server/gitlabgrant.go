@@ -1,13 +1,10 @@
 package server
 
 import (
-	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"time"
 
-	"github.com/gocov/gocov/internal/forge"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -32,7 +29,7 @@ const glConnectStateCookie = "gocov_gl_connect_state"
 // handleGitLabConnect implements GET /workspaces/{prefix}/gitlab/connect:
 // the start of the connect grant — state cookie, then GitLab's consent.
 func (s *Server) handleGitLabConnect(w http.ResponseWriter, r *http.Request) {
-	if s.glConnect == nil {
+	if s.forges.GitLab == nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -58,7 +55,7 @@ func (s *Server) handleGitLabConnect(w http.ResponseWriter, r *http.Request) {
 		Secure:   s.secureCookies,
 		SameSite: http.SameSiteLaxMode,
 	})
-	http.Redirect(w, r, s.glConnect.AuthorizeURL(state, s.redirectURI("gitlab")), http.StatusFound)
+	http.Redirect(w, r, s.forges.GitLab.AuthorizeURL(state, s.redirectURI("gitlab")), http.StatusFound)
 }
 
 // gitlabConnectCallback reports whether the sign-in callback request is
@@ -67,7 +64,7 @@ func (s *Server) handleGitLabConnect(w http.ResponseWriter, r *http.Request) {
 // exact redirect-URI match against the application's registered URIs —
 // and the connect state cookie is what tells the two flows apart.
 func (s *Server) gitlabConnectCallback(w http.ResponseWriter, r *http.Request) bool {
-	if s.glConnect == nil {
+	if s.forges.GitLab == nil {
 		return false
 	}
 	c, err := r.Cookie(glConnectStateCookie)
@@ -114,7 +111,7 @@ func (s *Server) gitlabConnectCallback(w http.ResponseWriter, r *http.Request) b
 		return true
 	}
 
-	grant, err := s.glConnect.Exchange(r.Context(), code, s.redirectURI("gitlab"))
+	grant, err := s.forges.GitLab.Exchange(r.Context(), code, s.redirectURI("gitlab"))
 	if err != nil {
 		s.log.Error("gitlab connect exchange", "workspace", ws.Prefix, "err", err)
 		s.renderConnect(w, r, http.StatusBadGateway, "GitLab did not confirm the grant",
@@ -126,7 +123,7 @@ func (s *Server) gitlabConnectCallback(w http.ResponseWriter, r *http.Request) b
 		s.internalError(w, "storing workspace grant", err)
 		return true
 	}
-	s.glTokens.put(ws.ID, grant.AccessToken, grant.TTL)
+	s.forges.CacheGrantToken("gitlab", ws.ID, grant.AccessToken, grant.TTL)
 	s.log.Info("gitlab workspace connected", "workspace", ws.Prefix, "account", grant.Account, "user", u.DisplayName)
 	http.Redirect(w, r, connectDest(ws.Prefix, from), http.StatusSeeOther)
 	return true
@@ -145,97 +142,16 @@ func (s *Server) handleGitLabDisconnect(w http.ResponseWriter, r *http.Request) 
 		s.internalError(w, "disconnecting gitlab grant", err)
 		return
 	}
-	s.glTokens.drop(ws.ID)
+	s.forges.DropGrantToken("gitlab", ws.ID)
 	s.log.Info("gitlab workspace disconnected", "workspace", ws.Prefix, "user", currentUser(r).DisplayName)
 	http.Redirect(w, r, workspaceURL(ws.Prefix, "?saved=1"), http.StatusSeeOther)
-}
-
-// gitlabGrantForge returns the grant-backed client when the workspace is
-// connected — the GitLab half of the credential chain's top link. A
-// revoked grant marks the connection broken (lazy detection) and returns
-// nil, so the upload degrades exactly like missing credentials;
-// transient trouble only logs and falls through the same way.
-func (s *Server) gitlabGrantForge(ctx context.Context, ws *store.Workspace, forgeName string) forge.Forge {
-	if s.glConnect == nil || ws == nil || forgeName != "gitlab" ||
-		ws.Forge != "gitlab" || ws.GitLabGrantAccount == "" {
-		return nil
-	}
-	token, err := s.gitlabAccessToken(ctx, ws)
-	if err != nil {
-		if errors.Is(err, forge.ErrCredentialsRevoked) {
-			s.markGitLabGrantBroken(ctx, ws, err)
-		} else {
-			s.log.Warn("gitlab grant token", "workspace", ws.Prefix, "err", err)
-		}
-		return nil
-	}
-	return s.glConnect.ForgeClient(token)
-}
-
-// gitlabAccessToken returns a live access token for the workspace's
-// grant, refreshing when the in-memory cache is empty or near expiry.
-// Refreshes are serialized per workspace and re-read the stored refresh
-// token under the lock, because every refresh rotates it: the rotated
-// token is persisted (narrow UPDATE, broken flag cleared) before the
-// access token is handed out.
-func (s *Server) gitlabAccessToken(ctx context.Context, ws *store.Workspace) (string, error) {
-	lock := s.glTokens.lock(ws.ID)
-	lock.Lock()
-	defer lock.Unlock()
-
-	if token, ok := s.glTokens.get(ws.ID); ok {
-		return token, nil
-	}
-	// The freshest stored token — a request holding the lock before us
-	// may have rotated it since our caller read the workspace.
-	fresh, err := s.store.WorkspaceByPrefix(ctx, ws.Prefix)
-	if err != nil {
-		return "", err
-	}
-	if fresh.GitLabRefreshToken == "" {
-		// Disconnected under our feet, or the stored token could not be
-		// decrypted (rotated GOCOV_SECRET_KEY) — either way a reconnect
-		// is the fix.
-		return "", fmt.Errorf("%w: workspace %s has no usable grant", forge.ErrCredentialsRevoked, ws.Prefix)
-	}
-	grant, err := s.glConnect.Refresh(ctx, fresh.GitLabRefreshToken, s.redirectURI("gitlab"))
-	if err != nil {
-		return "", err
-	}
-	newRefresh := grant.RefreshToken
-	if newRefresh == "" {
-		// Defensive: a non-rotating answer keeps the stored token.
-		newRefresh = fresh.GitLabRefreshToken
-	}
-	if err := s.store.SetWorkspaceGitLabGrant(ctx, ws.ID, fresh.GitLabGrantAccount, newRefresh, false); err != nil {
-		// The old token is already invalidated by the rotation; losing
-		// the new one breaks the next refresh, not this upload — loud
-		// log so the operator sees it before the cache runs out.
-		s.log.Error("persisting rotated gitlab refresh token", "workspace", ws.Prefix, "err", err)
-	}
-	s.glTokens.put(ws.ID, grant.AccessToken, grant.TTL)
-	return grant.AccessToken, nil
-}
-
-// markGitLabGrantBroken records the revoked grant so the settings page
-// shows "reconnect". The account name is kept — it says who to replace.
-func (s *Server) markGitLabGrantBroken(ctx context.Context, ws *store.Workspace, cause error) {
-	s.log.Warn("gitlab grant revoked", "workspace", ws.Prefix,
-		"account", ws.GitLabGrantAccount, "err", cause)
-	if ws.GitLabGrantBroken {
-		return
-	}
-	if err := s.store.SetWorkspaceGitLabGrant(ctx, ws.ID,
-		ws.GitLabGrantAccount, ws.GitLabRefreshToken, true); err != nil {
-		s.log.Error("marking gitlab grant broken", "workspace", ws.Prefix, "err", err)
-	}
 }
 
 // addGitLabGrantData fills the GitLab connection state shared by the
 // settings and setup pages. Absent when the deployment has no connect
 // support or the workspace is not on GitLab.
 func (s *Server) addGitLabGrantData(ws *store.Workspace, data map[string]any) {
-	if s.glConnect == nil || ws.Forge != "gitlab" {
+	if s.forges.GitLab == nil || ws.Forge != "gitlab" {
 		return
 	}
 	data["GitLabConnect"] = true

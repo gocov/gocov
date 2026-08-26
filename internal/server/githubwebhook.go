@@ -107,33 +107,10 @@ func (s *Server) handleInstallationEvent(ctx context.Context, p *webhookPayload)
 	}
 	switch p.Action {
 	case "deleted", "suspend":
-		s.setInstallationBroken(ctx, id, true)
+		s.forges.SetInstallationBroken(ctx, id, true)
 	case "unsuspend":
-		s.setInstallationBroken(ctx, id, false)
+		s.forges.SetInstallationBroken(ctx, id, false)
 	default:
 		s.log.Debug("github installation event", "action", p.Action, "installation", id)
-	}
-}
-
-// setInstallationBroken marks every workspace on the given installation
-// broken (or healed). No store index exists on the installation id, but
-// the workspace set is small.
-func (s *Server) setInstallationBroken(ctx context.Context, installationID int64, broken bool) {
-	all, err := s.store.ListWorkspaces(ctx)
-	if err != nil {
-		s.log.Error("github webhook: listing workspaces", "err", err)
-		return
-	}
-	for _, ws := range all {
-		if ws.GitHubInstallationID != installationID || ws.GitHubAppBroken == broken {
-			continue
-		}
-		ws.GitHubAppBroken = broken
-		if err := s.store.UpdateWorkspace(ctx, ws); err != nil {
-			s.log.Error("github webhook: updating workspace", "workspace", ws.Prefix, "err", err)
-			continue
-		}
-		s.log.Info("github installation flag set via webhook",
-			"workspace", ws.Prefix, "installation", installationID, "broken", broken)
 	}
 }

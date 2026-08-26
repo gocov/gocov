@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -246,7 +247,7 @@ func (s *Server) repoVerdict(latest *store.CommitReport, repo *store.Repo, base 
 	default:
 		v.State = "pass"
 	}
-	v.Reason = gateReason(latest.TotalPct, latest.DiffCoverage, repo.Gate, baseTotal, base != nil, "The latest commit")
+	v.Reason = core.GateReason(latest.TotalPct, latest.DiffCoverage, repo.Gate, baseTotal, base != nil, "The latest commit")
 	return v
 }
 
@@ -340,7 +341,7 @@ func (s *Server) repoWorkspacePrefix(ctx context.Context, repo *store.Repo) stri
 	if err != nil {
 		return ""
 	}
-	for _, prefix := range slugPrefixes(repo.Slug) { // longest (most specific) first
+	for _, prefix := range core.SlugPrefixes(repo.Slug) { // longest (most specific) first
 		for _, ws := range workspaces {
 			if ws.Forge == repo.Forge && ws.Prefix == prefix {
 				return prefix

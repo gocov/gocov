@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/hosted"
 	"github.com/gocov/gocov/internal/store"
 )
@@ -156,13 +157,13 @@ func gateActiveCount(g store.Gate) int {
 // deployment has no App or the workspace is not on GitHub — the pages
 // then render exactly as before.
 func (s *Server) addGitHubAppData(r *http.Request, ws *store.Workspace, data map[string]any) {
-	if s.githubApp == nil || ws.Forge != "github" {
+	if s.forges.GitHubApp == nil || ws.Forge != "github" {
 		return
 	}
 	data["GitHubApp"] = true
 	data["GitHubAppConnected"] = ws.GitHubInstallationID != 0
 	data["GitHubAppBroken"] = ws.GitHubAppBroken
-	data["GitHubInstallURL"] = s.githubInstallURL(r.Context())
+	data["GitHubInstallURL"] = s.forges.InstallURL(r.Context())
 }
 
 // handleWorkspacePage implements GET /workspaces/{prefix}.
@@ -198,7 +199,7 @@ func (s *Server) handleWorkspaceRotate(w http.ResponseWriter, r *http.Request) {
 	if ws == nil {
 		return
 	}
-	token, err := newToken()
+	token, err := core.NewToken()
 	if err != nil {
 		s.internalError(w, "generating workspace token", err)
 		return

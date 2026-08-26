@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/diffcov"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
@@ -183,7 +184,7 @@ func (s *Server) uploadVerdict(u *store.Upload, repo *store.Repo, base *store.Up
 	default:
 		v.State = "pass"
 	}
-	v.Reason = gateReason(u.TotalPct, u.DiffCoverage, repo.Gate, baseTotal, base != nil, "This upload")
+	v.Reason = core.GateReason(u.TotalPct, u.DiffCoverage, repo.Gate, baseTotal, base != nil, "This upload")
 	return v
 }
 

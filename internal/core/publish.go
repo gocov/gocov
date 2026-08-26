@@ -1,10 +1,9 @@
-// What gocov writes back to the forge, and the client it writes with:
-// resolving the workspace's one-click connection, then the three
-// surfaces an upload can update — the build status that gates a merge,
-// the code-insights report, and the PR comment. Everything here is best
-// effort: each helper returns a status string for the upload response
-// and never fails the upload itself.
-package server
+// What gocov writes back to the forge: the build status that gates a
+// merge, the code-insights report, and the PR comment. Every push is best
+// effort — each helper returns the words the uploader sees rather than an
+// error that could fail the upload.
+
+package core
 
 import (
 	"context"
@@ -30,74 +29,11 @@ const statusPushTimeout = 20 * time.Second
 // outcome.
 var errStatusPushFailed = errors.New("build status push failed")
 
-// forgeFor builds a forge client for the repo through the workspace's
-// one-click connection (GitHub App installation, Bitbucket grant or
-// GitLab grant). Returns (nil, nil) when the repo's workspace has no
-// connection — there is no manual-credential fallback.
-func (s *Server) forgeFor(ctx context.Context, repo *store.Repo) (forge.Forge, error) {
-	// The workspace is looked up lazily: only when a connection could
-	// apply, so a forge that supports no one-click connect skips the
-	// query entirely.
-	if s.oneClickCapable(repo.Forge) {
-		ws := s.repoWorkspace(ctx, repo.Slug, repo.Forge)
-		if fg := s.connectedForge(ctx, ws, repo.Forge); fg != nil {
-			return fg, nil
-		}
-	}
-	return nil, nil
-}
-
-// oneClickCapable reports whether a one-click connection could supply
-// credentials for the forge — the gate for the extra workspace lookup.
-func (s *Server) oneClickCapable(forgeName string) bool {
-	return (s.githubApp != nil && forgeName == "github") ||
-		(s.bbConnect != nil && forgeName == "bitbucket") ||
-		(s.glConnect != nil && forgeName == "gitlab")
-}
-
-// connectedForge returns the workspace's one-click-connected client —
-// GitHub App installation, Bitbucket grant or GitLab grant — or nil,
-// the top link of the credential chain (D4/D7).
-func (s *Server) connectedForge(ctx context.Context, ws *store.Workspace, forgeName string) forge.Forge {
-	if fg := s.installationForge(ctx, ws, forgeName); fg != nil {
-		return fg
-	}
-	if fg := s.grantForge(ctx, ws, forgeName); fg != nil {
-		return fg
-	}
-	return s.gitlabGrantForge(ctx, ws, forgeName)
-}
-
-// repoWorkspace returns the workspace owning the slug's prefix, nil when
-// there is none. Prefixes are tried longest first, so a repo below a
-// registered GitLab subgroup resolves to that subgroup's workspace, not a
-// same-named ancestor. A lookup failure only degrades down the credential
-// chain — forge surfaces are best-effort everywhere else too. The forge
-// must match: prefixes are globally unique, and a same-named workspace
-// on another forge must not lend its secrets or its installation.
-func (s *Server) repoWorkspace(ctx context.Context, slug, forgeName string) *store.Workspace {
-	for _, prefix := range slugPrefixes(slug) {
-		ws, err := s.store.WorkspaceByPrefix(ctx, prefix)
-		if errors.Is(err, store.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			s.log.Error("workspace lookup", "repo", slug, "err", err)
-			return nil
-		}
-		if ws.Forge != forgeName {
-			return nil
-		}
-		return ws
-	}
-	return nil
-}
-
 // pushBuildStatus posts a "coverage: X% (±Y)" build status to the repo's
 // forge; a failed coverage gate turns the state into FAILED so the forge
 // can block the merge. Best effort: push failures are reported in the
 // response but do not fail the upload.
-func (s *Server) pushBuildStatus(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, u *store.Upload, deltaPct *float64, gate gateResult) string {
+func (p *Pipeline) pushBuildStatus(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, u *store.Upload, deltaPct *float64, gate Verdict) string {
 	if fgErr != nil {
 		return "error: " + fgErr.Error()
 	}
@@ -110,20 +46,20 @@ func (s *Server) pushBuildStatus(ctx context.Context, fg forge.Forge, fgErr erro
 		desc += fmt.Sprintf(" (%+.1f%%)", *deltaPct)
 	}
 	state := forge.StateSuccessful
-	if gate.failed() {
+	if gate.Failed() {
 		state = forge.StateFailed
 		// Forge description fields are short; one reason has to do.
-		desc += " — " + gate.failures[0]
+		desc += " — " + gate.Failures[0]
 	}
 	status := forge.BuildStatus{
 		Key:         "gocov/coverage",
 		State:       state,
 		Name:        "gocov",
 		Description: desc,
-		URL:         s.uploadURL(u),
+		URL:         p.uploadURL(u),
 	}
 	if err := fg.PostBuildStatus(ctx, repo.Slug, u.CommitSHA, status); err != nil {
-		s.log.Error("post build status", "repo", repo.Slug, "commit", u.CommitSHA, "err", err)
+		p.Log.Error("post build status", "repo", repo.Slug, "commit", u.CommitSHA, "err", err)
 		return "error: " + err.Error()
 	}
 	return "posted"
@@ -137,15 +73,15 @@ const insightsMaxAnnotations = 100
 // PR uploads, annotates uncovered changed lines inline in the diff. Best
 // effort like the build status: failures land in the response field and
 // the log, never in the upload result.
-func (s *Server) pushCodeInsights(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, u *store.Upload, deltaPct *float64, gate gateResult) string {
+func (p *Pipeline) pushCodeInsights(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, u *store.Upload, deltaPct *float64, gate Verdict) string {
 	if fgErr != nil {
 		return "error: " + fgErr.Error()
 	}
 	if fg == nil {
-		s.log.Debug("code insights skipped: no forge connection", "repo", repo.Slug)
+		p.Log.Debug("code insights skipped: no forge connection", "repo", repo.Slug)
 		return "skipped"
 	}
-	report, annotations := s.insightsReport(u, deltaPct, gate)
+	report, annotations := p.insightsReport(u, deltaPct, gate)
 	err := fg.PublishReport(ctx, repo.Slug, u.CommitSHA, report, annotations)
 	if errors.Is(err, forge.ErrNotImplemented) {
 		// A wrapped sentinel carries the forge's reason (e.g. GitHub
@@ -154,11 +90,11 @@ func (s *Server) pushCodeInsights(ctx context.Context, fg forge.Forge, fgErr err
 		if err == forge.ErrNotImplemented {
 			return "skipped"
 		}
-		s.log.Info("code insights unavailable", "repo", repo.Slug, "reason", err)
+		p.Log.Info("code insights unavailable", "repo", repo.Slug, "reason", err)
 		return "skipped: " + err.Error()
 	}
 	if err != nil {
-		s.log.Warn("publish code insights report", "repo", repo.Slug, "commit", u.CommitSHA, "err", err)
+		p.Log.Warn("publish code insights report", "repo", repo.Slug, "commit", u.CommitSHA, "err", err)
 		return "error: " + err.Error()
 	}
 	return "posted"
@@ -167,7 +103,7 @@ func (s *Server) pushCodeInsights(ctx context.Context, fg forge.Forge, fgErr err
 // insightsReport builds the report card and its annotations. The data
 // fields stay well under the forge API's cap of ten; annotations exist
 // only for PR uploads, and only on uncovered changed lines.
-func (s *Server) insightsReport(u *store.Upload, deltaPct *float64, gate gateResult) (forge.Report, []forge.Annotation) {
+func (p *Pipeline) insightsReport(u *store.Upload, deltaPct *float64, gate Verdict) (forge.Report, []forge.Annotation) {
 	data := []forge.ReportData{
 		{Title: "Total coverage", Type: forge.DataPercentage, Value: u.TotalPct},
 	}
@@ -199,9 +135,9 @@ func (s *Server) insightsReport(u *store.Upload, deltaPct *float64, gate gateRes
 		Title: "Statements", Type: forge.DataText, Value: fmt.Sprintf("%d / %d", u.CoveredStmts, u.TotalStmts)})
 
 	result := ""
-	if gate.configured {
+	if gate.Configured {
 		data = append(data, forge.ReportData{Title: "Gate", Type: forge.DataText, Value: gate.String()})
-		if gate.failed() {
+		if gate.Failed() {
 			result = forge.ReportFailed
 		} else {
 			result = forge.ReportPassed
@@ -215,7 +151,7 @@ func (s *Server) insightsReport(u *store.Upload, deltaPct *float64, gate gateRes
 		Title:   "gocov coverage",
 		Details: details,
 		Result:  result,
-		Link:    s.uploadURL(u),
+		Link:    p.uploadURL(u),
 		Data:    data,
 	}, annotations
 }
@@ -307,15 +243,15 @@ func insightsAnnotations(dc *diffcov.Result) (anns []forge.Annotation, dropped i
 	return anns, dropped
 }
 
-// prCommentMarker identifies gocov's own comment on a PR; every body
+// PRCommentMarker identifies gocov's own comment on a PR; every body
 // built by prCommentBody starts with it, so repeated uploads update the
 // existing comment instead of stacking new ones.
-const prCommentMarker = "**gocov**"
+const PRCommentMarker = "**gocov**"
 
 // pushPRComment posts or updates the coverage summary comment on the pull
 // request. Returns "" for non-PR uploads so the field is omitted from the
 // response.
-func (s *Server) pushPRComment(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, u *store.Upload, deltaPct *float64, gate gateResult) string {
+func (p *Pipeline) pushPRComment(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, u *store.Upload, deltaPct *float64, gate Verdict) string {
 	if u.PRID == "" {
 		return ""
 	}
@@ -325,24 +261,24 @@ func (s *Server) pushPRComment(ctx context.Context, fg forge.Forge, fgErr error,
 	if fg == nil {
 		return "skipped"
 	}
-	body := s.prCommentBody(u, deltaPct, gate)
+	body := p.prCommentBody(u, deltaPct, gate)
 
 	// Best effort update-in-place: any failure falls back to posting a
 	// fresh comment, which is never worse than the old behavior.
-	commentID, err := fg.FindPRComment(ctx, repo.Slug, u.PRID, prCommentMarker)
+	commentID, err := fg.FindPRComment(ctx, repo.Slug, u.PRID, PRCommentMarker)
 	if err != nil && !errors.Is(err, forge.ErrNotImplemented) {
-		s.log.Warn("find PR comment", "repo", repo.Slug, "pr", u.PRID, "err", err)
+		p.Log.Warn("find PR comment", "repo", repo.Slug, "pr", u.PRID, "err", err)
 	}
 	if commentID != "" {
 		if err := fg.UpdatePRComment(ctx, repo.Slug, u.PRID, commentID, body); err == nil {
 			return "updated"
 		} else {
-			s.log.Warn("update PR comment", "repo", repo.Slug, "pr", u.PRID, "comment", commentID, "err", err)
+			p.Log.Warn("update PR comment", "repo", repo.Slug, "pr", u.PRID, "comment", commentID, "err", err)
 		}
 	}
 
 	if err := fg.PostPRComment(ctx, repo.Slug, u.PRID, body); err != nil {
-		s.log.Error("post PR comment", "repo", repo.Slug, "pr", u.PRID, "err", err)
+		p.Log.Error("post PR comment", "repo", repo.Slug, "pr", u.PRID, "err", err)
 		return "error: " + err.Error()
 	}
 	return "posted"
@@ -351,7 +287,7 @@ func (s *Server) pushPRComment(ctx context.Context, fg forge.Forge, fgErr error,
 // prCommentMaxFiles caps the uncovered-lines table in PR comments.
 const prCommentMaxFiles = 20
 
-func (s *Server) prCommentBody(u *store.Upload, deltaPct *float64, gate gateResult) string {
+func (p *Pipeline) prCommentBody(u *store.Upload, deltaPct *float64, gate Verdict) string {
 	var sb strings.Builder
 	short := u.CommitSHA
 	if len(short) > 12 {
@@ -363,9 +299,9 @@ func (s *Server) prCommentBody(u *store.Upload, deltaPct *float64, gate gateResu
 		fmt.Fprintf(&sb, " (%+.1f%%)", *deltaPct)
 	}
 	sb.WriteString("\n")
-	if gate.configured {
-		if gate.failed() {
-			fmt.Fprintf(&sb, "- Gate: ❌ %s\n", strings.Join(gate.failures, "; "))
+	if gate.Configured {
+		if gate.Failed() {
+			fmt.Fprintf(&sb, "- Gate: ❌ %s\n", strings.Join(gate.Failures, "; "))
 		} else {
 			sb.WriteString("- Gate: ✅ passed\n")
 		}
@@ -413,12 +349,12 @@ func (s *Server) prCommentBody(u *store.Upload, deltaPct *float64, gate gateResu
 		}
 	}
 
-	fmt.Fprintf(&sb, "\n[Full report](%s)\n", s.uploadURL(u))
+	fmt.Fprintf(&sb, "\n[Full report](%s)\n", p.uploadURL(u))
 	return sb.String()
 }
 
-func (s *Server) uploadURL(u *store.Upload) string {
-	return fmt.Sprintf("%s/uploads/%d", strings.TrimSuffix(s.baseURL, "/"), u.ID)
+func (p *Pipeline) uploadURL(u *store.Upload) string {
+	return fmt.Sprintf("%s/uploads/%d", strings.TrimSuffix(p.BaseURL, "/"), u.ID)
 }
 
 // mdPath neutralizes characters that would break the markdown table or the
@@ -429,8 +365,18 @@ func mdPath(p string) string {
 	return mdPathReplacer.Replace(p)
 }
 
-// pushToForge updates every forge surface for the commit and records the
-// outcome of each one in the response.
+// PushResult is what each forge surface did with this upload, in the
+// words the uploader sees: "posted", "skipped", "skipped: superseded" or
+// an "error: ..." explaining why not. None of them is a failure of the
+// upload itself.
+type PushResult struct {
+	BuildStatus  string
+	CodeInsights string
+	PRComment    string
+}
+
+// Push updates every forge surface for the commit and reports what each
+// one did.
 //
 // The pushes run after the locked recompute. Two parts of one commit can
 // push concurrently, and forge latency could let an older push land last
@@ -440,39 +386,41 @@ func mdPath(p string) string {
 // not older than the last successful one, and records the version only
 // after the push succeeds — so a failed push doesn't burn the version and
 // a later part retries.
-func (s *Server) pushToForge(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, upload *store.Upload, rc *mergedRecompute, resp *uploadResponse) {
-	merged, mergedDelta, mergedGate := rc.upload, rc.delta, rc.gate
+func (p *Pipeline) Push(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, upload *store.Upload, rc *Merged) PushResult {
+	merged, mergedDelta, mergedGate := rc.Upload, rc.Delta, rc.Verdict
+	var res PushResult
 
 	pushCtx, cancel := context.WithTimeout(ctx, statusPushTimeout)
 	defer cancel()
-	pushed, err := s.store.TryPushStatus(pushCtx, repo.ID, upload.CommitSHA, upload.ID, func(ctx context.Context) error {
-		resp.BuildStatus = s.pushBuildStatus(ctx, fg, fgErr, repo, merged, mergedDelta, mergedGate)
-		resp.CodeInsights = s.pushCodeInsights(ctx, fg, fgErr, repo, merged, mergedDelta, mergedGate)
-		resp.PRComment = s.pushPRComment(ctx, fg, fgErr, repo, merged, mergedDelta, mergedGate)
+	pushed, err := p.Store.TryPushStatus(pushCtx, repo.ID, upload.CommitSHA, upload.ID, func(ctx context.Context) error {
+		res.BuildStatus = p.pushBuildStatus(ctx, fg, fgErr, repo, merged, mergedDelta, mergedGate)
+		res.CodeInsights = p.pushCodeInsights(ctx, fg, fgErr, repo, merged, mergedDelta, mergedGate)
+		res.PRComment = p.pushPRComment(ctx, fg, fgErr, repo, merged, mergedDelta, mergedGate)
 		// The build status gates merges; if it didn't post, signal failure so
 		// the version isn't advanced and a later part retries. Insights and
 		// PR comment are best effort and don't hold back the version.
-		if strings.HasPrefix(resp.BuildStatus, "error") {
+		if strings.HasPrefix(res.BuildStatus, "error") {
 			return errStatusPushFailed
 		}
 		return nil
 	})
 	switch {
 	case errors.Is(err, errStatusPushFailed):
-		// resp fields already carry the per-surface outcome; nothing to do.
+		// res already carries the per-surface outcome; nothing to do.
 	case err != nil:
 		// Lock/tx failure: the push may not have run. Report it rather than
 		// leaving the fields blank.
-		s.log.Warn("status push lock", "repo", repo.Slug, "commit", upload.CommitSHA, "err", err)
-		if resp.BuildStatus == "" {
-			resp.BuildStatus = "error: " + err.Error()
-			resp.CodeInsights = "error: " + err.Error()
+		p.Log.Warn("status push lock", "repo", repo.Slug, "commit", upload.CommitSHA, "err", err)
+		if res.BuildStatus == "" {
+			res.BuildStatus = "error: " + err.Error()
+			res.CodeInsights = "error: " + err.Error()
 		}
 	case !pushed:
-		resp.BuildStatus = "skipped: superseded"
-		resp.CodeInsights = "skipped: superseded"
+		res.BuildStatus = "skipped: superseded"
+		res.CodeInsights = "skipped: superseded"
 		if merged.PRID != "" {
-			resp.PRComment = "skipped: superseded"
+			res.PRComment = "skipped: superseded"
 		}
 	}
+	return res
 }

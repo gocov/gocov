@@ -1,3 +1,9 @@
+// Merging parts as an uploader meets it: two CI jobs POST the same commit
+// and the endpoint answers with the combined total. The merge itself is
+// unit-tested in internal/core (merge_test.go); these are the endpoint's
+// tests, which is why they are named for upload.go rather than for a file
+// of their own.
+
 package server
 
 import (

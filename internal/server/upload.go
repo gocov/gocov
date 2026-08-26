@@ -8,12 +8,7 @@ package server
 
 import (
 	"bytes"
-	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -22,8 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gocov/gocov/internal/diffcov"
-	"github.com/gocov/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 )
@@ -156,68 +150,40 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	repo := req.repo
-
-	dropDelta, ok := s.gateDropBaseline(w, r, req)
-	if !ok {
-		return
-	}
-
-	blobKey, err := s.storeRawProfile(r, repo.ID, req.raw)
+	res, err := s.pipeline.Accept(r.Context(), core.Submission{
+		Repo:       req.repo,
+		Commit:     req.commit,
+		Branch:     req.branch,
+		PRID:       req.prID,
+		Part:       req.part,
+		Format:     req.format,
+		PathPrefix: req.pathPrefix,
+		Raw:        req.raw,
+		Profile:    req.prof,
+		Meta:       buildUploadMeta(r, req.filename, len(req.raw), time.Since(start)),
+	})
 	if err != nil {
-		s.internalError(w, "storing raw profile", err)
-		return
-	}
-
-	// Forge client for build status, PR comment and diff coverage; nil when
-	// the repo has no credentials configured.
-	fg, fgErr := s.forgeFor(r.Context(), repo)
-
-	var diffResult *diffcov.Result
-	var diffStatus string
-	if req.prID != "" {
-		diffResult, diffStatus = s.computeDiffCoverage(r.Context(), fg, fgErr, repo, req.prID, req.prof, req.format, req.pathPrefix)
-	}
-
-	gate := evaluateGate(repo.Gate, req.totalPct, dropDelta, diffResult)
-	upload, files := req.rows(blobKey, diffResult, gate, buildUploadMeta(r, req.filename, len(req.raw), time.Since(start)))
-	if err := s.store.CreateUpload(r.Context(), upload, files); err != nil {
-		// The raw profile was already written; don't leave it orphaned.
-		if delErr := s.blobs.Delete(r.Context(), blobKey); delErr != nil {
-			s.log.Error("cleaning up blob after failed upload", "key", blobKey, "err", delErr)
-		}
-		s.internalError(w, "saving upload", err)
-		return
-	}
-
-	// Recompute the commit's merged report from every part's latest upload
-	// and drive all outward-facing surfaces from it, so a commit uploaded
-	// in several parts reports its combined total, not the last part in.
-	rc, err := s.recomputeCommitReport(r.Context(), repo, upload)
-	if err != nil {
-		// The upload row is already committed; a recompute failure (including
-		// the bounded-timeout case) returns 500 deliberately so the CI client
-		// sees the upload didn't fully land. It self-heals: the next part's
-		// upload — or a retry of this one — recomputes the commit again.
-		s.internalError(w, "computing merged report", err)
+		s.internalError(w, "accepting upload", err)
 		return
 	}
 
 	resp := uploadResponse{
-		ID:           upload.ID,
-		TotalPct:     rc.upload.TotalPct,
-		CoveredStmts: rc.upload.CoveredStmts,
-		TotalStmts:   rc.upload.TotalStmts,
-		DeltaPct:     rc.delta,
+		ID:           res.Upload.ID,
+		TotalPct:     res.Merged.Upload.TotalPct,
+		CoveredStmts: res.Merged.Upload.CoveredStmts,
+		TotalStmts:   res.Merged.Upload.TotalStmts,
+		DeltaPct:     res.Merged.Delta,
 		RepoCreated:  req.repoCreated,
-		DiffStatus:   diffStatus,
-		Warnings:     rc.warnings,
+		DiffStatus:   res.DiffStatus,
+		Warnings:     res.Merged.Warnings,
+		BuildStatus:  res.Push.BuildStatus,
+		CodeInsights: res.Push.CodeInsights,
+		PRComment:    res.Push.PRComment,
 	}
-	if rc.gate.configured {
-		resp.Gate = rc.gate.String()
+	if res.Merged.Verdict.Configured {
+		resp.Gate = res.Merged.Verdict.String()
 	}
-	s.pushToForge(r.Context(), fg, fgErr, repo, upload, rc, &resp)
-	if md := rc.upload.DiffCoverage; md != nil {
+	if md := res.Merged.Upload.DiffCoverage; md != nil {
 		pct := md.Percent()
 		resp.DiffPct = &pct
 		resp.DiffCoveredLines = &md.CoveredLines
@@ -246,9 +212,6 @@ type uploadRequest struct {
 	filename string // as the client named it, for provenance
 	raw      []byte
 	prof     *profile.Profile
-
-	covered, total int64
-	totalPct       float64
 }
 
 // readUploadRequest parses the multipart body and validates every field,
@@ -348,124 +311,7 @@ func (s *Server) readUploadRequest(w http.ResponseWriter, r *http.Request, authe
 		httpError(w, http.StatusUnprocessableEntity, "parsing %s profile: %v", req.format, err)
 		return nil, false
 	}
-	req.covered, req.total = req.prof.Coverage()
-	req.totalPct = profile.Percent(req.covered, req.total)
 	return req, true
-}
-
-// gateDropBaseline returns this upload's coverage difference to the gate's
-// baseline, or nil when the drop rule is off or has nothing to compare
-// against. The rule always compares against the default branch, so a PR
-// cannot lower coverage step by step within tolerance. A false second
-// return means the error response is already written.
-func (s *Server) gateDropBaseline(w http.ResponseWriter, r *http.Request, req *uploadRequest) (*float64, bool) {
-	if req.repo.Gate.MaxCoverageDrop == nil {
-		return nil, true
-	}
-	base, err := s.store.LatestPassedCommitReport(r.Context(), req.repo.ID, req.repo.DefaultBranch, req.commit)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		s.internalError(w, "loading gate baseline", err)
-		return nil, false
-	}
-	if base == nil {
-		return nil, true
-	}
-	d := req.totalPct - base.TotalPct
-	return &d, true
-}
-
-// rows turns the request into the upload row and its per-file rows.
-//
-// The upload row keeps its own single-part gate result (its gate_failed
-// column still feeds the per-upload web views); the response, forge
-// status, gate and PR comment are driven by the merged report computed
-// after the row is stored.
-func (req *uploadRequest) rows(blobKey string, diff *diffcov.Result, gate gateResult, meta store.UploadMeta) (*store.Upload, []*store.UploadFile) {
-	upload := &store.Upload{
-		RepoID:       req.repo.ID,
-		CommitSHA:    req.commit,
-		Branch:       req.branch,
-		PRID:         req.prID,
-		Format:       req.format,
-		TotalPct:     req.totalPct,
-		CoveredStmts: req.covered,
-		TotalStmts:   req.total,
-		RawBlobKey:   blobKey,
-		DiffCoverage: diff,
-		GateFailed:   gate.failed(),
-		PathPrefix:   req.pathPrefix,
-		Part:         req.part,
-		Meta:         meta,
-	}
-	files := make([]*store.UploadFile, 0, len(req.prof.Files))
-	for i := range req.prof.Files {
-		f := &req.prof.Files[i]
-		c, t := f.Coverage()
-		files = append(files, &store.UploadFile{
-			Path:         f.Path,
-			Pct:          profile.Percent(c, t),
-			CoveredStmts: c,
-			TotalStmts:   t,
-			Blocks:       f.Blocks,
-		})
-	}
-	return upload, files
-}
-
-// sourceExts maps a profile format to the extensions of source files whose
-// absence from the coverage report is worth flagging in diff coverage.
-var sourceExts = map[string][]string{
-	"go":        {".go"},
-	"lcov":      {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte"},
-	"jacoco":    {".java", ".kt", ".kts", ".scala", ".groovy"},
-	"cobertura": {".py", ".cs", ".php", ".cpp", ".cc", ".c"},
-}
-
-// computeDiffCoverage fetches the PR diff from the forge and intersects it
-// with the parsed profile. Best effort: any failure is reported in the
-// returned status, never as an upload error.
-func (s *Server) computeDiffCoverage(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, prID string, prof *profile.Profile, format, pathPrefix string) (*diffcov.Result, string) {
-	if fgErr != nil {
-		return nil, "error: " + fgErr.Error()
-	}
-	if fg == nil {
-		return nil, "skipped: no forge connection"
-	}
-	diffText, err := fg.GetPRDiff(ctx, repo.Slug, prID)
-	if errors.Is(err, forge.ErrNotImplemented) {
-		return nil, "skipped: diff not supported by forge"
-	}
-	if err != nil {
-		s.log.Error("fetch PR diff", "repo", repo.Slug, "pr", prID, "err", err)
-		return nil, "error: fetching PR diff: " + err.Error()
-	}
-	added, err := diffcov.ParseUnifiedDiff(strings.NewReader(diffText))
-	if err != nil {
-		s.log.Error("parse PR diff", "repo", repo.Slug, "pr", prID, "err", err)
-		return nil, "error: parsing PR diff: " + err.Error()
-	}
-
-	files := make([]diffcov.FileBlocks, 0, len(prof.Files))
-	for _, f := range prof.Files {
-		files = append(files, diffcov.FileBlocks{Path: f.Path, Blocks: f.Blocks})
-	}
-	result := diffcov.Compute(files, added, pathPrefix)
-
-	// Keep only source files in the "changed but no coverage data" list;
-	// docs, configs etc. are expected to be absent from the profile.
-	if exts := sourceExts[format]; len(exts) > 0 {
-		var src []string
-		for _, p := range result.UnmatchedFiles {
-			for _, ext := range exts {
-				if strings.HasSuffix(p, ext) {
-					src = append(src, p)
-					break
-				}
-			}
-		}
-		result.UnmatchedFiles = src
-	}
-	return result, "computed"
 }
 
 // commitRe bounds commit identifiers: they appear in forge API paths and
@@ -478,15 +324,3 @@ var commitRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 // and lowercased before this check, so "Backend" and " backend " reduce to
 // the same "backend" and can't split one commit into two parts.
 var partRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
-
-func (s *Server) storeRawProfile(r *http.Request, repoID int64, raw []byte) (string, error) {
-	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	key := fmt.Sprintf("profiles/%d/%s", repoID, hex.EncodeToString(buf))
-	if err := s.blobs.Put(r.Context(), key, raw); err != nil {
-		return "", err
-	}
-	return key, nil
-}

@@ -1,8 +1,7 @@
-// The coverage gate: the rule set a repo can require of an upload, and
-// the verdict it produces. Evaluation lives here; the same verdict is
-// rendered for the web UI in pages.go and pushed to the forge in
-// forgepush.go.
-package server
+// The coverage gate: the rules a repo can require of a commit, the
+// verdict they produce, and the sentence that explains it to a human.
+
+package core
 
 import (
 	"fmt"
@@ -12,17 +11,17 @@ import (
 	"github.com/gocov/gocov/internal/store"
 )
 
-// gateResult is the evaluated coverage gate for one upload.
-type gateResult struct {
-	configured bool
-	failures   []string
+// Verdict is the evaluated coverage gate for one upload.
+type Verdict struct {
+	Configured bool
+	Failures   []string
 }
 
-func (g gateResult) failed() bool { return len(g.failures) > 0 }
+func (v Verdict) Failed() bool { return len(v.Failures) > 0 }
 
-func (g gateResult) String() string {
-	if g.failed() {
-		return "failed: " + strings.Join(g.failures, "; ")
+func (v Verdict) String() string {
+	if v.Failed() {
+		return "failed: " + strings.Join(v.Failures, "; ")
 	}
 	return "passed"
 }
@@ -32,30 +31,30 @@ func (g gateResult) String() string {
 // 56.999999999999993 in float arithmetic).
 const gateEpsilon = 1e-9
 
-// evaluateGate checks the repo's coverage requirements. dropDelta is the
+// EvaluateGate checks the repo's coverage requirements. dropDelta is the
 // difference to the latest gate-passing upload on the default branch —
 // never a gate-failing upload, so re-running CI cannot launder a failure,
 // and never the branch's own history, so a PR cannot ratchet coverage
 // down within tolerance push by push. The drop and diff rules are
 // fail-open when their inputs are unavailable.
-func evaluateGate(gate store.Gate, totalPct float64, dropDelta *float64, diff *diffcov.Result) gateResult {
-	res := gateResult{configured: gate.Configured()}
+func EvaluateGate(gate store.Gate, totalPct float64, dropDelta *float64, diff *diffcov.Result) Verdict {
+	res := Verdict{Configured: gate.Configured()}
 	if gate.MinCoverage != nil && totalPct < *gate.MinCoverage-gateEpsilon {
-		res.failures = append(res.failures,
+		res.Failures = append(res.Failures,
 			fmt.Sprintf("total coverage %.4g%% is below the minimum %.4g%%", totalPct, *gate.MinCoverage))
 	}
 	if gate.MaxCoverageDrop != nil && dropDelta != nil && *dropDelta < -*gate.MaxCoverageDrop-gateEpsilon {
-		res.failures = append(res.failures,
+		res.Failures = append(res.Failures,
 			fmt.Sprintf("coverage dropped %.4g%% (allowed %.4g%%)", -*dropDelta, *gate.MaxCoverageDrop))
 	}
 	if gate.MinDiffCoverage != nil && diff != nil && diff.TotalLines > 0 && diff.Percent() < *gate.MinDiffCoverage-gateEpsilon {
-		res.failures = append(res.failures,
+		res.Failures = append(res.Failures,
 			fmt.Sprintf("diff coverage %.4g%% is below the minimum %.4g%%", diff.Percent(), *gate.MinDiffCoverage))
 	}
 	return res
 }
 
-// gateReason narrates the gate: one clause per configured rule, comparing this
+// GateReason narrates the Verdict:  one clause per configured rule, comparing this
 // upload's measured value to the threshold, joined into a sentence. It reads
 // the same whether the gate passed or failed — the clauses themselves say
 // which rule is the problem.
@@ -64,7 +63,7 @@ func evaluateGate(gate store.Gate, totalPct float64, dropDelta *float64, diff *d
 // serves both the upload page and the repo page. totalPct/diff are the
 // measured values; baseTotal is the baseline's total coverage, valid only
 // when hasBase is true.
-func gateReason(totalPct float64, diff *diffcov.Result, g store.Gate, baseTotal float64, hasBase bool, subject string) string {
+func GateReason(totalPct float64, diff *diffcov.Result, g store.Gate, baseTotal float64, hasBase bool, subject string) string {
 	if !g.Configured() {
 		return fmt.Sprintf("No coverage gate is configured for this repo. %s records %.1f%% total coverage.", subject, totalPct)
 	}
