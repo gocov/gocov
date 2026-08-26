@@ -30,8 +30,12 @@ services:
     expose:
       - "8080"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      # The runtime image is distroless — no wget, no shell — so the
+      # binary probes its own /healthz.
+      test: ["CMD", "/usr/local/bin/gocov-server", "healthcheck"]
       interval: 10s
+      # Must stay above healthProbeTimeout in cmd/gocov-server, so a failing
+      # probe reports its own error instead of being killed here.
       timeout: 3s
       retries: 3
 

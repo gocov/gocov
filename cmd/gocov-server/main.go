@@ -1,6 +1,7 @@
 // gocov-server runs the gocov API + web UI:
 //
 //	gocov-server serve                # default when no subcommand given
+//	gocov-server healthcheck          # probe our own /healthz, for containers
 //	gocov-server version
 //
 // Workspaces, repos, gates and members are all administered from the web
@@ -25,9 +26,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -60,9 +63,61 @@ func run(args []string) error {
 		return nil
 	case "serve":
 		return serve()
+	case "healthcheck":
+		return healthcheck()
 	default:
-		return fmt.Errorf("unknown command %q (want serve|version)", args[0])
+		return fmt.Errorf("unknown command %q (want serve|healthcheck|version)", args[0])
 	}
+}
+
+// healthProbeTimeout is the budget for one `gocov-server healthcheck` run.
+// It is deliberately boxed in on both sides: longer than the time /healthz
+// spends on its database ping, so a slow database produces a reported 503
+// instead of a blind timeout here, and shorter than the `timeout:` the
+// compose healthchecks allow, so a wedged server fails with our own error
+// message instead of being killed mid-request by Docker.
+const healthProbeTimeout = server.HealthTimeout + 500*time.Millisecond
+
+// healthcheck asks the server we are running next to whether it is well,
+// and reports the answer as an exit status. It exists because the runtime
+// image is distroless: there is no wget or curl in the container for a
+// Docker HEALTHCHECK to call, so the binary probes itself.
+func healthcheck() error {
+	cfg, err := config.LoadServer()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), healthProbeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL(cfg.Addr), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("healthz: %s", resp.Status)
+	}
+	return nil
+}
+
+// healthURL turns a listen address into one to dial it on: the listener's
+// wildcard host (":8080", "0.0.0.0:8080", "[::]:8080") is not an address a
+// client can connect to, so loopback stands in for it. SplitHostPort has
+// already unwrapped "[::]" to "::" by the time the host is compared.
+func healthURL(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		host, port = "", strings.TrimPrefix(addr, ":")
+	}
+	switch host {
+	case "", "0.0.0.0", "::":
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, port) + "/healthz"
 }
 
 func connect(ctx context.Context, cfg config.Server) (*storepg.Store, error) {
