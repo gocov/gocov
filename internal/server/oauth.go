@@ -388,6 +388,16 @@ func readStateCookie(r *http.Request) (state, next string) {
 // net/url's own serialization rather than the caller's string — so whatever
 // survives is a shape this package chose, not one an attacker spelled.
 func sanitizeNext(next string) string {
+	// The plain forms, refused where a reader looks for them: a target that
+	// is not a rooted path at all, and the two scheme-relative spellings
+	// that name another origin ("//host", and "/\host" because browsers
+	// read '\' as a separator for http(s)). The parse below would catch
+	// these too — it finds a Host — but this is the browser rule the whole
+	// function exists to respect, so it is worth saying out loud rather
+	// than leaving as a consequence of net/url's behaviour.
+	if next == "" || next[0] != '/' || strings.HasPrefix(next, "//") || strings.HasPrefix(next, `/\`) {
+		return "/"
+	}
 	// Browsers read '\' as a path separator for http(s) (WHATWG URL,
 	// relative slash state) while net/url does not, so fold it before
 	// parsing: "/\host" is an authority to the client and a mere path to
@@ -405,10 +415,12 @@ func sanitizeNext(next string) string {
 	if err != nil || target.Scheme != "" || target.Host != "" || target.User != nil {
 		return "/"
 	}
-	// An authority-less URL can still be a relative path ("x", "../x"),
-	// which would resolve against wherever the browser happens to be.
+	// The same two properties again, on the parsed path this time: an
+	// authority-less URL can still be a relative path ("x", "../x") that
+	// resolves against wherever the browser happens to be, and a path can
+	// still open with the slash pair that starts an authority.
 	escaped := target.EscapedPath()
-	if !strings.HasPrefix(escaped, "/") {
+	if !strings.HasPrefix(escaped, "/") || strings.HasPrefix(escaped, "//") || strings.HasPrefix(escaped, `/\`) {
 		return "/"
 	}
 	// Collapse the dot segments here rather than leaving them for
