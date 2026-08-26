@@ -28,8 +28,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
+	// One destination per request, shared by the redirect below and by the
+	// sign-in buttons the page renders.
+	next := sanitizeNext(r.FormValue("next"))
 	if u := s.sessionUser(r); u != nil {
-		http.Redirect(w, r, sanitizeNext(r.FormValue("next")), http.StatusFound)
+		redirectInSite(w, r, next)
 		return
 	}
 	// The denial page is private-mode only (M3/D1): a hosted instance
@@ -58,7 +61,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "login.html", map[string]any{
 		"Failed":     r.FormValue("error") == "1",
 		"Denied":     denied,
-		"Next":       sanitizeNext(r.FormValue("next")),
+		"Next":       next,
 		"Workspaces": workspaces,
 		"Providers":  providers,
 		"Hosted":     s.hosted,
@@ -218,7 +221,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("sign-in", "forge", provider.Name(), "user", u.DisplayName, "email", u.Email)
-	http.Redirect(w, r, next, http.StatusFound)
+	redirectInSite(w, r, next)
 }
 
 // signInFailed sends the visitor back to the login page. The reason is
@@ -380,6 +383,19 @@ func readStateCookie(r *http.Request) (state, next string) {
 		return state, "/"
 	}
 	return state, sanitizeNext(next)
+}
+
+// redirectInSite sends the browser to a path on this server, and to "/" if
+// handed anything else. Every caller passes a value sanitizeNext has already
+// vetted, so the check here is a second opinion rather than the deciding
+// one — but it puts the rule next to the dangerous call instead of a
+// function call away, which is where both a reader and an analyzer look for
+// it when asking whether a redirect can leave the site.
+func redirectInSite(w http.ResponseWriter, r *http.Request, next string) {
+	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.HasPrefix(next, `/\`) {
+		next = "/"
+	}
+	http.Redirect(w, r, next, http.StatusFound)
 }
 
 // sanitizeNext confines the post-login redirect to in-site paths, so the
