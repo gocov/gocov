@@ -94,15 +94,14 @@ var secretKeyPattern = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
 // span more than one variable. Presence and emptiness are the tags' job
 // (see DatabaseURL), so they are not repeated here.
 func (c Server) validate() error {
-	// The at-rest AES key is a plain SHA-256 of GOCOV_SECRET_KEY
-	// (secretbox.New), with no salt or work factor, so the value itself
-	// must carry the full 256 bits of entropy — a guessable passphrase
-	// would be brute-forceable offline against a leaked database. We
-	// therefore refuse anything that isn't 64 hex characters at boot
-	// rather than sealing tokens under a weak key. Derivation is left
-	// untouched, so an existing 64-hex key keeps producing the same
-	// cipher. An unset or blank value is not an error: it just leaves
-	// workspace connect disabled.
+	// GOCOV_SECRET_KEY is hex-decoded straight into the at-rest AES key
+	// (secretbox.New), so the value itself must carry the full 256 bits
+	// of entropy — a guessable passphrase would be brute-forceable
+	// offline against a leaked database. secretbox refuses a key of any
+	// other shape too; we repeat the check here so a typo stops the boot
+	// with a message that names the variable and how to generate one.
+	// An unset or blank value is not an error: it just leaves workspace
+	// connect disabled.
 	if c.SecretKey != "" && !secretKeyPattern.MatchString(c.SecretKey) {
 		return errors.New("GOCOV_SECRET_KEY must be 64 hex characters.\nGenerate one with: openssl rand -hex 32")
 	}
