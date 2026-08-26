@@ -392,10 +392,11 @@ func readStateCookie(r *http.Request) (state, next string) {
 // function call away, which is where both a reader and an analyzer look for
 // it when asking whether a redirect can leave the site.
 func redirectInSite(w http.ResponseWriter, r *http.Request, next string) {
-	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.HasPrefix(next, `/\`) {
-		next = "/"
+	if strings.HasPrefix(next, "/") && !strings.HasPrefix(next, "//") && !strings.HasPrefix(next, `/\`) {
+		http.Redirect(w, r, next, http.StatusFound)
+		return
 	}
-	http.Redirect(w, r, next, http.StatusFound)
+	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 // sanitizeNext confines the post-login redirect to in-site paths, so the
