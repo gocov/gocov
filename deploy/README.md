@@ -20,8 +20,28 @@ cd /opt/gocov/deploy && docker compose -f docker-compose.prod.yml up -d --build
 
 .env keys: DATABASE_URL (RDS), GOCOV_BASE_URL=https://app.gocov.dev,
 GOCOV_MODE=hosted, GOCOV_SECRET_KEY, GOCOV_GITHUB_APP_ID,
-GOCOV_GITHUB_APP_PRIVATE_KEY (PEM content), GOCOV_OAUTH_GITHUB_KEY/SECRET,
-GOCOV_OAUTH_BITBUCKET_KEY/SECRET.
+GOCOV_OAUTH_GITHUB_KEY/SECRET, GOCOV_OAUTH_BITBUCKET_KEY/SECRET.
+
+The GitHub App private key is the exception: it is not in .env. The compose
+file defaults GOCOV_GITHUB_APP_PRIVATE_KEY to `/run/gocov-app-key.pem` and
+mounts `/opt/gocov/deploy/github-app.pem` there, and the server reads the
+file because the value holds no PEM content. The container runs as **uid
+65532** (distroless nonroot), so that file must be readable by that uid —
+keep it `chmod 600` and give it to the container's user rather than opening
+it up, because the key can mint installation tokens for every repo the App
+is installed on:
+
+```sh
+sudo chown 65532 /opt/gocov/deploy/github-app.pem
+```
+
+Getting this wrong is a boot failure, not a degraded feature: the server
+exits when it cannot read a configured key, so the container crash-loops.
+Check it without touching the running service:
+
+```sh
+docker run --rm --user 65532:65532 -v /opt/gocov/deploy/github-app.pem:/run/k.pem:ro alpine:3.21 cat /run/k.pem > /dev/null && echo readable
+```
 
 Upgrades: `git -C /opt/gocov pull && cd /opt/gocov/deploy && docker compose -f docker-compose.prod.yml up -d --build`
 (migrations apply automatically on start).

@@ -33,3 +33,13 @@ without authentication even when web UI sign-in is enabled.
 
 `GET /healthz` reports readiness (checks database connectivity) for load balancers and container orchestrators; it stays
 open when sign-in is enabled.
+
+The container image is distroless, so it has no `wget` or `curl` for a Docker `HEALTHCHECK` to call. The binary probes
+itself instead — `gocov-server healthcheck` requests `/healthz` on `GOCOV_ADDR` and exits non-zero if it is not `200 OK`,
+which is what the compose files use. Three timeouts are nested inside each other and want to stay in that order: the 2s
+`/healthz` spends on its database ping, the 2.5s the probe waits for a reply, and the 3s Docker allows the probe to run.
+
+```yaml
+healthcheck:
+  test: ["CMD", "/usr/local/bin/gocov-server", "healthcheck"]
+```

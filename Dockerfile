@@ -11,10 +11,11 @@ RUN ver="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo d
     CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${ver}" \
     -o /out/gocov-server ./cmd/gocov-server
 
-FROM alpine:3.21
-RUN adduser -D -H gocov
+# Distroless: no shell, no package manager, just the static binary plus CA
+# certificates and /etc/passwd. The :nonroot tag runs as uid 65532.
+FROM gcr.io/distroless/static-debian13:nonroot
 COPY --from=build /out/gocov-server /usr/local/bin/gocov-server
-USER gocov
+USER nonroot:nonroot
 EXPOSE 8080
-ENTRYPOINT ["gocov-server"]
+ENTRYPOINT ["/usr/local/bin/gocov-server"]
 CMD ["serve"]

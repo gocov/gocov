@@ -264,11 +264,17 @@ func staticVersion() string {
 	return fmt.Sprintf("%x", h.Sum64())
 }
 
+// HealthTimeout is how long GET /healthz gives its readiness probe before
+// calling the instance unhealthy. It is exported because whoever polls the
+// endpoint has to outwait it to get an answer rather than a timeout of
+// their own — see healthProbeTimeout in cmd/gocov-server.
+const HealthTimeout = 2 * time.Second
+
 // handleHealthz reports readiness: 200 when the health probe (typically a
 // database ping) succeeds, 503 otherwise.
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	if s.health != nil {
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), HealthTimeout)
 		defer cancel()
 		if err := s.health(ctx); err != nil {
 			s.log.Error("health check", "err", err)
