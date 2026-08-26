@@ -409,10 +409,14 @@ func sanitizeNext(next string) string {
 	// it, so "/\t/host" would arrive as "//host", and net/http passes a tab
 	// into the header untouched.
 	target, err := url.Parse(folded)
-	// Host, not Hostname: the latter drops a port, so "//:8080/x" would read
-	// as hostless here and as an authority in the browser. User covers the
-	// credentials-only authority "//user@".
-	if err != nil || target.Scheme != "" || target.Host != "" || target.User != nil {
+	// Host does the real work — Hostname would drop a port, so "//:8080/x"
+	// would read as hostless here and as an authority in the browser, and
+	// User covers the credentials-only authority "//user@". The Hostname
+	// call is nevertheless required: comparing it against a constant is the
+	// one URL check CodeQL's go/unvalidated-url-redirection query accepts
+	// as clearing target itself (UrlCheck.qll), where the Host comparison
+	// only clears the Host read and the taint survives via EscapedPath.
+	if err != nil || target.Hostname() != "" || target.Scheme != "" || target.Host != "" || target.User != nil {
 		return "/"
 	}
 	// The same two properties again, on the parsed path this time: an
