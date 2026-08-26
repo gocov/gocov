@@ -120,7 +120,9 @@ func signIn(t *testing.T, f *fixture, next string) *http.Cookie {
 	if cb.Code != http.StatusFound {
 		t.Fatalf("callback: status = %d", cb.Code)
 	}
-	if loc := cb.Header().Get("Location"); loc != sanitizeNext(next) {
+	loc := cb.Header().Get("Location")
+	assertInSite(t, loc)
+	if loc != sanitizeNext(next) {
 		t.Fatalf("callback redirected to %q, want %q", loc, sanitizeNext(next))
 	}
 	return cookieNamed(t, cb, sessionCookie)
@@ -242,14 +244,140 @@ func TestNonMemberIsDenied(t *testing.T) {
 	}
 }
 
+// hostileNext is every "next" that must never leave this server pointing at
+// another origin. The cases are grouped by the trick they use, because each
+// one defeated an earlier version of sanitizeNext.
+var hostileNext = []string{
+	// The plain forms: an absolute URL, and the scheme-relative spellings.
+	"https://evil.example", "//evil.example", `/\evil.example`, "no-slash",
+	// An authority needs neither a host nor a scheme to be an authority.
+	"//:8080/evil.example", "//user@evil.example", "//@evil.example",
+	// A browser deletes every tab and newline from a URL before resolving
+	// it, so each of these arrives as "//evil.example".
+	"/\t/evil.example", "/\n/evil.example", "/\r/evil.example",
+	"/\t\\evil.example", "/pa\tth//evil.example",
+	// http.Redirect runs path.Clean on its target, which drops "." and ".."
+	// segments while leaving a backslash alone — so these look like paths
+	// here and would reach the client collapsed into "/\evil.example".
+	`/./\evil.example`, `/./\/evil.example`, `/a/../\evil.example`,
+}
+
+// assertInSite fails unless the browser would resolve loc against this
+// server. It re-derives the answer the way a URL parser does — remove tab
+// and newline, read '\' as a separator — instead of calling sanitizeNext,
+// so that a sanitizer bug cannot hide behind an assertion that shares it.
+func assertInSite(t *testing.T, loc string) {
+	t.Helper()
+	asBrowser := strings.NewReplacer("\t", "", "\n", "", "\r", "", `\`, "/").Replace(loc)
+	if !strings.HasPrefix(asBrowser, "/") || strings.HasPrefix(asBrowser, "//") {
+		t.Errorf("Location %q reads as %q — that is another origin", loc, asBrowser)
+	}
+}
+
+// Both redirects that carry a caller-supplied next are checked against the
+// Location header they actually emit, not against sanitizeNext's return
+// value: the bug this test grew out of lived downstream of the sanitizer,
+// in http.Redirect's own normalization, where a unit test of the function
+// alone is blind. Only the origin is asserted, not the exact landing path —
+// a hostile next is neutralized, and where the leftovers point is the
+// sanitizer's business, not this test's.
 func TestOpenRedirectRejected(t *testing.T) {
 	f := newAuthFixture(t, &fakeProvider{identity: memberIdentity()}, nil)
-	for _, next := range []string{"https://evil.example", "//evil.example", `/\evil.example`, "no-slash"} {
-		sess := signIn(t, f, next) // signIn asserts the redirect goes to sanitizeNext(next)
-		if got := sanitizeNext(next); got != "/" {
-			t.Errorf("sanitizeNext(%q) = %q, want /", next, got)
+	sess := signIn(t, f, "/")
+	for _, next := range hostileNext {
+		t.Run(next, func(t *testing.T) {
+			// GET /login with a live session forwards straight to next.
+			assertInSite(t, get(f, "/login?next="+url.QueryEscape(next), sess).Header().Get("Location"))
+			// The post-consent redirect takes the same next through the
+			// state cookie. (signIn asserts on its Location too.)
+			signIn(t, f, next)
+		})
+	}
+}
+
+// In-site paths have to keep working: rejecting a hostile next is only half
+// the job, sending every signed-in visitor to "/" would be the other kind of
+// bug. What comes back is net/url's serialization, so a path is normalized
+// (non-ASCII percent-encoded) but never redirected away from.
+func TestSanitizeNextKeepsInSitePaths(t *testing.T) {
+	for next, want := range map[string]string{
+		"/":                         "/",
+		"/onboarding":               "/onboarding",
+		"/workspaces/acme":          "/workspaces/acme",
+		"/repos/acme/web":           "/repos/acme/web",
+		"/repos/acme/web?tab=files": "/repos/acme/web?tab=files",
+		"/github/setup?installation_id=42&setup_action=install": "/github/setup?installation_id=42&setup_action=install",
+		"/repos/acme/web#L12":   "/repos/acme/web#L12",
+		"/repos/acme/web?q=a+b": "/repos/acme/web?q=a+b",
+		// Percent-encoded on the way out, and still the same destination.
+		"/wörk/spåce": "/w%C3%B6rk/sp%C3%A5ce",
+	} {
+		if got := sanitizeNext(next); got != want {
+			t.Errorf("sanitizeNext(%q) = %q, want %q", next, got, want)
 		}
-		_ = sess
+	}
+}
+
+// The state cookie carries next across the consent round trip, and
+// http.SetCookie deletes every byte it considers invalid — anything
+// non-ASCII, '"', ';'. Unencoded, "/repos/acme/wörk" came back as
+// "/repos/acme/wrk" and the visitor landed on a 404 after signing in.
+func TestNextSurvivesTheStateCookie(t *testing.T) {
+	f := newAuthFixture(t, &fakeProvider{identity: memberIdentity()}, nil)
+	for _, next := range []string{"/repos/acme/wörk", "/a;b", `/a"b`, "/a b", "/repos/acme/web?q=a+b"} {
+		t.Run(next, func(t *testing.T) {
+			start := get(f, "/oauth/bitbucket/start?next="+url.QueryEscape(next))
+			ck := cookieNamed(t, start, stateCookie)
+			state, _, _ := strings.Cut(ck.Value, "|")
+			cb := get(f, "/oauth/bitbucket/callback?code=thecode&state="+url.QueryEscape(state), ck)
+			if got, want := cb.Header().Get("Location"), sanitizeNext(next); got != want {
+				t.Errorf("after the round trip Location = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// What sanitizeNext returns has to be exactly what goes on the wire.
+// http.Redirect normalizes its own target, and both open redirects this
+// file has had lived in the gap between the string the sanitizer approved
+// and the different one the client received; asserting the gap is empty
+// retires the whole class rather than the two payloads that found it.
+func TestSanitizeNextIsWhatGoesOnTheWire(t *testing.T) {
+	f := newAuthFixture(t, &fakeProvider{identity: memberIdentity()}, nil)
+	sess := signIn(t, f, "/")
+	nexts := append([]string{
+		"/", "/onboarding", "/repos/acme/web?tab=files", "/repos/acme/web#L12",
+		"/wörk/spåce", "/a/b/", "/a/./b", "/a/../b", "/%2f/evil.example",
+	}, hostileNext...)
+	for _, next := range nexts {
+		t.Run(next, func(t *testing.T) {
+			loc := get(f, "/login?next="+url.QueryEscape(next), sess).Header().Get("Location")
+			if want := sanitizeNext(next); loc != want {
+				t.Errorf("Location = %q but sanitizeNext returned %q — http.Redirect rewrote it underneath us", loc, want)
+			}
+		})
+	}
+}
+
+// The regression this guards is only visible on the wire: a tab passes
+// net/http's header sanitizer (unlike \r and \n, which it rewrites to
+// spaces), so "/\t/evil.example" would leave the process intact and reach
+// the browser as a scheme-relative URL pointing at another origin.
+func TestLoginRedirectHeaderCarriesNoControlBytes(t *testing.T) {
+	f := newAuthFixture(t, &fakeProvider{identity: memberIdentity()}, nil)
+	sess := signIn(t, f, "/")
+
+	rec := get(f, "/login?next="+url.QueryEscape("/\t/evil.example"), sess)
+
+	var raw strings.Builder
+	if err := rec.Result().Write(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(raw.String(), "\t") {
+		t.Errorf("response carries a raw tab, which a browser strips out:\n%q", raw.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/" {
+		t.Errorf("Location = %q, want /", loc)
 	}
 }
 

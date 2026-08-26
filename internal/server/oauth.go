@@ -12,6 +12,8 @@ import (
 	"encoding/hex"
 	"html/template"
 	"net/http"
+	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -152,8 +154,12 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name:     stateCookie,
-		Value:    state + "|" + sanitizeNext(r.FormValue("next")),
+		Name: stateCookie,
+		// Percent-encoded, because a cookie value is not a place for an
+		// arbitrary path: net/http drops every byte SetCookie considers
+		// invalid — anything non-ASCII, '"', ';' — so an unencoded
+		// "/repos/acme/wörk" would come back as "/repos/acme/wrk".
+		Value:    state + "|" + url.QueryEscape(sanitizeNext(r.FormValue("next"))),
 		Path:     "/",
 		MaxAge:   int((10 * time.Minute).Seconds()),
 		HttpOnly: true,
@@ -368,20 +374,60 @@ func readStateCookie(r *http.Request) (state, next string) {
 	if err != nil {
 		return "", "/"
 	}
-	state, next, _ = strings.Cut(c.Value, "|")
+	state, escaped, _ := strings.Cut(c.Value, "|")
+	next, err = url.QueryUnescape(escaped)
+	if err != nil {
+		return state, "/"
+	}
 	return state, sanitizeNext(next)
 }
 
 // sanitizeNext confines the post-login redirect to in-site paths, so the
-// login URL can never be turned into an open redirect. A safe target is a
-// single leading slash whose second character is neither '/' nor '\\' —
-// browsers treat "//host" and "/\host" as scheme-relative external URLs.
+// login URL can never be turned into an open redirect. The target is parsed
+// and kept only if it names no host of its own, and what comes back is
+// net/url's own serialization rather than the caller's string — so whatever
+// survives is a shape this package chose, not one an attacker spelled.
 func sanitizeNext(next string) string {
-	if len(next) == 0 || next[0] != '/' {
+	// Browsers read '\' as a path separator for http(s) (WHATWG URL,
+	// relative slash state) while net/url does not, so fold it before
+	// parsing: "/\host" is an authority to the client and a mere path to
+	// url.Parse, and "/./\host" is one that http.Redirect's own path.Clean
+	// would assemble on the way out.
+	folded := strings.ReplaceAll(next, `\`, "/")
+	// url.Parse refuses ASCII control bytes, which is exactly what is
+	// needed: a browser deletes tab and newline from a URL before resolving
+	// it, so "/\t/host" would arrive as "//host", and net/http passes a tab
+	// into the header untouched.
+	target, err := url.Parse(folded)
+	// Host, not Hostname: the latter drops a port, so "//:8080/x" would read
+	// as hostless here and as an authority in the browser. User covers the
+	// credentials-only authority "//user@".
+	if err != nil || target.Scheme != "" || target.Host != "" || target.User != nil {
 		return "/"
 	}
-	if len(next) > 1 && (next[1] == '/' || next[1] == '\\') {
+	// An authority-less URL can still be a relative path ("x", "../x"),
+	// which would resolve against wherever the browser happens to be.
+	escaped := target.EscapedPath()
+	if !strings.HasPrefix(escaped, "/") {
 		return "/"
 	}
-	return next
+	// Collapse the dot segments here rather than leaving them for
+	// http.Redirect, which cleans its target on the way out: twice now a
+	// hole has opened in the gap between the string this function approved
+	// and the different string that reached the client. Cleaning the
+	// escaped form keeps "%2f" an escape rather than a separator, and a
+	// cleaned rooted path always begins with exactly one slash, so no
+	// authority can appear after this point. Clean is idempotent, so what
+	// http.Redirect does next is a no-op.
+	out := path.Clean(escaped)
+	if strings.HasSuffix(escaped, "/") && !strings.HasSuffix(out, "/") {
+		out += "/"
+	}
+	if target.ForceQuery || target.RawQuery != "" {
+		out += "?" + target.RawQuery
+	}
+	if target.Fragment != "" {
+		out += "#" + target.EscapedFragment()
+	}
+	return out
 }
