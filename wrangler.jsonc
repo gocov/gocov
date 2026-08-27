@@ -1,0 +1,12 @@
+{
+  // Deploy config for docs.gocov.dev. The docs site is static: Cloudflare runs
+  // the build command from requirements-docs.txt + zensical.toml, then this
+  // uploads site/ as assets — there is no Worker script.
+  "name": "gocov-docs",
+  "compatibility_date": "2026-08-28",
+  "assets": {
+    "directory": "./site",
+    // Serve the generated 404.html instead of a bare Cloudflare 404.
+    "not_found_handling": "404-page"
+  }
+}

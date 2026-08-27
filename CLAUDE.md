@@ -63,3 +63,5 @@ The `Hosted` config flag switches the instance to self-service mode (any forge a
 ## Docs
 
 User-facing docs are in `docs/` (getting-started, sign-in/OAuth setup, forge connections, CI upload, coverage gate, parts, API/badge, configuration, development). Update the relevant page when changing user-visible behavior.
+
+Those same files are the docs site at docs.gocov.dev: `zensical.toml` at the root points at `docs/`, `overrides/` carries the one theme tweak plus a copy of the app's mark (`assets/gocov*.svg` — keep it in step with `internal/server/static/favicon.svg`), and CI builds them with `zensical build --strict`, so a link to a page that no longer exists fails the build. Cloudflare runs the same build on every push to `main` and uploads `site/` as static assets per `wrangler.jsonc` — no Worker script, so the file is deploy config only. `docs/` stays plain Markdown — no frontmatter, no site-only files — because it is read on GitHub too, and `docs/README.md` is the site's home page.

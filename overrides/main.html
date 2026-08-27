@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{#
+  Theme tweaks that would otherwise need a stylesheet inside docs/ — the docs
+  tree stays plain Markdown, read the same way on GitHub and here.
+
+  Reference tables (every environment variable, the page index) carry long
+  identifiers. Without this they wrap mid-token on a phone — "DATABASE_U" over
+  "RL" — instead of the table scrolling sideways in its own container.
+#}
+{% block extrahead %}
+  <style>
+    .md-typeset__table code { white-space: nowrap; }
+  </style>
+{% endblock %}

@@ -1,0 +1,5 @@
+# Zensical, the successor to Material for MkDocs by the same team — MkDocs 1.x
+# is unmaintained and MkDocs 2.0 drops the theme/plugin model Material needs.
+# Pinned: pre-1.0 and moving fast, a floating version turns an unrelated morning
+# into a broken docs build.
+zensical==0.0.57
