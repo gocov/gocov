@@ -221,6 +221,7 @@
     <p class="sub">Then add the coverage job to your <code>.gitlab-ci.yml</code> &mdash; the
     <code>workflow</code> rules run it on merge requests and the default branch without
     duplicate pipelines, and the checksum line pins the binary:</p>
+    {{/* x-release-please-start-version */}}
     <pre><code id="snippet">workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -235,6 +236,7 @@ coverage:
       | grep ' gocov-linux-amd64$' | sha256sum -c -
     - chmod +x gocov-linux-amd64
     - ./gocov-linux-amd64 upload coverage.out</code></pre>
+    {{/* x-release-please-end */}}
     {{else}}
     <p class="sub">Then add the step to <code>bitbucket-pipelines.yml</code> &mdash;
     <code>branches</code> and <code>pull-requests</code> share one step so a PR build runs

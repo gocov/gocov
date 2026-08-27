@@ -29,6 +29,8 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+      - name: Check version pins agree
+        run: ./scripts/check-pins.sh
       - name: Vet
         run: go vet ./...
       - name: Test (with Postgres integration tests)

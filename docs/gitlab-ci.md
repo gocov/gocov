@@ -7,6 +7,7 @@
 
 2. Add an upload step after your tests:
 
+<!-- x-release-please-start-version -->
 ```yaml
 workflow:
   rules:
@@ -23,6 +24,7 @@ coverage:
     - chmod +x gocov-linux-amd64
     - ./gocov-linux-amd64 upload coverage.out
 ```
+<!-- x-release-please-end -->
 
 Only the test command and the uploaded path change for other languages —
 [Languages & formats](languages.md) lists what each test tool writes.

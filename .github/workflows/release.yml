@@ -1,8 +1,28 @@
 name: release
 
+# One build, two ways in:
+#
+#   workflow_call — release-please merged a release PR and tagged it. The
+#     normal path; the tag comes in as an input.
+#   push of a v* tag — the escape hatch. Turn the bot off, cut a tag by
+#     hand, and everything below still runs exactly as it did before.
+#
+# The tag cannot be read from GITHUB_REF_NAME any more: on the called
+# path that is the branch, and baking "main" into -X main.version would
+# be a silent, shipped mistake. It is resolved once, into $TAG.
+#
+# release-please creates the GitHub Release itself, so publishing has to
+# cope with a release that already exists as well as one that does not.
+
 on:
   push:
     tags: ["v*"]
+  workflow_call:
+    inputs:
+      tag:
+        description: The tag to build and publish.
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -10,8 +30,12 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -26,18 +50,44 @@ jobs:
             os=${target%/*}; arch=${target#*/}
             ext=""; [ "$os" = "windows" ] && ext=".exe"
             CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath \
-              -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
+              -ldflags "-s -w -X main.version=${TAG}" \
               -o "dist/gocov-$os-$arch$ext" ./cmd/gocov
             CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath \
-              -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
+              -ldflags "-s -w -X main.version=${TAG}" \
               -o "dist/gocov-server-$os-$arch$ext" ./cmd/gocov-server
           done
           (cd dist && sha256sum * > checksums.txt)
 
-      - name: Create release
+      - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            # Hand-cut tag: nothing exists yet, so this is the whole job.
+            gh release create "$TAG" dist/* --title "$TAG" --generate-notes
+            exit 0
+          fi
+
+          gh release upload "$TAG" dist/* --clobber
+
+          # release-please wrote the body from the CHANGELOG. Put the
+          # generated pull-request list underneath it rather than instead
+          # of it: the written part belongs on top, and today the CHANGELOG
+          # section is thin, so losing this list would make the notes worse
+          # than they were before any of this was automated.
+          body=$(gh release view "$TAG" --json body --jq .body)
+          case "$body" in
+          *"## What's Changed"*)
+            echo "notes already carry the generated list; leaving them alone"
+            ;;
+          *)
+            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+              -f tag_name="$TAG" --jq .body >generated.md
+            { printf '%s\n\n' "$body"; cat generated.md; } >notes.md
+            gh release edit "$TAG" --notes-file notes.md
+            ;;
+          esac
 
   # The server image every deployment runs — the hosted instance pulls it
   # by exact version, self-hosters pull it instead of building from source.

@@ -48,3 +48,74 @@ instead of the process environment, so the whole contract is covered by ordinary
 Coverage formats sit behind `profile.Parser`, forges behind
 `forge.Forge`, and raw profile storage behind `blobstore.Store`; the database schema stores a format-agnostic normalized
 model. GitHub and GitLab were each added this way — new formats or S3 storage slot in without rewrites.
+
+## Releasing
+
+A gocov release lands in three repositories. The CLI is tagged here, which builds the binaries and publishes the
+release; [gocov-action](https://github.com/gocov/gocov-action) pins the CLI version its users download; and
+[upload-pipe](https://github.com/gocov/upload-pipe) bakes the same version into the Bitbucket pipe image.
+
+### Cutting one
+
+Say which version you want, as an empty commit on main:
+
+```sh
+git commit --allow-empty -m "chore: release 0.13.0" -m "Release-As: 0.13.0"
+```
+
+[release-please](https://github.com/googleapis/release-please) picks that up and opens a release pull request
+holding the version, the CHANGELOG entry and the bumped install-snippet pins. Read it, then merge it: merging tags
+`v0.13.0`, and the tag's build publishes the ten binaries and `checksums.txt`.
+
+The version is stated rather than inferred on purpose. release-please normally derives it from `feat:`/`fix:`
+commit prefixes, and this repo writes commit subjects as English sentences instead — a convention worth more than
+the inference is. So it runs as a pull-request, CHANGELOG and pin machine, and nothing happens until a
+`Release-As:` commit asks for it. The cost of that trade is a thin CHANGELOG: with no conventional prefixes to
+read, release-please has little to put under the version heading. The release body makes up for it — the build
+appends GitHub's generated pull-request list underneath whatever the CHANGELOG said, so the notes stay at least as
+full as they were before any of this was automated, and anything written by hand stays on top of them.
+
+The pull request is the point. Until it is merged nothing is tagged, so a wrong version or a bad note is a comment
+on a PR rather than a tag that has to be burned.
+
+### Where the version is written down
+
+In the snippets a user copies — the CI recipes in [gitlab-ci](gitlab-ci.md) and [ci-other](ci-other.md), and the
+onboarding wizard's template — plus the `PinnedCLIVersion` constant in `internal/hosted` that the wizard and its
+test read. The copies cannot share that constant — some are Markdown, one is a Go template — so release-please
+rewrites them all, guided by `x-release-please-start-version` markers (and a line marker on the constant). The
+markers sit *outside* the snippets: an HTML comment in the Markdown, a Go template comment in the page, so neither
+shows up in what a reader copies and neither reaches the browser.
+
+Copies drift, and in August they did: the pipe image spent ten days baking a CLI two releases older than the one the
+action installed, and nothing said so. Two scripts close that off from opposite ends.
+
+`scripts/check-pins.sh` runs in CI and holds this repo's pins to *each other*. It says nothing about whether
+that version is the latest, and cannot: the release PR is what bumps the pins, so between a release and its bump
+every pin would look stale and main would be red for no reason. The wrapper repos have a script of the same name
+doing the same job for their own copies.
+
+`scripts/verify-release.sh` is the other end — it checks the published world after a release rather than the
+working tree before one:
+
+```sh
+scripts/verify-release.sh            # the newest release
+scripts/verify-release.sh v0.12.0    # a specific one
+```
+
+It confirms that the ten binaries and `checksums.txt` are on the release and that the checksums cover every binary,
+that this repo's snippets and both wrappers name the released CLI, that `gocov-action@v1` resolves to the newest
+action release, that the pipe image is on Docker Hub for both architectures, and that the image actually reports the
+right `gocov version` when opened. It also checks the pipe's tag reached Bitbucket as well as GitHub — that repo
+releases through two remotes, and a tag that lands on only one publishes nothing on the other silently. It needs
+`gh`, `curl` and `jq`; `docker` is optional and only the last check needs it.
+
+The `verify-release` workflow runs it weekly and on demand. It also runs on every published release, where it
+reports rather than fails: at that moment the wrapper bumps are still open PRs, so the output is a to-do list, not a
+verdict.
+
+### If the bot is in the way
+
+Turn it off and cut the tag by hand — `release.yml` still triggers on a pushed `v*` tag and still does the whole
+job, creating the release itself when release-please has not already made one. Nothing about the release depends on
+the bot being alive.

@@ -1,0 +1,70 @@
+name: verify-release
+
+# Answers "what actually shipped?" for the whole release — the CLI's
+# binaries, the action's pin and its floating v1, the pipe's image on both
+# architectures, and the pipe's tag on both of its remotes.
+#
+# Three triggers, because the answer means different things at different
+# times:
+#
+#   release: published — the wrappers have not been bumped yet, so this
+#     run is a to-do list, not a verdict. It reports and stays green.
+#   schedule           — by Monday everything should have landed. Here a
+#     stale pin is a real failure, and the weekly cadence is what catches
+#     drift that appears outside a release (a hand-cut tag, a rebuilt
+#     image) rather than because of one.
+#   workflow_dispatch  — check any release, any time.
+#
+# Cross-repo reads are all of public repositories, so the default token is
+# enough and no App or PAT is involved.
+on:
+  release:
+    types: [published]
+  schedule:
+    - cron: "17 8 * * 1"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "gocov release to verify (default: the newest one)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Verify the release
+        id: verify
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: |
+          ./scripts/verify-release.sh "$TAG" | tee report.txt
+
+      - name: Publish the report
+        run: |
+          {
+            echo '```'
+            cat report.txt
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      # Straight after a release the wrappers are legitimately behind: the
+      # bump PRs are open, not merged. Failing here would make every
+      # release red and teach everyone to ignore the one check that knows
+      # what shipped. The scheduled and manual runs are the real gate.
+      - name: Fail on drift
+        if: steps.verify.outcome == 'failure' && github.event_name != 'release'
+        run: |
+          echo "::error title=verify-release::the release is not consistent across repos; see the job summary"
+          exit 1
+
+      - name: Note what is still outstanding
+        if: steps.verify.outcome == 'failure' && github.event_name == 'release'
+        run: echo "::notice title=verify-release::the wrappers have not caught up yet; see the job summary"

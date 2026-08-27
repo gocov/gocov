@@ -1,0 +1,65 @@
+name: release-please
+
+# Keeps a release pull request open on main. The PR is the review gate:
+# it carries the version, the CHANGELOG entry and the bumped install-
+# snippet pins, and nothing is tagged until it is merged — so a mistake is
+# a PR comment rather than a tag that has to be burned.
+#
+# Versions are not inferred here. This repo writes commit subjects as
+# English sentences rather than `feat:`/`fix:` prefixes, which
+# release-please cannot read, so it is used as a pull-request, CHANGELOG
+# and pin machine and the version is stated outright when a release is
+# wanted:
+#
+#   git commit --allow-empty -m "chore: release 0.13.0" -m "Release-As: 0.13.0"
+#
+# Without such a commit no release PR appears, which is the intended
+# behaviour: releases happen when they are asked for.
+#
+# The pins live in the CI recipe docs (gitlab-ci.md, ci-other.md), the
+# onboarding template and the PinnedCLIVersion constant, wrapped in
+# x-release-please-start-version markers that sit outside the snippets
+# themselves — an HTML comment in the Markdown, a Go template comment in
+# the page, so neither reaches a reader or the browser.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # A tag pushed by the action carries GITHUB_TOKEN, and GitHub does not
+  # start workflow runs from those — release.yml's own `on: push: tags`
+  # would never fire here. Calling it directly sidesteps that entirely,
+  # and keeps one copy of the build rather than a second that drifts.
+  publish:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}
+    # A called workflow can never hold more permission than its caller
+    # grants, so everything release.yml's jobs need is named here: the
+    # release itself (contents), the GHCR push (packages), the deploy
+    # role (id-token). Same for secrets — without inherit, the deploy
+    # smoke test would run without its upload token.
+    secrets: inherit
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
