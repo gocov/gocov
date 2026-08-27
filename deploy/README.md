@@ -1,7 +1,8 @@
 # Hosted deployment (app.gocov.dev)
 
 Single EC2 instance (docker compose: gocov-server + Caddy) in front of an
-RDS Postgres. TLS via Caddy/Let's Encrypt, DNS on Cloudflare (DNS-only).
+RDS Postgres. Caddy serves a Cloudflare Origin CA certificate from
+`deploy/certs/` (no ACME), behind Cloudflare's proxy on Full (strict).
 Management via SSM Session Manager — the instance has no SSH port open.
 
 Infra (eu-central-1):

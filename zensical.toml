@@ -47,12 +47,18 @@ invalid_link_anchors = true
 
 [project.theme]
 custom_dir = "overrides"
+# System fonts, no Google Fonts request: it is the single biggest
+# render-blocking resource on a phone, and a docs site that argues for
+# keeping your data on your own infrastructure should not phone a third
+# party to draw its text.
+font = false
 # The app's own mark, copied under overrides/ so docs/ stays Markdown. Same
 # split the web UI makes: the header pairs the bare arc with the wordmark, the
 # favicon carries the "g" because at 16px there is no room for words.
 logo = "assets/gocov-mark.svg"
 favicon = "assets/gocov.svg"
 features = [
+  "announce.dismiss",
   "content.action.edit",
   "content.code.copy",
   "content.tabs.link",
