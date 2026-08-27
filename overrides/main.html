@@ -8,6 +8,17 @@
   identifiers. Without this they wrap mid-token on a phone — "DATABASE_U" over
   "RL" — instead of the table scrolling sideways in its own container.
 #}
+{#
+  The one place the docs sell the hosted service. ?ref=docs is what makes the
+  crossing countable; the banner is dismissable, so it costs a returning reader
+  one click and then nothing.
+#}
+{% block announce %}
+  gocov is hosted at
+  <a href="https://app.gocov.dev/?ref=docs">app.gocov.dev</a>
+  &mdash; free for public repos, nothing to run yourself.
+{% endblock %}
+
 {% block extrahead %}
   <style>
     .md-typeset__table code { white-space: nowrap; }
