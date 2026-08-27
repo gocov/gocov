@@ -40,3 +40,15 @@ jobs:
         with:
           files: coverage.out
           token: ${{ secrets.GOCOV_TOKEN }}
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install Zensical
+        run: pip install -r requirements-docs.txt
+      - name: Build docs site (strict — a broken link fails here, not in production)
+        run: zensical build --strict
