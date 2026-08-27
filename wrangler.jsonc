@@ -4,10 +4,14 @@
   // uploads site/ as assets — there is no Worker script.
   "name": "gocov-docs",
   "compatibility_date": "2026-08-28",
-  // Branch builds upload a version rather than deploying; this keeps their
-  // preview URLs on regardless of the workers.dev setting. site/_headers
-  // tells crawlers not to index those hosts, so only docs.gocov.dev ranks.
-  "preview_urls": true,
+  // One public address, docs.gocov.dev. Without workers_dev the deploy also
+  // publishes the site on workers.dev, and preview URLs put every branch build
+  // on a near-permanent workers.dev host of its own — which cannot be moved to
+  // a domain we own. Branch builds still upload a version; it simply has no
+  // public address until this is turned back on. site/_headers keeps the
+  // noindex rule for those hosts in case it is.
+  "preview_urls": false,
+  "workers_dev": false,
   "assets": {
     "directory": "./site",
     // Serve the generated 404.html instead of a bare Cloudflare 404.

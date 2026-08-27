@@ -56,7 +56,8 @@ runner produced. The badge is one line of markdown:
 
 ## Documentation
 
-Everything else lives in [docs/](docs/README.md):
+The full documentation is at **[docs.gocov.dev](https://docs.gocov.dev)**, built from [docs/](docs/README.md) in this
+repository:
 
 - [Getting started](docs/getting-started.md) — onboarding, workspace settings, hosted mode
 - [Sign-in](docs/sign-in.md) — OAuth setup for Bitbucket, GitHub, GitLab and the access model
