@@ -1,25 +1,40 @@
 # gocov documentation
 
-[Getting started](getting-started.md) is the short path to a first coverage report: sign in at
-[app.gocov.dev](https://app.gocov.dev/?ref=docs) or run your own instance, add an upload step to CI, and coverage lands
-on the commit, in the pull request and on the badge.
+gocov tracks your test coverage and puts it where your team already works: a build status and delta on every
+commit, a diff-coverage comment on every pull request, a gate that can block merges, and a badge for the README.
+It works with GitHub, Bitbucket Cloud and GitLab, and accepts coverage reports from Go, JavaScript/TypeScript,
+Java/Kotlin, Python, PHP and Ruby — the format is detected automatically.
 
-## Contents
+Use the hosted service at [app.gocov.dev](https://app.gocov.dev/?ref=docs), or
+[run your own instance](self-hosting.md) — same binary, same docs.
 
-| Page                                      | Covers                                                                              |
-|-------------------------------------------|-------------------------------------------------------------------------------------|
-| [Getting started](getting-started.md)     | Hosted or your own instance, onboarding, workspace settings                           |
-| [Forge connections](forge-connections.md) | GitHub App, Bitbucket and GitLab one-click connect — setup and behavior             |
-| [Uploading coverage](ci-upload.md)        | Pipelines, Actions, GitLab CI, prebuilt binaries, other ecosystems                    |
-| [Coverage gate](coverage-gate.md)         | Minimum/diff/drop rules and making them block merges                                |
-| [Parts](parts.md)                         | Combining multiple reports per commit from separate CI jobs                         |
-| [Why coverage changed](coverage-changed.md) | Baselines, missing parts, empty diff coverage — the usual surprises                     |
-| [API & badge](api.md)                     | The upload API and the SVG badge                                                    |
-| [Features](features.md)                   | What gocov does, surface by surface, and how the architecture extends               |
-| [Development](development.md)             | Building, testing, the configuration contract                                        |
-| [Self-hosting](self-hosting.md)           | Running an instance for real: TLS, Postgres, the secret key, upgrades                |
-| [Sign-in](sign-in.md)                     | Enabling web UI sign-in per forge; the access model, hosted mode                     |
-| [Configuration](configuration.md)         | Every environment variable                                                           |
+## Start here
+
+1. **[Getting started](getting-started.md)** — sign in, add one CI step, and coverage lands on your next push.
+2. **Wire up your CI** — [GitHub Actions](github-actions.md), [GitLab CI](gitlab-ci.md),
+   [Bitbucket Pipelines](bitbucket-pipelines.md), or [any other CI](ci-other.md).
+3. **[Your language](languages.md)** — the test command and upload line for each supported ecosystem.
+
+## Guides
+
+| Page                                        | Covers                                                              |
+|---------------------------------------------|---------------------------------------------------------------------|
+| [Pull requests](pull-requests.md)           | The comment, check run, inline annotations and source view          |
+| [Connect your forge](connecting.md)         | The one-click connection that turns the PR surfaces on              |
+| [Coverage gate](coverage-gate.md)           | Minimum/diff/drop rules and making them block merges                |
+| [Parts](parts.md)                           | Combining reports from separate CI jobs into one per commit         |
+| [Why coverage changed](coverage-changed.md) | Baselines, missing parts, empty diff coverage — the usual surprises |
+
+## Reference
+
+- [CLI](cli.md) — every flag and environment variable of `gocov upload`
+- [API & badge](api.md) — the raw upload endpoint and the SVG badge
+
+## Self-hosting
+
+Everything about running an instance yourself lives in its own section:
+[production setup](self-hosting.md), [sign-in](sign-in.md), [forge apps & credentials](forge-connections.md)
+and the [configuration reference](configuration.md). None of it is needed to *use* gocov.
 
 ## Conventions
 

@@ -1,8 +1,12 @@
 # Self-hosting in production
 
-[Getting started](getting-started.md) takes you from `docker compose up` to a first upload on your own machine. This
-page is the difference between that and an instance other people upload to: TLS in front, a database you did not start
-with the app, a key you can lose, and upgrades that have to be boring. The process itself stays small — almost
+To evaluate gocov on your own machine, `docker compose up` in the repo brings Postgres and the server up on
+http://localhost:8080, migrations apply themselves, and from there [Getting started](getting-started.md) is the same
+as on the hosted service — a fresh instance just needs [sign-in enabled](sign-in.md) first, so onboarding has a forge
+identity to derive your workspaces from.
+
+This page is the difference between that and an instance other people upload to: TLS in front, a database you did not
+start with the app, a key you can lose, and upgrades that have to be boring. The process itself stays small — almost
 everything here is about what surrounds it.
 
 ## What you are running
@@ -16,10 +20,8 @@ uid **65532**. There is no published container image yet, so both compose files 
 rather run the binary under systemd, every release ships `gocov-server` for linux, darwin and windows on amd64 and
 arm64, with `checksums.txt` alongside.
 
-All of it is AGPL-3.0, and on an instance you run yourself the license does more work than it does on a page you merely
-visit. The server contacts nothing but your database and the forge APIs — no telemetry, no license check, no call home
-— so a running deployment depends on this project's servers not at all, and on this project only for the next version
-you choose to build. That is the part of "self-hostable" that survives a change of ownership, funding or interest.
+All of it is AGPL-3.0. The server contacts nothing but your database and the forge APIs — no telemetry, no license
+check, no call home — so a running deployment depends on this project only for the next version you choose to build.
 
 The footprint is modest. gocov's own hosted instance runs the server and a TLS terminator on a single 2 vCPU / 2 GB
 arm64 VM, in front of a 2 vCPU / 1 GB managed Postgres.
@@ -106,6 +108,22 @@ Check it without touching the running service:
 docker run --rm --user 65532:65532 -v "$PWD/github-app.pem:/run/k.pem:ro" alpine:3.21 cat /run/k.pem > /dev/null && echo readable
 ```
 
+## Health checks
+
+`GET /healthz` reports readiness (it checks database connectivity) for load balancers and container orchestrators; it
+stays open when sign-in is enabled.
+
+The container image is distroless, so it has no `wget` or `curl` for a Docker `HEALTHCHECK` to call. The binary probes
+itself instead — `gocov-server healthcheck` requests `/healthz` on `GOCOV_ADDR` and exits non-zero if it is not
+`200 OK`, which is what the compose files use. Three timeouts are nested inside each other and want to stay in that
+order: the 2s `/healthz` spends on its database ping, the 2.5s the probe waits for a reply, and the 3s Docker allows
+the probe to run.
+
+```yaml
+healthcheck:
+  test: ["CMD", "/usr/local/bin/gocov-server", "healthcheck"]
+```
+
 ## Upgrading
 
 Fetch the new code, rebuild or replace the binary, restart; migrations apply themselves on the way up. On the compose
@@ -126,7 +144,7 @@ cut an upload in half. Kubernetes' 30-second default already clears it.
 the image is built.
 
 The server and the upload CLI version independently, so pin the CLI in CI on its own schedule; see
-[Uploading coverage](ci-upload.md).
+[Other CI systems](ci-other.md).
 
 ## What talks to what
 
@@ -136,5 +154,5 @@ The server and the upload CLI version independently, so pin the CLI in CI on its
 | outbound 443 | forge APIs — statuses, PR comments, check runs, diffs                       |
 | Postgres     | from the server only; it never needs to be reachable from anywhere else     |
 
-Every variable named on this page, and the rest of them, are listed in [Configuration](configuration.md). Setting up the
-forge side is [Forge connections](forge-connections.md); who may sign in is [Sign-in](sign-in.md).
+Every variable named on this page, and the rest of them, are listed in [Configuration](configuration.md). Setting up
+the forge side is [Forge apps & credentials](forge-connections.md); who may sign in is [Sign-in](sign-in.md).

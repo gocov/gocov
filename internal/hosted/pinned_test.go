@@ -7,10 +7,11 @@ import (
 )
 
 // pinnedIn are the files whose copy-paste snippets install a specific CLI
-// release. Both are read by users following instructions, so a stale
+// release. All are read by users following instructions, so a stale
 // version here is a broken pipeline for someone, not a typo.
 var pinnedIn = []string{
-	"../../docs/ci-upload.md",
+	"../../docs/gitlab-ci.md",
+	"../../docs/ci-other.md",
 	"../../internal/server/templates/onboarding.html",
 }
 

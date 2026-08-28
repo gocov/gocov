@@ -8,7 +8,7 @@
 [project]
 site_name = "gocov"
 site_url = "https://docs.gocov.dev/"
-site_description = "Self-hostable coverage tracking — diff coverage, PR annotations and coverage gates for Bitbucket Cloud, GitHub and GitLab."
+site_description = "Coverage tracking for pull requests — diff coverage, PR comments and merge gates for GitHub, GitLab and Bitbucket Cloud. Hosted at app.gocov.dev, or self-host a single Go binary."
 site_author = "gocov"
 copyright = "AGPL-3.0 © 2026"
 repo_url = "https://github.com/gocov/gocov"
@@ -19,32 +19,36 @@ strict = true
 
 nav = [
   { Home = "README.md" },
-  { Setup = [
-    { "Getting started" = "getting-started.md" },
-    { "Forge connections" = "forge-connections.md" },
+  { "Getting started" = "getting-started.md" },
+  { "Upload from CI" = [
+    { "GitHub Actions" = "github-actions.md" },
+    { "GitLab CI" = "gitlab-ci.md" },
+    { "Bitbucket Pipelines" = "bitbucket-pipelines.md" },
+    { "Other CI systems" = "ci-other.md" },
+    { "Languages & formats" = "languages.md" },
   ] },
-  { "Using gocov" = [
-    { "Uploading coverage" = "ci-upload.md" },
+  { Features = [
+    { "Pull requests" = "pull-requests.md" },
+    { "Connect your forge" = "connecting.md" },
     { "Coverage gate" = "coverage-gate.md" },
     { Parts = "parts.md" },
     { "Why coverage changed" = "coverage-changed.md" },
-    { "API & badge" = "api.md" },
   ] },
   { Reference = [
-    { Features = "features.md" },
-    { Development = "development.md" },
+    { CLI = "cli.md" },
+    { "API & badge" = "api.md" },
   ] },
-  { "Running an instance" = [
-    { "Self-hosting" = "self-hosting.md" },
+  { "Self-hosting" = [
+    { "Production setup" = "self-hosting.md" },
     { "Sign-in" = "sign-in.md" },
+    { "Forge apps & credentials" = "forge-connections.md" },
     { Configuration = "configuration.md" },
+    { Development = "development.md" },
   ] },
 ]
 
 # A dead link fails the build instead of reaching production. Both are on by
 # default; spelled out because R4 of the docs-site plan rests on them.
-# unresolved_references stays off: the `_[screenshot: ...]_` placeholders in
-# features.md parse as reference links and would fail every build.
 [project.validation]
 invalid_links = true
 invalid_link_anchors = true

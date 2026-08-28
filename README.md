@@ -17,7 +17,8 @@ Self-hostable coverage tracking — an open-source Coveralls/Codecov alternative
 - **Web UI:** repo list, per-file coverage, line-by-line source view with hit counts, coverage trend chart, SVG badge
   per repo, sign-in with your forge account
 
-The full tour, screenshots included, is in [docs/features.md](docs/features.md).
+The full tour, screenshots included, starts at [docs.gocov.dev](https://docs.gocov.dev) — the
+[pull request surfaces](docs/pull-requests.md) page is the product in one look.
 
 ## Quick start
 
@@ -33,10 +34,11 @@ This starts Postgres and the server on http://localhost:8080 (migrations apply a
    denied.
 2. Set `GOCOV_TOKEN` (secured) and `GOCOV_SERVER` as workspace variables in CI; repos register themselves on their first
    upload.
-3. Optionally [connect the workspace to its forge](docs/forge-connections.md)
+3. Optionally [connect the workspace to its forge](docs/connecting.md)
    — one click — for statuses, PR comments, check runs and diff coverage.
 
-Upload from CI (GitHub Actions shown; [Bitbucket Pipelines and GitLab CI here](docs/ci-upload.md)):
+Upload from CI (GitHub Actions shown; [GitLab CI](docs/gitlab-ci.md) and
+[Bitbucket Pipelines](docs/bitbucket-pipelines.md) have their own recipes):
 
 ```yaml
 - run: npx jest --coverage        # or go test -coverprofile, mvn verify, pytest --cov, ...
@@ -59,13 +61,17 @@ runner produced. The badge is one line of markdown:
 The full documentation is at **[docs.gocov.dev](https://docs.gocov.dev)**, built from [docs/](docs/README.md) in this
 repository:
 
-- [Getting started](docs/getting-started.md) — onboarding, workspace settings, hosted mode
-- [Sign-in](docs/sign-in.md) — OAuth setup for Bitbucket, GitHub, GitLab and the access model
-- [Forge connections](docs/forge-connections.md) — GitHub App and Bitbucket/GitLab one-click connect
-- [Uploading from CI](docs/ci-upload.md) — all three CIs, prebuilt binaries, other ecosystems
-- [Coverage gate](docs/coverage-gate.md) · [Parts](docs/parts.md) ·
-  [API & badge](docs/api.md) · [Configuration](docs/configuration.md) ·
-  [Development](docs/development.md)
+- [Getting started](docs/getting-started.md) — sign in, one CI step, first report
+- Uploading from CI — [GitHub Actions](docs/github-actions.md), [GitLab CI](docs/gitlab-ci.md),
+  [Bitbucket Pipelines](docs/bitbucket-pipelines.md), [other CI systems](docs/ci-other.md),
+  [languages & formats](docs/languages.md)
+- [Pull requests](docs/pull-requests.md) · [Connect your forge](docs/connecting.md) ·
+  [Coverage gate](docs/coverage-gate.md) · [Parts](docs/parts.md) ·
+  [Why coverage changed](docs/coverage-changed.md)
+- [CLI](docs/cli.md) · [API & badge](docs/api.md)
+- Self-hosting — [production setup](docs/self-hosting.md), [sign-in](docs/sign-in.md),
+  [forge apps & credentials](docs/forge-connections.md), [configuration](docs/configuration.md),
+  [development](docs/development.md)
 
 ## License
 

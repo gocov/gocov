@@ -45,11 +45,11 @@ var docRow = regexp.MustCompile("^\\|\\s*`([A-Z][A-Z0-9_]*)`\\s*\\|")
 // a variable that was removed — fails here instead of silently misleading
 // self-hosters.
 //
-// Only Server is covered. The CLI's variables are documented in prose
-// across ci-upload.md, parts.md and getting-started.md rather than in a
-// table, and GOCOV_UPLOADER_KIND is set by the gocov-action rather than
-// by users, so there is no table to hold them to. Preview is a dev
-// harness and deliberately undocumented.
+// Only Server is covered. The CLI's variables have their own reference
+// table in docs/cli.md, but it lists flags and their env equivalents in
+// prose-shaped rows rather than the NAME|default|description shape this
+// test parses, and GOCOV_UPLOADER_KIND is set by the gocov-action rather
+// than by users. Preview is a dev harness and deliberately undocumented.
 func TestConfigurationDocIsInSync(t *testing.T) {
 	fields, err := env.GetFieldParams(&Server{})
 	if err != nil {
