@@ -1,9 +1,13 @@
 # Production compose for the hosted gocov instance: the app plus a Caddy
 # TLS terminator. Postgres is external (RDS) — set DATABASE_URL in .env.
-# Run from this directory:  docker compose -f docker-compose.prod.yml up -d --build
+# Run from this directory:  docker compose -f docker-compose.prod.yml up -d
+#
+# The image is pulled from GHCR, never built here: GOCOV_VERSION in .env
+# pins the exact release, and the deploy workflow is what changes it
+# (see .github/workflows/deploy.yml). Rollback = older tag, same pull.
 services:
   server:
-    build: ..
+    image: ghcr.io/gocov/gocov-server:${GOCOV_VERSION:?pin a release tag in .env, e.g. GOCOV_VERSION=v0.12.0}
     restart: unless-stopped
     logging:
       driver: json-file
