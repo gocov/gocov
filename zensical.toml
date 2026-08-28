@@ -21,19 +21,23 @@ nav = [
   { Home = "README.md" },
   { Setup = [
     { "Getting started" = "getting-started.md" },
-    { "Sign-in" = "sign-in.md" },
     { "Forge connections" = "forge-connections.md" },
   ] },
   { "Using gocov" = [
-    { "Uploading from CI" = "ci-upload.md" },
+    { "Uploading coverage" = "ci-upload.md" },
     { "Coverage gate" = "coverage-gate.md" },
     { Parts = "parts.md" },
+    { "Why coverage changed" = "coverage-changed.md" },
     { "API & badge" = "api.md" },
   ] },
   { Reference = [
     { Features = "features.md" },
-    { Configuration = "configuration.md" },
     { Development = "development.md" },
+  ] },
+  { "Running an instance" = [
+    { "Self-hosting" = "self-hosting.md" },
+    { "Sign-in" = "sign-in.md" },
+    { Configuration = "configuration.md" },
   ] },
 ]
 

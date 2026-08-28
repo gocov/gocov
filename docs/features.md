@@ -15,7 +15,7 @@ the format is detected from the uploaded content.
 - Web UI: repo list → upload list → per-file coverage table
 - Uploader CLI that auto-detects Bitbucket Pipelines, GitHub Actions and GitLab CI environment variables and falls back
   to git — see
-  [Uploading from CI](ci-upload.md)
+  [Uploading coverage](ci-upload.md)
 - Pushes a `coverage: X% (±Y%)` build status to Bitbucket commits (or a commit status to GitHub/GitLab) when the repo's
   workspace is connected to its forge
 - Coverage gate: per-repo minimums for total and diff coverage plus a drop tolerance; violations push a FAILED build
@@ -24,6 +24,8 @@ the format is detected from the uploaded content.
   at the exact commit and cached immutably (misses are cached too); without a forge connection the page falls back to an
   uncovered-line summary. When an upload has no `path_prefix`, recorded paths that carry an unmapped leading prefix (a
   Go module path, a CI checkout directory) are resolved by probing trimmed variants against the forge
+
+  ![A file in the source view: executed lines green with hit counts, never-executed lines red, a rail mapping every miss in the file, and the lines this commit newly uncovered](assets/source-view.png)
 - Web UI sign-in with Bitbucket, GitHub and/or GitLab: configure an OAuth consumer/app and every page requires login,
   allowed only for members of the workspaces and orgs the instance tracks (see
   [Sign-in](sign-in.md)). Uploads, badges and health checks are unaffected; no passwords are ever stored
@@ -50,7 +52,7 @@ the format is detected from the uploaded content.
 - Coverage trend chart: the repo page graphs total coverage over the branch's recent uploads (gate failures marked in
   red, every point links to its upload) — rendered as inline SVG on the server, no JavaScript chart library
 
-  _[screenshot: coverage trend chart on a repo page]_
+  ![Coverage over time on a repo page: total coverage per upload, gate failures marked in red, and a dashed line at the gate minimum](assets/trend.png)
 
 ## Architecture
 

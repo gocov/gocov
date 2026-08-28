@@ -17,6 +17,8 @@ status, gate, PR comment, Code Insights, badge and trend from that merged report
 replaces it rather than double-counting. When two parts report the same file, their line hit counts are summed, so a
 line covered by any part counts as covered.
 
+![An upload's page: the part it carried, and a note that the commit's report was merged from two parts](assets/upload-parts.png)
+
 Part names are normalized (trimmed and lowercased) server-side, so
 `Backend` and `backend` are the same part. Uploads without a `part` use the reserved name `default`; passing
 `-part default` explicitly lands in that same bucket, so single-job setups are unchanged — a one-part merged report
@@ -28,3 +30,6 @@ until the last part lands, then correct itself. If a reviewer merges inside that
 sequence the gate check after all coverage jobs, or wait for the final status. A future
 `expected_parts` setting will let a repo hold status until every part is in; until then the self-healing behaviour above
 is the model.
+
+A part that does not run at all is the other half of this: it is not carried forward from the previous commit, so the
+merged total drops until it lands. See [Why coverage changed](coverage-changed.md).

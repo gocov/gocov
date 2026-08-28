@@ -19,9 +19,6 @@ GOCOV_TEST_DATABASE_URL=postgres://gocov:gocov@localhost:5433/gocov go test ./..
 docker stop gocov-test-db
 ```
 
-`GET /healthz` reports readiness (checks database connectivity) for load balancers and container orchestrators; the
-server shuts down gracefully on SIGINT/SIGTERM.
-
 ## Configuration
 
 Every environment variable the binaries read is declared as a tagged struct field in `internal/config`:

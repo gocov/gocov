@@ -41,7 +41,7 @@ services:
       GOCOV_ALLOWED_WORKSPACES: ${GOCOV_ALLOWED_WORKSPACES:-}
       # private (default) restricts sign-in to tracked-workspace members;
       # hosted opens self-service registration. See "Hosted mode" in
-      # docs/getting-started.md.
+      # docs/sign-in.md.
       GOCOV_MODE: ${GOCOV_MODE:-private}
     ports:
       - "8080:8080"

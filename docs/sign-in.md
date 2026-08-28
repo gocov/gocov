@@ -3,6 +3,8 @@
 Out of the box the web UI is open and shows a banner saying so — nothing changes on upgrade until you opt in. Configure
 one or more providers; each renders as its own button on the login page.
 
+![The login page with a sign-in button for each configured forge](assets/login.png)
+
 ## Bitbucket
 
 1. Create an OAuth consumer under **Workspace settings → OAuth consumers → Add consumer** with
@@ -57,6 +59,27 @@ repos admit their owner. Set `GOCOV_ALLOWED_WORKSPACES`
 (comma-separated workspace/org slugs) to replace the derived set with an explicit list. Accounts are provisioned on
 first successful sign-in — there is no user bookkeeping, and gocov never sees or stores passwords (the forge tokens are
 discarded right after login).
+
+What a signed-in account then sees mirrors that membership: the repo list is filtered to the workspaces the forge
+says it belongs to, and a direct link to another workspace's repo, upload or source page returns 404. Membership is
+re-derived at each login rather than per request, so removing someone on the forge removes their access at their next
+login; sessions last 30 days. There is no separate invite or member-management step — add someone to the workspace on
+the forge and they see its coverage when they next sign in. A single-team instance where everyone belongs to the same
+workspace is unaffected, as is one with sign-in left open.
+
+## Hosted mode (self-service signup)
+
+`GOCOV_MODE=hosted` turns the instance into a self-service one: any forge account may sign in, and a user who belongs to
+no tracked workspace lands on **/register**, which lists the workspaces their forge account is a member of (captured at
+sign-in). Claiming one creates the workspace, makes the user a member and shows the upload token — once; afterwards it
+can only be rotated. Only workspaces the forge itself reports for the account can be registered, so there is nothing to
+dispute: if a colleague registered your workspace first, signing in simply makes you a member.
+
+Registration lands on an onboarding page: the forge-appropriate CI snippet with the server URL and token pre-filled, and
+a live "waiting for your first upload" state that flips to the repo link once coverage arrives.
+
+The default (`GOCOV_MODE=private`) keeps exactly the behavior described above — self-hosted deployments upgrade
+with zero change. Hosted mode requires at least one sign-in provider.
 
 ## Bootstrapping a fresh private instance
 

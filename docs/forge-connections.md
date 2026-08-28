@@ -46,6 +46,8 @@ A connected installation is what gives the workspace's repos forge access. Unins
 the next upload — the affected surfaces degrade to `skipped`, never to a failed upload — and the settings page offers a
 reconnect.
 
+![The workspace settings page after the installation was removed: reporting marked as needing a reconnect, coverage still uploading, and a button to reinstall the app](assets/reporting-broken.png)
+
 The GitHub App covers every surface, check runs included — nothing to provision per repo beyond installing the app on
 the org or account. gocov recognizes its own PR comment by its `**gocov**` marker and updates it in place.
 

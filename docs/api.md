@@ -23,8 +23,11 @@ delta_pct, build_status}`. Uploads carrying a `pr_id` additionally get
 ## Badge
 
 ```markdown
-![coverage](https://gocov.example/badge/myworkspace/myrepo.svg)
+![coverage](https://app.gocov.dev/badge/myworkspace/myrepo.svg)
 ```
+
+A self-hosted instance serves the same path from its own host. Either way there is nothing to assemble by hand: the
+repo page shows the finished snippet with a copy button.
 
 Red below 50%, yellow 50–75%, green above 75%. Shows the latest upload on the repo's default branch. Badges are served
 without authentication even when web UI sign-in is enabled.
