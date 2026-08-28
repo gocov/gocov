@@ -1,5 +1,8 @@
 # API & badge
 
+Most uploads should go through the [CLI](cli.md) or its CI wrappers; this is the HTTP endpoint underneath, for
+anything they don't cover.
+
 ## Upload
 
 `POST /api/v1/upload` — multipart form, `Authorization: Bearer <token>`
@@ -18,7 +21,7 @@
 Returns `201` with `{id, total_pct, covered_stmts, total_stmts,
 delta_pct, build_status}`. Uploads carrying a `pr_id` additionally get
 `diff_pct`, `diff_covered_lines`, `diff_total_lines`, `diff_status` and
-`pr_comment` when the repo's workspace is connected to its forge.
+`pr_comment` when the repo's workspace is [connected to its forge](connecting.md).
 
 ## Badge
 
@@ -31,18 +34,3 @@ repo page shows the finished snippet with a copy button.
 
 Red below 50%, yellow 50–75%, green above 75%. Shows the latest upload on the repo's default branch. Badges are served
 without authentication even when web UI sign-in is enabled.
-
-## Health
-
-`GET /healthz` reports readiness (checks database connectivity) for load balancers and container orchestrators; it stays
-open when sign-in is enabled.
-
-The container image is distroless, so it has no `wget` or `curl` for a Docker `HEALTHCHECK` to call. The binary probes
-itself instead — `gocov-server healthcheck` requests `/healthz` on `GOCOV_ADDR` and exits non-zero if it is not `200 OK`,
-which is what the compose files use. Three timeouts are nested inside each other and want to stay in that order: the 2s
-`/healthz` spends on its database ping, the 2.5s the probe waits for a reply, and the 3s Docker allows the probe to run.
-
-```yaml
-healthcheck:
-  test: ["CMD", "/usr/local/bin/gocov-server", "healthcheck"]
-```

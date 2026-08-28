@@ -13,8 +13,7 @@ to disable it — and the values apply to repos registered from then on.
 
 Gate-failing uploads are recorded but never serve as a baseline, so re-running CI cannot launder a failure and a PR
 cannot ratchet coverage down push by push. Violations mark the pushed build status FAILED and are reported in the PR
-comment and the upload response (`gate` field). The uploader `gocov` CLI exits non-zero on a failed gate when run with
-`-fail-on-gate`.
+comment and the upload response (`gate` field).
 
 ## Making the gate block merges
 
@@ -24,8 +23,8 @@ comment and the upload response (`gate` field). The uploader `gocov` CLI exits n
 - **GitLab** — use **Settings → Merge requests → Status checks**
   policies that reference the `gocov` commit status.
 
-All three require the workspace to be connected to its forge — see
-[Forge connections](forge-connections.md).
+All three require the workspace to be [connected to its forge](connecting.md). Even without one, the uploader CLI can
+turn a failed gate into a failed pipeline step with [`-fail-on-gate`](cli.md).
 
 Note that when a commit's coverage arrives in several
 [parts](parts.md), the gate is evaluated against the merged report as parts arrive, so it can fail transiently until the

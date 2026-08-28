@@ -47,11 +47,11 @@ package-qualified paths (`com/example/Foo.java`) meet a repo path like `src/main
 
 When neither matches — a profile recorded under a Go module path, a CI checkout directory baked into the paths, a
 monorepo subdirectory — total coverage is still correct and diff coverage comes out empty, because gocov cannot tell
-which recorded lines are the changed ones. Set `-path-prefix` to the prefix your profile carries.
+which recorded lines are the changed ones. Set [`-path-prefix`](cli.md) to the prefix your profile carries.
 
 ## There is nothing to diff against
 
 Diff coverage needs the pull request's diff, which gocov fetches from the forge. On a workspace with no
-[forge connection](forge-connections.md), on a push that is not part of a pull request, or on an upload whose PR id was
+[forge connection](connecting.md), on a push that is not part of a pull request, or on an upload whose PR id was
 not detected, there is no diff — diff coverage is skipped and the gate's diff rule is skipped with it. Total coverage
 and the gate's other rules are unaffected.
