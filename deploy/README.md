@@ -68,6 +68,12 @@ that is RDS point-in-time recovery, not a redeploy.
 equivalent of a deploy is editing `GOCOV_VERSION` in `.env` and
 `docker compose -f docker-compose.prod.yml pull server && docker compose -f docker-compose.prod.yml up -d server`.
 
+The deploy checks the repo at `/opt/gocov` out at the release tag before
+touching compose, so the box's checkout follows releases (detached), not
+`main` — the compose file and Caddyfile a deploy uses are the released
+ones. A local edit to a tracked file on the box makes the next deploy
+fail loudly at that checkout, on purpose.
+
 ### One-time setup the workflow depends on
 
 - **GHCR package public**: the first push of `ghcr.io/gocov/gocov-server`
