@@ -41,3 +41,4 @@ and the [configuration reference](configuration.md). None of it is needed to *us
 Throughout these docs, *forge* means the code host (Bitbucket Cloud, GitHub or GitLab) and *workspace* means the
 namespace gocov tracks — a Bitbucket workspace, a GitHub org or user, or a GitLab group, subgroup (by full path) or user
 namespace.
+
