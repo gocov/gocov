@@ -1,4 +1,10 @@
-# Uploading coverage from CI
+# Uploading coverage
+
+Coverage reaches gocov four interchangeable ways: a Bitbucket pipe, a GitHub Action, `go run` straight from source, and
+a plain binary you `curl`. That redundancy is deliberate. An uploader that only ships as a marketplace action is a
+dependency on that marketplace, and CI that breaks when one is retired is a bad trade for three saved lines — so every
+recipe below has a two-line shell equivalent against a checksummed release binary, and the upload API underneath them
+is documented in [API & badge](api.md).
 
 ## Bitbucket Pipelines
 
@@ -42,26 +48,12 @@ your tests are written in. Commit, branch, repo and PR number are auto-detected,
     token: ${{ secrets.GOCOV_TOKEN }}
 ```
 
-```yaml
-# JavaScript/TypeScript — Jest, Vitest, nyc, c8
-- run: npx jest --coverage
-- uses: gocov/gocov-action@v1
-  with:
-    files: coverage/lcov.info
-    token: ${{ secrets.GOCOV_TOKEN }}
-```
+Only the `files:` path changes for other test tools — [Other ecosystems](#other-ecosystems) lists what each
+one writes.
 
-```yaml
-# Java/Kotlin — Maven with the jacoco-maven-plugin
-- run: mvn verify
-- uses: gocov/gocov-action@v1
-  with:
-    files: target/site/jacoco/jacoco.xml
-    token: ${{ secrets.GOCOV_TOKEN }}
-```
-
-`files` takes a comma-separated list and globs. When self-hosting, add `server: https://gocov.example`; the default is
-the hosted service. `part:` labels one slice of a matrix build — see [Parts](parts.md).
+`files` takes a comma-separated list and globs. The default server is the hosted service,
+[app.gocov.dev](https://app.gocov.dev/?ref=docs); when self-hosting, add `server: https://gocov.example`. `part:`
+labels one slice of a matrix build — see [Parts](parts.md).
 
 On a runner that already has Go, the CLI also runs straight from source, no action involved:
 

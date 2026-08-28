@@ -1,75 +1,71 @@
 # Getting started
 
-## Quick start
+By the end of this page a push carries its own coverage: a percentage and a delta on the commit, a comment and a build
+status on the pull request, a gate that can hold a merge, and a badge for the README. Three things get you there — a
+token, an upload step in CI, and a forge connection.
 
-```sh
-docker compose up
-```
+## 1. Get a workspace and its upload token
 
-This starts Postgres and the server on http://localhost:8080 (migrations apply automatically).
+A *workspace* is the namespace gocov tracks: a GitHub org or user, a GitLab group or subgroup, a Bitbucket workspace.
+Repos under it register themselves on their first upload, so this is the only thing you create by hand.
 
-## Onboarding (in the web UI)
+**On the hosted service**, sign in at [app.gocov.dev](https://app.gocov.dev/?ref=docs) with your forge account. If you
+belong to no workspace gocov already tracks you land on **/register**, which lists the workspaces your forge account is
+a member of. Claiming one creates it, makes you a member, and shows its **upload token — once**. Only workspaces the
+forge itself reports for your account can be claimed, so there is nothing to dispute: if a colleague registered yours
+first, signing in simply makes you a member.
 
-Workspaces, repos, tokens, gates and forge connections are all administered from the web UI — there is no server-side
-admin CLI. Because onboarding derives the workspaces you may register from your signed-in forge identity, the first step
-is to **enable sign-in** (see
-[Sign-in](sign-in.md)); a fully open instance with no provider configured has no identity to register from.
+**On your own instance**, start one with `docker compose up` — Postgres and the server come up on
+http://localhost:8080 and migrations apply themselves. Onboarding derives the workspaces you may register from your
+signed-in forge identity, so a fresh instance needs [sign-in enabled](sign-in.md) before there is an identity to
+register from; after that the wizard is the same as above. That compose file is for evaluating gocov rather than
+running it — when the instance becomes one other people upload to, read [Self-hosting](self-hosting.md).
 
-Once a sign-in provider is set:
+Either way you end up on an onboarding page with the CI snippet for your forge already filled in, and a live "waiting
+for your first upload" state that turns into the repo link once coverage arrives.
 
-1. Sign in with your forge account.
-2. The onboarding wizard registers your workspace (the org/group/user the forge lists for you) and shows its **upload
-   token — once**.
-3. Set that token as a *workspace variable* (`GOCOV_TOKEN`, secured)
-   together with `GOCOV_SERVER`; every repo under the workspace inherits them. Repos register themselves on their first
-   upload — their default branch is asked from the forge when the workspace is connected, falling back to the
-   workspace's default.
-4. Connect the workspace to its forge (GitHub App, or a Bitbucket/GitLab one-click grant) so gocov can post statuses,
-   PR/MR comments and check runs — see [Forge connections](forge-connections.md). A workspace with no connection still
-   stores and reports coverage; the forge surfaces are simply skipped.
+![The onboarding page once the first profile has arrived: the three setup steps checked off, and the repository's first report](assets/onboarding.png)
 
-A workspace can sit at any level of a namespace tree: a GitHub org, a GitLab group or subgroup (registered by its full
-path), a Bitbucket workspace, or a personal namespace — repos below it register themselves on first upload.
+## 2. Add the upload step to CI
 
-After onboarding, manage everything from the dashboard: each workspace links to its **settings** page (rotate the upload
-token, set the default branch and coverage-gate defaults, connect/disconnect the forge). See
-"Workspace settings in the UI" below.
+Set the token as a *workspace variable* (`GOCOV_TOKEN`, secured) so every repo under the workspace inherits it. On a
+self-hosted instance set `GOCOV_SERVER` beside it; on the hosted service the server is implicit and the token is all
+you need.
 
-## Hosted mode (self-service signup)
+Then add one upload step to the pipeline — the recipes for Bitbucket Pipelines, GitHub Actions and GitLab CI, and for
+each coverage format, are in [Uploading coverage](ci-upload.md). The first upload registers the repo.
 
-`GOCOV_MODE=hosted` turns the instance into a self-service one: any forge account may sign in, and a user who belongs to
-no tracked workspace lands on **/register**, which lists the workspaces their forge account is a member of (captured at
-sign-in). Claiming one creates the workspace, makes the user a member and shows the upload token — once; afterwards it
-can only be rotated. Only workspaces the forge itself reports for the account can be registered, so there is nothing to
-dispute: if a colleague registered your workspace first, signing in simply makes you a member.
+## 3. Connect the workspace to its forge
 
-Registration lands on an onboarding page: the forge-appropriate CI snippet with the server URL and token pre-filled, and
-a live "waiting for your first upload" state that flips to the repo link once coverage arrives.
+One click, from the workspace's settings page: a GitHub App installation, or a Bitbucket/GitLab grant. See
+[Forge connections](forge-connections.md).
 
-The default (`GOCOV_MODE=private`) keeps exactly the behavior described in these docs — self-hosted deployments upgrade
-with zero change. Hosted mode requires at least one sign-in provider.
+This step is easy to skip and it is where most of the product lives. Without it gocov still accepts uploads, stores
+history, evaluates the gate and serves the badge — but everything that reaches your team where they work is off, since
+all of it goes through the forge's API:
 
-## Workspace settings in the UI
+| with a connection | without one |
+|---|---|
+| build status on the commit | — |
+| coverage comment on the pull request | — |
+| check run with per-file annotations | — |
+| diff coverage (needs the PR's diff) | total coverage only |
+| default branch detected from the forge | falls back to the workspace default |
 
-Signed-in members manage their workspaces from the dashboard (private and hosted mode alike): rotate the upload token
-(the old one dies immediately; the new one is shown once), change the default branch and gate defaults for
-auto-registered repos, and connect the workspace to its forge (GitHub App, or a Bitbucket/GitLab one-click grant) for
-statuses, PR comments and insights. The upload token is never rendered back — it is shown once, right after a rotation.
-This is the only way workspaces are administered; there is no server-side admin CLI.
+## What you have now
 
-There is no user bookkeeping to manage: accounts are provisioned on first sign-in and access is re-derived from forge
-membership at each login (not per request), so removing someone from the workspace on the forge removes their access at
-their next login. Sessions last 30 days.
+The dashboard lists every repo that has uploaded, with its coverage, its trend and whether its gate is passing. Each
+workspace links to a **settings** page: rotate the upload token (the old one dies immediately, the new one is shown
+once and never rendered back), set the default branch and the gate defaults new repos inherit, and connect or
+disconnect the forge.
 
-Access mirrors your forge workspace membership. Once sign-in is configured, each account sees only the repos in the
-workspaces and orgs the forge says it belongs to — the repo list is filtered, and a direct link to another workspace's
-repo, upload or source page returns 404. Memberships are synced from the forge on every sign-in, so there is no separate
-invite or member-management step: add someone to the workspace on the forge and they see its coverage at their next
-login; remove them and it disappears. A single-team self-host where everyone belongs to the same workspace is
-unaffected, as is an instance with sign-in left open — both stay exactly as before.
+![The dashboard: workspace coverage, how many gates are passing, and one row per repository with its coverage, delta, 30-day trend and gate](assets/dashboard.png)
+
+Who sees what follows your forge: members of the workspace see its repos and nobody else does, with no invite step to
+manage — [Sign-in](sign-in.md) has the details.
 
 ## Next steps
 
-- [Uploading from CI](ci-upload.md) — wire your pipelines up
+- [Uploading coverage](ci-upload.md) — wire your pipelines up
 - [Coverage gate](coverage-gate.md) — set minimums and make them block merges
 - [Configuration](configuration.md) — the full environment variable reference

@@ -178,7 +178,7 @@ func main() {
 	}
 	srcUpload := &store.Upload{
 		RepoID: repo.ID, CommitSHA: "9f31c2ab7e5d0000000000000000000000000000",
-		Branch: "main", Format: "go",
+		Branch: "main", Format: "go", Part: "unit",
 		TotalPct: 82.0, CoveredStmts: 205, TotalStmts: 250,
 		CreatedAt: base.Add(45 * 24 * time.Hour),
 		Meta: store.UploadMeta{
@@ -199,9 +199,39 @@ func main() {
 	if err := st.CreateUpload(ctx, srcUpload, srcFiles); err != nil {
 		log.Fatal(err)
 	}
-	if err := st.UpsertCommitReport(ctx, reportFor(srcUpload)); err != nil {
+	srcReport := reportFor(srcUpload)
+	srcReport.PartCount = 2
+	if err := st.UpsertCommitReport(ctx, srcReport); err != nil {
 		log.Fatal(err)
 	}
+	// A second slice of the same commit, so the upload page shows a part chip
+	// and "merged from 2 parts" instead of a single profile. The seeded merged
+	// report above keeps the head commit's totals: the real pipeline sums the
+	// parts, but here the report is written by hand and the rest of the
+	// preview (trend, gate, dashboard) is calibrated to those numbers.
+	intUpload := &store.Upload{
+		RepoID: repo.ID, CommitSHA: srcUpload.CommitSHA,
+		Branch: "main", Format: "go", Part: "integration",
+		TotalPct: 71.4, CoveredStmts: 35, TotalStmts: 49,
+		CreatedAt: srcUpload.CreatedAt.Add(90 * time.Second),
+		Meta: store.UploadMeta{
+			Uploader: "gocov v0.9.2", UploaderKind: "action",
+			CIProvider: "github", CIRunURL: "https://github.com/acme/widgets/actions/runs/2481",
+			CommitMessage: srcUpload.Meta.CommitMessage,
+			CommitAuthor:  srcUpload.Meta.CommitAuthor,
+			ProfileName:   "integration.out", ProfileBytes: 31 * 1024, ProcessMillis: 640,
+		},
+	}
+	intFiles := []*store.UploadFile{
+		{Path: "internal/api/routes.go", Pct: 82.1, CoveredStmts: 23, TotalStmts: 28,
+			Blocks: []profile.Block{{StartLine: 1, EndLine: 8, NumStmts: 23, Count: 1}}},
+		{Path: "internal/ledger/settle.go", Pct: 57.1, CoveredStmts: 12, TotalStmts: 21,
+			Blocks: []profile.Block{{StartLine: 1, EndLine: 8, NumStmts: 12, Count: 1}}},
+	}
+	if err := st.CreateUpload(ctx, intUpload, intFiles); err != nil {
+		log.Fatal(err)
+	}
+
 	blobKey := fmt.Sprintf("source/%d/%s/%s", repo.ID, srcUpload.CommitSHA, file.Path)
 	if err := blobs.Put(ctx, blobKey, []byte(chargeSource)); err != nil {
 		log.Fatal(err)
