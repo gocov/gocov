@@ -1,0 +1,164 @@
+name: deploy
+
+# Rolls the hosted instance (app.gocov.dev) to a released image.
+#
+# Two ways in, one job:
+#
+#   workflow_call — release.yml calls this after the image is on GHCR.
+#     The normal path for every release.
+#   workflow_dispatch — the rollback (and re-deploy) path: dispatch with
+#     any existing release tag and the same job runs. No build happens
+#     here at all, so a rollback is a pull of the old image — seconds,
+#     not a rebuild.
+#
+# The job is gated by the `production` environment, whose required
+# reviewer is the human approval every deploy waits for. The AWS side is
+# an OIDC role that may do exactly one thing: run a command on the one
+# production instance via SSM. Setup for both is in deploy/README.md.
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: The release tag to deploy.
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to deploy (an older one = rollback).
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/gocov/gocov-server
+  INSTANCE_ID: i-0ec3687170963f061
+  AWS_REGION: eu-central-1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # One deploy at a time, in order, and never cancel one that is already
+    # talking to the server. Job-level because workflow-level concurrency
+    # is ignored on the workflow_call path.
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    environment:
+      name: production
+      url: https://app.gocov.dev
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      TAG: ${{ inputs.tag }}
+    steps:
+      - name: Tag looks like a release
+        # $TAG is spliced into a shell script that runs as root on the
+        # production box; nothing that is not a version gets past this.
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "not a release tag: $TAG" >&2; exit 1; }
+
+      - name: Image exists for both architectures
+        # Before touching the server: the image is public, so this needs
+        # no login, and it fails a rollback to a tag that predates GHCR
+        # publishing here instead of on the instance.
+        run: |
+          docker buildx imagetools inspect "$IMAGE:$TAG" --raw >manifest.json
+          for arch in amd64 arm64; do
+            grep -q "\"architecture\": *\"$arch\"" manifest.json || {
+              echo "$IMAGE:$TAG is missing linux/$arch" >&2; exit 1; }
+          done
+
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: arn:aws:iam::773658094601:role/gocov-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Roll the server to the tag (SSM)
+        run: |
+          set -euo pipefail
+
+          # The script that runs on the instance: pin GOCOV_VERSION in
+          # .env, pull, restart, and refuse to report success until the
+          # container's own healthcheck does.
+          cat >remote.sh <<REMOTE
+          set -euo pipefail
+          cd /opt/gocov/deploy
+          if grep -q '^GOCOV_VERSION=' .env; then
+            sed -i 's|^GOCOV_VERSION=.*|GOCOV_VERSION=$TAG|' .env
+          else
+            echo 'GOCOV_VERSION=$TAG' >> .env
+          fi
+          docker compose -f docker-compose.prod.yml pull --quiet server
+          docker compose -f docker-compose.prod.yml up -d server
+          for i in \$(seq 1 30); do
+            state=\$(docker inspect --format '{{.State.Health.Status}}' \
+              \$(docker compose -f docker-compose.prod.yml ps -q server))
+            [ "\$state" = healthy ] && break
+            sleep 2
+          done
+          if [ "\$state" != healthy ]; then
+            echo "server container is \$state, not healthy" >&2
+            docker compose -f docker-compose.prod.yml logs --tail 50 server >&2
+            exit 1
+          fi
+          docker compose -f docker-compose.prod.yml exec -T server \
+            /usr/local/bin/gocov-server version | grep -F "$TAG"
+          REMOTE
+
+          cmd_id=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --comment "deploy gocov-server $TAG" \
+            --parameters "$(jq -n --rawfile s remote.sh '{commands: [$s]}')" \
+            --query Command.CommandId --output text)
+
+          # send-command returns immediately; poll the invocation until it
+          # lands somewhere terminal and surface its output either way.
+          # (The invocation record itself takes a moment to exist, hence
+          # the fallback to Pending on a failed read.)
+          for i in $(seq 1 60); do
+            status=$(aws ssm get-command-invocation --command-id "$cmd_id" \
+              --instance-id "$INSTANCE_ID" --query Status --output text \
+              2>/dev/null) || status=Pending
+            case "$status" in Pending|InProgress|Delayed) sleep 5 ;; *) break ;; esac
+          done
+          aws ssm get-command-invocation --command-id "$cmd_id" \
+            --instance-id "$INSTANCE_ID" \
+            --query '{status: Status, stdout: StandardOutputContent, stderr: StandardErrorContent}' \
+            --output json | jq -r '"status: \(.status)\n--- stdout\n\(.stdout)\n--- stderr\n\(.stderr)"'
+          [ "$status" = Success ]
+
+      - name: "Smoke: /healthz"
+        run: curl -fsS --retry 5 --retry-delay 3 --retry-all-errors https://app.gocov.dev/healthz
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+
+      - name: "Smoke: a real upload"
+        # The whole path a user's CI takes: the released CLI binary from
+        # this tag's assets, a real coverage profile from a real checkout,
+        # uploaded to the smoke repo on the freshly deployed server. The
+        # CLI's default server URL is the hosted instance, which is
+        # exactly the thing under test, so no -server flag.
+        env:
+          GOCOV_TOKEN: ${{ secrets.GOCOV_TOKEN }}
+        run: |
+          set -euo pipefail
+          curl -fsSL -o gocov \
+            "https://github.com/gocov/gocov/releases/download/$TAG/gocov-linux-amd64"
+          chmod +x gocov
+          git clone --depth 1 https://github.com/gocov/smoke smoke
+          cd smoke
+          go test ./... -covermode=atomic -coverprofile=coverage.out
+          ../gocov upload \
+            -repo gocov/smoke \
+            -commit "$(git rev-parse HEAD)" \
+            -branch main \
+            coverage.out

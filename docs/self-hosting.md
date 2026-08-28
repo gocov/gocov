@@ -16,19 +16,30 @@ sessions, and the raw uploaded profiles themselves, because the blob store is a 
 nothing to disk, so it can be rebuilt or replaced without moving state, and there is exactly one thing to back up.
 
 The image is distroless: a static binary, CA certificates and nothing else — no shell, no package manager — running as
-uid **65532**. There is no published container image yet, so both compose files build it from the repo. If you would
-rather run the binary under systemd, every release ships `gocov-server` for linux, darwin and windows on amd64 and
-arm64, with `checksums.txt` alongside.
+uid **65532**. Every release publishes it to `ghcr.io/gocov/gocov-server` for amd64 and arm64, and it is the same image
+the hosted instance runs. Pin a version rather than `latest` — an upgrade should be something you chose, with the
+release notes read, not something a restart did to you:
+
+```yaml
+services:
+  server:
+    image: ghcr.io/gocov/gocov-server:v0.12.0
+```
+
+The root `docker-compose.yml` builds from the repo instead, because the evaluation case is often "the code I just
+changed". If you would rather run the binary under systemd, every release ships `gocov-server` for linux, darwin and
+windows on amd64 and arm64, with `checksums.txt` alongside.
 
 All of it is AGPL-3.0. The server contacts nothing but your database and the forge APIs — no telemetry, no license
-check, no call home — so a running deployment depends on this project only for the next version you choose to build.
+check, no call home — so a running deployment depends on this project only for the next version you choose to run.
 
 The footprint is modest. gocov's own hosted instance runs the server and a TLS terminator on a single 2 vCPU / 2 GB
 arm64 VM, in front of a 2 vCPU / 1 GB managed Postgres.
 
-The repo ships a starting point for this shape under `deploy/`: `docker-compose.prod.yml` runs the server behind a Caddy
-TLS terminator and expects Postgres to be external, and the `Caddyfile` next to it is the one quoted below. The root
-`docker-compose.yml` is the evaluation stack and is not the same thing — it brings its own Postgres.
+The repo ships a starting point for this shape under `deploy/`: `docker-compose.prod.yml` pulls the published image at
+the version pinned in `.env` and runs it behind a Caddy TLS terminator, expecting Postgres to be external; the
+`Caddyfile` next to it is the one quoted below. The root `docker-compose.yml` is the evaluation stack and is not the
+same thing — it brings its own Postgres and builds from source.
 
 ## TLS and the reverse proxy
 
@@ -126,11 +137,11 @@ healthcheck:
 
 ## Upgrading
 
-Fetch the new code, rebuild or replace the binary, restart; migrations apply themselves on the way up. On the compose
-deployment above that is:
+Point at the new image, restart; migrations apply themselves on the way up. On the compose deployment above that is
+editing `GOCOV_VERSION` in `.env` (read the release notes first — they are where a breaking change is announced) and:
 
 ```sh
-git pull && docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
 ```
 
 Detached, because this is the long-running instance — unlike the foreground `docker compose up` the quick start uses to
@@ -140,7 +151,8 @@ A restart is the one place the shutdown budget shows. `SIGTERM` drains in-flight
 is longer than Docker's 10-second default stop timeout — raise `stop_grace_period` above it, or a rolling restart will
 cut an upload in half. Kubernetes' 30-second default already clears it.
 
-`gocov-server version` reports what is actually running — the version is stamped at build time, derived from git when
+`gocov-server version` reports what is actually running — the published image is stamped with its release tag, and a
+build of your own derives the version from git when
 the image is built.
 
 The server and the upload CLI version independently, so pin the CLI in CI on its own schedule; see
