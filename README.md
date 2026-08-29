@@ -80,3 +80,5 @@ repository:
 ## License
 
 AGPL-3.0 — see [LICENSE](LICENSE).
+
+<!-- tokenless fork-PR acceptance test — this PR will be closed after verification -->
