@@ -74,7 +74,7 @@ jobs:
               echo "$IMAGE:$TAG is missing linux/$arch" >&2; exit 1; }
           done
 
-      - uses: aws-actions/configure-aws-credentials@v5
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::773658094601:role/gocov-deploy
           aws-region: ${{ env.AWS_REGION }}
@@ -148,6 +148,9 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: stable
+          # This job never checks the repo out — there is no go.mod for
+          # the module cache to key on, and the smoke build is tiny.
+          cache: false
 
       - name: "Smoke: a real upload"
         # The whole path a user's CI takes: the released CLI binary from
