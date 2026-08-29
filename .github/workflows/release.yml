@@ -150,7 +150,7 @@ jobs:
       - uses: actions/create-github-app-token@v3
         id: app
         with:
-          app-id: ${{ secrets.CROSSBUMP_APP_ID }}
+          client-id: ${{ secrets.CROSSBUMP_APP_ID }}
           private-key: ${{ secrets.CROSSBUMP_APP_PRIVATE_KEY }}
           owner: gocov
           repositories: gocov-action,upload-pipe
