@@ -31,6 +31,7 @@ ACTION_REPO=gocov/gocov-action
 PIPE_REPO=gocov/upload-pipe
 PIPE_IMAGE=gocov/upload-pipe
 PIPE_BITBUCKET=gocov/upload-pipe
+SERVER_IMAGE=gocov/gocov-server
 
 pass=0 fail=0 skipped=0
 
@@ -240,6 +241,45 @@ if command -v docker >/dev/null 2>&1 && docker version >/dev/null 2>&1; then
   fi
 else
   skip "did not open $PIPE_IMAGE:0 to check the baked CLI" "docker is not available here"
+fi
+
+# ------------------------------------------------------ server image --
+head2 "ghcr.io/$SERVER_IMAGE"
+
+# The server image is what production deploys and what self-hosters pull;
+# both pin the exact release tag, so a tag that is missing or half-built
+# is a failed deploy waiting for its approval click.
+ghcr_token=$(curl -fsSL "https://ghcr.io/token?scope=repository:$SERVER_IMAGE:pull" 2>/dev/null | jq -r .token 2>/dev/null)
+if [ -z "$ghcr_token" ] || [ "$ghcr_token" = null ]; then
+  bad "could not get a GHCR pull token for $SERVER_IMAGE" "is the package public?"
+else
+  # architecture "unknown" entries are buildx attestation manifests, not
+  # runnable platforms.
+  arches=$(curl -fsSL -H "Authorization: Bearer $ghcr_token" \
+    -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json" \
+    "https://ghcr.io/v2/$SERVER_IMAGE/manifests/$tag" 2>/dev/null |
+    jq -r '.manifests[]? | select(.platform.architecture != "unknown") | "\(.platform.os)/\(.platform.architecture)"' 2>/dev/null | sort -u | tr '\n' ' ')
+  if echo "$arches" | grep -q 'linux/amd64' && echo "$arches" | grep -q 'linux/arm64'; then
+    ok ":$tag is a multi-arch image (${arches% })"
+  else
+    bad ":$tag is not published for both architectures" "found: ${arches:-nothing}" \
+      "production (arm64) and most self-hosters (amd64) pull this by exact version"
+  fi
+fi
+
+# Same open-the-box check as the pipe: the version the image reports is
+# the one the tag promises.
+if command -v docker >/dev/null 2>&1 && docker version >/dev/null 2>&1; then
+  reported=$(docker run --rm --pull always "ghcr.io/$SERVER_IMAGE:$tag" version 2>/dev/null | tr -d '\r' | awk '{print $NF}')
+  if [ -z "$reported" ]; then
+    bad "could not run gocov-server inside ghcr.io/$SERVER_IMAGE:$tag"
+  elif [ "$reported" = "$tag" ]; then
+    ok "ghcr.io/$SERVER_IMAGE:$tag reports $reported"
+  else
+    bad "ghcr.io/$SERVER_IMAGE:$tag reports $reported, not $tag"
+  fi
+else
+  skip "did not open ghcr.io/$SERVER_IMAGE:$tag to check its version" "docker is not available here"
 fi
 
 # -------------------------------------------------------------- verdict

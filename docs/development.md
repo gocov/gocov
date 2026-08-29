@@ -105,8 +105,8 @@ scripts/verify-release.sh v0.12.0    # a specific one
 
 It confirms that the ten binaries and `checksums.txt` are on the release and that the checksums cover every binary,
 that this repo's snippets and both wrappers name the released CLI, that `gocov-action@v1` resolves to the newest
-action release, that the pipe image is on Docker Hub for both architectures, and that the image actually reports the
-right `gocov version` when opened. It also checks the pipe's tag reached Bitbucket as well as GitHub — that repo
+action release, that the pipe image is on Docker Hub and the server image on GHCR for both architectures, and that
+both images actually report the right version when opened. It also checks the pipe's tag reached Bitbucket as well as GitHub — that repo
 releases through two remotes, and a tag that lands on only one publishes nothing on the other silently. It needs
 `gh`, `curl` and `jq`; `docker` is optional and only the last check needs it.
 
