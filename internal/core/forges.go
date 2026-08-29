@@ -22,6 +22,7 @@ import (
 
 	"github.com/gocov/gocov/internal/forge"
 	"github.com/gocov/gocov/internal/forge/bitbucket"
+	"github.com/gocov/gocov/internal/forge/github"
 	"github.com/gocov/gocov/internal/forge/gitlab"
 	"github.com/gocov/gocov/internal/store"
 )
@@ -133,6 +134,12 @@ type GitHubApp interface {
 	InstallationAccount(ctx context.Context, installationID int64) (string, error)
 	// InstallURL is the app's public install page on GitHub.
 	InstallURL(ctx context.Context) (string, error)
+	// VerifyRunClaim checks a tokenless upload's claim against GitHub,
+	// authenticated as the installation: repo public, workflow run real
+	// and in progress, PR open at the claimed head. A
+	// *github.ClaimRejectedError is a definitive verdict; any other
+	// error is transient.
+	VerifyRunClaim(ctx context.Context, installationID int64, claim github.RunClaim) error
 }
 
 // tokenLeeway retires cached access tokens before their 2h expiry.
@@ -282,6 +289,19 @@ func (f *Forges) installationForge(ctx context.Context, ws *store.Workspace, for
 		}
 	}
 	return fg
+}
+
+// VerifyGitHubRunClaim verifies a tokenless upload's workflow-run claim
+// through the workspace's installation. Connection upkeep matches
+// installationForge: a refused mint marks the connection broken (lazy
+// uninstall detection, D3) — the caller still sees the error, because
+// unlike a forge push, tokenless authentication cannot degrade.
+func (f *Forges) VerifyGitHubRunClaim(ctx context.Context, ws *store.Workspace, claim github.RunClaim) error {
+	err := f.GitHubApp.VerifyRunClaim(ctx, ws.GitHubInstallationID, claim)
+	if errors.Is(err, forge.ErrCredentialsRevoked) {
+		f.markAppBroken(ctx, ws, err)
+	}
+	return err
 }
 
 // markAppBroken records that the workspace's installation stopped

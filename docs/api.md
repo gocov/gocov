@@ -23,6 +23,22 @@ delta_pct, build_status}`. Uploads carrying a `pr_id` additionally get
 `diff_pct`, `diff_covered_lines`, `diff_total_lines`, `diff_status` and
 `pr_comment` when the repo's workspace is [connected to its forge](connecting.md).
 
+### Tokenless fork-PR uploads
+
+A request **without** the `Authorization` header may instead authenticate as a running GitHub Actions `pull_request`
+workflow — the [fork-PR path](pull-requests.md#fork-prs-without-a-token). It carries three extra parts, and `repo`,
+`commit` (the PR head SHA) and `pr_id` become required:
+
+| part          | meaning                                                          |
+|---------------|------------------------------------------------------------------|
+| `run_id`      | `$GITHUB_RUN_ID` of the workflow run doing the upload            |
+| `run_attempt` | `$GITHUB_RUN_ATTEMPT`                                            |
+| `head_repo`   | the fork the PR head is on (`pull_request.head.repo.full_name`)  |
+
+The server verifies the claim with GitHub through the repo's App installation; the repo must be public, tracked, and
+its workspace connected. Refusals are explicit: `403` with the reason, `404` for an untracked repo, `409` when the
+same `(run_id, run_attempt, part)` already uploaded, `429` past the per-repo hourly limit.
+
 ## Badge
 
 ```markdown

@@ -940,6 +940,13 @@ func (s *Store) LatestCommitReport(ctx context.Context, repoID int64, branch str
 		repoID, branch))
 }
 
+func (s *Store) LatestNonPRCommitReport(ctx context.Context, repoID int64, branch string) (*store.CommitReport, error) {
+	return s.scanCommitReport(s.pool.QueryRow(ctx,
+		`SELECT `+commitReportCols+` FROM commit_reports
+		 WHERE repo_id = $1 AND branch = $2 AND pr_id = '' ORDER BY id DESC LIMIT 1`,
+		repoID, branch))
+}
+
 func (s *Store) LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*store.CommitReport, error) {
 	return s.latestPassedCommitReport(ctx, s.pool, repoID, branch, excludeCommit)
 }
@@ -948,6 +955,7 @@ func (s *Store) latestPassedCommitReport(ctx context.Context, q querier, repoID 
 	return s.scanCommitReport(q.QueryRow(ctx,
 		`SELECT `+commitReportCols+` FROM commit_reports
 		 WHERE repo_id = $1 AND branch = $2 AND commit_sha <> $3 AND NOT gate_failed
+		   AND pr_id = ''
 		 ORDER BY id DESC LIMIT 1`,
 		repoID, branch, excludeCommit))
 }
@@ -995,6 +1003,25 @@ func (s *Store) TryPushStatus(ctx context.Context, repoID int64, commitSHA strin
 		return false, err
 	}
 	return true, tx.Commit(ctx)
+}
+
+func (s *Store) ClaimTokenlessUpload(ctx context.Context, repoID, runID, runAttempt int64, part string) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`INSERT INTO tokenless_claims (repo_id, run_id, run_attempt, part)
+		 VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
+		repoID, runID, runAttempt, part)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+func (s *Store) ReleaseTokenlessUpload(ctx context.Context, repoID, runID, runAttempt int64, part string) error {
+	_, err := s.pool.Exec(ctx,
+		`DELETE FROM tokenless_claims
+		 WHERE repo_id = $1 AND run_id = $2 AND run_attempt = $3 AND part = $4`,
+		repoID, runID, runAttempt, part)
+	return err
 }
 
 func (s *Store) ListBranchCommitReports(ctx context.Context, repoID int64, branch string, limit int) ([]*store.CommitReport, error) {

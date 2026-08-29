@@ -19,6 +19,7 @@ import (
 	"github.com/gocov/gocov/internal/forge"
 	"github.com/gocov/gocov/internal/forge/bitbucket"
 	forgefake "github.com/gocov/gocov/internal/forge/fake"
+	"github.com/gocov/gocov/internal/forge/github"
 	"github.com/gocov/gocov/internal/forge/gitlab"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/server"
@@ -60,6 +61,7 @@ func (devGitHubApp) InstallationAccount(context.Context, int64) (string, error) 
 func (devGitHubApp) InstallURL(context.Context) (string, error) {
 	return "https://github.com/apps/gocov/installations/new", nil
 }
+func (devGitHubApp) VerifyRunClaim(context.Context, int64, github.RunClaim) error { return nil }
 
 // devGLConnect stubs server.GitLabConnect the same way devBBConnect
 // stubs Bitbucket: the consent bounce goes straight back to the local
@@ -229,6 +231,29 @@ func main() {
 			Blocks: []profile.Block{{StartLine: 1, EndLine: 8, NumStmts: 12, Count: 1}}},
 	}
 	if err := st.CreateUpload(ctx, intUpload, intFiles); err != nil {
+		log.Fatal(err)
+	}
+
+	// A tokenless fork-PR upload, so the "unverified contributor upload"
+	// chip on the upload page is previewable.
+	forkUpload := &store.Upload{
+		RepoID: repo.ID, CommitSHA: "77aa11bb22cc0000000000000000000000000000",
+		Branch: "fix-typo", PRID: "12", Format: "go",
+		TotalPct: 81.0, CoveredStmts: 202, TotalStmts: 249,
+		CreatedAt: srcUpload.CreatedAt.Add(4 * time.Hour),
+		Meta: store.UploadMeta{
+			Uploader: "gocov v0.9.2", UploaderKind: "action",
+			CIProvider: "github", CIRunURL: "https://github.com/acme/widgets/actions/runs/2519",
+			CommitMessage: "Fix off-by-one in ledger rounding",
+			CommitAuthor:  "forkcontributor",
+			ProfileName:   "coverage.out", ProfileBytes: 116 * 1024, ProcessMillis: 950,
+			Tokenless: true,
+		},
+	}
+	if err := st.CreateUpload(ctx, forkUpload, steadyFiles()); err != nil {
+		log.Fatal(err)
+	}
+	if err := st.UpsertCommitReport(ctx, reportFor(forkUpload)); err != nil {
 		log.Fatal(err)
 	}
 

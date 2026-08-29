@@ -31,6 +31,7 @@ type Store struct {
 	users      map[int64]*store.User
 	sessions   map[string]*store.Session // keyed by token hash
 	members    map[int64]map[int64]bool  // userID -> set of workspace IDs
+	tokenless  map[string]bool           // accepted tokenless (repo, run, attempt, part) triples
 }
 
 // New returns an empty in-memory store.
@@ -47,6 +48,7 @@ func New() *Store {
 		users:      map[int64]*store.User{},
 		sessions:   map[string]*store.Session{},
 		members:    map[int64]map[int64]bool{},
+		tokenless:  map[string]bool{},
 	}
 }
 
@@ -598,14 +600,18 @@ func (s *Store) CommitReport(_ context.Context, repoID int64, commitSHA string) 
 }
 
 func (s *Store) LatestCommitReport(_ context.Context, repoID int64, branch string) (*store.CommitReport, error) {
-	return s.latestCommitReport(repoID, branch, "", false)
+	return s.latestCommitReport(repoID, branch, "", false, false)
+}
+
+func (s *Store) LatestNonPRCommitReport(_ context.Context, repoID int64, branch string) (*store.CommitReport, error) {
+	return s.latestCommitReport(repoID, branch, "", false, true)
 }
 
 func (s *Store) LatestPassedCommitReport(_ context.Context, repoID int64, branch, excludeCommit string) (*store.CommitReport, error) {
-	return s.latestCommitReport(repoID, branch, excludeCommit, true)
+	return s.latestCommitReport(repoID, branch, excludeCommit, true, true)
 }
 
-func (s *Store) latestCommitReport(repoID int64, branch, excludeCommit string, passedOnly bool) (*store.CommitReport, error) {
+func (s *Store) latestCommitReport(repoID int64, branch, excludeCommit string, passedOnly, nonPROnly bool) (*store.CommitReport, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var latest *store.CommitReport
@@ -614,6 +620,9 @@ func (s *Store) latestCommitReport(repoID int64, branch, excludeCommit string, p
 			continue
 		}
 		if passedOnly && cr.GateFailed {
+			continue
+		}
+		if nonPROnly && cr.PRID != "" {
 			continue
 		}
 		if excludeCommit != "" && cr.CommitSHA == excludeCommit {
@@ -696,6 +705,28 @@ func (s *Store) ListBranchCommitReports(_ context.Context, repoID int64, branch 
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func (s *Store) ClaimTokenlessUpload(_ context.Context, repoID, runID, runAttempt int64, part string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := tokenlessKey(repoID, runID, runAttempt, part)
+	if s.tokenless[key] {
+		return false, nil
+	}
+	s.tokenless[key] = true
+	return true, nil
+}
+
+func (s *Store) ReleaseTokenlessUpload(_ context.Context, repoID, runID, runAttempt int64, part string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.tokenless, tokenlessKey(repoID, runID, runAttempt, part))
+	return nil
+}
+
+func tokenlessKey(repoID, runID, runAttempt int64, part string) string {
+	return fmt.Sprintf("%d:%d:%d:%s", repoID, runID, runAttempt, part)
 }
 
 // copyCommitReport deep-copies a report so callers never alias the stored

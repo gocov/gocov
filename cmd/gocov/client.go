@@ -13,7 +13,7 @@ import (
 
 type uploadRequest struct {
 	Server       string
-	Token        string
+	Token        string // empty on a tokenless upload
 	Format       string
 	PathPrefix   string
 	Part         string
@@ -23,6 +23,9 @@ type uploadRequest struct {
 	UploaderKind string
 	Build        buildInfo
 	Meta         metaInfo
+	// Run is the workflow-run claim a tokenless upload authenticates
+	// with; zero fields when a token is sent.
+	Run runInfo
 }
 
 // uploadResponse mirrors the server's POST /api/v1/upload response.
@@ -44,6 +47,18 @@ type uploadResponse struct {
 	PRComment        string   `json:"pr_comment"`
 }
 
+// serverError is a non-2xx answer from the server, kept as a type so
+// tokenless mode can tell a rejection (server said no, with a reason)
+// from transport trouble.
+type serverError struct {
+	code int
+	msg  string
+}
+
+func (e *serverError) Error() string {
+	return fmt.Sprintf("server returned %d: %s", e.code, e.msg)
+}
+
 func upload(req uploadRequest) (*uploadResponse, error) {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
@@ -61,6 +76,11 @@ func upload(req uploadRequest) (*uploadResponse, error) {
 		"ci_run_url":     req.Meta.CIRunURL,
 		"commit_message": req.Meta.CommitMessage,
 		"commit_author":  req.Meta.CommitAuthor,
+	}
+	if req.Token == "" {
+		fields["run_id"] = req.Run.RunID
+		fields["run_attempt"] = req.Run.RunAttempt
+		fields["head_repo"] = req.Run.HeadRepo
 	}
 	for k, v := range fields {
 		if v == "" {
@@ -90,7 +110,9 @@ func upload(req uploadRequest) (*uploadResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	httpReq.Header.Set("Authorization", "Bearer "+req.Token)
+	if req.Token != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+req.Token)
+	}
 	httpReq.Header.Set("Content-Type", mw.FormDataContentType())
 
 	client := &http.Client{Timeout: 60 * time.Second}
@@ -109,9 +131,9 @@ func upload(req uploadRequest) (*uploadResponse, error) {
 			Error string `json:"error"`
 		}
 		if json.Unmarshal(body, &apiErr) == nil && apiErr.Error != "" {
-			return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, apiErr.Error)
+			return nil, &serverError{code: resp.StatusCode, msg: apiErr.Error}
 		}
-		return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, body)
+		return nil, &serverError{code: resp.StatusCode, msg: string(body)}
 	}
 	var out uploadResponse
 	if err := json.Unmarshal(body, &out); err != nil {

@@ -1075,3 +1075,85 @@ func TestGitLabGrantEncryptedAtRest(t *testing.T) {
 			got.DefaultBranch, got.GitLabRefreshToken)
 	}
 }
+
+func TestTokenlessClaims(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	repo := &store.Repo{Forge: "github", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+
+	won, err := st.ClaimTokenlessUpload(ctx, repo.ID, 9001, 2, "default")
+	if err != nil || !won {
+		t.Fatalf("first claim = (%v, %v), want won", won, err)
+	}
+	won, err = st.ClaimTokenlessUpload(ctx, repo.ID, 9001, 2, "default")
+	if err != nil || won {
+		t.Fatalf("replayed claim = (%v, %v), want refused", won, err)
+	}
+	// Another part and another attempt are distinct triples.
+	if won, err = st.ClaimTokenlessUpload(ctx, repo.ID, 9001, 2, "frontend"); err != nil || !won {
+		t.Fatalf("other-part claim = (%v, %v), want won", won, err)
+	}
+	if won, err = st.ClaimTokenlessUpload(ctx, repo.ID, 9001, 3, "default"); err != nil || !won {
+		t.Fatalf("next-attempt claim = (%v, %v), want won", won, err)
+	}
+	// Releasing reopens the triple for the CI retry.
+	if err := st.ReleaseTokenlessUpload(ctx, repo.ID, 9001, 2, "default"); err != nil {
+		t.Fatal(err)
+	}
+	if won, err = st.ClaimTokenlessUpload(ctx, repo.ID, 9001, 2, "default"); err != nil || !won {
+		t.Fatalf("claim after release = (%v, %v), want won", won, err)
+	}
+	// Deleting the repo sweeps its claims away.
+	if err := st.DeleteRepo(ctx, repo.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// LatestNonPRCommitReport skips PR-build reports (the badge series), and
+// LatestPassedCommitReport does the same for the delta/gate baseline: a
+// fork PR whose head branch is named like the default branch must not
+// feed either.
+func TestCommitReportsExcludePRBuilds(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	repo := &store.Repo{Forge: "github", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	branchReport := &store.CommitReport{RepoID: repo.ID, CommitSHA: "c1", Branch: "main", TotalPct: 80}
+	if err := st.UpsertCommitReport(ctx, branchReport); err != nil {
+		t.Fatal(err)
+	}
+	prReport := &store.CommitReport{RepoID: repo.ID, CommitSHA: "c2", Branch: "main", PRID: "42", TotalPct: 10}
+	if err := st.UpsertCommitReport(ctx, prReport); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := st.LatestNonPRCommitReport(ctx, repo.ID, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CommitSHA != "c1" {
+		t.Errorf("latest non-PR report = %s, want c1", got.CommitSHA)
+	}
+	base, err := st.LatestPassedCommitReport(ctx, repo.ID, "main", "c3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base.CommitSHA != "c1" {
+		t.Errorf("baseline = %s, want c1 (PR report must not be the baseline)", base.CommitSHA)
+	}
+	// The newest overall still sees the PR report.
+	latest, err := st.LatestCommitReport(ctx, repo.ID, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.CommitSHA != "c2" {
+		t.Errorf("latest report = %s, want c2", latest.CommitSHA)
+	}
+}

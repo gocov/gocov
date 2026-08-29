@@ -204,6 +204,9 @@ type provView struct {
 	Part         string // the upload's part, "" for the default single profile
 	PartsNote    string // "single profile, no merge" or "merged from N parts"
 	Processed    string // server processing time, "" when not recorded
+	// Tokenless marks an upload authenticated by workflow-run verification
+	// instead of a token — rendered as "unverified contributor upload".
+	Tokenless bool
 }
 
 var ciLabels = map[string]string{
@@ -227,6 +230,7 @@ func (s *Server) uploadProvenance(ctx context.Context, u *store.Upload) provView
 		CIRunURL:     m.CIRunURL,
 		Uploader:     m.Uploader,
 		UploaderKind: uploaderKindLabels[m.UploaderKind],
+		Tokenless:    m.Tokenless,
 	}
 	if p.ProfileName == "" {
 		p.ProfileName = profileFilename(u.Format)

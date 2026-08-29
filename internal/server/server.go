@@ -99,6 +99,8 @@ type Server struct {
 	webhookSecret string
 	// pipeline is the coverage logic proper: gate, merge, forge report.
 	pipeline *core.Pipeline
+	// tokenless rate-limits tokenless upload attempts per repo.
+	tokenless *tokenlessLimiter
 
 	// auths holds the sign-in providers by forge name; authOrder keeps
 	// the configured order for the login-page buttons.
@@ -172,6 +174,7 @@ func New(cfg Config) *Server {
 		health:        cfg.Health,
 		forges:        core.NewForges(cfg.Store, log, cfg.BaseURL, cfg.GitHubApp, cfg.BitbucketConnect, cfg.GitLabConnect),
 		webhookSecret: cfg.GitHubWebhookSecret,
+		tokenless:     newTokenlessLimiter(),
 
 		auths:             map[string]auth.Provider{},
 		authOrder:         cfg.Auths,

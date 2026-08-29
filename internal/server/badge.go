@@ -47,8 +47,10 @@ func (s *Server) handleBadge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Non-PR reports only: a PR whose head branch shares the default
+	// branch's name (a fork's "main") must not take over the badge.
 	value, color := "unknown", badgeGray
-	latest, err := s.store.LatestCommitReport(r.Context(), repo.ID, repo.DefaultBranch)
+	latest, err := s.store.LatestNonPRCommitReport(r.Context(), repo.ID, repo.DefaultBranch)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.internalError(w, "loading latest report for badge", err)
 		return

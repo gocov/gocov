@@ -142,6 +142,11 @@ type UploadMeta struct {
 	ProfileName   string `json:"profile_name,omitempty"`   // original uploaded filename
 	ProfileBytes  int64  `json:"profile_bytes,omitempty"`  // raw profile size
 	ProcessMillis int64  `json:"process_millis,omitempty"` // server processing time
+	// Tokenless marks an upload authenticated by workflow-run
+	// verification instead of a bearer token (a fork PR's CI). Set by
+	// the server only, never from a request field: the UI renders it as
+	// "unverified contributor upload".
+	Tokenless bool `json:"tokenless,omitzero"`
 }
 
 // User is a web UI account, identified by the forge account it signed in
@@ -303,10 +308,17 @@ type Store interface {
 	CommitReport(ctx context.Context, repoID int64, commitSHA string) (*CommitReport, error)
 	// LatestCommitReport returns the most recent merged report on a branch.
 	LatestCommitReport(ctx context.Context, repoID int64, branch string) (*CommitReport, error)
+	// LatestNonPRCommitReport is LatestCommitReport restricted to reports
+	// that did not come from a pull request build. The badge reads it: a
+	// PR whose head branch shares the default branch's name — a fork's
+	// "main", say — must not take over the repo's headline number.
+	LatestNonPRCommitReport(ctx context.Context, repoID int64, branch string) (*CommitReport, error)
 	// LatestPassedCommitReport returns the most recent gate-passing merged
 	// report on a branch, skipping excludeCommit (the commit being uploaded,
 	// whose own in-progress report must not serve as its baseline). Used as
-	// the delta and gate-drop baseline.
+	// the delta and gate-drop baseline; PR-build reports are excluded — the
+	// baseline is always the branch's own history, never a PR that happens
+	// to carry the branch's name.
 	LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*CommitReport, error)
 	// ListBranchCommitReports returns merged reports on a branch newest
 	// first; limit <= 0 means all. Feeds the coverage trend.
@@ -322,6 +334,17 @@ type Store interface {
 	// CommitParts returns the distinct part names uploaded for a commit —
 	// a cheap read (no blocks/diff) for the per-commit parts cap.
 	CommitParts(ctx context.Context, repoID int64, commitSHA string) ([]string, error)
+
+	// ClaimTokenlessUpload records that the (workflow run, attempt, part)
+	// triple has been accepted for a tokenless upload and reports whether
+	// this call won the claim. One accept per triple: a replay of an
+	// already-claimed triple returns false and the upload is refused.
+	// Concurrent claims of the same triple must resolve to exactly one
+	// winner.
+	ClaimTokenlessUpload(ctx context.Context, repoID, runID, runAttempt int64, part string) (bool, error)
+	// ReleaseTokenlessUpload forgets a claim whose upload then failed to
+	// land, so the CI job's retry is not locked out by its own failure.
+	ReleaseTokenlessUpload(ctx context.Context, repoID, runID, runAttempt int64, part string) error
 }
 
 // CommitTx is the store access available inside WithCommitReportTx. On

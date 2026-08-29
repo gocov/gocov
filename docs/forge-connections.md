@@ -14,8 +14,8 @@ described there.
 Register a GitHub App (**Settings → Developer settings → GitHub Apps → New GitHub App**) with:
 
 - **Setup URL**: `https://your-gocov-host/github/setup`, with *Redirect on update* enabled
-- **Repository permissions**: *Checks: Read & write*, *Commit statuses: Read & write*, *Pull requests: Read & write*,
-  *Contents: Read-only*, *Metadata: Read-only*
+- **Repository permissions**: *Actions: Read-only*, *Checks: Read & write*, *Commit statuses: Read & write*,
+  *Pull requests: Read & write*, *Contents: Read-only*, *Metadata: Read-only*
 - **Organization permissions**: *Members: Read-only* (org membership for sign-in sync)
 - **Webhook**: optional. gocov's model is upload-driven, so a self-hosted app can leave it disabled — installs are
   linked through the setup redirect and uninstalls are detected lazily. A **Marketplace listing requires it**: set the
@@ -34,6 +34,11 @@ Members then connect from the workspace settings or setup page; after GitHub's i
 with the workspace connected. The App covers every surface, check runs included — it is the first-class Checks API
 citizen, so check runs are not permission-fragile — and posts as the app's bot identity (e.g. `gocov[bot]`). In hosted
 mode an install on an account with no workspace yet registers it on the spot (same claim rules as **/register**).
+
+The *Actions: Read-only* permission is what powers
+[tokenless fork-PR uploads](pull-requests.md#fork-prs-without-a-token): the server verifies a claimed workflow run
+through the installation. Without it (an app registered before the permission was listed, until the org re-approves
+the permission update), tokenless uploads are refused with the reason in the CI log; everything else keeps working.
 
 Handling and protecting the private key file is covered in [Self-hosting](self-hosting.md#the-github-app-private-key).
 
