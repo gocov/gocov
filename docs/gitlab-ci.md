@@ -7,6 +7,7 @@
 
 2. Add an upload step after your tests:
 
+<!-- x-release-please-start-version -->
 ```yaml
 workflow:
   rules:
@@ -17,12 +18,13 @@ coverage:
   image: golang:1.23
   script:
     - go test ./... -covermode=atomic -coverprofile=coverage.out
-    - curl -fsSLO https://github.com/gocov/gocov/releases/download/v0.12.0/gocov-linux-amd64
-    - curl -fsSL https://github.com/gocov/gocov/releases/download/v0.12.0/checksums.txt
+    - curl -fsSLO https://github.com/gocov/gocov/releases/download/v0.13.0/gocov-linux-amd64
+    - curl -fsSL https://github.com/gocov/gocov/releases/download/v0.13.0/checksums.txt
       | grep ' gocov-linux-amd64$' | sha256sum -c -
     - chmod +x gocov-linux-amd64
     - ./gocov-linux-amd64 upload coverage.out
 ```
+<!-- x-release-please-end -->
 
 Only the test command and the uploaded path change for other languages —
 [Languages & formats](languages.md) lists what each test tool writes.

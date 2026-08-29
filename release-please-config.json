@@ -1,0 +1,16 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "go",
+  "include-v-in-tag": true,
+  "packages": {
+    ".": {
+      "extra-files": [
+        "docs/gitlab-ci.md",
+        "docs/ci-other.md",
+        "docs/self-hosting.md",
+        "internal/server/templates/onboarding.html",
+        "internal/hosted/hosted.go"
+      ]
+    }
+  }
+}

@@ -12,8 +12,9 @@ self-hosting, `GOCOV_SERVER`.
 Every release ships static binaries for linux, darwin and windows on amd64 and arm64, with `checksums.txt` alongside —
 no toolchain needed. Pin a version, and cache the download on self-hosted runners:
 
+<!-- x-release-please-start-version -->
 ```sh
-ver=v0.12.0
+ver=v0.13.0
 arch=$(uname -m); case "$arch" in x86_64) arch=amd64;; aarch64|arm64) arch=arm64;; esac
 bin="$HOME/.cache/gocov/gocov-$ver-linux-$arch"
 if [ ! -x "$bin" ]; then
@@ -23,6 +24,7 @@ if [ ! -x "$bin" ]; then
 fi
 "$bin" upload coverage.out
 ```
+<!-- x-release-please-end -->
 
 ## With a Go toolchain
 
