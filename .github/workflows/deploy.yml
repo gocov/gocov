@@ -83,11 +83,19 @@ jobs:
         run: |
           set -euo pipefail
 
-          # The script that runs on the instance: pin GOCOV_VERSION in
-          # .env, pull, restart, and refuse to report success until the
-          # container's own healthcheck does.
+          # The script that runs on the instance: sync the checkout to
+          # the tag, pin GOCOV_VERSION in .env, pull, restart, and refuse
+          # to report success until the container's own healthcheck does.
           cat >remote.sh <<REMOTE
           set -euo pipefail
+          # The compose file and Caddyfile live in this checkout, so a
+          # deploy has to bring them to the released version too — the
+          # first v0.13.0 deploy failed exactly here, pulling nothing
+          # because the box still had the compose that said "build".
+          # Deliberately no -f: unexpected local edits should fail the
+          # deploy loudly, not be discarded silently.
+          git -C /opt/gocov fetch --tags --force origin
+          git -C /opt/gocov -c advice.detachedHead=false checkout '$TAG'
           cd /opt/gocov/deploy
           if grep -q '^GOCOV_VERSION=' .env; then
             sed -i 's|^GOCOV_VERSION=.*|GOCOV_VERSION=$TAG|' .env
