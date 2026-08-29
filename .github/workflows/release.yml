@@ -132,6 +132,79 @@ jobs:
             ghcr.io/gocov/gocov-server:${{ steps.tags.outputs.minor }}
             ghcr.io/gocov/gocov-server:latest
 
+  # A release is not finished until the wrappers follow: this opens a bump
+  # PR in gocov-action (action.yml's pinned CLI) and upload-pipe
+  # (Dockerfile ARG + pipe.yml + CHANGELOG), authored by the cross-repo
+  # App, which is installed on exactly those two repos. Merging a bump PR
+  # is that wrapper's release decision — its tag-on-release-merge workflow
+  # takes it from there. Needs only the binaries, so it runs beside the
+  # image build, not behind the deploy.
+  bump-wrappers:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/create-github-app-token@v2
+        id: app
+        with:
+          app-id: ${{ secrets.CROSSBUMP_APP_ID }}
+          private-key: ${{ secrets.CROSSBUMP_APP_PRIVATE_KEY }}
+          owner: gocov
+          repositories: gocov-action,upload-pipe
+
+      - name: Open the gocov-action bump PR
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          set -euo pipefail
+          git clone -q "https://x-access-token:$GH_TOKEN@github.com/gocov/gocov-action" action
+          cd action
+          old=$(sed -n 's/^ *default: *\(v[0-9][0-9.]*\) *$/\1/p' action.yml)
+          if [ "$old" = "$TAG" ]; then echo "action already pins $TAG"; exit 0; fi
+          sed -i "s|^\( *default: *\)$old\$|\1$TAG|" action.yml
+          git config user.name "gocov-cross-repo-bump[bot]"
+          git config user.email "gocov-cross-repo-bump[bot]@users.noreply.github.com"
+          git checkout -q -b "bump-gocov-$TAG"
+          git commit -qam "Pin gocov CLI $TAG"
+          git push -qf origin "bump-gocov-$TAG"
+          gh pr create --repo gocov/gocov-action --base main \
+            --head "bump-gocov-$TAG" --label release \
+            --title "Pin gocov CLI $TAG" \
+            --body "gocov $TAG is released; this pins the CLI the action installs (was $old). Merging this releases the action: the next minor is tagged, v1 moves to it." \
+            || echo "::notice::bump PR for $TAG already open"
+
+      - name: Open the upload-pipe bump PR
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          set -euo pipefail
+          git clone -q "https://x-access-token:$GH_TOKEN@github.com/gocov/upload-pipe" pipe
+          cd pipe
+          old=$(sed -n 's/^ARG GOCOV_VERSION=\(v[0-9][0-9.]*\) *$/\1/p' Dockerfile)
+          if [ "$old" = "$TAG" ]; then echo "pipe already bakes $TAG"; exit 0; fi
+          cur=$(sed -n 's|^image: gocov/upload-pipe:\([0-9][0-9.]*\)$|\1|p' pipe.yml)
+          major=${cur%%.*}; rest=${cur#*.}
+          next="$major.$(( ${rest%%.*} + 1 )).0"
+          sed -i "s|^ARG GOCOV_VERSION=$old\$|ARG GOCOV_VERSION=$TAG|" Dockerfile
+          sed -i "s|^image: gocov/upload-pipe:$cur\$|image: gocov/upload-pipe:$next|" pipe.yml
+          { head -2 CHANGELOG.md
+            printf '## %s\n\n- Bake gocov CLI %s (was %s).\n\n' "$next" "$TAG" "$old"
+            tail -n +3 CHANGELOG.md
+          } > CHANGELOG.new && mv CHANGELOG.new CHANGELOG.md
+          git config user.name "gocov-cross-repo-bump[bot]"
+          git config user.email "gocov-cross-repo-bump[bot]@users.noreply.github.com"
+          git checkout -q -b "bump-gocov-$TAG"
+          git commit -qam "Bake gocov CLI $TAG as $next"
+          git push -qf origin "bump-gocov-$TAG"
+          gh pr create --repo gocov/upload-pipe --base main \
+            --head "bump-gocov-$TAG" --label release \
+            --title "Bake gocov CLI $TAG as $next" \
+            --body "gocov $TAG is released; this bakes it into the pipe image as $next (was $old). Merging this releases the pipe: $next is tagged from pipe.yml and the multi-arch image goes to Docker Hub." \
+            || echo "::notice::bump PR for $TAG already open"
+
   # Deploying is a separate, reusable workflow so a rollback is the same
   # job dispatched by hand with an older tag. Its job carries
   # environment: production, so the run waits here for approval.

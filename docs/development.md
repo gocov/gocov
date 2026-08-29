@@ -57,10 +57,13 @@ release; [gocov-action](https://github.com/gocov/gocov-action) pins the CLI vers
 
 ### Cutting one
 
-Say which version you want, as an empty commit on main:
+Say which version you want, as an empty commit whose message carries a `Release-As:` footer — main only takes pull
+requests, so it goes in as one (keep the footer in the squash message when merging):
 
 ```sh
-git commit --allow-empty -m "chore: release 0.13.0" -m "Release-As: 0.13.0"
+git checkout -b release-0.14.0
+git commit --allow-empty -m "chore: release 0.14.0" -m "Release-As: 0.14.0"
+git push -u origin release-0.14.0
 ```
 
 [release-please](https://github.com/googleapis/release-please) picks that up and opens a release pull request
@@ -77,6 +80,21 @@ full as they were before any of this was automated, and anything written by hand
 
 The pull request is the point. Until it is merged nothing is tagged, so a wrong version or a bad note is a comment
 on a PR rather than a tag that has to be burned.
+
+### The wrappers follow by themselves
+
+The release build also opens a bump PR in each wrapper, authored by the cross-repo App (installed on exactly those
+two repos): gocov-action's pins the CLI its `action.yml` installs; upload-pipe's bakes the CLI into the image and
+bumps `pipe.yml` and the CHANGELOG. Each PR carries the `release` label, and merging it **is** that wrapper's
+release: a `tag-on-release-merge` workflow tags the merge commit (the action computes its next minor from its tags;
+the pipe reads its version from `pipe.yml`) and runs that repo's release workflow — the action's release moves
+`v1`, the pipe's builds the multi-arch image for Docker Hub. So a full release across all three repos is three PR
+merges and nothing else; between the gocov release and the wrapper merges, `verify-release` reports the wrappers as
+behind, which is true.
+
+The pipe's Bitbucket mirror is the one seam: its tag workflow pushes the mirror only when the
+`BITBUCKET_MIRROR_USERNAME`/`BITBUCKET_MIRROR_APP_PASSWORD` secrets are set, and warns instead of failing when they
+are not — the Atlassian catalog reads the Bitbucket repo, and verify-release checks the tag landed there.
 
 ### Where the version is written down
 
