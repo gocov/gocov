@@ -107,13 +107,13 @@ fi
 # check-pins.sh keeps those pins in step with each other; only here, after
 # the release exists, can they be held to the release itself.
 docs_stale=""
-for path in docs/gitlab-ci.md docs/ci-other.md internal/server/templates/onboarding.html; do
+for path in docs/gitlab-ci.md docs/ci-other.md docs/self-hosting.md internal/server/templates/onboarding.html; do
   body=$(contents "$CLI_REPO" "$path" main)
   if [ -z "$body" ]; then
     docs_stale="$docs_stale $path(unreadable)"
     continue
   fi
-  for v in $(echo "$body" | grep -Eo -e 'releases/download/v[0-9]+\.[0-9]+\.[0-9]+' -e 'ver=v[0-9]+\.[0-9]+\.[0-9]+' |
+  for v in $(echo "$body" | grep -Eo -e 'releases/download/v[0-9]+\.[0-9]+\.[0-9]+' -e 'ver=v[0-9]+\.[0-9]+\.[0-9]+' -e 'gocov-server:v[0-9]+\.[0-9]+\.[0-9]+' |
     grep -Eo 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -u); do
     [ "$v" = "$tag" ] || docs_stale="$docs_stale $path:$v"
   done

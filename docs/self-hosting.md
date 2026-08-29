@@ -20,11 +20,13 @@ uid **65532**. Every release publishes it to `ghcr.io/gocov/gocov-server` for am
 the hosted instance runs. Pin a version rather than `latest` — an upgrade should be something you chose, with the
 release notes read, not something a restart did to you:
 
+<!-- x-release-please-start-version -->
 ```yaml
 services:
   server:
     image: ghcr.io/gocov/gocov-server:v0.12.0
 ```
+<!-- x-release-please-end -->
 
 The root `docker-compose.yml` builds from the repo instead, because the evaluation case is often "the code I just
 changed". If you would rather run the binary under systemd, every release ships `gocov-server` for linux, darwin and

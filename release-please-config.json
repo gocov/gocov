@@ -7,6 +7,7 @@
       "extra-files": [
         "docs/gitlab-ci.md",
         "docs/ci-other.md",
+        "docs/self-hosting.md",
         "internal/server/templates/onboarding.html",
         "internal/hosted/hosted.go"
       ]

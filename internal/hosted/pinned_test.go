@@ -12,13 +12,16 @@ import (
 var pinnedIn = []string{
 	"../../docs/gitlab-ci.md",
 	"../../docs/ci-other.md",
+	"../../docs/self-hosting.md",
 	"../../internal/server/templates/onboarding.html",
 }
 
-// version matches the CLI release in a download URL or a shell assignment
-// — "releases/download/v0.12.0/…" and "ver=v0.12.0" — which is every
-// shape the snippets currently use to name one.
-var version = regexp.MustCompile(`(?:releases/download/|\bver=)(v\d+\.\d+\.\d+)`)
+// version matches the pinned release in a download URL, a shell assignment
+// or the server image reference — "releases/download/…", "ver=…" and
+// "gocov-server:…" — which is every shape the snippets currently use to
+// name one. The server image versions with the CLI (same repo, same tag),
+// so one constant covers both.
+var version = regexp.MustCompile(`(?:releases/download/|\bver=|gocov-server:)(v\d+\.\d+\.\d+)`)
 
 // TestPinnedCLIVersionIsInSync keeps the snippets and PinnedCLIVersion from
 // drifting apart. Releasing bumps the constant; this fails until every
