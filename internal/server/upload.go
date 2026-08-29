@@ -126,29 +126,57 @@ func baseName(p string) string {
 //
 // Auth: Bearer token — either a per-repo token or a workspace token.
 // With a workspace token the repo field is required; unknown repos under
-// the workspace prefix are registered automatically. Multipart form: file
-// field "profile"; value fields repo, commit (required), branch (defaults
-// to the repo's default branch), pr_id (optional), format (default "go").
+// the workspace prefix are registered automatically. Without any token
+// the request may instead claim a running GitHub Actions pull_request
+// workflow, verified through the workspace's App installation (tokenless
+// fork-PR uploads — tokenless.go). Multipart form: file field "profile";
+// value fields repo, commit (required), branch (defaults to the repo's
+// default branch), pr_id (optional), format (default "go").
 //
 // The body below is the flow and nothing else — authenticate, read the
 // request, store what arrived, merge the commit's parts, answer the
 // uploader, tell the forge — with each step's detail one call away.
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if !ok || token == "" {
-		httpError(w, http.StatusUnauthorized, "missing bearer token")
-		return
-	}
-	// Authenticate before touching the body so invalid tokens cost a
-	// lookup, not a 64MB multipart parse.
-	authedRepo, ws, ok := s.lookupUploadToken(w, r, token)
-	if !ok {
-		return
+	token, hasToken := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	var authedRepo *store.Repo
+	var ws *store.Workspace
+	var claim *tokenlessClaim // non-nil on the tokenless path
+	if hasToken && token != "" {
+		// Authenticate before touching the body so invalid tokens cost a
+		// lookup, not a 64MB multipart parse. The tokenless path cannot
+		// have that luxury: its credentials are form fields.
+		var ok bool
+		if authedRepo, ws, ok = s.lookupUploadToken(w, r, token); !ok {
+			return
+		}
+	} else {
+		var ok bool
+		if claim, authedRepo, ok = s.authTokenless(w, r); !ok {
+			return
+		}
 	}
 	req, ok := s.readUploadRequest(w, r, authedRepo, ws)
 	if !ok {
 		return
+	}
+	meta := buildUploadMeta(r, req.filename, len(req.raw), time.Since(start))
+	if claim != nil {
+		// Server-set only: the flag drives the "unverified contributor
+		// upload" badge and must not be settable through a form field.
+		meta.Tokenless = true
+		// One accept per (run, attempt, part): first verified upload wins
+		// the triple, replays are refused. Claimed only after verification
+		// so an unverifiable request cannot squat a real run's slot.
+		won, err := s.store.ClaimTokenlessUpload(r.Context(), req.repo.ID, claim.runID, claim.runAttempt, req.part)
+		if err != nil {
+			s.internalError(w, "claiming tokenless upload", err)
+			return
+		}
+		if !won {
+			httpError(w, http.StatusConflict, "workflow run %d (attempt %d) already uploaded part %q; ignoring the duplicate", claim.runID, claim.runAttempt, req.part)
+			return
+		}
 	}
 	res, err := s.pipeline.Accept(r.Context(), core.Submission{
 		Repo:       req.repo,
@@ -160,9 +188,16 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		PathPrefix: req.pathPrefix,
 		Raw:        req.raw,
 		Profile:    req.prof,
-		Meta:       buildUploadMeta(r, req.filename, len(req.raw), time.Since(start)),
+		Meta:       meta,
 	})
 	if err != nil {
+		if claim != nil {
+			// The upload did not land; free the triple so the CI job's
+			// retry is not locked out by this failure.
+			if relErr := s.store.ReleaseTokenlessUpload(r.Context(), req.repo.ID, claim.runID, claim.runAttempt, req.part); relErr != nil {
+				s.log.Error("releasing tokenless claim", "repo", req.repo.Slug, "run", claim.runID, "err", relErr)
+			}
+		}
 		s.internalError(w, "accepting upload", err)
 		return
 	}

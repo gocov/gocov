@@ -5,7 +5,7 @@
 
 <div class="uphead">
   <h1>{{if $u.Meta.CommitMessage}}{{$u.Meta.CommitMessage}}{{else}}<span class="mono">{{short $u.CommitSHA}}</span>{{end}}</h1>
-  <p class="sub"><a class="mono" href="/uploads/{{$u.ID}}">{{short $u.CommitSHA}}</a> on <code class="mono">{{$u.Branch}}</code>{{if $u.PRID}} <span class="chip info">PR #{{$u.PRID}}</span>{{end}}{{with $u.Meta.CommitAuthor}} &middot; by <span class="mono">{{.}}</span>{{end}} &middot; {{timeago $u.CreatedAt}}</p>
+  <p class="sub"><a class="mono" href="/uploads/{{$u.ID}}">{{short $u.CommitSHA}}</a> on <code class="mono">{{$u.Branch}}</code>{{if $u.PRID}} <span class="chip info">PR #{{$u.PRID}}</span>{{end}}{{if .Prov.Tokenless}} <span class="chip warn" title="Uploaded from a fork's CI without a token; authenticated by verifying the workflow run, not a repository secret.">unverified contributor upload</span>{{end}}{{with $u.Meta.CommitAuthor}} &middot; by <span class="mono">{{.}}</span>{{end}} &middot; {{timeago $u.CreatedAt}}</p>
 </div>
 
 {{with .Verdict}}

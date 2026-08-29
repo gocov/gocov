@@ -114,6 +114,57 @@ func detectMeta(env envFunc, git gitFunc, commit string) metaInfo {
 	return m
 }
 
+// runInfo identifies the GitHub Actions workflow run an upload came from,
+// for tokenless fork-PR uploads: the server verifies the run against
+// GitHub instead of a token. HeadRepo is the fork the PR head lives on,
+// read from the event payload.
+type runInfo struct {
+	EventName  string
+	RunID      string
+	RunAttempt string
+	HeadRepo   string
+}
+
+// tokenlessEligible reports whether the environment is one the server's
+// tokenless verification can vouch for: a GitHub Actions pull_request
+// workflow — the one place CI legitimately has no token to send.
+func (ri runInfo) tokenlessEligible() bool {
+	return ri.EventName == "pull_request" && ri.RunID != ""
+}
+
+// detectGitHubRun reads the workflow-run identity from the GitHub Actions
+// environment; zero outside Actions.
+func detectGitHubRun(env envFunc, readFile readFileFunc) runInfo {
+	if env("GITHUB_ACTIONS") == "" {
+		return runInfo{}
+	}
+	ri := runInfo{
+		EventName:  env("GITHUB_EVENT_NAME"),
+		RunID:      env("GITHUB_RUN_ID"),
+		RunAttempt: env("GITHUB_RUN_ATTEMPT"),
+	}
+	if ri.RunAttempt == "" {
+		ri.RunAttempt = "1"
+	}
+	if path := env("GITHUB_EVENT_PATH"); path != "" && readFile != nil {
+		if data, err := readFile(path); err == nil {
+			var ev struct {
+				PullRequest struct {
+					Head struct {
+						Repo struct {
+							FullName string `json:"full_name"`
+						} `json:"repo"`
+					} `json:"head"`
+				} `json:"pull_request"`
+			}
+			if json.Unmarshal(data, &ev) == nil {
+				ri.HeadRepo = ev.PullRequest.Head.Repo.FullName
+			}
+		}
+	}
+	return ri
+}
+
 // firstLine returns the trimmed first line of s.
 func firstLine(s string) string {
 	if i := strings.IndexAny(s, "\r\n"); i >= 0 {

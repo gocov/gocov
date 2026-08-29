@@ -22,7 +22,7 @@ variables, falling back to `git`.
 
 | flag           | default                          | meaning                                                                                        |
 |----------------|----------------------------------|------------------------------------------------------------------------------------------------|
-| `-token`       | `$GOCOV_TOKEN`                   | the workspace/repo upload token (required)                                                     |
+| `-token`       | `$GOCOV_TOKEN`                   | the workspace/repo upload token. Required — except in a GitHub Actions `pull_request` run, where a missing token switches to tokenless mode (see below) |
 | `-server`      | `$GOCOV_SERVER`, else the hosted service | the gocov instance to upload to — only needed when self-hosting                        |
 | `-repo`        | auto-detect                      | repo slug, `workspace/repo`                                                                    |
 | `-commit`      | auto-detect                      | commit SHA. The one value that has no fallback: if detection fails, the upload asks for it     |
@@ -43,6 +43,16 @@ variables, falling back to `git`.
 
 `GOCOV_PART` is handy for matrix jobs that already expose the variant in the environment. Flags win over the
 environment.
+
+## Tokenless fork-PR uploads
+
+In a GitHub Actions `pull_request` workflow with no token set — the fork-PR situation, where secrets are withheld —
+the CLI uploads tokenless: it sends the workflow run's identity (run id, attempt, PR number, head SHA, fork) and the
+server [verifies the run with GitHub](pull-requests.md#fork-prs-without-a-token) through the repo's App installation.
+Works on public repos with the gocov GitHub App connected; anywhere else a missing token stays an error.
+
+In tokenless mode an upload that is refused or fails does **not** fail the build: the CLI prints one line with the
+server's reason (`gocov: tokenless upload rejected — …`) and exits 0.
 
 ## `-path-prefix`
 

@@ -32,6 +32,20 @@ branch protection rule or merge check [block the merge](coverage-gate.md#making-
   marker. No other coverage product on Bitbucket Cloud ships this today.
 - **GitLab** — GitLab has no check-run equivalent, so the MR note's diff coverage table is the in-MR surface.
 
+## Fork PRs without a token
+
+On GitHub, a workflow run for a PR opened from a fork cannot read repository secrets — there is no token to upload
+with. When the repo is **public** and its workspace is [connected through the gocov GitHub App](connecting.md), the
+uploader falls back to tokenless mode: instead of a token it names the workflow run it is, and the server verifies
+with GitHub — through the App installation, so there is no anonymous rate limit to drown in — that the run is real,
+still in progress, a `pull_request` build of that repo at that head commit, and that the PR is open. Contributors get
+the comment, check run and status above with zero setup on their side.
+
+A verified tokenless upload is still not the same as a token: it appears with an **unverified contributor upload**
+badge in the UI, never feeds the default-branch trend, badge or comparison baseline, and each workflow run attempt is
+accepted once per part. Private repos always require a token. If verification fails, the upload is refused with the
+reason in the CI log — and the build stays green.
+
 ## The source view
 
 Any file in an upload renders line by line with a coverage overlay and hit counts, fetched from the forge at the exact

@@ -10,6 +10,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -76,8 +77,19 @@ func run(args []string) error {
 	if *server == "" {
 		return fmt.Errorf("server URL required: set -server or $GOCOV_SERVER")
 	}
+	// Without a token, a GitHub Actions pull_request workflow — the one CI
+	// context that legitimately has no secret to send (a fork PR) — falls
+	// back to tokenless mode: the server verifies the workflow run through
+	// the repo's GitHub App installation instead. Anywhere else a missing
+	// token stays an error.
+	var run runInfo
+	tokenless := false
 	if *token == "" {
-		return fmt.Errorf("upload token required: set -token or $GOCOV_TOKEN")
+		run = detectGitHubRun(osEnv, os.ReadFile)
+		if !run.tokenlessEligible() {
+			return fmt.Errorf("upload token required: set -token or $GOCOV_TOKEN")
+		}
+		tokenless = true
 	}
 
 	build := detectBuild(osEnv, runGit, os.ReadFile)
@@ -114,8 +126,19 @@ func run(args []string) error {
 		UploaderKind: cfg.Kind(),
 		Build:        build,
 		Meta:         detectMeta(osEnv, runGit, build.Commit),
+		Run:          run,
 	})
 	if err != nil {
+		if tokenless {
+			// A fork contributor's build must never break over coverage
+			// plumbing: one readable line with the server's reason, exit 0.
+			verb := "failed"
+			if _, ok := errors.AsType[*serverError](err); ok {
+				verb = "rejected"
+			}
+			fmt.Fprintf(os.Stderr, "gocov: tokenless upload %s — %v\n", verb, err)
+			return nil
+		}
 		return err
 	}
 

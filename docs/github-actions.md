@@ -31,6 +31,17 @@ That's the whole setup:
 | `part`   | names one slice of a matrix or multi-job build — see [Parts](parts.md)                       |
 | `server` | only when self-hosting: your instance's URL. On the hosted service the server is implicit    |
 
+## Fork pull requests
+
+Workflow runs for PRs opened from forks cannot read `secrets.GOCOV_TOKEN` — GitHub withholds secrets from fork code.
+On a **public** repo whose workspace is [connected through the gocov GitHub App](connecting.md) that's fine: with no
+token available the uploader switches to tokenless mode and the server verifies the workflow run itself through the
+App. Fork contributors see the PR comment and check run without any setup;
+[Coverage in pull requests](pull-requests.md#fork-prs-without-a-token) has the details and limits.
+
+A tokenless upload never fails the build: if it is refused (App not installed, private repo, verification failed),
+the job logs the reason and exits 0.
+
 ## Without the action
 
 On a runner that already has Go, the CLI also runs straight from source — no marketplace dependency:

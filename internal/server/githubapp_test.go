@@ -14,19 +14,23 @@ import (
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
 	"github.com/gocov/gocov/internal/forge"
 	forgefake "github.com/gocov/gocov/internal/forge/fake"
+	"github.com/gocov/gocov/internal/forge/github"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
 )
 
 // fakeGitHubApp is a canned server.GitHubApp: installations resolve via
-// the accounts map, and ForgeClient hands out appForge (or forgeErr).
+// the accounts map, ForgeClient hands out appForge (or forgeErr), and
+// verify answers VerifyRunClaim (nil verify accepts every claim).
 type fakeGitHubApp struct {
-	appForge   forge.Forge
-	forgeErr   error
-	accounts   map[int64]string
-	installURL string
-	forgeCalls []int64
+	appForge    forge.Forge
+	forgeErr    error
+	accounts    map[int64]string
+	installURL  string
+	forgeCalls  []int64
+	verify      func(installationID int64, claim github.RunClaim) error
+	verifyCalls []github.RunClaim
 }
 
 func (f *fakeGitHubApp) ForgeClient(_ context.Context, id int64) (forge.Forge, error) {
@@ -49,6 +53,14 @@ func (f *fakeGitHubApp) InstallURL(context.Context) (string, error) {
 		return "", fmt.Errorf("github app: GET /app failed")
 	}
 	return f.installURL, nil
+}
+
+func (f *fakeGitHubApp) VerifyRunClaim(_ context.Context, installationID int64, claim github.RunClaim) error {
+	f.verifyCalls = append(f.verifyCalls, claim)
+	if f.verify == nil {
+		return nil
+	}
+	return f.verify(installationID, claim)
 }
 
 // githubAppFixture exposes the App's forge double (app.appForge, also the
