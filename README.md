@@ -2,43 +2,17 @@
 
 ![coverage](https://app.gocov.dev/badge/gocov/gocov.svg)
 
-**Hosted:** [gocov.dev](https://gocov.dev) — public repos free forever, badge included. Or self-host the whole thing
-(below); it's the same product.
+Diff coverage, pull request comments and merge gates for GitHub, GitLab and Bitbucket Cloud — an open-source
+Coveralls/Codecov alternative. Use the hosted service at [gocov.dev](https://gocov.dev) (public repos free forever,
+badge included), or self-host the same product: one Go binary plus Postgres.
 
-Self-hostable coverage tracking — an open-source Coveralls/Codecov alternative. Single binary + Postgres.
+![The gocov dashboard: workspace coverage, how many gates are passing, and one row per repository with its coverage, delta, 30-day trend and gate](docs/assets/dashboard.png)
 
-- **Forges:** Bitbucket Cloud, GitHub and GitLab — build statuses, PR/MR comments with diff coverage, Bitbucket Code
-  Insights report cards and GitHub check runs with inline annotations on uncovered changed lines
-- **Formats:** Go cover profiles, LCOV (Jest, Vitest, nyc, c8), JaCoCo XML (Maven, Gradle, Android), Cobertura XML
-  (coverage.py/pytest-cov, coverlet, gcovr), Clover XML (PHPUnit, Istanbul) and SimpleCov resultsets (Ruby) — detected
-  from the uploaded content, no flag needed
-- **Coverage gate:** per-repo minimums for total and diff coverage plus a drop tolerance; a failed gate pushes a FAILED
-  status your forge's merge checks can block on
-- **Web UI:** repo list, per-file coverage, line-by-line source view with hit counts, coverage trend chart, SVG badge
-  per repo, sign-in with your forge account
+## Coverage on your pull requests in three steps
 
-The full tour, screenshots included, starts at [docs.gocov.dev](https://docs.gocov.dev) — the
-[pull request surfaces](docs/pull-requests.md) page is the product in one look.
-
-## Quick start
-
-```sh
-docker compose up
-```
-
-This starts Postgres and the server on http://localhost:8080 (migrations apply automatically). Then, in the web UI:
-
-1. [Enable sign-in](docs/sign-in.md) with your forge and sign in — the onboarding wizard registers your workspace
-   (org/group/user) and shows its upload token, once. A brand-new instance tracks no workspaces yet, so set
-   `GOCOV_ALLOWED_WORKSPACES` to the one you want to track (e.g. `GOCOV_ALLOWED_WORKSPACES=myorg`) or every sign-in is
-   denied.
-2. Set `GOCOV_TOKEN` (secured) and `GOCOV_SERVER` as workspace variables in CI; repos register themselves on their first
-   upload.
-3. Optionally [connect the workspace to its forge](docs/connecting.md)
-   — one click — for statuses, PR comments, check runs and diff coverage.
-
-Upload from CI (GitHub Actions shown; [GitLab CI](docs/gitlab-ci.md) and
-[Bitbucket Pipelines](docs/bitbucket-pipelines.md) have their own recipes):
+1. Sign in at [app.gocov.dev](https://app.gocov.dev) and claim your workspace — it shows your upload token, once.
+2. Add the token to CI as a secret named `GOCOV_TOKEN`.
+3. Add one step after your tests (GitHub Actions shown):
 
 ```yaml
 - run: npx jest --coverage        # or go test -coverprofile, mvn verify, pytest --cov, ...
@@ -49,12 +23,42 @@ Upload from CI (GitHub Actions shown; [GitLab CI](docs/gitlab-ci.md) and
 ```
 
 The action downloads the CLI binary and checks its sha256, so there is no toolchain to install — the same three lines
-work whatever your tests are written in. Every supported format uploads this way; point `files` at whatever your test
-runner produced. The badge is one line of markdown:
+work whatever your tests are written in; point `files` at whatever your test runner produced. Recipes for the rest:
+[GitLab CI](docs/gitlab-ci.md) · [Bitbucket Pipelines](docs/bitbucket-pipelines.md) ·
+[any other CI](docs/ci-other.md) · [languages & formats](docs/languages.md)
+
+From then on every push carries its own coverage: a status and delta on the commit, a diff-coverage comment on the
+pull request, a gate that can block the merge, and a badge that is one line of markdown:
 
 ```markdown
-![coverage](https://gocov.example/badge/myworkspace/myrepo.svg)
+![coverage](https://app.gocov.dev/badge/myworkspace/myrepo.svg)
 ```
+
+## What you get
+
+- **Pull request surfaces:** build statuses, PR/MR comments with diff coverage, GitHub check runs and Bitbucket Code
+  Insights report cards with inline annotations on uncovered changed lines — see
+  [the tour](docs/pull-requests.md)
+- **Coverage gate:** per-repo minimums for total and diff coverage plus a drop tolerance; a failed gate pushes a
+  FAILED status your forge's merge checks can block on
+- **Any language:** Go cover profiles, LCOV (Jest, Vitest, nyc, c8), JaCoCo XML (Maven, Gradle, Android), Cobertura
+  XML (coverage.py/pytest-cov, coverlet, gcovr), Clover XML (PHPUnit, Istanbul) and SimpleCov resultsets (Ruby) —
+  detected from the uploaded content, no flag needed
+- **Web UI:** repo list, per-file coverage, line-by-line source view with hit counts, coverage trend chart, SVG badge
+  per repo, sign-in with your forge account
+
+## Self-hosting
+
+The same product on your infrastructure, AGPL-3.0, no telemetry and no call home:
+
+```sh
+docker compose up
+```
+
+This starts Postgres and the server on http://localhost:8080 (migrations apply automatically). Then
+[enable sign-in](docs/sign-in.md) with your forge, sign in — the onboarding wizard registers your workspace and mints
+its upload token — and set `GOCOV_TOKEN` and `GOCOV_SERVER` in CI. The path from there to a production instance (TLS,
+the secret key, your own GitHub App, upgrades) is in [Self-hosting](docs/self-hosting.md).
 
 ## Documentation
 
