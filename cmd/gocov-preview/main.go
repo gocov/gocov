@@ -98,9 +98,13 @@ func (d devBBConnect) ForgeClient(string) forge.Forge { return d.fg }
 func main() {
 	ctx := context.Background()
 	st := storemem.New()
+	// Marked public so the anonymous read-only view (CTA band, hidden
+	// settings) is previewable with GOCOV_PREVIEW_AUTH=1 in a second,
+	// signed-out browser tab.
 	repo := &store.Repo{
 		Forge: "bitbucket", Slug: "acme/widgets", Token: "tok",
 		DefaultBranch: "main", Gate: store.Gate{MinCoverage: new(float64(70))},
+		Visibility: store.VisibilityPublic,
 	}
 	if err := st.CreateRepo(ctx, repo); err != nil {
 		log.Fatal(err)
@@ -310,6 +314,7 @@ func main() {
 		BaseURL:          "http://localhost:" + cfg.Port,
 		Auths:            auths,
 		Hosted:           hosted,
+		PublicReports:    true,
 		GitHubApp:        devGitHubApp{fg: forgefake.New()},
 		BitbucketConnect: devBBConnect{fg: forgefake.New()},
 		GitLabConnect:    devGLConnect{fg: forgefake.New()},

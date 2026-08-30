@@ -62,6 +62,7 @@ func (p *Pipeline) Accept(ctx context.Context, sub Submission) (*Result, error) 
 	if p.Forges != nil {
 		fg, fgErr = p.Forges.For(ctx, sub.Repo)
 	}
+	p.RefreshVisibility(ctx, fg, sub.Repo)
 
 	covered, total := sub.Profile.Coverage()
 	totalPct := profile.Percent(covered, total)

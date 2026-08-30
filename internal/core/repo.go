@@ -103,6 +103,35 @@ func (p *Pipeline) RegisterRepo(ctx context.Context, ws *store.Workspace, slug s
 	return repo, nil
 }
 
+// RefreshVisibility re-asks the forge whether the repo is public and
+// caches the answer on the repo row — the switch behind anonymous report
+// pages, so a repo flipped private on the forge closes its pages by the
+// next upload at the latest. Best effort: any failure keeps the last
+// known state (private until the forge has ever answered) and never
+// disturbs the upload.
+func (p *Pipeline) RefreshVisibility(ctx context.Context, fg forge.Forge, repo *store.Repo) {
+	if fg == nil {
+		return
+	}
+	v, err := fg.GetRepoVisibility(ctx, repo.Slug)
+	if errors.Is(err, forge.ErrNotImplemented) {
+		return
+	}
+	if err != nil {
+		p.Log.Warn("get repo visibility", "repo", repo.Slug, "err", err)
+		return
+	}
+	if v == repo.Visibility {
+		return
+	}
+	if err := p.Store.SetRepoVisibility(ctx, repo.ID, v); err != nil {
+		p.Log.Error("caching repo visibility", "repo", repo.Slug, "err", err)
+		return
+	}
+	p.Log.Info("repo visibility changed", "repo", repo.Slug, "visibility", v)
+	repo.Visibility = v
+}
+
 // NewToken generates a token: 24 random bytes in hex. Repo and workspace
 // tokens are the same shape, and only their hash is ever compared, so one
 // generator serves both.

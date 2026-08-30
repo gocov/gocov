@@ -63,6 +63,26 @@ func TestInsightsAnnotationsTruncate(t *testing.T) {
 	}
 }
 
+func TestPRCommentSignatureHostedOnly(t *testing.T) {
+	u := &store.Upload{CommitSHA: "abc123", TotalPct: 80}
+
+	selfHosted := &Pipeline{BaseURL: "https://cov.example.com"}
+	if body := selfHosted.prCommentBody(u, nil, Verdict{}); strings.Contains(body, "gocov.dev") {
+		t.Errorf("self-hosted PR comment carries the signature line:\n%s", body)
+	}
+
+	hosted := &Pipeline{BaseURL: "https://cov.example.com", Hosted: true}
+	body := hosted.prCommentBody(u, nil, Verdict{})
+	if !strings.Contains(body, "<sub>Coverage by [gocov](https://gocov.dev?ref=pr-comment) — free for public repos</sub>") {
+		t.Errorf("hosted PR comment misses the signature line:\n%s", body)
+	}
+	// Update-in-place matches on the leading marker; the signature must
+	// not disturb it.
+	if !strings.HasPrefix(body, PRCommentMarker) {
+		t.Errorf("comment no longer starts with the update-in-place marker:\n%s", body)
+	}
+}
+
 func TestInsightsPerFileDataBudget(t *testing.T) {
 	p := &Pipeline{BaseURL: "https://cov.example.com"}
 	// Eight partially covered files against six standard fields (delta

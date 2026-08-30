@@ -131,11 +131,13 @@ func (s *Store) Migrate(ctx context.Context) error {
 func (s *Store) CreateRepo(ctx context.Context, r *store.Repo) error {
 	return s.pool.QueryRow(ctx, `
 		INSERT INTO repos (forge, slug, token, default_branch,
-			min_coverage, min_diff_coverage, max_coverage_drop)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+			min_coverage, min_diff_coverage, max_coverage_drop,
+			visibility, public_reports_disabled)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id, created_at`,
 		r.Forge, r.Slug, r.Token, r.DefaultBranch,
 		r.Gate.MinCoverage, r.Gate.MinDiffCoverage, r.Gate.MaxCoverageDrop,
+		r.Visibility, r.PublicReportsDisabled,
 	).Scan(&r.ID, &r.CreatedAt)
 }
 
@@ -143,10 +145,24 @@ func (s *Store) UpdateRepo(ctx context.Context, r *store.Repo) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE repos SET forge = $2, slug = $3, token = $4,
 			default_branch = $5,
-			min_coverage = $6, min_diff_coverage = $7, max_coverage_drop = $8
+			min_coverage = $6, min_diff_coverage = $7, max_coverage_drop = $8,
+			visibility = $9, public_reports_disabled = $10
 		WHERE id = $1`,
 		r.ID, r.Forge, r.Slug, r.Token, r.DefaultBranch,
-		r.Gate.MinCoverage, r.Gate.MinDiffCoverage, r.Gate.MaxCoverageDrop)
+		r.Gate.MinCoverage, r.Gate.MinDiffCoverage, r.Gate.MaxCoverageDrop,
+		r.Visibility, r.PublicReportsDisabled)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) SetRepoVisibility(ctx context.Context, repoID int64, visibility string) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE repos SET visibility = $2 WHERE id = $1`, repoID, visibility)
 	if err != nil {
 		return err
 	}
@@ -157,7 +173,8 @@ func (s *Store) UpdateRepo(ctx context.Context, r *store.Repo) error {
 }
 
 const repoCols = `id, forge, slug, token, default_branch,
-	min_coverage, min_diff_coverage, max_coverage_drop, created_at`
+	min_coverage, min_diff_coverage, max_coverage_drop,
+	visibility, public_reports_disabled, created_at`
 
 func (s *Store) DeleteRepo(ctx context.Context, id int64) error {
 	tag, err := s.pool.Exec(ctx, `DELETE FROM repos WHERE id = $1`, id)
@@ -218,7 +235,8 @@ type querier interface {
 func (s *Store) scanRepo(row rowScanner) (*store.Repo, error) {
 	var r store.Repo
 	err := row.Scan(&r.ID, &r.Forge, &r.Slug, &r.Token, &r.DefaultBranch,
-		&r.Gate.MinCoverage, &r.Gate.MinDiffCoverage, &r.Gate.MaxCoverageDrop, &r.CreatedAt)
+		&r.Gate.MinCoverage, &r.Gate.MinDiffCoverage, &r.Gate.MaxCoverageDrop,
+		&r.Visibility, &r.PublicReportsDisabled, &r.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}

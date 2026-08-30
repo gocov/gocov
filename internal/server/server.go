@@ -73,6 +73,10 @@ type Config struct {
 	// (POST /github/webhook) and is the HMAC secret its signatures are
 	// verified against. Empty leaves the route unregistered.
 	GitHubWebhookSecret string
+	// PublicReports allows anonymous read-only report pages for repos the
+	// forge reports public (GOCOV_PUBLIC_REPORTS). False keeps every page
+	// behind the login wall exactly as before.
+	PublicReports bool
 }
 
 // The forge connectors a deployment can configure. They are declared in
@@ -108,6 +112,7 @@ type Server struct {
 	authOrder         []auth.Provider
 	allowedWorkspaces []string
 	hosted            bool
+	publicReports     bool
 	// secureCookies marks auth cookies Secure when the public base URL is
 	// https (the UI is then served through TLS or a terminating proxy).
 	secureCookies bool
@@ -180,11 +185,12 @@ func New(cfg Config) *Server {
 		authOrder:         cfg.Auths,
 		allowedWorkspaces: cfg.AllowedWorkspaces,
 		hosted:            cfg.Hosted,
+		publicReports:     cfg.PublicReports,
 		secureCookies:     strings.HasPrefix(cfg.BaseURL, "https://"),
 	}
 	// Everything that decides rather than transports lives in core; the
 	// server holds one handle to it.
-	s.pipeline = &core.Pipeline{Store: cfg.Store, Blobs: cfg.Blobs, Log: log, BaseURL: cfg.BaseURL, Forges: s.forges}
+	s.pipeline = &core.Pipeline{Store: cfg.Store, Blobs: cfg.Blobs, Log: log, BaseURL: cfg.BaseURL, Forges: s.forges, Hosted: cfg.Hosted}
 	for _, p := range cfg.Auths {
 		s.auths[p.Name()] = p
 	}
@@ -197,6 +203,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/upload", s.handleUpload)
 	s.mux.HandleFunc("GET /badge/{slug...}", s.handleBadge)
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
+	s.mux.HandleFunc("GET /robots.txt", s.handleRobots)
+	s.mux.HandleFunc("GET /sitemap.xml", s.handleSitemap)
 	s.mux.Handle("GET /static/", cacheStatic(http.FileServerFS(staticFS)))
 	s.mux.HandleFunc("GET /login", s.handleLogin)
 	s.mux.HandleFunc("GET /oauth/{forge}/start", s.handleOAuthStart)

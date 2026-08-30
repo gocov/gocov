@@ -87,6 +87,17 @@ func (s *Store) UpdateRepo(_ context.Context, r *store.Repo) error {
 	return nil
 }
 
+func (s *Store) SetRepoVisibility(_ context.Context, repoID int64, visibility string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.repos[repoID]
+	if !ok {
+		return store.ErrNotFound
+	}
+	r.Visibility = visibility
+	return nil
+}
+
 func (s *Store) DeleteRepo(_ context.Context, id int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -42,11 +42,12 @@ same `(run_id, run_attempt, part)` already uploaded, `429` past the per-repo hou
 ## Badge
 
 ```markdown
-![coverage](https://app.gocov.dev/badge/myworkspace/myrepo.svg)
+[![coverage](https://app.gocov.dev/badge/myworkspace/myrepo.svg)](https://app.gocov.dev/repos/myworkspace/myrepo?ref=badge)
 ```
 
-A self-hosted instance serves the same path from its own host. Either way there is nothing to assemble by hand: the
-repo page shows the finished snippet with a copy button.
+The link lands on the repo's report page — for a public repo that is a [page anyone can read](public-reports.md);
+on a private repo, visitors get the sign-in page. A self-hosted instance serves the same paths from its own host.
+Either way there is nothing to assemble by hand: the repo page shows the finished snippet with a copy button.
 
 Red below 50%, yellow 50–75%, green above 75%. Shows the latest upload on the repo's default branch. Badges are served
 without authentication even when web UI sign-in is enabled.

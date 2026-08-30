@@ -64,16 +64,23 @@ func (s *Server) memberRepo(w http.ResponseWriter, r *http.Request) (*store.Repo
 func (s *Server) repoSettingsData(repo *store.Repo, wsPrefix, newToken, notice, errMsg string) map[string]any {
 	baseURL := strings.TrimSuffix(s.baseURL, "/")
 	return map[string]any{
-		"Repo":          repo,
-		"WSPrefix":      wsPrefix,
-		"WSPrefixEsc":   url.PathEscape(wsPrefix),
-		"Token":         repo.Token,
-		"MaskedToken":   maskSecret(repo.Token),
-		"NewToken":      newToken,
-		"Notice":        notice,
-		"Error":         errMsg,
-		"GateActive":    gateActiveCount(repo.Gate),
-		"BadgeMarkdown": fmt.Sprintf("![coverage](%s/badge/%s.svg)", baseURL, repo.Slug),
+		"Repo":        repo,
+		"WSPrefix":    wsPrefix,
+		"WSPrefixEsc": url.PathEscape(wsPrefix),
+		"Token":       repo.Token,
+		"MaskedToken": maskSecret(repo.Token),
+		"NewToken":    newToken,
+		"Notice":      notice,
+		"Error":       errMsg,
+		"GateActive":  gateActiveCount(repo.Gate),
+		// The badge links to the repo page: for a public repo that is a
+		// report any README reader can open, for a private one the login
+		// wall answers as it always did.
+		"BadgeMarkdown": fmt.Sprintf("[![coverage](%s/badge/%s.svg)](%s/repos/%s?ref=badge)",
+			baseURL, repo.Slug, baseURL, repo.Slug),
+		// The switch exists only where it can do something: a repo the
+		// forge reports public, on an instance that allows public reports.
+		"ShowPublicReports": s.publicReports && repo.Visibility == store.VisibilityPublic,
 	}
 }
 
@@ -109,6 +116,12 @@ func (s *Server) handleRepoSettingsSave(w http.ResponseWriter, r *http.Request) 
 	}
 	repo.DefaultBranch = branch
 	repo.Gate = gate
+	// The "Public reports" switch only renders (and may only change) where
+	// it is meaningful; a private repo's save must not flip the stored
+	// value just because the form had no checkbox to send.
+	if s.publicReports && repo.Visibility == store.VisibilityPublic {
+		repo.PublicReportsDisabled = r.FormValue("public_reports") == ""
+	}
 	if err := s.store.UpdateRepo(r.Context(), repo); err != nil {
 		s.internalError(w, "updating repo", err)
 		return

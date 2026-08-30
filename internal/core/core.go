@@ -33,4 +33,8 @@ type Pipeline struct {
 	// Forges resolves the client a repo's workspace is connected through.
 	// Nil leaves every forge surface reporting "skipped".
 	Forges *Forges
+	// Hosted marks the self-service deployment; the PR comment then
+	// carries the one-line gocov signature. Self-hosted instances never
+	// get marketing appended to their PRs.
+	Hosted bool
 }

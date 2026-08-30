@@ -82,6 +82,14 @@ type Workspace struct {
 	CreatedAt          time.Time
 }
 
+// Repo visibility values, as the forge last reported them. The empty
+// string means the forge has never been asked; everything but "public"
+// is treated as private.
+const (
+	VisibilityPublic  = "public"
+	VisibilityPrivate = "private"
+)
+
 // Repo is a tracked repository. Slug is namespaced ("workspace/repo").
 type Repo struct {
 	ID            int64
@@ -91,8 +99,24 @@ type Repo struct {
 	DefaultBranch string
 	// Gate holds the repo's coverage requirements; violations turn the
 	// pushed build status into a failure.
-	Gate      Gate
-	CreatedAt time.Time
+	Gate Gate
+	// Visibility caches what the forge last reported about the repo:
+	// VisibilityPublic or VisibilityPrivate. Refreshed on upload; empty
+	// until the forge has been asked, which counts as private.
+	Visibility string
+	// PublicReportsDisabled is the repo-settings "Public reports" switch,
+	// inverted so the zero value keeps the default: a public repo's
+	// report pages are anonymously viewable unless a member turns them off.
+	PublicReportsDisabled bool
+	CreatedAt             time.Time
+}
+
+// ReportsPublic reports whether the repo's report pages may be served to
+// anonymous visitors: the forge says the repo is public and the repo's
+// "Public reports" switch has not been turned off. The instance-level
+// switch (GOCOV_PUBLIC_REPORTS) is the server's to apply on top.
+func (r *Repo) ReportsPublic() bool {
+	return r.Visibility == VisibilityPublic && !r.PublicReportsDisabled
 }
 
 // Upload is one coverage report for a commit.
@@ -226,6 +250,10 @@ type Store interface {
 	// DeleteRepo removes a repo together with its uploads and per-file rows.
 	// Raw profile blobs are not touched; callers clean those up first.
 	DeleteRepo(ctx context.Context, id int64) error
+	// SetRepoVisibility updates only the repo's cached forge visibility —
+	// a narrow UPDATE, because it is written from the upload path and must
+	// not clobber (or be clobbered by) a concurrent settings save.
+	SetRepoVisibility(ctx context.Context, repoID int64, visibility string) error
 	RepoByID(ctx context.Context, id int64) (*Repo, error)
 	RepoBySlug(ctx context.Context, slug string) (*Repo, error)
 	RepoByToken(ctx context.Context, token string) (*Repo, error)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -477,4 +478,30 @@ func TestPublishReportOtherBadRequestsDoNotRetry(t *testing.T) {
 	if puts != 1 {
 		t.Errorf("PUT retried %d times on an unrelated 400, want no retry", puts-1)
 	}
+}
+
+func TestGetRepoVisibility(t *testing.T) {
+	for isPrivate, want := range map[bool]string{false: forge.VisibilityPublic, true: forge.VisibilityPrivate} {
+		c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/repositories/acme/widgets" {
+				t.Errorf("path = %q", r.URL.Path)
+			}
+			fmt.Fprintf(w, `{"is_private": %v, "slug": "widgets"}`, isPrivate)
+		})
+		got, err := c.GetRepoVisibility(context.Background(), "acme/widgets")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Errorf("is_private=%v: visibility = %q, want %q", isPrivate, got, want)
+		}
+	}
+	t.Run("404 maps to ErrRepoNotFound", func(t *testing.T) {
+		c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "not found", http.StatusNotFound)
+		})
+		if _, err := c.GetRepoVisibility(context.Background(), "a/ghost"); !errors.Is(err, forge.ErrRepoNotFound) {
+			t.Errorf("err = %v, want ErrRepoNotFound", err)
+		}
+	})
 }

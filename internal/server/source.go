@@ -60,17 +60,27 @@ type missBlock struct {
 func (s *Server) handleSource(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		s.renderNotFound(w, r)
+		s.reportNotFound(w, r)
 		return
 	}
 	path := r.PathValue("path")
 	upload, err := s.store.Upload(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
-		s.renderNotFound(w, r)
+		s.reportNotFound(w, r)
 		return
 	}
 	if err != nil {
 		s.internalError(w, "loading upload", err)
+		return
+	}
+	repo, err := s.store.RepoByID(r.Context(), upload.RepoID)
+	if err != nil {
+		s.internalError(w, "loading repo for upload", err)
+		return
+	}
+	// Access before the per-file lookup, so a signed-out probe cannot tell
+	// a missing file from a missing upload.
+	if !s.authorizeReport(w, r, repo) {
 		return
 	}
 	files, err := s.store.UploadFiles(r.Context(), id)
@@ -86,18 +96,6 @@ func (s *Server) handleSource(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if file == nil {
-		s.renderNotFound(w, r)
-		return
-	}
-	repo, err := s.store.RepoByID(r.Context(), upload.RepoID)
-	if err != nil {
-		s.internalError(w, "loading repo for upload", err)
-		return
-	}
-	if ok, err := s.canView(r, repo.Slug); err != nil {
-		s.internalError(w, "checking access", err)
-		return
-	} else if !ok {
 		s.renderNotFound(w, r)
 		return
 	}
@@ -123,6 +121,7 @@ func (s *Server) handleSource(w http.ResponseWriter, r *http.Request) {
 		"MissLines":      0,
 		"NewlyUncovered": 0,
 		"Delta":          nil,
+		"PublicView":     s.publicView(r),
 	}
 	if unavailable == "" {
 		lines := renderSourceLines(source, file.Blocks)

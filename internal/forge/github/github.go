@@ -219,6 +219,38 @@ func (c *Client) GetDefaultBranch(ctx context.Context, repoSlug string) (string,
 	return body.DefaultBranch, nil
 }
 
+// GetRepoVisibility reads the repo's private flag via GET /repos/{slug}.
+func (c *Client) GetRepoVisibility(ctx context.Context, repoSlug string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/repos/"+repoSlug, nil)
+	if err != nil {
+		return "", err
+	}
+	c.authorize(req)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("github: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return "", fmt.Errorf("%w: %s", forge.ErrRepoNotFound, repoSlug)
+	}
+	if resp.StatusCode >= 300 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return "", fmt.Errorf("github: /repos/%s returned %d: %s", repoSlug, resp.StatusCode, msg)
+	}
+	var body struct {
+		Private bool `json:"private"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body); err != nil {
+		return "", fmt.Errorf("github: decoding repository: %w", err)
+	}
+	if body.Private {
+		return forge.VisibilityPrivate, nil
+	}
+	return forge.VisibilityPublic, nil
+}
+
 // maxFileBytes bounds source files fetched for the source view.
 const maxFileBytes = 2 << 20
 

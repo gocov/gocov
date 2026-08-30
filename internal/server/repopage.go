@@ -24,18 +24,14 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	repo, err := s.store.RepoBySlug(r.Context(), slug)
 	if errors.Is(err, store.ErrNotFound) {
-		s.renderNotFound(w, r)
+		s.reportNotFound(w, r)
 		return
 	}
 	if err != nil {
 		s.internalError(w, "loading repo", err)
 		return
 	}
-	if ok, err := s.canView(r, repo.Slug); err != nil {
-		s.internalError(w, "checking access", err)
-		return
-	} else if !ok {
-		s.renderNotFound(w, r)
+	if !s.authorizeReport(w, r, repo) {
 		return
 	}
 
@@ -128,6 +124,13 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		trend = newTrendView(trendBranch, trendReports)
 	}
 
+	// The settings link is for members; the anonymous public view gets
+	// neither the button nor the workspace lookup behind it.
+	wsPrefix := ""
+	if !s.publicView(r) {
+		wsPrefix = s.repoWorkspacePrefix(r.Context(), repo)
+	}
+
 	s.render(w, r, "repo.html", map[string]any{
 		"Repo":        repo,
 		"Latest":      latest,
@@ -135,7 +138,8 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		"Uncovered":   uncovered,
 		"LastUpload":  lastProv,
 		"Miss":        miss,
-		"WSPrefix":    s.repoWorkspacePrefix(r.Context(), repo),
+		"WSPrefix":    wsPrefix,
+		"PublicView":  s.publicView(r),
 		"GateSummary": gateSummary(repo.Gate),
 		"Branches":    branches,
 		"Branch":      branch,

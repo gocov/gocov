@@ -23,6 +23,14 @@ var ErrRepoNotFound = errors.New("forge: repository not found")
 // prompt instead of retrying.
 var ErrCredentialsRevoked = errors.New("forge: credentials revoked")
 
+// Repo visibility values, mapped by each implementation from its native
+// field. Anything the forge restricts to signed-in accounts (e.g. a
+// GitLab "internal" project) is private.
+const (
+	VisibilityPublic  = "public"
+	VisibilityPrivate = "private"
+)
+
 // Build status states, mapped by each implementation to its native values.
 const (
 	StateSuccessful = "successful"
@@ -102,6 +110,10 @@ type Forge interface {
 	// GetDefaultBranch returns the repository's main branch name, used
 	// when auto-registering repos on first upload.
 	GetDefaultBranch(ctx context.Context, repoSlug string) (string, error)
+	// GetRepoVisibility reports whether the repository is world-readable
+	// on the forge: VisibilityPublic or VisibilityPrivate. It decides
+	// whether the repo's report pages may be served anonymously.
+	GetRepoVisibility(ctx context.Context, repoSlug string) (string, error)
 	// GetFileContent returns a file's raw content at a commit, used by
 	// the source view. Returns ErrRepoNotFound-wrapped errors when the
 	// file does not exist at that commit.

@@ -61,6 +61,10 @@ type Forge struct {
 	Files     map[string]string
 	FileErr   error
 	ReportErr error // returned by PublishReport
+	// Visibility is returned by GetRepoVisibility; empty means
+	// ErrNotImplemented. VisibilityErr wins when set.
+	Visibility    string
+	VisibilityErr error
 
 	StatusCalls        []StatusCall
 	CommentCalls       []CommentCall
@@ -70,6 +74,7 @@ type Forge struct {
 	DefaultBranchCalls []string // repo slugs
 	FileCalls          []string // paths
 	ReportCalls        []ReportCall
+	VisibilityCalls    []string // repo slugs
 
 	// comments simulates the PR comment store: posted and updated bodies
 	// keyed by a fake incremental id, so FindPRComment behaves like the
@@ -148,6 +153,19 @@ func (f *Forge) GetDefaultBranch(_ context.Context, repoSlug string) (string, er
 		return "", forge.ErrNotImplemented
 	}
 	return f.DefaultBranch, nil
+}
+
+func (f *Forge) GetRepoVisibility(_ context.Context, repoSlug string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.VisibilityCalls = append(f.VisibilityCalls, repoSlug)
+	if f.VisibilityErr != nil {
+		return "", f.VisibilityErr
+	}
+	if f.Visibility == "" {
+		return "", forge.ErrNotImplemented
+	}
+	return f.Visibility, nil
 }
 
 func (f *Forge) GetFileContent(_ context.Context, repoSlug, commitSHA, path string) ([]byte, error) {

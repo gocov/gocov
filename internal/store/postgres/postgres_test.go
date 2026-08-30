@@ -115,12 +115,33 @@ func TestRepoLifecycle(t *testing.T) {
 		t.Error("old token still resolves after rotation")
 	}
 
+	// Visibility and the public-reports switch round-trip; the narrow
+	// visibility update touches nothing else.
+	repo.Visibility = store.VisibilityPublic
+	repo.PublicReportsDisabled = true
+	if err := st.UpdateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.RepoByID(ctx, repo.ID); got.Visibility != store.VisibilityPublic || !got.PublicReportsDisabled {
+		t.Errorf("public-reports round trip: %+v", got)
+	}
+	if err := st.SetRepoVisibility(ctx, repo.ID, store.VisibilityPrivate); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.RepoByID(ctx, repo.ID); got.Visibility != store.VisibilityPrivate || !got.PublicReportsDisabled ||
+		got.DefaultBranch != "develop" {
+		t.Errorf("after SetRepoVisibility: %+v", got)
+	}
+
 	// Missing rows yield ErrNotFound.
 	if err := st.UpdateRepo(ctx, &store.Repo{ID: 9999, Slug: "x/y", Token: "t"}); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("UpdateRepo missing = %v", err)
 	}
 	if _, err := st.RepoBySlug(ctx, "no/such"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("RepoBySlug missing = %v", err)
+	}
+	if err := st.SetRepoVisibility(ctx, 9999, store.VisibilityPublic); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("SetRepoVisibility missing = %v", err)
 	}
 }
 

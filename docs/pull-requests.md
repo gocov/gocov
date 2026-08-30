@@ -15,7 +15,9 @@ see [Why coverage changed](coverage-changed.md).
 ## The PR comment
 
 A comment on the pull request with total coverage, the delta, diff coverage and the uncovered changed lines. Repeated
-uploads update the same comment instead of stacking new ones. On GitLab it is posted as a merge request note.
+uploads update the same comment instead of stacking new ones. On GitLab it is posted as a merge request note. The
+*Full report* link opens without sign-in when the repo is public — see [public reports](public-reports.md). On the
+hosted service the comment ends with a small one-line gocov signature; self-hosted instances never add one.
 
 ## The build status
 

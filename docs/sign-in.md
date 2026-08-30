@@ -91,3 +91,10 @@ what gets registered later; leave it unset and the allow-set grows to include ev
 Signed-in members can register any workspace their forge account vouches for.
 
 CI is unaffected either way: the upload API keeps its Bearer tokens, badges stay embeddable, `/healthz` stays open.
+
+## Public report pages
+
+Repos the forge reports as public additionally get anonymous read-only
+[report pages](public-reports.md) — members can turn them off per repo in repo settings, and
+`GOCOV_PUBLIC_REPORTS=off` turns the whole feature off for the instance, keeping every page behind the login wall.
+An instance running inside a private network typically wants exactly that one switch.

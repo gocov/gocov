@@ -7,6 +7,7 @@ package server
 
 import (
 	"github.com/gocov/gocov/internal/core"
+	"github.com/gocov/gocov/internal/store"
 
 	"net/http"
 	"sort"
@@ -66,6 +67,57 @@ func (s *Server) canView(r *http.Request, slug string) (bool, error) {
 		return false, err
 	}
 	return scope.allows(slug), nil
+}
+
+// authorizeReport decides whether the request may see a repo's report
+// pages — repo page, upload detail, source view, raw profile. Members (and
+// open-mode instances) pass exactly as before. Anyone else passes only
+// when the repo is effectively public: the forge reported it public, the
+// repo's "Public reports" switch is on and the instance allows it
+// (GOCOV_PUBLIC_REPORTS). A refused anonymous visitor gets the login
+// redirect — the same answer the middleware gave every signed-out request
+// before these pages existed, so nothing about the repo leaks; a
+// signed-in non-member of a non-public repo still 404s (D3).
+// Returns false when it wrote the response.
+func (s *Server) authorizeReport(w http.ResponseWriter, r *http.Request, repo *store.Repo) bool {
+	allowed, err := s.canView(r, repo.Slug)
+	if err != nil {
+		s.internalError(w, "checking access", err)
+		return false
+	}
+	if allowed {
+		return true
+	}
+	if s.publicReports && repo.ReportsPublic() {
+		return true
+	}
+	if currentUser(r) == nil {
+		redirectToLogin(w, r)
+		return false
+	}
+	s.renderNotFound(w, r)
+	return false
+}
+
+// reportNotFound answers a report-page lookup that found nothing. For an
+// anonymous visitor the answer is the login redirect, exactly what a
+// missing session got before public report pages existed — a 404 here
+// would tell a signed-out browser which slugs and upload ids exist.
+func (s *Server) reportNotFound(w http.ResponseWriter, r *http.Request) {
+	if s.authEnabled() && currentUser(r) == nil {
+		redirectToLogin(w, r)
+		return
+	}
+	s.renderNotFound(w, r)
+}
+
+// publicView reports whether this render is the anonymous read-only view
+// of a public repo's page — the only state the layout shows the sign-up
+// band in. Report handlers call it after authorizeReport let the request
+// through, so signed-out with auth enabled implies an effectively public
+// repo.
+func (s *Server) publicView(r *http.Request) bool {
+	return s.authEnabled() && currentUser(r) == nil
 }
 
 // allowedWorkspaceSet is the D3 authorization rule: the operator's explicit

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -366,4 +367,36 @@ func TestNextLink(t *testing.T) {
 			t.Errorf("nextLink(%q) = %q, want %q", tt.header, got, tt.want)
 		}
 	}
+}
+
+func TestGetRepoVisibility(t *testing.T) {
+	// GitLab's third value, "internal", is readable only by signed-in
+	// GitLab accounts — not world-readable, so private for our purposes.
+	for visibility, want := range map[string]string{
+		"public":   forge.VisibilityPublic,
+		"internal": forge.VisibilityPrivate,
+		"private":  forge.VisibilityPrivate,
+	} {
+		c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/projects/acme%2Fwidgets" && r.URL.EscapedPath() != "/projects/acme%2Fwidgets" {
+				t.Errorf("path = %q", r.URL.EscapedPath())
+			}
+			fmt.Fprintf(w, `{"visibility": %q, "name": "widgets"}`, visibility)
+		})
+		got, err := c.GetRepoVisibility(context.Background(), "acme/widgets")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Errorf("%s: visibility = %q, want %q", visibility, got, want)
+		}
+	}
+	t.Run("404 maps to ErrRepoNotFound", func(t *testing.T) {
+		c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "not found", http.StatusNotFound)
+		})
+		if _, err := c.GetRepoVisibility(context.Background(), "a/ghost"); !errors.Is(err, forge.ErrRepoNotFound) {
+			t.Errorf("err = %v, want ErrRepoNotFound", err)
+		}
+	})
 }

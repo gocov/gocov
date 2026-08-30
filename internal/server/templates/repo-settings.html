@@ -16,6 +16,7 @@
   <span class="grp">Repository</span>
   <a href="#general">General</a>
   <a href="#gates">Coverage gates</a>
+  {{if .ShowPublicReports}}<a href="#public-reports">Public reports</a>{{end}}
   <a href="#uploads">Uploads</a>
   <a href="#badge">Badge</a>
   <span class="grp">Danger zone</span>
@@ -74,6 +75,22 @@
   <div class="card-ft"><button class="btn primary" type="submit">Save</button>
     <span class="hint">Applies to uploads received from now on. Past verdicts are not recalculated.</span></div>
 </div>
+
+{{if .ShowPublicReports}}
+<div class="card" id="public-reports">
+  <div class="card-hd"><h2>Public reports</h2><span class="spacer"></span>
+    {{if .Repo.PublicReportsDisabled}}<span class="chip plain">Off</span>{{else}}<span class="chip pass">On</span>{{end}}</div>
+  <div class="card-bd">
+    <p>The forge reports this repository as public, so its report pages — the repo overview,
+    upload reports and source views — can be read without signing in. Settings and every
+    mutating action stay members-only either way.</p>
+    <label><input type="checkbox" name="public_reports" value="on"{{if not .Repo.PublicReportsDisabled}} checked{{end}}>
+      Serve read-only report pages to visitors who are not signed in</label>
+  </div>
+  <div class="card-ft"><button class="btn primary" type="submit">Save</button>
+    <span class="hint">Turning this off closes the pages to members only immediately.</span></div>
+</div>
+{{end}}
 </form>
 
 <div class="card" id="uploads">

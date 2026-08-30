@@ -1,4 +1,7 @@
-{{define "title"}}gocov — {{.Repo.Slug}}{{end}}
+{{define "title"}}{{.Repo.Slug}} code coverage — gocov{{end}}
+{{define "head"}}<meta name="description" content="Code coverage for {{.Repo.Slug}}, tracked by gocov: current total, coverage trend and where coverage is missing.">
+<link rel="canonical" href="{{.BaseURL}}/repos/{{.Repo.Slug}}">
+{{end}}
 {{define "content"}}
 <div class="crumbs"><a href="/">Repos</a> / <code>{{.Repo.Slug}}</code></div>
 
@@ -22,7 +25,7 @@
   <img alt="coverage badge" src="/badge/{{.Repo.Slug}}.svg">
   <input id="badge-md" class="input mono" readonly onfocus="this.select()"
          style="flex: 1; min-width: 0; font-size: 12px"
-         value="![coverage]({{.BaseURL}}/badge/{{.Repo.Slug}}.svg)">
+         value="[![coverage]({{.BaseURL}}/badge/{{.Repo.Slug}}.svg)]({{.BaseURL}}/repos/{{.Repo.Slug}}?ref=badge)">
   <button class="btn" data-copy="#badge-md">Copy</button>
 </div>
 
