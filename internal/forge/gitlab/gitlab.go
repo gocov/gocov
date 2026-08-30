@@ -234,33 +234,43 @@ func (c *Client) GetPRDiff(ctx context.Context, repoSlug, prID string) (string, 
 	return sb.String(), nil
 }
 
-// GetDefaultBranch reads the project's default branch via
-// GET /projects/{id}.
-func (c *Client) GetDefaultBranch(ctx context.Context, repoSlug string) (string, error) {
+// fetchProject GETs the project resource (GET /projects/{id}) and decodes
+// it into out — the request/status/decode plumbing GetDefaultBranch and
+// GetRepoVisibility share.
+func (c *Client) fetchProject(ctx context.Context, repoSlug string, out any) error {
 	path := "/projects/" + projectID(repoSlug)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
 	if err != nil {
-		return "", err
+		return err
 	}
 	c.authorize(req)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("gitlab: %w", err)
+		return fmt.Errorf("gitlab: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return "", fmt.Errorf("%w: %s", forge.ErrRepoNotFound, repoSlug)
+		return fmt.Errorf("%w: %s", forge.ErrRepoNotFound, repoSlug)
 	}
 	if resp.StatusCode >= 300 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("gitlab: %s returned %d: %s", path, resp.StatusCode, msg)
+		return fmt.Errorf("gitlab: %s returned %d: %s", path, resp.StatusCode, msg)
 	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out); err != nil {
+		return fmt.Errorf("gitlab: decoding project: %w", err)
+	}
+	return nil
+}
+
+// GetDefaultBranch reads the project's default branch via
+// GET /projects/{id}.
+func (c *Client) GetDefaultBranch(ctx context.Context, repoSlug string) (string, error) {
 	var body struct {
 		DefaultBranch string `json:"default_branch"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body); err != nil {
-		return "", fmt.Errorf("gitlab: decoding project: %w", err)
+	if err := c.fetchProject(ctx, repoSlug, &body); err != nil {
+		return "", err
 	}
 	if body.DefaultBranch == "" {
 		return "", fmt.Errorf("gitlab: project %s has no default branch", repoSlug)
@@ -272,30 +282,11 @@ func (c *Client) GetDefaultBranch(ctx context.Context, repoSlug string) (string,
 // GitLab's "internal" (any signed-in GitLab account) is not world-readable,
 // so it maps to private.
 func (c *Client) GetRepoVisibility(ctx context.Context, repoSlug string) (string, error) {
-	path := "/projects/" + projectID(repoSlug)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
-	if err != nil {
-		return "", err
-	}
-	c.authorize(req)
-
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("gitlab: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		return "", fmt.Errorf("%w: %s", forge.ErrRepoNotFound, repoSlug)
-	}
-	if resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("gitlab: %s returned %d: %s", path, resp.StatusCode, msg)
-	}
 	var body struct {
 		Visibility string `json:"visibility"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body); err != nil {
-		return "", fmt.Errorf("gitlab: decoding project: %w", err)
+	if err := c.fetchProject(ctx, repoSlug, &body); err != nil {
+		return "", err
 	}
 	if body.Visibility == "public" {
 		return forge.VisibilityPublic, nil

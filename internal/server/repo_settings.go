@@ -62,26 +62,37 @@ func (s *Server) memberRepo(w http.ResponseWriter, r *http.Request) (*store.Repo
 // the repo row in the clear, so exposing it to members (Reveal) leaks nothing
 // the DB does not already hold; MaskedToken is the default rendering.
 func (s *Server) repoSettingsData(repo *store.Repo, wsPrefix, newToken, notice, errMsg string) map[string]any {
-	baseURL := strings.TrimSuffix(s.baseURL, "/")
 	return map[string]any{
-		"Repo":        repo,
-		"WSPrefix":    wsPrefix,
-		"WSPrefixEsc": url.PathEscape(wsPrefix),
-		"Token":       repo.Token,
-		"MaskedToken": maskSecret(repo.Token),
-		"NewToken":    newToken,
-		"Notice":      notice,
-		"Error":       errMsg,
-		"GateActive":  gateActiveCount(repo.Gate),
-		// The badge links to the repo page: for a public repo that is a
-		// report any README reader can open, for a private one the login
-		// wall answers as it always did.
-		"BadgeMarkdown": fmt.Sprintf("[![coverage](%s/badge/%s.svg)](%s/repos/%s?ref=badge)",
-			baseURL, repo.Slug, baseURL, repo.Slug),
-		// The switch exists only where it can do something: a repo the
-		// forge reports public, on an instance that allows public reports.
-		"ShowPublicReports": s.publicReports && repo.Visibility == store.VisibilityPublic,
+		"Repo":              repo,
+		"WSPrefix":          wsPrefix,
+		"WSPrefixEsc":       url.PathEscape(wsPrefix),
+		"Token":             repo.Token,
+		"MaskedToken":       maskSecret(repo.Token),
+		"NewToken":          newToken,
+		"Notice":            notice,
+		"Error":             errMsg,
+		"GateActive":        gateActiveCount(repo.Gate),
+		"BadgeMarkdown":     s.badgeMarkdown(repo.Slug),
+		"ShowPublicReports": s.publicReportsSwitch(repo),
 	}
+}
+
+// badgeMarkdown is the copy-paste snippet the repo page and repo settings
+// both hand out — one definition, so the two copy buttons can never drift.
+// The badge links to the repo page: for a public repo that is a report any
+// README reader can open, for a private one the login wall answers as it
+// always did.
+func (s *Server) badgeMarkdown(slug string) string {
+	base := strings.TrimSuffix(s.baseURL, "/")
+	return fmt.Sprintf("[![coverage](%s/badge/%s.svg)](%s/repos/%s?ref=badge)", base, slug, base, slug)
+}
+
+// publicReportsSwitch reports whether the repo-settings "Public reports"
+// switch is meaningful for this repo — a repo the forge reports public, on
+// an instance that allows public reports. Render and save both consult it,
+// so a save can never flip a value the form did not show.
+func (s *Server) publicReportsSwitch(repo *store.Repo) bool {
+	return s.publicReports && repo.Visibility == store.VisibilityPublic
 }
 
 // handleRepoSettings implements GET /repo-settings/{slug}.
@@ -119,7 +130,7 @@ func (s *Server) handleRepoSettingsSave(w http.ResponseWriter, r *http.Request) 
 	// The "Public reports" switch only renders (and may only change) where
 	// it is meaningful; a private repo's save must not flip the stored
 	// value just because the form had no checkbox to send.
-	if s.publicReports && repo.Visibility == store.VisibilityPublic {
+	if s.publicReportsSwitch(repo) {
 		repo.PublicReportsDisabled = r.FormValue("public_reports") == ""
 	}
 	if err := s.store.UpdateRepo(r.Context(), repo); err != nil {

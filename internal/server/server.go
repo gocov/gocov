@@ -321,6 +321,14 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 // navigations (a GET that accepts HTML) get the styled 404 page; everything
 // else — API clients, other methods — keeps the plain-text 404.
 func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
+	// A signed-out request can only land here through the public-report
+	// pass-through (an unrouted path under /repos/ or /uploads/); answer
+	// with the login redirect every other signed-out request gets, so the
+	// signed-out response surface stays uniform.
+	if s.authEnabled() && currentUser(r) == nil {
+		redirectToLogin(w, r)
+		return
+	}
 	if r.Method == http.MethodGet && strings.Contains(r.Header.Get("Accept"), "text/html") {
 		s.renderNotFound(w, r)
 		return

@@ -80,7 +80,7 @@ func (s *Server) handleSource(w http.ResponseWriter, r *http.Request) {
 	}
 	// Access before the per-file lookup, so a signed-out probe cannot tell
 	// a missing file from a missing upload.
-	if !s.authorizeReport(w, r, repo) {
+	if _, ok := s.authorizeReport(w, r, repo); !ok {
 		return
 	}
 	files, err := s.store.UploadFiles(r.Context(), id)

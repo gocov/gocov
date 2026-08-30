@@ -115,22 +115,20 @@ func TestRepoLifecycle(t *testing.T) {
 		t.Error("old token still resolves after rotation")
 	}
 
-	// Visibility and the public-reports switch round-trip; the narrow
-	// visibility update touches nothing else.
-	repo.Visibility = store.VisibilityPublic
+	// The public-reports switch rides UpdateRepo; visibility does not —
+	// only SetRepoVisibility writes it, so a full-row save carrying a
+	// stale value cannot revert a concurrent refresh.
+	if err := st.SetRepoVisibility(ctx, repo.ID, store.VisibilityPrivate); err != nil {
+		t.Fatal(err)
+	}
+	repo.Visibility = store.VisibilityPublic // stale in-memory value
 	repo.PublicReportsDisabled = true
 	if err := st.UpdateRepo(ctx, repo); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ = st.RepoByID(ctx, repo.ID); got.Visibility != store.VisibilityPublic || !got.PublicReportsDisabled {
-		t.Errorf("public-reports round trip: %+v", got)
-	}
-	if err := st.SetRepoVisibility(ctx, repo.ID, store.VisibilityPrivate); err != nil {
-		t.Fatal(err)
-	}
 	if got, _ = st.RepoByID(ctx, repo.ID); got.Visibility != store.VisibilityPrivate || !got.PublicReportsDisabled ||
 		got.DefaultBranch != "develop" {
-		t.Errorf("after SetRepoVisibility: %+v", got)
+		t.Errorf("after stale-visibility UpdateRepo: %+v", got)
 	}
 
 	// Missing rows yield ErrNotFound.

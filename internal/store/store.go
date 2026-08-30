@@ -245,7 +245,10 @@ type UploadFile struct {
 // Store is the persistence interface used by the server.
 type Store interface {
 	CreateRepo(ctx context.Context, r *Repo) error
-	// UpdateRepo replaces the stored row matching r.ID with r's fields.
+	// UpdateRepo replaces the stored row matching r.ID with r's fields —
+	// except Visibility, which only SetRepoVisibility writes: the upload
+	// path refreshes it concurrently with settings saves, and a full-row
+	// save carrying a stale value must not revert it.
 	UpdateRepo(ctx context.Context, r *Repo) error
 	// DeleteRepo removes a repo together with its uploads and per-file rows.
 	// Raw profile blobs are not touched; callers clean those up first.
@@ -258,6 +261,12 @@ type Store interface {
 	RepoBySlug(ctx context.Context, slug string) (*Repo, error)
 	RepoByToken(ctx context.Context, token string) (*Repo, error)
 	ListRepos(ctx context.Context) ([]*Repo, error)
+	// PublicRepoSlugs returns the slugs of repos whose report pages are
+	// effectively public (forge-reported public, "Public reports" switch
+	// on), ordered by slug and capped at limit; limit <= 0 means all.
+	// Feeds the sitemap without hydrating full rows on a crawler-facing
+	// endpoint.
+	PublicRepoSlugs(ctx context.Context, limit int) ([]string, error)
 
 	CreateWorkspace(ctx context.Context, w *Workspace) error
 	// UpdateWorkspace replaces the stored row matching w.ID with w's fields.

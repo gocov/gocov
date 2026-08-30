@@ -31,7 +31,8 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "loading repo", err)
 		return
 	}
-	if !s.authorizeReport(w, r, repo) {
+	member, ok := s.authorizeReport(w, r, repo)
+	if !ok {
 		return
 	}
 
@@ -124,33 +125,35 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		trend = newTrendView(trendBranch, trendReports)
 	}
 
-	// The settings link is for members; the anonymous public view gets
-	// neither the button nor the workspace lookup behind it.
+	// The settings link is for members; anyone admitted through the
+	// public branch — anonymous or a signed-in non-member — gets neither
+	// the button nor the workspace lookup behind it.
 	wsPrefix := ""
-	if !s.publicView(r) {
+	if member {
 		wsPrefix = s.repoWorkspacePrefix(r.Context(), repo)
 	}
 
 	s.render(w, r, "repo.html", map[string]any{
-		"Repo":        repo,
-		"Latest":      latest,
-		"Verdict":     verdict,
-		"Uncovered":   uncovered,
-		"LastUpload":  lastProv,
-		"Miss":        miss,
-		"WSPrefix":    wsPrefix,
-		"PublicView":  s.publicView(r),
-		"GateSummary": gateSummary(repo.Gate),
-		"Branches":    branches,
-		"Branch":      branch,
-		"TrendBranch": trendBranch,
-		"Trend":       trend,
-		"Uploads":     uploads,
-		"Page":        page,
-		"PrevPage":    page - 1,
-		"NextPage":    page + 1,
-		"HasOlder":    hasOlder,
-		"BaseURL":     strings.TrimSuffix(s.baseURL, "/"),
+		"Repo":          repo,
+		"Latest":        latest,
+		"Verdict":       verdict,
+		"Uncovered":     uncovered,
+		"LastUpload":    lastProv,
+		"Miss":          miss,
+		"WSPrefix":      wsPrefix,
+		"PublicView":    s.publicView(r),
+		"BadgeMarkdown": s.badgeMarkdown(repo.Slug),
+		"GateSummary":   gateSummary(repo.Gate),
+		"Branches":      branches,
+		"Branch":        branch,
+		"TrendBranch":   trendBranch,
+		"Trend":         trend,
+		"Uploads":       uploads,
+		"Page":          page,
+		"PrevPage":      page - 1,
+		"NextPage":      page + 1,
+		"HasOlder":      hasOlder,
+		"BaseURL":       strings.TrimSuffix(s.baseURL, "/"),
 	})
 }
 

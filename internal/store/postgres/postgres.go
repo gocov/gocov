@@ -141,16 +141,20 @@ func (s *Store) CreateRepo(ctx context.Context, r *store.Repo) error {
 	).Scan(&r.ID, &r.CreatedAt)
 }
 
+// UpdateRepo leaves the visibility column alone: it is written from the
+// upload path via SetRepoVisibility, and a settings save carrying the
+// value it loaded minutes ago must not be able to revert a concurrent
+// refresh (a private repo would reopen to anonymous visitors).
 func (s *Store) UpdateRepo(ctx context.Context, r *store.Repo) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE repos SET forge = $2, slug = $3, token = $4,
 			default_branch = $5,
 			min_coverage = $6, min_diff_coverage = $7, max_coverage_drop = $8,
-			visibility = $9, public_reports_disabled = $10
+			public_reports_disabled = $9
 		WHERE id = $1`,
 		r.ID, r.Forge, r.Slug, r.Token, r.DefaultBranch,
 		r.Gate.MinCoverage, r.Gate.MinDiffCoverage, r.Gate.MaxCoverageDrop,
-		r.Visibility, r.PublicReportsDisabled)
+		r.PublicReportsDisabled)
 	if err != nil {
 		return err
 	}
@@ -158,6 +162,31 @@ func (s *Store) UpdateRepo(ctx context.Context, r *store.Repo) error {
 		return store.ErrNotFound
 	}
 	return nil
+}
+
+func (s *Store) PublicRepoSlugs(ctx context.Context, limit int) ([]string, error) {
+	q := `SELECT slug FROM repos
+		WHERE visibility = 'public' AND NOT public_reports_disabled
+		ORDER BY slug`
+	var args []any
+	if limit > 0 {
+		q += ` LIMIT $1`
+		args = append(args, limit)
+	}
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var slug string
+		if err := rows.Scan(&slug); err != nil {
+			return nil, err
+		}
+		out = append(out, slug)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) SetRepoVisibility(ctx context.Context, repoID int64, visibility string) error {

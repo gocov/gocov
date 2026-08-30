@@ -25,6 +25,13 @@ The same report members see, minus the member chrome: no settings, no tokens, no
 [tokenless from a fork PR](pull-requests.md#fork-prs-without-a-token) keep their "unverified contributor upload"
 marker on the public page too.
 
+## Search engines see public pages
+
+Public repo pages are made findable on purpose: each carries a descriptive title and canonical URL, the instance
+serves a `/sitemap.xml` listing every public repo page, and `/robots.txt` keeps the sign-in flow, settings pages and
+raw profile downloads out of indexes. Turning the repo's **Public reports** switch off removes its page from the
+sitemap and closes it in the same move — search engines drop pages they can no longer fetch.
+
 ## The badge links here
 
 The badge snippet the repo page and repo settings hand out links the SVG to the repo's report page, so a README

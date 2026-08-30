@@ -27,8 +27,12 @@ func (s *Server) handleRobots(w http.ResponseWriter, r *http.Request) {
 		sb.WriteString("\nSitemap: " + strings.TrimSuffix(s.baseURL, "/") + "/sitemap.xml\n")
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
 	_, _ = w.Write([]byte(sb.String()))
 }
+
+// sitemapMaxEntries is the sitemap protocol's cap on URLs per file.
+const sitemapMaxEntries = 50000
 
 // sitemap is the minimal urlset shape of the sitemap protocol.
 type sitemap struct {
@@ -49,19 +53,18 @@ func (s *Server) handleSitemap(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	repos, err := s.store.ListRepos(r.Context())
+	slugs, err := s.store.PublicRepoSlugs(r.Context(), sitemapMaxEntries)
 	if err != nil {
-		s.internalError(w, "listing repos for sitemap", err)
+		s.internalError(w, "listing public repos for sitemap", err)
 		return
 	}
 	base := strings.TrimSuffix(s.baseURL, "/")
 	sm := sitemap{Xmlns: "http://www.sitemaps.org/schemas/sitemap/0.9"}
-	for _, repo := range repos {
-		if repo.ReportsPublic() {
-			sm.URLs = append(sm.URLs, sitemapURL{Loc: base + "/repos/" + repo.Slug})
-		}
+	for _, slug := range slugs {
+		sm.URLs = append(sm.URLs, sitemapURL{Loc: base + "/repos/" + slug})
 	}
 	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
 	_, _ = w.Write([]byte(xml.Header))
 	enc := xml.NewEncoder(w)
 	enc.Indent("", "  ")

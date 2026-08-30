@@ -49,7 +49,7 @@ func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "loading repo for upload", err)
 		return
 	}
-	if !s.authorizeReport(w, r, repo) {
+	if _, ok := s.authorizeReport(w, r, repo); !ok {
 		return
 	}
 
@@ -370,7 +370,7 @@ func (s *Server) handleUploadProfile(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "loading repo for upload", err)
 		return
 	}
-	if !s.authorizeReport(w, r, repo) {
+	if _, ok := s.authorizeReport(w, r, repo); !ok {
 		return
 	}
 	if upload.RawBlobKey == "" {

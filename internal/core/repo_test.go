@@ -58,10 +58,14 @@ func TestRefreshVisibilityCachesForgeAnswer(t *testing.T) {
 	}
 
 	// A forge that cannot answer keeps the last known state; so does
-	// having no forge at all.
+	// having no forge at all, and so does an answer outside the
+	// public/private contract — it is rejected, never cached verbatim.
 	fg.VisibilityErr = errors.New("forge down")
 	p.RefreshVisibility(ctx, fg, repo)
 	p.RefreshVisibility(ctx, nil, repo)
+	fg.VisibilityErr = nil
+	fg.Visibility = "internal"
+	p.RefreshVisibility(ctx, fg, repo)
 	if stored, _ := st.RepoBySlug(ctx, repo.Slug); stored.Visibility != store.VisibilityPrivate {
 		t.Errorf("stored visibility after failures = %q, want private", stored.Visibility)
 	}

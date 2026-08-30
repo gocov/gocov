@@ -113,12 +113,26 @@ func (p *Pipeline) RefreshVisibility(ctx context.Context, fg forge.Forge, repo *
 	if fg == nil {
 		return
 	}
-	v, err := fg.GetRepoVisibility(ctx, repo.Slug)
+	fv, err := fg.GetRepoVisibility(ctx, repo.Slug)
 	if errors.Is(err, forge.ErrNotImplemented) {
 		return
 	}
 	if err != nil {
 		p.Log.Warn("get repo visibility", "repo", repo.Slug, "err", err)
+		return
+	}
+	// Map the forge vocabulary onto the store's explicitly, so the two
+	// constant sets are tied here rather than by incidental string
+	// equality — and a forge answer outside the contract is rejected
+	// instead of cached as an unrecognized (and thus private) value.
+	var v string
+	switch fv {
+	case forge.VisibilityPublic:
+		v = store.VisibilityPublic
+	case forge.VisibilityPrivate:
+		v = store.VisibilityPrivate
+	default:
+		p.Log.Warn("unknown repo visibility from forge", "repo", repo.Slug, "visibility", fv)
 		return
 	}
 	if v == repo.Visibility {

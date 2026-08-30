@@ -74,29 +74,40 @@ func (s *Server) canView(r *http.Request, slug string) (bool, error) {
 // open-mode instances) pass exactly as before. Anyone else passes only
 // when the repo is effectively public: the forge reported it public, the
 // repo's "Public reports" switch is on and the instance allows it
-// (GOCOV_PUBLIC_REPORTS). A refused anonymous visitor gets the login
-// redirect — the same answer the middleware gave every signed-out request
-// before these pages existed, so nothing about the repo leaks; a
-// signed-in non-member of a non-public repo still 404s (D3).
-// Returns false when it wrote the response.
-func (s *Server) authorizeReport(w http.ResponseWriter, r *http.Request, repo *store.Repo) bool {
+// (GOCOV_PUBLIC_REPORTS). A refused visitor gets reportNotFound's answer —
+// the login redirect when signed out, the 404 page for a signed-in
+// non-member of a non-public repo (D3) — so nothing about the repo leaks.
+//
+// ok is false when the refusal has been written. member reports whether
+// the viewer passed by membership (or the instance being open) rather than
+// through the public branch: the switch for member chrome like the
+// settings button, which a signed-in stranger on a public repo must not
+// see either.
+func (s *Server) authorizeReport(w http.ResponseWriter, r *http.Request, repo *store.Repo) (member, ok bool) {
 	allowed, err := s.canView(r, repo.Slug)
 	if err != nil {
 		s.internalError(w, "checking access", err)
-		return false
+		return false, false
 	}
 	if allowed {
-		return true
+		return true, true
 	}
 	if s.publicReports && repo.ReportsPublic() {
-		return true
+		if currentUser(r) == nil {
+			// The anonymous render is briefly cacheable — these pages are
+			// the badge/SEO surface, so repeat crawler traffic should be
+			// absorbed upstream. max-age stays short so turning the
+			// "Public reports" switch off takes effect within a minute
+			// even behind a shared cache, and Vary: Cookie keeps such a
+			// cache from answering a signed-in member with the stored
+			// anonymous variant.
+			w.Header().Set("Cache-Control", "public, max-age=60")
+			w.Header().Set("Vary", "Cookie")
+		}
+		return false, true
 	}
-	if currentUser(r) == nil {
-		redirectToLogin(w, r)
-		return false
-	}
-	s.renderNotFound(w, r)
-	return false
+	s.reportNotFound(w, r)
+	return false, false
 }
 
 // reportNotFound answers a report-page lookup that found nothing. For an

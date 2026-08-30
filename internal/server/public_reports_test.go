@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -108,10 +109,15 @@ func TestPublicRepoReportPagesOpenAnonymously(t *testing.T) {
 	if !strings.Contains(body, "public-cta") {
 		t.Error("anonymous repo page misses the CTA band")
 	}
-	// The anonymous render is cacheable — the no-store header belongs to
-	// member sessions only.
-	if cc := repoPage.Header().Get("Cache-Control"); cc == "no-store" {
-		t.Errorf("anonymous public page sent Cache-Control: %q", cc)
+	// The anonymous render is briefly cacheable and must say so — a shared
+	// cache with no policy would cache heuristically and keep serving after
+	// the switch turns the pages off; Vary keeps it from answering a
+	// signed-in member with the stored anonymous variant.
+	if cc := repoPage.Header().Get("Cache-Control"); cc != "public, max-age=60" {
+		t.Errorf("anonymous public page Cache-Control = %q, want public, max-age=60", cc)
+	}
+	if v := repoPage.Header().Get("Vary"); v != "Cookie" {
+		t.Errorf("anonymous public page Vary = %q, want Cookie", v)
 	}
 
 	uploadPage := get(f, "/uploads/1")
@@ -143,7 +149,10 @@ func TestPublicRepoReportPagesOpenAnonymously(t *testing.T) {
 	if prof.Body.String() != testProfile {
 		t.Errorf("raw profile body = %q", prof.Body.String())
 	}
-	_ = u
+
+	// An unrouted path under the public prefixes still answers with the
+	// login redirect, keeping the signed-out response surface uniform.
+	wantLoginRedirect(t, get(f, "/uploads/"+strconv.FormatInt(u.ID, 10)+"/bogus"), "/uploads/{id}/bogus")
 }
 
 func TestNonPublicRepoKeepsLoginWallForAnonymous(t *testing.T) {
@@ -161,6 +170,7 @@ func TestNonPublicRepoKeepsLoginWallForAnonymous(t *testing.T) {
 			"/uploads/1/files/a.go",
 			"/uploads/999",
 			"/uploads/notanid",
+			"/uploads/1/bogus",
 		} {
 			wantLoginRedirect(t, get(f, path), path)
 		}
@@ -206,6 +216,54 @@ func TestMemberViewOfPublicRepoIsUnchanged(t *testing.T) {
 	}
 	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
 		t.Errorf("member page Cache-Control = %q, want no-store", cc)
+	}
+}
+
+// A signed-in user who is not a member of the repo's workspace passes
+// through the public branch and must get the read-only view: no settings
+// link (clicking it would 404) — and, being signed in, no visitor CTA
+// either. Before public reports this state was unreachable (a non-member
+// always 404d).
+func TestSignedInNonMemberGetsReadOnlyPublicView(t *testing.T) {
+	ctx := context.Background()
+	st := storemem.New()
+	repo := &store.Repo{
+		Forge: "bitbucket", Slug: "acme/widgets", Token: "secret-token",
+		DefaultBranch: "main", Visibility: store.VisibilityPublic,
+	}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	// Both workspaces are tracked, so the outsider may sign in — as a
+	// member of beta, never of acme.
+	for _, prefix := range []string{"acme", "beta"} {
+		if err := st.CreateWorkspace(ctx, &store.Workspace{Forge: "bitbucket", Prefix: prefix, Token: "ws-" + prefix, DefaultBranch: "main"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	outsider := &auth.Identity{ForgeUUID: "{uuid-out}", DisplayName: "Sam Outsider",
+		Email: "sam@example.com", Workspaces: []string{"beta"}}
+	srv := New(Config{
+		Store:         st,
+		Blobs:         blobmem.New(),
+		Parsers:       map[string]profile.Parser{"go": profile.GoParser{}},
+		BaseURL:       "https://gocov.example",
+		Auths:         []auth.Provider{&fakeProvider{identity: outsider}},
+		PublicReports: true,
+	})
+	f := &fixture{srv: srv, store: st, repo: repo}
+	sess := signIn(t, f, "/")
+
+	rec := get(f, "/repos/acme/widgets", sess)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("non-member on public repo: status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "/repo-settings/") {
+		t.Error("signed-in non-member sees the settings link")
+	}
+	if strings.Contains(body, "public-cta") {
+		t.Error("signed-in visitor sees the anonymous CTA band")
 	}
 }
 

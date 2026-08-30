@@ -25,7 +25,7 @@
   <img alt="coverage badge" src="/badge/{{.Repo.Slug}}.svg">
   <input id="badge-md" class="input mono" readonly onfocus="this.select()"
          style="flex: 1; min-width: 0; font-size: 12px"
-         value="[![coverage]({{.BaseURL}}/badge/{{.Repo.Slug}}.svg)]({{.BaseURL}}/repos/{{.Repo.Slug}}?ref=badge)">
+         value="{{.BadgeMarkdown}}">
   <button class="btn" data-copy="#badge-md">Copy</button>
 </div>
 
