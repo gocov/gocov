@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -25,8 +26,8 @@ func TestRepoBranchFilterAndPagination(t *testing.T) {
 		t.Errorf("badge copy button missing: %s", body)
 	}
 
-	// 26 more uploads on main force pagination.
-	for i := range 26 {
+	// One full page more on main, so main1 alone lands on page 1.
+	for i := range uploadsPageSize {
 		doUpload(t, f, "secret-token", map[string]string{
 			"commit": "bulk" + strings.Repeat("x", i%3) + string(rune('a'+i%26)), "branch": "main",
 		}, testProfile)
@@ -41,6 +42,35 @@ func TestRepoBranchFilterAndPagination(t *testing.T) {
 	}
 	if !strings.Contains(page1, "main1") {
 		t.Errorf("oldest upload not on the last page")
+	}
+}
+
+// The unfiltered history reuses the branch-selector fetch instead of querying
+// again. On the first page whose window needs one row more than that fetch
+// holds, reusing it would hide "Older" with pages still to come.
+func TestRepoPaginationPastRecentFetch(t *testing.T) {
+	f := newFixture(t, nil)
+
+	page := 0
+	for (page+1)*uploadsPageSize+1 <= recentUploads {
+		page++
+	}
+	for i := range (page + 2) * uploadsPageSize {
+		u := &store.Upload{
+			RepoID:    f.repo.ID,
+			CommitSHA: fmt.Sprintf("c%04d", i),
+			Branch:    "main",
+			Format:    "go",
+			TotalPct:  80,
+		}
+		if err := f.store.CreateUpload(t.Context(), u, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	body := doGet(t, f, fmt.Sprintf("/repos/acme/widgets?page=%d", page)).Body.String()
+	if !strings.Contains(body, "Older") {
+		t.Errorf("page %d missing Older link with older uploads still to come", page)
 	}
 }
 

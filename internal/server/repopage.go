@@ -44,7 +44,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch one page beyond the current one so "Older" knows whether to
 	// render; the recent list also feeds the branch selector.
-	recent, err := s.store.ListUploads(r.Context(), repo.ID, 100)
+	recent, err := s.store.ListUploads(r.Context(), repo.ID, recentUploads)
 	if err != nil {
 		s.internalError(w, "listing uploads", err)
 		return
@@ -62,7 +62,10 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	limit := (page+1)*uploadsPageSize + 1
 	var fetched []*store.Upload
 	if branch == "" {
-		if limit <= 101 {
+		// Reuse the branch-selector fetch only while it also covers the
+		// sentinel row; at limit == recentUploads+1 it is one row short of
+		// deciding "Older" and would hide the link with pages still to come.
+		if limit <= recentUploads {
 			fetched = recent
 		} else if fetched, err = s.store.ListUploads(r.Context(), repo.ID, limit); err != nil {
 			s.internalError(w, "listing uploads", err)
@@ -157,7 +160,12 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-const uploadsPageSize = 25
+const (
+	uploadsPageSize = 10
+	// recentUploads bounds the newest-uploads fetch that fills the branch
+	// selector, and doubles as the first pages' history without a second query.
+	recentUploads = 100
+)
 
 // branchDelta compares the newest merged report on a branch against the
 // most recent gate-passing report before it — the same baseline rule the
