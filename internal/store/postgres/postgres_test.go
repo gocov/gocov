@@ -115,13 +115,21 @@ func TestRepoLifecycle(t *testing.T) {
 		t.Error("old token still resolves after rotation")
 	}
 
-	// The public-reports switch rides UpdateRepo; visibility does not —
-	// only SetRepoVisibility writes it, so a full-row save carrying a
-	// stale value cannot revert a concurrent refresh.
+	// Until the forge has ever answered, the checked-at stamp reads back
+	// as the zero value (NULL), not year one.
+	if got, _ = st.RepoByID(ctx, repo.ID); !got.VisibilityCheckedAt.IsZero() {
+		t.Errorf("VisibilityCheckedAt before any answer = %v, want zero", got.VisibilityCheckedAt)
+	}
+
+	// The public-reports switch rides UpdateRepo; visibility and its
+	// checked-at stamp do not — only SetRepoVisibility writes them, so a
+	// full-row save carrying stale values cannot revert a concurrent
+	// refresh.
 	if err := st.SetRepoVisibility(ctx, repo.ID, store.VisibilityPrivate); err != nil {
 		t.Fatal(err)
 	}
-	repo.Visibility = store.VisibilityPublic // stale in-memory value
+	repo.Visibility = store.VisibilityPublic // stale in-memory values
+	repo.VisibilityCheckedAt = time.Time{}
 	repo.PublicReportsDisabled = true
 	if err := st.UpdateRepo(ctx, repo); err != nil {
 		t.Fatal(err)
@@ -129,6 +137,9 @@ func TestRepoLifecycle(t *testing.T) {
 	if got, _ = st.RepoByID(ctx, repo.ID); got.Visibility != store.VisibilityPrivate || !got.PublicReportsDisabled ||
 		got.DefaultBranch != "develop" {
 		t.Errorf("after stale-visibility UpdateRepo: %+v", got)
+	}
+	if got.VisibilityCheckedAt.IsZero() {
+		t.Error("SetRepoVisibility did not stamp VisibilityCheckedAt (or UpdateRepo cleared it)")
 	}
 
 	// Missing rows yield ErrNotFound.

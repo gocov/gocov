@@ -101,9 +101,16 @@ type Repo struct {
 	// pushed build status into a failure.
 	Gate Gate
 	// Visibility caches what the forge last reported about the repo:
-	// VisibilityPublic or VisibilityPrivate. Refreshed on upload; empty
-	// until the forge has been asked, which counts as private.
+	// VisibilityPublic or VisibilityPrivate. Refreshed on upload and
+	// re-verified in the background when report pages are served
+	// anonymously on a stale answer; empty until the forge has been
+	// asked, which counts as private.
 	Visibility string
+	// VisibilityCheckedAt is when the forge last answered the visibility
+	// question (stamped by SetRepoVisibility); zero when it never has.
+	// Both freshness windows — the upload path's skip and the serving
+	// path's background re-verification — count from it.
+	VisibilityCheckedAt time.Time
 	// PublicReportsDisabled is the repo-settings "Public reports" switch,
 	// inverted so the zero value keeps the default: a public repo's
 	// report pages are anonymously viewable unless a member turns them off.
@@ -246,16 +253,19 @@ type UploadFile struct {
 type Store interface {
 	CreateRepo(ctx context.Context, r *Repo) error
 	// UpdateRepo replaces the stored row matching r.ID with r's fields —
-	// except Visibility, which only SetRepoVisibility writes: the upload
-	// path refreshes it concurrently with settings saves, and a full-row
-	// save carrying a stale value must not revert it.
+	// except Visibility and VisibilityCheckedAt, which only
+	// SetRepoVisibility writes: the upload path refreshes them
+	// concurrently with settings saves, and a full-row save carrying a
+	// stale value must not revert them.
 	UpdateRepo(ctx context.Context, r *Repo) error
 	// DeleteRepo removes a repo together with its uploads and per-file rows.
 	// Raw profile blobs are not touched; callers clean those up first.
 	DeleteRepo(ctx context.Context, id int64) error
 	// SetRepoVisibility updates only the repo's cached forge visibility —
 	// a narrow UPDATE, because it is written from the upload path and must
-	// not clobber (or be clobbered by) a concurrent settings save.
+	// not clobber (or be clobbered by) a concurrent settings save. It also
+	// stamps VisibilityCheckedAt with the current time, so the freshness
+	// windows count from the last answer, changed or not.
 	SetRepoVisibility(ctx context.Context, repoID int64, visibility string) error
 	RepoByID(ctx context.Context, id int64) (*Repo, error)
 	RepoBySlug(ctx context.Context, slug string) (*Repo, error)

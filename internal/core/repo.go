@@ -12,6 +12,7 @@ import (
 	"errors"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/gocov/gocov/internal/forge"
 	"github.com/gocov/gocov/internal/store"
@@ -103,21 +104,70 @@ func (p *Pipeline) RegisterRepo(ctx context.Context, ws *store.Workspace, slug s
 	return repo, nil
 }
 
+// How stale the cached forge visibility answer may grow on each path
+// before it is re-asked. The Pipeline fields of the same names override
+// the two TTLs for tests.
+const (
+	// defaultVisibilityUploadTTL bounds the upload path: within it an
+	// upload skips the visibility round-trip entirely, so a commit
+	// uploading ten parts asks the forge once, not ten times.
+	defaultVisibilityUploadTTL = time.Hour
+	// defaultVisibilityServeTTL bounds the anonymous serving path: a
+	// public report page served on an older answer triggers a background
+	// re-verification, so a repo flipped private on the forge closes its
+	// pages within the TTL even when its CI never uploads again.
+	defaultVisibilityServeTTL = 24 * time.Hour
+	// visibilityRecheckGap rate-limits background re-verification
+	// attempts per repo — a hot public page must not hammer the forge
+	// while an answer refuses to land (failures never stamp the row).
+	visibilityRecheckGap = time.Minute
+	// visibilityRecheckTimeout bounds the detached background check.
+	visibilityRecheckTimeout = 15 * time.Second
+)
+
+func (p *Pipeline) uploadVisibilityTTL() time.Duration {
+	if p.VisibilityUploadTTL != 0 {
+		return p.VisibilityUploadTTL
+	}
+	return defaultVisibilityUploadTTL
+}
+
+func (p *Pipeline) serveVisibilityTTL() time.Duration {
+	if p.VisibilityServeTTL != 0 {
+		return p.VisibilityServeTTL
+	}
+	return defaultVisibilityServeTTL
+}
+
+// visibilityFresh reports whether the repo's cached visibility answer is
+// younger than ttl. A zero stamp — the forge has never answered — is
+// always stale.
+func visibilityFresh(repo *store.Repo, ttl time.Duration) bool {
+	return !repo.VisibilityCheckedAt.IsZero() && time.Since(repo.VisibilityCheckedAt) < ttl
+}
+
 // RefreshVisibility re-asks the forge whether the repo is public and
 // caches the answer on the repo row — the switch behind anonymous report
-// pages, so a repo flipped private on the forge closes its pages by the
-// next upload at the latest. Best effort: any failure keeps the last
-// known state (private until the forge has ever answered) and never
-// disturbs the upload.
+// pages. Best effort: a transient failure keeps the last known state
+// (private until the forge has ever answered) and never disturbs the
+// caller; only a definitive answer — public, private, or the forge
+// positively saying the repo is gone — changes anything. Callers decide
+// when to ask (visibilityFresh); this always does.
 func (p *Pipeline) RefreshVisibility(ctx context.Context, fg forge.Forge, repo *store.Repo) {
 	if fg == nil {
 		return
 	}
 	fv, err := fg.GetRepoVisibility(ctx, repo.Slug)
-	if errors.Is(err, forge.ErrNotImplemented) {
+	switch {
+	case errors.Is(err, forge.ErrNotImplemented):
 		return
-	}
-	if err != nil {
+	case errors.Is(err, forge.ErrRepoNotFound):
+		// Definitive: this connection can no longer see the repo —
+		// deleted, or hidden from an installation that lost access.
+		// Not-visible is certainly not public, so fail closed instead of
+		// serving the old answer forever.
+		fv = forge.VisibilityPrivate
+	case err != nil:
 		p.Log.Warn("get repo visibility", "repo", repo.Slug, "err", err)
 		return
 	}
@@ -135,15 +185,65 @@ func (p *Pipeline) RefreshVisibility(ctx context.Context, fg forge.Forge, repo *
 		p.Log.Warn("unknown repo visibility from forge", "repo", repo.Slug, "visibility", fv)
 		return
 	}
-	if v == repo.Visibility {
-		return
-	}
+	// An unchanged answer is still persisted: SetRepoVisibility stamps
+	// VisibilityCheckedAt, and both freshness windows count from the last
+	// answer, not the last change.
 	if err := p.Store.SetRepoVisibility(ctx, repo.ID, v); err != nil {
 		p.Log.Error("caching repo visibility", "repo", repo.Slug, "err", err)
 		return
 	}
-	p.Log.Info("repo visibility changed", "repo", repo.Slug, "visibility", v)
+	if v != repo.Visibility {
+		p.Log.Info("repo visibility changed", "repo", repo.Slug, "visibility", v)
+	}
 	repo.Visibility = v
+	repo.VisibilityCheckedAt = time.Now()
+}
+
+// ReverifyVisibilityIfStale starts a background re-check of a repo about
+// to be served publicly when its cached forge answer has aged past the
+// serve TTL. The current request still serves the cached answer — the
+// check must not add a forge round-trip to a page load — but a repo
+// flipped private on the forge closes for the requests after it, upload
+// or no upload. Attempts are rate-limited per repo, and only a definitive
+// forge answer changes anything (RefreshVisibility keeps the last known
+// state on transient errors). Reports whether a re-check was started.
+func (p *Pipeline) ReverifyVisibilityIfStale(repo *store.Repo) bool {
+	if p.Forges == nil || visibilityFresh(repo, p.serveVisibilityTTL()) {
+		return false
+	}
+	if !p.claimVisibilityRecheck(repo.ID) {
+		return false
+	}
+	// Detached copy and context: the check outlives the request, and the
+	// request's repo struct must not be written from another goroutine.
+	r := *repo
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), visibilityRecheckTimeout)
+		defer cancel()
+		fg, err := p.Forges.For(ctx, &r)
+		if err != nil || fg == nil {
+			return // no connection to ask: keep the last known state
+		}
+		p.RefreshVisibility(ctx, fg, &r)
+	}()
+	return true
+}
+
+// claimVisibilityRecheck records a re-check attempt for the repo unless
+// one was recorded within the rate-limit gap — the winner of concurrent
+// page loads is the one goroutine that asks the forge.
+func (p *Pipeline) claimVisibilityRecheck(repoID int64) bool {
+	p.visMu.Lock()
+	defer p.visMu.Unlock()
+	now := time.Now()
+	if last, ok := p.visChecks[repoID]; ok && now.Sub(last) < visibilityRecheckGap {
+		return false
+	}
+	if p.visChecks == nil {
+		p.visChecks = map[int64]time.Time{}
+	}
+	p.visChecks[repoID] = now
+	return true
 }
 
 // NewToken generates a token: 24 random bytes in hex. Repo and workspace

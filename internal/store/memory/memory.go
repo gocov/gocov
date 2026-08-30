@@ -83,9 +83,11 @@ func (s *Store) UpdateRepo(_ context.Context, r *store.Repo) error {
 	if cp.CreatedAt.IsZero() {
 		cp.CreatedAt = existing.CreatedAt
 	}
-	// Visibility is SetRepoVisibility's alone (see the Store contract): a
-	// full-row save must not revert a concurrent refresh.
+	// Visibility and its checked-at stamp are SetRepoVisibility's alone
+	// (see the Store contract): a full-row save must not revert a
+	// concurrent refresh.
 	cp.Visibility = existing.Visibility
+	cp.VisibilityCheckedAt = existing.VisibilityCheckedAt
 	s.repos[r.ID] = &cp
 	return nil
 }
@@ -114,6 +116,7 @@ func (s *Store) SetRepoVisibility(_ context.Context, repoID int64, visibility st
 		return store.ErrNotFound
 	}
 	r.Visibility = visibility
+	r.VisibilityCheckedAt = time.Now()
 	return nil
 }
 

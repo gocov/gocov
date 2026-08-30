@@ -9,10 +9,13 @@ world can already read the code of — settings, tokens and every mutating actio
 
 Two things, both of which you control:
 
-- **The forge says so.** gocov asks the forge for the repo's visibility and caches the answer, refreshing it on every
-  upload — so a repo flipped private on the forge closes its pages by the next upload at the latest, and a repo flipped
-  public opens them the same way. A repo whose workspace has no [forge connection](connecting.md) counts as private:
-  gocov never guesses.
+- **The forge says so.** gocov asks the forge for the repo's visibility and caches the answer. The cache is kept
+  honest three ways: uploads refresh it once the answer is an hour old (a commit uploading many parts asks once, not
+  per part), an answer older than a day is re-verified in the background whenever a report page is served
+  anonymously — so a repo flipped private on the forge closes its pages within a day even if its CI never uploads
+  again — and on GitHub, instances receiving the App's webhooks close (and reopen) the pages the moment the
+  visibility changes. A repo flipped public opens the same way: by the webhook or the next upload. A repo whose
+  workspace has no [forge connection](connecting.md) counts as private: gocov never guesses.
 - **The switch is on.** Repo settings grow a **Public reports** switch for public repos, on by default. Turning it off
   closes the pages to members only, immediately. Private repos don't show the switch and are never served publicly.
 

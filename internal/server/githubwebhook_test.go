@@ -127,6 +127,79 @@ func TestWebhookInstallationFlipsBrokenFlag(t *testing.T) {
 	}
 }
 
+func TestWebhookRepositoryVisibilityChange(t *testing.T) {
+	srv, st := webhookServer(t)
+	ctx := context.Background()
+	repo := &store.Repo{
+		Forge: "github", Slug: "acme/widgets", Token: "tok-r",
+		DefaultBranch: "main", Visibility: store.VisibilityPublic,
+	}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+
+	visibility := func(slug string) *store.Repo {
+		t.Helper()
+		r, err := st.RepoBySlug(ctx, slug)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+
+	// privatized closes the cached answer the moment GitHub says so.
+	priv := `{"action":"privatized","repository":{"full_name":"acme/widgets"}}`
+	if rec := postWebhook(srv, "repository", priv, sign(webhookSecret, priv)); rec.Code != http.StatusOK {
+		t.Fatalf("repository privatized: status = %d", rec.Code)
+	}
+	if got := visibility("acme/widgets"); got.Visibility != store.VisibilityPrivate {
+		t.Errorf("visibility after privatized = %q, want private", got.Visibility)
+	} else if got.VisibilityCheckedAt.IsZero() {
+		t.Error("webhook flip did not stamp VisibilityCheckedAt")
+	}
+
+	// publicized reopens it.
+	pub := `{"action":"publicized","repository":{"full_name":"acme/widgets"}}`
+	if rec := postWebhook(srv, "repository", pub, sign(webhookSecret, pub)); rec.Code != http.StatusOK {
+		t.Fatalf("repository publicized: status = %d", rec.Code)
+	}
+	if got := visibility("acme/widgets"); got.Visibility != store.VisibilityPublic {
+		t.Errorf("visibility after publicized = %q, want public", got.Visibility)
+	}
+
+	// An untracked repo is a no-op, still acknowledged with 2xx.
+	ghost := `{"action":"privatized","repository":{"full_name":"acme/ghost"}}`
+	if rec := postWebhook(srv, "repository", ghost, sign(webhookSecret, ghost)); rec.Code != http.StatusOK {
+		t.Errorf("untracked repo: status = %d", rec.Code)
+	}
+
+	// A same-named repo tracked on another forge must not be flipped by a
+	// GitHub event.
+	bb := &store.Repo{
+		Forge: "bitbucket", Slug: "beta/things", Token: "tok-bb",
+		DefaultBranch: "main", Visibility: store.VisibilityPublic,
+	}
+	if err := st.CreateRepo(ctx, bb); err != nil {
+		t.Fatal(err)
+	}
+	cross := `{"action":"privatized","repository":{"full_name":"beta/things"}}`
+	if rec := postWebhook(srv, "repository", cross, sign(webhookSecret, cross)); rec.Code != http.StatusOK {
+		t.Fatalf("cross-forge slug: status = %d", rec.Code)
+	}
+	if got := visibility("beta/things"); got.Visibility != store.VisibilityPublic {
+		t.Errorf("a GitHub event flipped a bitbucket repo to %q", got.Visibility)
+	}
+
+	// Other repository actions are ignored.
+	ren := `{"action":"renamed","repository":{"full_name":"acme/widgets"}}`
+	if rec := postWebhook(srv, "repository", ren, sign(webhookSecret, ren)); rec.Code != http.StatusOK {
+		t.Errorf("renamed: status = %d", rec.Code)
+	}
+	if got := visibility("acme/widgets"); got.Visibility != store.VisibilityPublic {
+		t.Errorf("renamed changed visibility to %q", got.Visibility)
+	}
+}
+
 func TestWebhookRouteAbsentWithoutSecret(t *testing.T) {
 	st := storemem.New()
 	srv := New(Config{

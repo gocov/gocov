@@ -93,6 +93,13 @@ func (s *Server) authorizeReport(w http.ResponseWriter, r *http.Request, repo *s
 		return true, true
 	}
 	if s.publicReports && repo.ReportsPublic() {
+		// The cached "public" answer may be stale — a repo whose CI
+		// stopped uploading never refreshes it on upload — so an aged
+		// answer is re-verified in the background (rate-limited, one
+		// forge call for concurrent page loads). This request still
+		// serves; a repo flipped private on the forge closes for the
+		// requests after the answer lands.
+		s.pipeline.ReverifyVisibilityIfStale(repo)
 		if currentUser(r) == nil {
 			// The anonymous render is briefly cacheable — these pages are
 			// the badge/SEO surface, so repeat crawler traffic should be

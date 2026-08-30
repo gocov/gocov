@@ -14,6 +14,8 @@ package core
 
 import (
 	"log/slog"
+	"sync"
+	"time"
 
 	"github.com/gocov/gocov/internal/blobstore"
 	"github.com/gocov/gocov/internal/store"
@@ -37,4 +39,16 @@ type Pipeline struct {
 	// carries the one-line gocov signature. Self-hosted instances never
 	// get marketing appended to their PRs.
 	Hosted bool
+
+	// VisibilityUploadTTL and VisibilityServeTTL override how long the
+	// cached forge visibility answer counts as fresh on the upload and
+	// anonymous serving paths (repo.go). Zero means the defaults; only
+	// tests shrink them.
+	VisibilityUploadTTL time.Duration
+	VisibilityServeTTL  time.Duration
+
+	// visMu guards visChecks: when each repo's visibility was last
+	// re-checked in the background, the serving path's rate limit.
+	visMu     sync.Mutex
+	visChecks map[int64]time.Time
 }

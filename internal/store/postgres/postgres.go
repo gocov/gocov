@@ -10,6 +10,7 @@ import (
 	"hash/fnv"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -132,19 +133,29 @@ func (s *Store) CreateRepo(ctx context.Context, r *store.Repo) error {
 	return s.pool.QueryRow(ctx, `
 		INSERT INTO repos (forge, slug, token, default_branch,
 			min_coverage, min_diff_coverage, max_coverage_drop,
-			visibility, public_reports_disabled)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			visibility, public_reports_disabled, visibility_checked_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id, created_at`,
 		r.Forge, r.Slug, r.Token, r.DefaultBranch,
 		r.Gate.MinCoverage, r.Gate.MinDiffCoverage, r.Gate.MaxCoverageDrop,
-		r.Visibility, r.PublicReportsDisabled,
+		r.Visibility, r.PublicReportsDisabled, nullableTime(r.VisibilityCheckedAt),
 	).Scan(&r.ID, &r.CreatedAt)
 }
 
-// UpdateRepo leaves the visibility column alone: it is written from the
-// upload path via SetRepoVisibility, and a settings save carrying the
-// value it loaded minutes ago must not be able to revert a concurrent
-// refresh (a private repo would reopen to anonymous visitors).
+// nullableTime maps the zero time onto NULL, so "never" round-trips as
+// the zero value rather than year one.
+func nullableTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return &t
+}
+
+// UpdateRepo leaves the visibility columns (value and checked-at stamp)
+// alone: they are written from the upload path via SetRepoVisibility, and
+// a settings save carrying the values it loaded minutes ago must not be
+// able to revert a concurrent refresh (a private repo would reopen to
+// anonymous visitors).
 func (s *Store) UpdateRepo(ctx context.Context, r *store.Repo) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE repos SET forge = $2, slug = $3, token = $4,
@@ -191,7 +202,8 @@ func (s *Store) PublicRepoSlugs(ctx context.Context, limit int) ([]string, error
 
 func (s *Store) SetRepoVisibility(ctx context.Context, repoID int64, visibility string) error {
 	tag, err := s.pool.Exec(ctx,
-		`UPDATE repos SET visibility = $2 WHERE id = $1`, repoID, visibility)
+		`UPDATE repos SET visibility = $2, visibility_checked_at = now()
+		WHERE id = $1`, repoID, visibility)
 	if err != nil {
 		return err
 	}
@@ -203,7 +215,7 @@ func (s *Store) SetRepoVisibility(ctx context.Context, repoID int64, visibility 
 
 const repoCols = `id, forge, slug, token, default_branch,
 	min_coverage, min_diff_coverage, max_coverage_drop,
-	visibility, public_reports_disabled, created_at`
+	visibility, public_reports_disabled, visibility_checked_at, created_at`
 
 func (s *Store) DeleteRepo(ctx context.Context, id int64) error {
 	tag, err := s.pool.Exec(ctx, `DELETE FROM repos WHERE id = $1`, id)
@@ -263,9 +275,13 @@ type querier interface {
 
 func (s *Store) scanRepo(row rowScanner) (*store.Repo, error) {
 	var r store.Repo
+	var checkedAt *time.Time // NULL = the forge has never answered
 	err := row.Scan(&r.ID, &r.Forge, &r.Slug, &r.Token, &r.DefaultBranch,
 		&r.Gate.MinCoverage, &r.Gate.MinDiffCoverage, &r.Gate.MaxCoverageDrop,
-		&r.Visibility, &r.PublicReportsDisabled, &r.CreatedAt)
+		&r.Visibility, &r.PublicReportsDisabled, &checkedAt, &r.CreatedAt)
+	if checkedAt != nil {
+		r.VisibilityCheckedAt = *checkedAt
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
