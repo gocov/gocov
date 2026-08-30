@@ -23,6 +23,7 @@ Use the hosted service at [app.gocov.dev](https://app.gocov.dev/?ref=docs), or
 | [Connect your forge](connecting.md)         | The one-click connection that turns the PR surfaces on              |
 | [Coverage gate](coverage-gate.md)           | Minimum/diff/drop rules and making them block merges                |
 | [Parts](parts.md)                           | Combining reports from separate CI jobs into one per commit         |
+| [Public reports](public-reports.md)         | Read-only report pages anyone can open, for public repos            |
 | [Why coverage changed](coverage-changed.md) | Baselines, missing parts, empty diff coverage — the usual surprises |
 
 ## Reference

@@ -187,36 +187,60 @@ func (c *Client) GetPRDiff(ctx context.Context, repoSlug, prID string) (string, 
 	return string(body), nil
 }
 
-// GetDefaultBranch reads the repo's default branch via GET /repos/{slug}.
-func (c *Client) GetDefaultBranch(ctx context.Context, repoSlug string) (string, error) {
+// fetchRepo GETs the repository resource (GET /repos/{slug}) and decodes
+// it into out — the request/status/decode plumbing GetDefaultBranch and
+// GetRepoVisibility share.
+func (c *Client) fetchRepo(ctx context.Context, repoSlug string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/repos/"+repoSlug, nil)
 	if err != nil {
-		return "", err
+		return err
 	}
 	c.authorize(req)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("github: %w", err)
+		return fmt.Errorf("github: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return "", fmt.Errorf("%w: %s", forge.ErrRepoNotFound, repoSlug)
+		return fmt.Errorf("%w: %s", forge.ErrRepoNotFound, repoSlug)
 	}
 	if resp.StatusCode >= 300 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("github: /repos/%s returned %d: %s", repoSlug, resp.StatusCode, msg)
+		return fmt.Errorf("github: /repos/%s returned %d: %s", repoSlug, resp.StatusCode, msg)
 	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out); err != nil {
+		return fmt.Errorf("github: decoding repository: %w", err)
+	}
+	return nil
+}
+
+// GetDefaultBranch reads the repo's default branch via GET /repos/{slug}.
+func (c *Client) GetDefaultBranch(ctx context.Context, repoSlug string) (string, error) {
 	var body struct {
 		DefaultBranch string `json:"default_branch"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body); err != nil {
-		return "", fmt.Errorf("github: decoding repository: %w", err)
+	if err := c.fetchRepo(ctx, repoSlug, &body); err != nil {
+		return "", err
 	}
 	if body.DefaultBranch == "" {
 		return "", fmt.Errorf("github: repository %s has no default branch", repoSlug)
 	}
 	return body.DefaultBranch, nil
+}
+
+// GetRepoVisibility reads the repo's private flag via GET /repos/{slug}.
+func (c *Client) GetRepoVisibility(ctx context.Context, repoSlug string) (string, error) {
+	var body struct {
+		Private bool `json:"private"`
+	}
+	if err := c.fetchRepo(ctx, repoSlug, &body); err != nil {
+		return "", err
+	}
+	if body.Private {
+		return forge.VisibilityPrivate, nil
+	}
+	return forge.VisibilityPublic, nil
 }
 
 // maxFileBytes bounds source files fetched for the source view.

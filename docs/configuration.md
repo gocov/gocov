@@ -17,6 +17,7 @@
 | `GOCOV_OAUTH_GITLAB_SECRET`    | —                          | GitLab OAuth application secret                                                                                                                              |
 | `GOCOV_ALLOWED_WORKSPACES`     | derived from tracked repos | comma-separated workspace/org slugs allowed to sign in                                                                                                       |
 | `GOCOV_MODE`                   | `private`                  | `hosted` opens sign-in to any forge account with self-service workspace registration                                                                         |
+| `GOCOV_PUBLIC_REPORTS`         | `on`                       | `off` disables the anonymous read-only report pages that public repos otherwise get                                                                          |
 
 How the pieces fit together:
 

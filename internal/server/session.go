@@ -51,7 +51,9 @@ func (s *Server) authEnabled() bool { return len(s.auths) > 0 }
 
 // requireAuth is the enforcement middleware. With no provider configured
 // the UI stays open exactly as before (the layout shows a banner instead);
-// with one configured, every non-public path needs a valid session.
+// with one configured, every non-public path needs a valid session — except
+// the report pages of repos that may be public, which pass through
+// sessionless for the handler to decide by the repo's effective state.
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.authEnabled() || publicPath(r.URL.Path) {
@@ -60,6 +62,16 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		}
 		u := s.sessionUser(r)
 		if u == nil {
+			if s.publicReportCandidate(r) {
+				// No session and possibly no login wall: the handler
+				// checks whether the repo behind the path is effectively
+				// public and redirects to login itself when it is not,
+				// so a signed-out browser learns nothing it could not
+				// see before these pages existed. No no-store header:
+				// the render is anonymous and cacheable.
+				next.ServeHTTP(w, r)
+				return
+			}
 			redirectToLogin(w, r)
 			return
 		}
@@ -69,12 +81,26 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 	})
 }
 
+// publicReportCandidate reports whether a sessionless request may reach
+// its handler for a per-repo public decision: a GET (or HEAD — the mux's
+// GET patterns serve those too, and crawlers probe with them) on the
+// read-only report pages, and only while the instance-level switch
+// (GOCOV_PUBLIC_REPORTS) is on. Everything mutating or administrative
+// keeps the login wall unconditionally.
+func (s *Server) publicReportCandidate(r *http.Request) bool {
+	if !s.publicReports || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
+		return false
+	}
+	return strings.HasPrefix(r.URL.Path, "/repos/") ||
+		strings.HasPrefix(r.URL.Path, "/uploads/")
+}
+
 // publicPath reports whether a path must work without a session: the CI
-// surface (upload API, badges, health), embedded assets and the login
-// flow itself. Everything else is a protected page.
+// surface (upload API, badges, health), embedded assets, the login
+// flow itself and the crawler files. Everything else is a protected page.
 func publicPath(p string) bool {
 	if p == "/api/v1/upload" || p == "/healthz" || p == "/login" ||
-		p == "/github/webhook" {
+		p == "/github/webhook" || p == "/robots.txt" || p == "/sitemap.xml" {
 		return true
 	}
 	return strings.HasPrefix(p, "/badge/") ||

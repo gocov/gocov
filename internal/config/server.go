@@ -32,6 +32,12 @@ type Server struct {
 	// may sign in. Empty means "members of any tracked workspace".
 	AllowedWorkspaces []string `env:"GOCOV_ALLOWED_WORKSPACES" envSeparator:","`
 
+	// PublicReports is the instance-level switch for anonymous read-only
+	// report pages on public repos: "on" (default) or "off". An operator
+	// running gocov inside a private network turns the whole feature off
+	// in one move; per-repo control stays in repo settings.
+	PublicReports string `env:"GOCOV_PUBLIC_REPORTS" envDefault:"on"`
+
 	Bitbucket OAuthApp `envPrefix:"GOCOV_OAUTH_BITBUCKET_"`
 	GitHub    OAuthApp `envPrefix:"GOCOV_OAUTH_GITHUB_"`
 	GitLab    OAuthApp `envPrefix:"GOCOV_OAUTH_GITLAB_"`
@@ -73,6 +79,7 @@ func LoadServerFrom(environ map[string]string) (Server, error) {
 func (c *Server) normalize() {
 	c.SecretKey = strings.TrimSpace(c.SecretKey)
 	c.Mode = strings.TrimSpace(c.Mode)
+	c.PublicReports = strings.ToLower(strings.TrimSpace(c.PublicReports))
 	workspaces := c.AllowedWorkspaces[:0]
 	for _, ws := range c.AllowedWorkspaces {
 		if ws = strings.TrimSpace(ws); ws != "" {
@@ -116,6 +123,11 @@ func (c Server) validate() error {
 	default:
 		return fmt.Errorf("GOCOV_MODE=%q: want private or hosted", c.Mode)
 	}
+	switch c.PublicReports {
+	case "on", "off":
+	default:
+		return fmt.Errorf("GOCOV_PUBLIC_REPORTS=%q: want on or off", c.PublicReports)
+	}
 	return nil
 }
 
@@ -147,6 +159,10 @@ func (c Server) Warnings() []string {
 
 // Hosted reports whether the instance runs in self-service mode.
 func (c Server) Hosted() bool { return c.Mode == ModeHosted }
+
+// PublicReportsEnabled reports whether anonymous read-only report pages
+// for public repos are allowed on this instance.
+func (c Server) PublicReportsEnabled() bool { return c.PublicReports == "on" }
 
 // SignInEnabled reports whether any forge can sign users in. Configuring
 // an OAuth consumer/app is the switch that turns sign-in on; without one

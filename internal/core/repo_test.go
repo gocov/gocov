@@ -1,6 +1,14 @@
 package core
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/gocov/gocov/internal/forge"
+	forgefake "github.com/gocov/gocov/internal/forge/fake"
+	"github.com/gocov/gocov/internal/store"
+)
 
 func TestValidRepoName(t *testing.T) {
 	tests := []struct {
@@ -21,5 +29,44 @@ func TestValidRepoName(t *testing.T) {
 		if got := ValidRepoName(tt.forge, tt.name); got != tt.want {
 			t.Errorf("ValidRepoName(%q, %q) = %v, want %v", tt.forge, tt.name, got, tt.want)
 		}
+	}
+}
+
+func TestRefreshVisibilityCachesForgeAnswer(t *testing.T) {
+	p, st, repo := newPipeline(t, store.Gate{})
+	ctx := context.Background()
+
+	fg := forgefake.New()
+	fg.Visibility = forge.VisibilityPublic
+	p.RefreshVisibility(ctx, fg, repo)
+	if repo.Visibility != store.VisibilityPublic {
+		t.Errorf("repo.Visibility = %q, want public", repo.Visibility)
+	}
+	stored, err := st.RepoBySlug(ctx, repo.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Visibility != store.VisibilityPublic {
+		t.Errorf("stored visibility = %q, want public", stored.Visibility)
+	}
+
+	// Flipped private on the forge: the cache follows.
+	fg.Visibility = forge.VisibilityPrivate
+	p.RefreshVisibility(ctx, fg, repo)
+	if stored, _ := st.RepoBySlug(ctx, repo.Slug); stored.Visibility != store.VisibilityPrivate {
+		t.Errorf("stored visibility after flip = %q, want private", stored.Visibility)
+	}
+
+	// A forge that cannot answer keeps the last known state; so does
+	// having no forge at all, and so does an answer outside the
+	// public/private contract — it is rejected, never cached verbatim.
+	fg.VisibilityErr = errors.New("forge down")
+	p.RefreshVisibility(ctx, fg, repo)
+	p.RefreshVisibility(ctx, nil, repo)
+	fg.VisibilityErr = nil
+	fg.Visibility = "internal"
+	p.RefreshVisibility(ctx, fg, repo)
+	if stored, _ := st.RepoBySlug(ctx, repo.Slug); stored.Visibility != store.VisibilityPrivate {
+		t.Errorf("stored visibility after failures = %q, want private", stored.Visibility)
 	}
 }

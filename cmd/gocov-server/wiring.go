@@ -58,9 +58,13 @@ func buildServerConfig(cfg config.Server, d deps, log *slog.Logger) (server.Conf
 		Auths:             authProviders(cfg, log),
 		AllowedWorkspaces: cfg.AllowedWorkspaces,
 		Hosted:            cfg.Hosted(),
+		PublicReports:     cfg.PublicReportsEnabled(),
 	}
 	if cfg.Hosted() {
 		log.Info("hosted mode: self-service workspace registration enabled")
+	}
+	if !cfg.PublicReportsEnabled() {
+		log.Info("public report pages disabled (GOCOV_PUBLIC_REPORTS=off)")
 	}
 	// Assigned conditionally: a typed-nil *github.App in the interface
 	// field would read as "configured".

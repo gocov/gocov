@@ -147,6 +147,27 @@ func TestLoadServerMode(t *testing.T) {
 	})
 }
 
+func TestLoadServerPublicReports(t *testing.T) {
+	cfg, err := LoadServerFrom(minimal(nil))
+	if err != nil {
+		t.Fatalf("LoadServerFrom: %v", err)
+	}
+	if !cfg.PublicReportsEnabled() {
+		t.Error("public reports default off, want on")
+	}
+	cfg, err = LoadServerFrom(minimal(map[string]string{"GOCOV_PUBLIC_REPORTS": " OFF "}))
+	if err != nil {
+		t.Fatalf("LoadServerFrom: %v", err)
+	}
+	if cfg.PublicReportsEnabled() {
+		t.Error("GOCOV_PUBLIC_REPORTS=off left public reports on")
+	}
+	if _, err := LoadServerFrom(minimal(map[string]string{"GOCOV_PUBLIC_REPORTS": "nope"})); err == nil ||
+		!strings.Contains(err.Error(), "on or off") {
+		t.Fatalf("error = %v, want one listing the valid values", err)
+	}
+}
+
 func TestLoadServerAllowedWorkspaces(t *testing.T) {
 	cases := []struct {
 		raw  string

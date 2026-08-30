@@ -350,6 +350,12 @@ func (p *Pipeline) prCommentBody(u *store.Upload, deltaPct *float64, gate Verdic
 	}
 
 	fmt.Fprintf(&sb, "\n[Full report](%s)\n", p.uploadURL(u))
+	// Hosted only: self-hosted operators do not get marketing appended to
+	// their PRs. Appended after the marker-led body, so update-in-place
+	// (PRCommentMarker) is untouched.
+	if p.Hosted {
+		sb.WriteString("\n<sub>Coverage by [gocov](https://gocov.dev?ref=pr-comment) — free for public repos</sub>\n")
+	}
 	return sb.String()
 }
 

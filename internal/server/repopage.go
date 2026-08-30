@@ -24,18 +24,15 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	repo, err := s.store.RepoBySlug(r.Context(), slug)
 	if errors.Is(err, store.ErrNotFound) {
-		s.renderNotFound(w, r)
+		s.reportNotFound(w, r)
 		return
 	}
 	if err != nil {
 		s.internalError(w, "loading repo", err)
 		return
 	}
-	if ok, err := s.canView(r, repo.Slug); err != nil {
-		s.internalError(w, "checking access", err)
-		return
-	} else if !ok {
-		s.renderNotFound(w, r)
+	member, ok := s.authorizeReport(w, r, repo)
+	if !ok {
 		return
 	}
 
@@ -128,25 +125,35 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		trend = newTrendView(trendBranch, trendReports)
 	}
 
+	// The settings link is for members; anyone admitted through the
+	// public branch — anonymous or a signed-in non-member — gets neither
+	// the button nor the workspace lookup behind it.
+	wsPrefix := ""
+	if member {
+		wsPrefix = s.repoWorkspacePrefix(r.Context(), repo)
+	}
+
 	s.render(w, r, "repo.html", map[string]any{
-		"Repo":        repo,
-		"Latest":      latest,
-		"Verdict":     verdict,
-		"Uncovered":   uncovered,
-		"LastUpload":  lastProv,
-		"Miss":        miss,
-		"WSPrefix":    s.repoWorkspacePrefix(r.Context(), repo),
-		"GateSummary": gateSummary(repo.Gate),
-		"Branches":    branches,
-		"Branch":      branch,
-		"TrendBranch": trendBranch,
-		"Trend":       trend,
-		"Uploads":     uploads,
-		"Page":        page,
-		"PrevPage":    page - 1,
-		"NextPage":    page + 1,
-		"HasOlder":    hasOlder,
-		"BaseURL":     strings.TrimSuffix(s.baseURL, "/"),
+		"Repo":          repo,
+		"Latest":        latest,
+		"Verdict":       verdict,
+		"Uncovered":     uncovered,
+		"LastUpload":    lastProv,
+		"Miss":          miss,
+		"WSPrefix":      wsPrefix,
+		"PublicView":    s.publicView(r),
+		"BadgeMarkdown": s.badgeMarkdown(repo.Slug),
+		"GateSummary":   gateSummary(repo.Gate),
+		"Branches":      branches,
+		"Branch":        branch,
+		"TrendBranch":   trendBranch,
+		"Trend":         trend,
+		"Uploads":       uploads,
+		"Page":          page,
+		"PrevPage":      page - 1,
+		"NextPage":      page + 1,
+		"HasOlder":      hasOlder,
+		"BaseURL":       strings.TrimSuffix(s.baseURL, "/"),
 	})
 }
 

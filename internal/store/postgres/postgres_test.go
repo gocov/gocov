@@ -115,12 +115,31 @@ func TestRepoLifecycle(t *testing.T) {
 		t.Error("old token still resolves after rotation")
 	}
 
+	// The public-reports switch rides UpdateRepo; visibility does not —
+	// only SetRepoVisibility writes it, so a full-row save carrying a
+	// stale value cannot revert a concurrent refresh.
+	if err := st.SetRepoVisibility(ctx, repo.ID, store.VisibilityPrivate); err != nil {
+		t.Fatal(err)
+	}
+	repo.Visibility = store.VisibilityPublic // stale in-memory value
+	repo.PublicReportsDisabled = true
+	if err := st.UpdateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.RepoByID(ctx, repo.ID); got.Visibility != store.VisibilityPrivate || !got.PublicReportsDisabled ||
+		got.DefaultBranch != "develop" {
+		t.Errorf("after stale-visibility UpdateRepo: %+v", got)
+	}
+
 	// Missing rows yield ErrNotFound.
 	if err := st.UpdateRepo(ctx, &store.Repo{ID: 9999, Slug: "x/y", Token: "t"}); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("UpdateRepo missing = %v", err)
 	}
 	if _, err := st.RepoBySlug(ctx, "no/such"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("RepoBySlug missing = %v", err)
+	}
+	if err := st.SetRepoVisibility(ctx, 9999, store.VisibilityPublic); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("SetRepoVisibility missing = %v", err)
 	}
 }
 

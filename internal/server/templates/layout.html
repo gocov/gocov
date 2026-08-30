@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{block "title" .}}gocov{{end}}</title>
-<link rel="icon" href="{{asset "/static/favicon.svg"}}" type="image/svg+xml">
+{{block "head" .}}{{end}}<link rel="icon" href="{{asset "/static/favicon.svg"}}" type="image/svg+xml">
 <link rel="stylesheet" href="{{asset "/static/style.css"}}">
 <script src="{{asset "/static/htmx.min.js"}}" defer></script>
 <script src="{{asset "/static/app.js"}}" defer></script>
@@ -20,6 +20,12 @@
   <form class="nav-logout" method="post" action="/logout"><button class="btn" type="submit">Sign out</button></form>
   {{end}}
 </div>
+{{if .PublicView}}
+<div class="banner" id="public-cta">
+  <span><a href="https://gocov.dev?ref=report-cta" rel="noopener">Track your repo&rsquo;s coverage
+  &mdash; free for public repos</a></span>
+</div>
+{{end}}
 {{if .AuthOpen}}
 <div class="banner" id="auth-banner">
   <span>The web UI is open to anyone who can reach this server. To require sign-in, create a

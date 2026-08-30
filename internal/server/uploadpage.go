@@ -27,12 +27,12 @@ import (
 func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		s.renderNotFound(w, r)
+		s.reportNotFound(w, r)
 		return
 	}
 	upload, err := s.store.Upload(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
-		s.renderNotFound(w, r)
+		s.reportNotFound(w, r)
 		return
 	}
 	if err != nil {
@@ -49,11 +49,7 @@ func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "loading repo for upload", err)
 		return
 	}
-	if ok, err := s.canView(r, repo.Slug); err != nil {
-		s.internalError(w, "checking access", err)
-		return
-	} else if !ok {
-		s.renderNotFound(w, r)
+	if _, ok := s.authorizeReport(w, r, repo); !ok {
 		return
 	}
 
@@ -122,6 +118,7 @@ func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
 		"Prov":         s.uploadProvenance(r.Context(), upload),
 		"CanDownload":  upload.RawBlobKey != "",
 		"Download":     fmt.Sprintf("/uploads/%d/profile", upload.ID),
+		"PublicView":   s.publicView(r),
 	})
 }
 
@@ -356,12 +353,12 @@ func splitPath(p string) (dir, base string) {
 func (s *Server) handleUploadProfile(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		http.NotFound(w, r)
+		s.reportNotFound(w, r)
 		return
 	}
 	upload, err := s.store.Upload(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
-		http.NotFound(w, r)
+		s.reportNotFound(w, r)
 		return
 	}
 	if err != nil {
@@ -373,11 +370,7 @@ func (s *Server) handleUploadProfile(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "loading repo for upload", err)
 		return
 	}
-	if ok, err := s.canView(r, repo.Slug); err != nil {
-		s.internalError(w, "checking access", err)
-		return
-	} else if !ok {
-		http.NotFound(w, r)
+	if _, ok := s.authorizeReport(w, r, repo); !ok {
 		return
 	}
 	if upload.RawBlobKey == "" {

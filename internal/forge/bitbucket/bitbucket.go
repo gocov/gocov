@@ -230,38 +230,63 @@ func (c *Client) GetPRDiff(ctx context.Context, repoSlug, prID string) (string, 
 // maxDiffBytes bounds PR diffs; larger diffs error instead of truncating.
 const maxDiffBytes = 32 << 20
 
-// GetDefaultBranch reads the repo's main branch via GET /repositories/{slug}.
-func (c *Client) GetDefaultBranch(ctx context.Context, repoSlug string) (string, error) {
+// fetchRepository GETs the repository resource (GET /repositories/{slug})
+// and decodes it into out — the request/status/decode plumbing
+// GetDefaultBranch and GetRepoVisibility share.
+func (c *Client) fetchRepository(ctx context.Context, repoSlug string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/repositories/"+repoSlug, nil)
 	if err != nil {
-		return "", err
+		return err
 	}
 	c.authorize(req)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("bitbucket: %w", err)
+		return fmt.Errorf("bitbucket: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return "", fmt.Errorf("%w: %s", forge.ErrRepoNotFound, repoSlug)
+		return fmt.Errorf("%w: %s", forge.ErrRepoNotFound, repoSlug)
 	}
 	if resp.StatusCode >= 300 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("bitbucket: /repositories/%s returned %d: %s", repoSlug, resp.StatusCode, msg)
+		return fmt.Errorf("bitbucket: /repositories/%s returned %d: %s", repoSlug, resp.StatusCode, msg)
 	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out); err != nil {
+		return fmt.Errorf("bitbucket: decoding repository: %w", err)
+	}
+	return nil
+}
+
+// GetDefaultBranch reads the repo's main branch via GET /repositories/{slug}.
+func (c *Client) GetDefaultBranch(ctx context.Context, repoSlug string) (string, error) {
 	var body struct {
 		MainBranch struct {
 			Name string `json:"name"`
 		} `json:"mainbranch"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body); err != nil {
-		return "", fmt.Errorf("bitbucket: decoding repository: %w", err)
+	if err := c.fetchRepository(ctx, repoSlug, &body); err != nil {
+		return "", err
 	}
 	if body.MainBranch.Name == "" {
 		return "", fmt.Errorf("bitbucket: repository %s has no main branch", repoSlug)
 	}
 	return body.MainBranch.Name, nil
+}
+
+// GetRepoVisibility reads the repo's is_private flag via
+// GET /repositories/{slug}.
+func (c *Client) GetRepoVisibility(ctx context.Context, repoSlug string) (string, error) {
+	var body struct {
+		IsPrivate bool `json:"is_private"`
+	}
+	if err := c.fetchRepository(ctx, repoSlug, &body); err != nil {
+		return "", err
+	}
+	if body.IsPrivate {
+		return forge.VisibilityPrivate, nil
+	}
+	return forge.VisibilityPublic, nil
 }
 
 // maxFileBytes bounds source files fetched for the source view.

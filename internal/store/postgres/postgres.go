@@ -131,22 +131,67 @@ func (s *Store) Migrate(ctx context.Context) error {
 func (s *Store) CreateRepo(ctx context.Context, r *store.Repo) error {
 	return s.pool.QueryRow(ctx, `
 		INSERT INTO repos (forge, slug, token, default_branch,
-			min_coverage, min_diff_coverage, max_coverage_drop)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+			min_coverage, min_diff_coverage, max_coverage_drop,
+			visibility, public_reports_disabled)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id, created_at`,
 		r.Forge, r.Slug, r.Token, r.DefaultBranch,
 		r.Gate.MinCoverage, r.Gate.MinDiffCoverage, r.Gate.MaxCoverageDrop,
+		r.Visibility, r.PublicReportsDisabled,
 	).Scan(&r.ID, &r.CreatedAt)
 }
 
+// UpdateRepo leaves the visibility column alone: it is written from the
+// upload path via SetRepoVisibility, and a settings save carrying the
+// value it loaded minutes ago must not be able to revert a concurrent
+// refresh (a private repo would reopen to anonymous visitors).
 func (s *Store) UpdateRepo(ctx context.Context, r *store.Repo) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE repos SET forge = $2, slug = $3, token = $4,
 			default_branch = $5,
-			min_coverage = $6, min_diff_coverage = $7, max_coverage_drop = $8
+			min_coverage = $6, min_diff_coverage = $7, max_coverage_drop = $8,
+			public_reports_disabled = $9
 		WHERE id = $1`,
 		r.ID, r.Forge, r.Slug, r.Token, r.DefaultBranch,
-		r.Gate.MinCoverage, r.Gate.MinDiffCoverage, r.Gate.MaxCoverageDrop)
+		r.Gate.MinCoverage, r.Gate.MinDiffCoverage, r.Gate.MaxCoverageDrop,
+		r.PublicReportsDisabled)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) PublicRepoSlugs(ctx context.Context, limit int) ([]string, error) {
+	q := `SELECT slug FROM repos
+		WHERE visibility = 'public' AND NOT public_reports_disabled
+		ORDER BY slug`
+	var args []any
+	if limit > 0 {
+		q += ` LIMIT $1`
+		args = append(args, limit)
+	}
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var slug string
+		if err := rows.Scan(&slug); err != nil {
+			return nil, err
+		}
+		out = append(out, slug)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) SetRepoVisibility(ctx context.Context, repoID int64, visibility string) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE repos SET visibility = $2 WHERE id = $1`, repoID, visibility)
 	if err != nil {
 		return err
 	}
@@ -157,7 +202,8 @@ func (s *Store) UpdateRepo(ctx context.Context, r *store.Repo) error {
 }
 
 const repoCols = `id, forge, slug, token, default_branch,
-	min_coverage, min_diff_coverage, max_coverage_drop, created_at`
+	min_coverage, min_diff_coverage, max_coverage_drop,
+	visibility, public_reports_disabled, created_at`
 
 func (s *Store) DeleteRepo(ctx context.Context, id int64) error {
 	tag, err := s.pool.Exec(ctx, `DELETE FROM repos WHERE id = $1`, id)
@@ -218,7 +264,8 @@ type querier interface {
 func (s *Store) scanRepo(row rowScanner) (*store.Repo, error) {
 	var r store.Repo
 	err := row.Scan(&r.ID, &r.Forge, &r.Slug, &r.Token, &r.DefaultBranch,
-		&r.Gate.MinCoverage, &r.Gate.MinDiffCoverage, &r.Gate.MaxCoverageDrop, &r.CreatedAt)
+		&r.Gate.MinCoverage, &r.Gate.MinDiffCoverage, &r.Gate.MaxCoverageDrop,
+		&r.Visibility, &r.PublicReportsDisabled, &r.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}

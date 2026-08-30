@@ -83,7 +83,37 @@ func (s *Store) UpdateRepo(_ context.Context, r *store.Repo) error {
 	if cp.CreatedAt.IsZero() {
 		cp.CreatedAt = existing.CreatedAt
 	}
+	// Visibility is SetRepoVisibility's alone (see the Store contract): a
+	// full-row save must not revert a concurrent refresh.
+	cp.Visibility = existing.Visibility
 	s.repos[r.ID] = &cp
+	return nil
+}
+
+func (s *Store) PublicRepoSlugs(_ context.Context, limit int) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	for _, r := range s.repos {
+		if r.ReportsPublic() {
+			out = append(out, r.Slug)
+		}
+	}
+	sort.Strings(out)
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (s *Store) SetRepoVisibility(_ context.Context, repoID int64, visibility string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.repos[repoID]
+	if !ok {
+		return store.ErrNotFound
+	}
+	r.Visibility = visibility
 	return nil
 }
 
