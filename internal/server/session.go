@@ -82,12 +82,13 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 }
 
 // publicReportCandidate reports whether a sessionless request may reach
-// its handler for a per-repo public decision: a GET on the read-only
-// report pages, and only while the instance-level switch
+// its handler for a per-repo public decision: a GET (or HEAD — the mux's
+// GET patterns serve those too, and crawlers probe with them) on the
+// read-only report pages, and only while the instance-level switch
 // (GOCOV_PUBLIC_REPORTS) is on. Everything mutating or administrative
 // keeps the login wall unconditionally.
 func (s *Server) publicReportCandidate(r *http.Request) bool {
-	if !s.publicReports || r.Method != http.MethodGet {
+	if !s.publicReports || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
 		return false
 	}
 	return strings.HasPrefix(r.URL.Path, "/repos/") ||

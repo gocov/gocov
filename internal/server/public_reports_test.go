@@ -127,6 +127,15 @@ func TestPublicRepoReportPagesOpenAnonymously(t *testing.T) {
 		t.Fatalf("source page anonymous: status = %d", src.Code)
 	}
 
+	// Crawlers probe with HEAD; the mux serves it through the GET route,
+	// so the sessionless pass-through must admit it too.
+	headReq := httptest.NewRequest(http.MethodHead, "/repos/acme/widgets", nil)
+	headRec := httptest.NewRecorder()
+	f.srv.ServeHTTP(headRec, headReq)
+	if headRec.Code != http.StatusOK {
+		t.Errorf("HEAD repo page anonymous: status = %d", headRec.Code)
+	}
+
 	prof := get(f, "/uploads/1/profile")
 	if prof.Code != http.StatusOK {
 		t.Fatalf("raw profile anonymous: status = %d", prof.Code)
