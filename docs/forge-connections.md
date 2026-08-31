@@ -21,7 +21,10 @@ Register a GitHub App (**Settings → Developer settings → GitHub Apps → New
   linked through the setup redirect and uninstalls are detected lazily. A **Marketplace listing requires it**: set the
   webhook URL to `https://your-gocov-host/github/webhook`, a webhook secret, and `GOCOV_GITHUB_WEBHOOK_SECRET` to the
   same value on the server. The endpoint verifies each delivery's signature; it logs `marketplace_purchase` events and
-  flips a workspace's app-broken flag on `installation` deleted/suspend/unsuspend
+  flips a workspace's app-broken flag on `installation` deleted/suspend/unsuspend. Subscribing the app to the
+  **Repository** event is worthwhile too: gocov then closes a repo's [public report pages](public-reports.md) the
+  moment GitHub reports it privatized, and re-verifies (rather than waiting for the next upload) when it is made
+  public — without the subscription the visibility cache still corrects itself, just on its own schedule
 
 Generate a private key on the app page and set both variables on the server:
 
