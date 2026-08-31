@@ -126,17 +126,17 @@ func (s *Server) handleInstallationEvent(ctx context.Context, p *webhookPayload)
 	}
 }
 
-// handleRepositoryEvent caches a visibility flip GitHub just announced,
-// closing (or opening) the repo's public report pages instantly. Other
+// handleRepositoryEvent reacts to a visibility flip GitHub just
+// announced, so the repo's public report pages close (or reopen) without
+// waiting for the TTLs. The flip itself goes through core — the one
+// owner of the visibility cache: a "privatized" is trusted as-is (the
+// fail-closed direction is always safe), while a "publicized" only
+// triggers a re-verification through the workspace's own connection, so
+// a stale redelivered event — or one for a repo this deployment's
+// installation cannot see — can never open pages by itself. Other
 // repository actions (rename, transfer, delete) stay lazy.
 func (s *Server) handleRepositoryEvent(ctx context.Context, p *webhookPayload) {
-	var v string
-	switch p.Action {
-	case "privatized":
-		v = store.VisibilityPrivate
-	case "publicized":
-		v = store.VisibilityPublic
-	default:
+	if p.Action != "privatized" && p.Action != "publicized" {
 		s.log.Debug("github repository event", "action", p.Action, "repo", p.Repository.FullName)
 		return
 	}
@@ -153,9 +153,9 @@ func (s *Server) handleRepositoryEvent(ctx context.Context, p *webhookPayload) {
 	if repo.Forge != "github" {
 		return
 	}
-	if err := s.store.SetRepoVisibility(ctx, repo.ID, v); err != nil {
-		s.log.Error("github webhook: caching repo visibility", "repo", repo.Slug, "err", err)
+	if p.Action == "privatized" {
+		s.pipeline.MarkRepoPrivate(ctx, repo)
 		return
 	}
-	s.log.Info("repo visibility changed via webhook", "repo", repo.Slug, "visibility", v)
+	s.pipeline.ReverifyVisibility(ctx, repo)
 }

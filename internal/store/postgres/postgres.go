@@ -129,26 +129,20 @@ func (s *Store) Migrate(ctx context.Context) error {
 	return nil
 }
 
+// CreateRepo leaves visibility_checked_at at its NULL default: per the
+// Store contract only SetRepoVisibility writes the stamp, so a fresh row
+// always starts as "never asked".
 func (s *Store) CreateRepo(ctx context.Context, r *store.Repo) error {
 	return s.pool.QueryRow(ctx, `
 		INSERT INTO repos (forge, slug, token, default_branch,
 			min_coverage, min_diff_coverage, max_coverage_drop,
-			visibility, public_reports_disabled, visibility_checked_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			visibility, public_reports_disabled)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id, created_at`,
 		r.Forge, r.Slug, r.Token, r.DefaultBranch,
 		r.Gate.MinCoverage, r.Gate.MinDiffCoverage, r.Gate.MaxCoverageDrop,
-		r.Visibility, r.PublicReportsDisabled, nullableTime(r.VisibilityCheckedAt),
+		r.Visibility, r.PublicReportsDisabled,
 	).Scan(&r.ID, &r.CreatedAt)
-}
-
-// nullableTime maps the zero time onto NULL, so "never" round-trips as
-// the zero value rather than year one.
-func nullableTime(t time.Time) *time.Time {
-	if t.IsZero() {
-		return nil
-	}
-	return &t
 }
 
 // UpdateRepo leaves the visibility columns (value and checked-at stamp)
@@ -200,15 +194,29 @@ func (s *Store) PublicRepoSlugs(ctx context.Context, limit int) ([]string, error
 	return out, rows.Err()
 }
 
-func (s *Store) SetRepoVisibility(ctx context.Context, repoID int64, visibility string) error {
-	tag, err := s.pool.Exec(ctx,
-		`UPDATE repos SET visibility = $2, visibility_checked_at = now()
-		WHERE id = $1`, repoID, visibility)
+// SetRepoVisibility stamps checkedAt as given (the app clock, the same
+// clock the freshness windows compare against) rather than now(): the
+// caller took it before asking the forge, so of two racing answers the
+// later ask wins regardless of write order.
+func (s *Store) SetRepoVisibility(ctx context.Context, repoID int64, visibility string, checkedAt time.Time) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE repos SET visibility = $2, visibility_checked_at = $3
+		WHERE id = $1 AND (visibility_checked_at IS NULL OR visibility_checked_at < $3)`,
+		repoID, visibility, checkedAt)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return store.ErrNotFound
+		// Missing repo, or a fresher answer already landed — only the
+		// former is an error.
+		var exists bool
+		if err := s.pool.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM repos WHERE id = $1)`, repoID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return store.ErrNotFound
+		}
 	}
 	return nil
 }

@@ -105,8 +105,8 @@ func (p *Pipeline) RegisterRepo(ctx context.Context, ws *store.Workspace, slug s
 }
 
 // How stale the cached forge visibility answer may grow on each path
-// before it is re-asked. The Pipeline fields of the same names override
-// the two TTLs for tests.
+// before it is re-asked. The Pipeline's VisibilityUploadTTL field
+// overrides the upload TTL for tests.
 const (
 	// defaultVisibilityUploadTTL bounds the upload path: within it an
 	// upload skips the visibility round-trip entirely, so a commit
@@ -132,13 +132,6 @@ func (p *Pipeline) uploadVisibilityTTL() time.Duration {
 	return defaultVisibilityUploadTTL
 }
 
-func (p *Pipeline) serveVisibilityTTL() time.Duration {
-	if p.VisibilityServeTTL != 0 {
-		return p.VisibilityServeTTL
-	}
-	return defaultVisibilityServeTTL
-}
-
 // visibilityFresh reports whether the repo's cached visibility answer is
 // younger than ttl. A zero stamp — the forge has never answered — is
 // always stale.
@@ -157,6 +150,11 @@ func (p *Pipeline) RefreshVisibility(ctx context.Context, fg forge.Forge, repo *
 	if fg == nil {
 		return
 	}
+	// The stamp is the time the question was asked, not answered or
+	// written: of two racing answers (an in-flight refresh vs a
+	// webhook-delivered flip, say) SetRepoVisibility then keeps whichever
+	// reflects the later ask, regardless of write order.
+	askedAt := time.Now()
 	fv, err := fg.GetRepoVisibility(ctx, repo.Slug)
 	switch {
 	case errors.Is(err, forge.ErrNotImplemented):
@@ -165,7 +163,10 @@ func (p *Pipeline) RefreshVisibility(ctx context.Context, fg forge.Forge, repo *
 		// Definitive: this connection can no longer see the repo —
 		// deleted, or hidden from an installation that lost access.
 		// Not-visible is certainly not public, so fail closed instead of
-		// serving the old answer forever.
+		// serving the old answer forever — loudly, because for a repo
+		// merely outside an App's selected-repositories set this closes
+		// legitimately public pages and the operator should see why.
+		p.Log.Warn("repo not visible to its forge connection; caching private", "repo", repo.Slug, "err", err)
 		fv = forge.VisibilityPrivate
 	case err != nil:
 		p.Log.Warn("get repo visibility", "repo", repo.Slug, "err", err)
@@ -188,7 +189,7 @@ func (p *Pipeline) RefreshVisibility(ctx context.Context, fg forge.Forge, repo *
 	// An unchanged answer is still persisted: SetRepoVisibility stamps
 	// VisibilityCheckedAt, and both freshness windows count from the last
 	// answer, not the last change.
-	if err := p.Store.SetRepoVisibility(ctx, repo.ID, v); err != nil {
+	if err := p.Store.SetRepoVisibility(ctx, repo.ID, v, askedAt); err != nil {
 		p.Log.Error("caching repo visibility", "repo", repo.Slug, "err", err)
 		return
 	}
@@ -196,7 +197,71 @@ func (p *Pipeline) RefreshVisibility(ctx context.Context, fg forge.Forge, repo *
 		p.Log.Info("repo visibility changed", "repo", repo.Slug, "visibility", v)
 	}
 	repo.Visibility = v
-	repo.VisibilityCheckedAt = time.Now()
+	repo.VisibilityCheckedAt = askedAt
+}
+
+// refreshVisibilityOnce is RefreshVisibility behind the per-repo
+// in-flight guard: when another request is already asking the forge the
+// same question — a commit's parts uploading concurrently, say — the
+// duplicate is skipped and that request's answer serves everyone.
+func (p *Pipeline) refreshVisibilityOnce(ctx context.Context, fg forge.Forge, repo *store.Repo) {
+	if !p.beginVisibilityRefresh(repo.ID) {
+		return
+	}
+	defer p.endVisibilityRefresh(repo.ID)
+	p.RefreshVisibility(ctx, fg, repo)
+}
+
+func (p *Pipeline) beginVisibilityRefresh(repoID int64) bool {
+	p.visMu.Lock()
+	defer p.visMu.Unlock()
+	if p.visInFlight[repoID] {
+		return false
+	}
+	if p.visInFlight == nil {
+		p.visInFlight = map[int64]bool{}
+	}
+	p.visInFlight[repoID] = true
+	return true
+}
+
+func (p *Pipeline) endVisibilityRefresh(repoID int64) {
+	p.visMu.Lock()
+	defer p.visMu.Unlock()
+	delete(p.visInFlight, repoID)
+}
+
+// ReverifyVisibility re-asks the repo's visibility through its
+// workspace's forge connection right now — the shared re-check behind
+// the serve-path staleness TTL and webhook-announced flips that must be
+// verified before they can open pages. Without a connection nothing
+// changes: the cached answer keeps its age.
+func (p *Pipeline) ReverifyVisibility(ctx context.Context, repo *store.Repo) {
+	if p.Forges == nil {
+		return
+	}
+	fg, err := p.Forges.For(ctx, repo)
+	if err != nil || fg == nil {
+		return
+	}
+	p.refreshVisibilityOnce(ctx, fg, repo)
+}
+
+// MarkRepoPrivate caches a private flip the forge announced out of band
+// (a webhook delivery). Trusting the announcement without re-asking is
+// safe in this direction only — closing pages on stale news costs a
+// public repo's visitors a sign-in until the next refresh, while opening
+// on stale news would leak a private repo — so the opposite flip goes
+// through ReverifyVisibility instead.
+func (p *Pipeline) MarkRepoPrivate(ctx context.Context, repo *store.Repo) {
+	if err := p.Store.SetRepoVisibility(ctx, repo.ID, store.VisibilityPrivate, time.Now()); err != nil {
+		p.Log.Error("caching repo visibility", "repo", repo.Slug, "err", err)
+		return
+	}
+	if repo.Visibility != store.VisibilityPrivate {
+		p.Log.Info("repo visibility changed", "repo", repo.Slug, "visibility", store.VisibilityPrivate, "source", "webhook")
+	}
+	repo.Visibility = store.VisibilityPrivate
 }
 
 // ReverifyVisibilityIfStale starts a background re-check of a repo about
@@ -208,7 +273,11 @@ func (p *Pipeline) RefreshVisibility(ctx context.Context, fg forge.Forge, repo *
 // forge answer changes anything (RefreshVisibility keeps the last known
 // state on transient errors). Reports whether a re-check was started.
 func (p *Pipeline) ReverifyVisibilityIfStale(repo *store.Repo) bool {
-	if p.Forges == nil || visibilityFresh(repo, p.serveVisibilityTTL()) {
+	if p.Forges == nil || !p.Forges.Capable(repo.Forge) ||
+		visibilityFresh(repo, defaultVisibilityServeTTL) {
+		// The Capable check keeps a forge this deployment has no
+		// connector for from scheduling work whose outcome — no client,
+		// keep the last known state — is already decided.
 		return false
 	}
 	if !p.claimVisibilityRecheck(repo.ID) {
@@ -220,11 +289,7 @@ func (p *Pipeline) ReverifyVisibilityIfStale(repo *store.Repo) bool {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), visibilityRecheckTimeout)
 		defer cancel()
-		fg, err := p.Forges.For(ctx, &r)
-		if err != nil || fg == nil {
-			return // no connection to ask: keep the last known state
-		}
-		p.RefreshVisibility(ctx, fg, &r)
+		p.ReverifyVisibility(ctx, &r)
 	}()
 	return true
 }
@@ -236,7 +301,15 @@ func (p *Pipeline) claimVisibilityRecheck(repoID int64) bool {
 	p.visMu.Lock()
 	defer p.visMu.Unlock()
 	now := time.Now()
-	if last, ok := p.visChecks[repoID]; ok && now.Sub(last) < visibilityRecheckGap {
+	// An entry past the gap can no longer refuse anything — sweep them so
+	// the map stays bounded by the repos re-checked in the last gap, not
+	// by every repo (deleted ones included) ever served on a stale answer.
+	for id, at := range p.visChecks {
+		if now.Sub(at) >= visibilityRecheckGap {
+			delete(p.visChecks, id)
+		}
+	}
+	if _, ok := p.visChecks[repoID]; ok {
 		return false
 	}
 	if p.visChecks == nil {

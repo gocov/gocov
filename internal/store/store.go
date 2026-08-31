@@ -263,10 +263,12 @@ type Store interface {
 	DeleteRepo(ctx context.Context, id int64) error
 	// SetRepoVisibility updates only the repo's cached forge visibility —
 	// a narrow UPDATE, because it is written from the upload path and must
-	// not clobber (or be clobbered by) a concurrent settings save. It also
-	// stamps VisibilityCheckedAt with the current time, so the freshness
-	// windows count from the last answer, changed or not.
-	SetRepoVisibility(ctx context.Context, repoID int64, visibility string) error
+	// not clobber (or be clobbered by) a concurrent settings save. checkedAt
+	// says when the answer was obtained and becomes VisibilityCheckedAt; a
+	// write whose checkedAt is not newer than the stored stamp is skipped
+	// silently (nil), so an answer from an in-flight forge ask cannot
+	// overwrite a fresher one — e.g. a webhook-delivered flip.
+	SetRepoVisibility(ctx context.Context, repoID int64, visibility string, checkedAt time.Time) error
 	RepoByID(ctx context.Context, id int64) (*Repo, error)
 	RepoBySlug(ctx context.Context, slug string) (*Repo, error)
 	RepoByToken(ctx context.Context, token string) (*Repo, error)

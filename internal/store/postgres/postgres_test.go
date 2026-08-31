@@ -125,7 +125,8 @@ func TestRepoLifecycle(t *testing.T) {
 	// checked-at stamp do not — only SetRepoVisibility writes them, so a
 	// full-row save carrying stale values cannot revert a concurrent
 	// refresh.
-	if err := st.SetRepoVisibility(ctx, repo.ID, store.VisibilityPrivate); err != nil {
+	flippedAt := time.Now()
+	if err := st.SetRepoVisibility(ctx, repo.ID, store.VisibilityPrivate, flippedAt); err != nil {
 		t.Fatal(err)
 	}
 	repo.Visibility = store.VisibilityPublic // stale in-memory values
@@ -142,6 +143,21 @@ func TestRepoLifecycle(t *testing.T) {
 		t.Error("SetRepoVisibility did not stamp VisibilityCheckedAt (or UpdateRepo cleared it)")
 	}
 
+	// An answer whose ask predates the stored stamp lost the race and is
+	// skipped without error; a later ask wins.
+	if err := st.SetRepoVisibility(ctx, repo.ID, store.VisibilityPublic, flippedAt.Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.RepoByID(ctx, repo.ID); got.Visibility != store.VisibilityPrivate {
+		t.Errorf("a stale answer overwrote a fresher one: %q", got.Visibility)
+	}
+	if err := st.SetRepoVisibility(ctx, repo.ID, store.VisibilityPublic, flippedAt.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.RepoByID(ctx, repo.ID); got.Visibility != store.VisibilityPublic {
+		t.Errorf("a fresher answer was refused: %q", got.Visibility)
+	}
+
 	// Missing rows yield ErrNotFound.
 	if err := st.UpdateRepo(ctx, &store.Repo{ID: 9999, Slug: "x/y", Token: "t"}); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("UpdateRepo missing = %v", err)
@@ -149,7 +165,7 @@ func TestRepoLifecycle(t *testing.T) {
 	if _, err := st.RepoBySlug(ctx, "no/such"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("RepoBySlug missing = %v", err)
 	}
-	if err := st.SetRepoVisibility(ctx, 9999, store.VisibilityPublic); !errors.Is(err, store.ErrNotFound) {
+	if err := st.SetRepoVisibility(ctx, 9999, store.VisibilityPublic, time.Now()); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("SetRepoVisibility missing = %v", err)
 	}
 }

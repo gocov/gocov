@@ -157,6 +157,52 @@ func TestReverifyVisibilityIfStale(t *testing.T) {
 	}
 }
 
+// TestSetRepoVisibilityIgnoresStaleAnswers pins the memory double to the
+// Store contract's answer ordering: a write whose ask predates the stored
+// stamp lost the race and must be skipped, or an in-flight refresh could
+// overwrite a fresher webhook-delivered flip.
+func TestSetRepoVisibilityIgnoresStaleAnswers(t *testing.T) {
+	_, st, repo := newPipeline(t, store.Gate{})
+	ctx := context.Background()
+
+	now := time.Now()
+	if err := st.SetRepoVisibility(ctx, repo.ID, store.VisibilityPrivate, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetRepoVisibility(ctx, repo.ID, store.VisibilityPublic, now.Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if stored, _ := st.RepoBySlug(ctx, repo.Slug); stored.Visibility != store.VisibilityPrivate {
+		t.Errorf("a stale answer overwrote a fresher one: %q", stored.Visibility)
+	}
+	if err := st.SetRepoVisibility(ctx, repo.ID, store.VisibilityPublic, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if stored, _ := st.RepoBySlug(ctx, repo.Slug); stored.Visibility != store.VisibilityPublic {
+		t.Errorf("a fresher answer was refused: %q", stored.Visibility)
+	}
+}
+
+// TestVisibilityRefreshInFlightGuard covers the per-repo claim that keeps
+// a commit's concurrently uploading parts from all asking the forge the
+// same visibility question.
+func TestVisibilityRefreshInFlightGuard(t *testing.T) {
+	p := &Pipeline{}
+	if !p.beginVisibilityRefresh(1) {
+		t.Fatal("first claim refused")
+	}
+	if p.beginVisibilityRefresh(1) {
+		t.Error("concurrent claim for the same repo allowed")
+	}
+	if !p.beginVisibilityRefresh(2) {
+		t.Error("an unrelated repo was blocked")
+	}
+	p.endVisibilityRefresh(1)
+	if !p.beginVisibilityRefresh(1) {
+		t.Error("claim after release refused")
+	}
+}
+
 // waitForVisibility polls the store until the repo's cached visibility
 // matches — the background re-check runs on its own goroutine.
 func waitForVisibility(t *testing.T, st *storemem.Store, slug, want string) {

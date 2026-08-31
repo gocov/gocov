@@ -40,15 +40,18 @@ type Pipeline struct {
 	// get marketing appended to their PRs.
 	Hosted bool
 
-	// VisibilityUploadTTL and VisibilityServeTTL override how long the
-	// cached forge visibility answer counts as fresh on the upload and
-	// anonymous serving paths (repo.go). Zero means the defaults; only
-	// tests shrink them.
+	// VisibilityUploadTTL overrides how long the cached forge visibility
+	// answer counts as fresh on the upload path (repo.go). Zero means the
+	// default; it is exported only so server tests can shrink it, never as
+	// deployment configuration (that lives in internal/config).
 	VisibilityUploadTTL time.Duration
-	VisibilityServeTTL  time.Duration
 
-	// visMu guards visChecks: when each repo's visibility was last
-	// re-checked in the background, the serving path's rate limit.
-	visMu     sync.Mutex
-	visChecks map[int64]time.Time
+	// visMu guards the in-process visibility-refresh state: visChecks is
+	// when each repo's background re-check was last attempted (the serving
+	// path's rate limit, pruned as entries age out), visInFlight the repos
+	// with a forge ask running right now (so concurrent uploads of one
+	// commit's parts don't all repeat the same question).
+	visMu       sync.Mutex
+	visChecks   map[int64]time.Time
+	visInFlight map[int64]bool
 }

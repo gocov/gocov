@@ -421,22 +421,30 @@ func TestStalePublicAnswerIsReverifiedWhenServed(t *testing.T) {
 	if rec := get(f, "/repos/acme/widgets"); rec.Code != http.StatusOK {
 		t.Fatalf("stale public page: status = %d", rec.Code)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		stored, err := st.RepoBySlug(ctx, "acme/widgets")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if stored.Visibility == store.VisibilityPrivate {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("visibility = %q, want private (background re-check never landed)", stored.Visibility)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	waitForVisibility(t, st, "acme/widgets", store.VisibilityPrivate)
 
 	// The answer landed: the pages are closed for the requests after it.
 	wantLoginRedirect(t, get(f, "/repos/acme/widgets"), "/repos/acme/widgets")
 	wantLoginRedirect(t, get(f, "/uploads/1"), "/uploads/1")
+}
+
+// waitForVisibility polls the store until the repo's cached visibility
+// matches — the background re-check runs on its own goroutine. (Mirrors
+// the helper of the same name in internal/core's tests.)
+func waitForVisibility(t *testing.T, st *storemem.Store, slug, want string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		stored, err := st.RepoBySlug(context.Background(), slug)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stored.Visibility == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("visibility = %q, want %q (background re-check never landed)", stored.Visibility, want)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }

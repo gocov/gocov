@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
+	forgefake "github.com/gocov/gocov/internal/forge/fake"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
@@ -19,8 +20,9 @@ import (
 const webhookSecret = "shhh"
 
 // webhookServer builds a server with the webhook enabled and one github
-// workspace linked to installation 4242.
-func webhookServer(t *testing.T) (*Server, *storemem.Store) {
+// workspace linked to installation 4242, connected through the App to
+// the returned fake forge (the client repository events verify against).
+func webhookServer(t *testing.T) (*Server, *storemem.Store, *forgefake.Forge) {
 	t.Helper()
 	st := storemem.New()
 	if err := st.CreateWorkspace(context.Background(), &store.Workspace{
@@ -29,13 +31,15 @@ func webhookServer(t *testing.T) (*Server, *storemem.Store) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	ff := forgefake.New()
 	srv := New(Config{
 		Store:               st,
 		Blobs:               blobmem.New(),
 		Parsers:             map[string]profile.Parser{"go": profile.GoParser{}},
+		GitHubApp:           &fakeGitHubApp{appForge: ff},
 		GitHubWebhookSecret: webhookSecret,
 	})
-	return srv, st
+	return srv, st, ff
 }
 
 func postWebhook(srv *Server, event, body, sig string) *httptest.ResponseRecorder {
@@ -56,7 +60,7 @@ func sign(secret, body string) string {
 }
 
 func TestWebhookRejectsBadSignature(t *testing.T) {
-	srv, _ := webhookServer(t)
+	srv, _, _ := webhookServer(t)
 	body := `{"action":"purchased"}`
 
 	if rec := postWebhook(srv, "marketplace_purchase", body, "sha256=deadbeef"); rec.Code != http.StatusUnauthorized {
@@ -72,7 +76,7 @@ func TestWebhookRejectsBadSignature(t *testing.T) {
 }
 
 func TestWebhookMarketplacePurchase(t *testing.T) {
-	srv, _ := webhookServer(t)
+	srv, _, _ := webhookServer(t)
 	body := `{"action":"purchased","marketplace_purchase":{"account":{"login":"acme","type":"Organization"},"plan":{"name":"Free"}}}`
 	rec := postWebhook(srv, "marketplace_purchase", body, sign(webhookSecret, body))
 	if rec.Code != http.StatusOK {
@@ -81,7 +85,7 @@ func TestWebhookMarketplacePurchase(t *testing.T) {
 }
 
 func TestWebhookPingAndUnknownEvent(t *testing.T) {
-	srv, _ := webhookServer(t)
+	srv, _, _ := webhookServer(t)
 	for _, event := range []string{"ping", "push"} {
 		body := `{"zen":"go"}`
 		if rec := postWebhook(srv, event, body, sign(webhookSecret, body)); rec.Code != http.StatusOK {
@@ -91,7 +95,7 @@ func TestWebhookPingAndUnknownEvent(t *testing.T) {
 }
 
 func TestWebhookInstallationFlipsBrokenFlag(t *testing.T) {
-	srv, st := webhookServer(t)
+	srv, st, _ := webhookServer(t)
 
 	broken := func() bool {
 		ws, err := st.WorkspaceByPrefix(context.Background(), "acme")
@@ -128,7 +132,7 @@ func TestWebhookInstallationFlipsBrokenFlag(t *testing.T) {
 }
 
 func TestWebhookRepositoryVisibilityChange(t *testing.T) {
-	srv, st := webhookServer(t)
+	srv, st, ff := webhookServer(t)
 	ctx := context.Background()
 	repo := &store.Repo{
 		Forge: "github", Slug: "acme/widgets", Token: "tok-r",
@@ -147,7 +151,8 @@ func TestWebhookRepositoryVisibilityChange(t *testing.T) {
 		return r
 	}
 
-	// privatized closes the cached answer the moment GitHub says so.
+	// privatized closes the cached answer the moment GitHub says so — no
+	// forge round-trip, the fail-closed direction is trusted as-is.
 	priv := `{"action":"privatized","repository":{"full_name":"acme/widgets"}}`
 	if rec := postWebhook(srv, "repository", priv, sign(webhookSecret, priv)); rec.Code != http.StatusOK {
 		t.Fatalf("repository privatized: status = %d", rec.Code)
@@ -157,14 +162,32 @@ func TestWebhookRepositoryVisibilityChange(t *testing.T) {
 	} else if got.VisibilityCheckedAt.IsZero() {
 		t.Error("webhook flip did not stamp VisibilityCheckedAt")
 	}
+	if len(ff.VisibilityCalls) != 0 {
+		t.Errorf("privatized asked the forge (%d calls); the closing direction needs no verification", len(ff.VisibilityCalls))
+	}
 
-	// publicized reopens it.
+	// A stale (redelivered, out-of-order) publicized must not reopen the
+	// pages on its own say-so: it triggers a re-verification through the
+	// connection, and the forge still answers private.
+	ff.Visibility = store.VisibilityPrivate
 	pub := `{"action":"publicized","repository":{"full_name":"acme/widgets"}}`
 	if rec := postWebhook(srv, "repository", pub, sign(webhookSecret, pub)); rec.Code != http.StatusOK {
 		t.Fatalf("repository publicized: status = %d", rec.Code)
 	}
+	if got := visibility("acme/widgets"); got.Visibility != store.VisibilityPrivate {
+		t.Errorf("a publicized event the forge contradicts reopened the repo: %q", got.Visibility)
+	}
+	if len(ff.VisibilityCalls) != 1 {
+		t.Errorf("publicized visibility calls = %d, want 1 (verified through the connection)", len(ff.VisibilityCalls))
+	}
+
+	// A truthful publicized reopens it — verified, not trusted.
+	ff.Visibility = store.VisibilityPublic
+	if rec := postWebhook(srv, "repository", pub, sign(webhookSecret, pub)); rec.Code != http.StatusOK {
+		t.Fatalf("repository publicized again: status = %d", rec.Code)
+	}
 	if got := visibility("acme/widgets"); got.Visibility != store.VisibilityPublic {
-		t.Errorf("visibility after publicized = %q, want public", got.Visibility)
+		t.Errorf("visibility after verified publicized = %q, want public", got.Visibility)
 	}
 
 	// An untracked repo is a no-op, still acknowledged with 2xx.
