@@ -71,6 +71,6 @@ type httpDoer interface {
 	Do(*http.Request) (*http.Response, error)
 }
 
-// defaultHTTPDoer is the production httpDoer: a client with the same short
-// timeout the upload uses.
+// defaultHTTPDoer is the production httpDoer: a client with a short timeout,
+// since the id-token endpoint is local to the runner.
 var defaultHTTPDoer httpDoer = &http.Client{Timeout: 30 * time.Second}
