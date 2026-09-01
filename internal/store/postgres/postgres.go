@@ -10,6 +10,7 @@ import (
 	"hash/fnv"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -128,6 +129,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 	return nil
 }
 
+// CreateRepo leaves visibility_checked_at at its NULL default: per the
+// Store contract only SetRepoVisibility writes the stamp, so a fresh row
+// always starts as "never asked".
 func (s *Store) CreateRepo(ctx context.Context, r *store.Repo) error {
 	return s.pool.QueryRow(ctx, `
 		INSERT INTO repos (forge, slug, token, default_branch,
@@ -141,10 +145,11 @@ func (s *Store) CreateRepo(ctx context.Context, r *store.Repo) error {
 	).Scan(&r.ID, &r.CreatedAt)
 }
 
-// UpdateRepo leaves the visibility column alone: it is written from the
-// upload path via SetRepoVisibility, and a settings save carrying the
-// value it loaded minutes ago must not be able to revert a concurrent
-// refresh (a private repo would reopen to anonymous visitors).
+// UpdateRepo leaves the visibility columns (value and checked-at stamp)
+// alone: they are written from the upload path via SetRepoVisibility, and
+// a settings save carrying the values it loaded minutes ago must not be
+// able to revert a concurrent refresh (a private repo would reopen to
+// anonymous visitors).
 func (s *Store) UpdateRepo(ctx context.Context, r *store.Repo) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE repos SET forge = $2, slug = $3, token = $4,
@@ -189,21 +194,36 @@ func (s *Store) PublicRepoSlugs(ctx context.Context, limit int) ([]string, error
 	return out, rows.Err()
 }
 
-func (s *Store) SetRepoVisibility(ctx context.Context, repoID int64, visibility string) error {
-	tag, err := s.pool.Exec(ctx,
-		`UPDATE repos SET visibility = $2 WHERE id = $1`, repoID, visibility)
+// SetRepoVisibility stamps checkedAt as given (the app clock, the same
+// clock the freshness windows compare against) rather than now(): the
+// caller took it before asking the forge, so of two racing answers the
+// later ask wins regardless of write order.
+func (s *Store) SetRepoVisibility(ctx context.Context, repoID int64, visibility string, checkedAt time.Time) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE repos SET visibility = $2, visibility_checked_at = $3
+		WHERE id = $1 AND (visibility_checked_at IS NULL OR visibility_checked_at < $3)`,
+		repoID, visibility, checkedAt)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return store.ErrNotFound
+		// Missing repo, or a fresher answer already landed — only the
+		// former is an error.
+		var exists bool
+		if err := s.pool.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM repos WHERE id = $1)`, repoID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return store.ErrNotFound
+		}
 	}
 	return nil
 }
 
 const repoCols = `id, forge, slug, token, default_branch,
 	min_coverage, min_diff_coverage, max_coverage_drop,
-	visibility, public_reports_disabled, created_at`
+	visibility, public_reports_disabled, visibility_checked_at, created_at`
 
 func (s *Store) DeleteRepo(ctx context.Context, id int64) error {
 	tag, err := s.pool.Exec(ctx, `DELETE FROM repos WHERE id = $1`, id)
@@ -263,9 +283,13 @@ type querier interface {
 
 func (s *Store) scanRepo(row rowScanner) (*store.Repo, error) {
 	var r store.Repo
+	var checkedAt *time.Time // NULL = the forge has never answered
 	err := row.Scan(&r.ID, &r.Forge, &r.Slug, &r.Token, &r.DefaultBranch,
 		&r.Gate.MinCoverage, &r.Gate.MinDiffCoverage, &r.Gate.MaxCoverageDrop,
-		&r.Visibility, &r.PublicReportsDisabled, &r.CreatedAt)
+		&r.Visibility, &r.PublicReportsDisabled, &checkedAt, &r.CreatedAt)
+	if checkedAt != nil {
+		r.VisibilityCheckedAt = *checkedAt
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}

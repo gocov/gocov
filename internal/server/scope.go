@@ -93,6 +93,10 @@ func (s *Server) authorizeReport(w http.ResponseWriter, r *http.Request, repo *s
 		return true, true
 	}
 	if s.publicReports && repo.ReportsPublic() {
+		// The cached "public" may have flipped on the forge; an aged
+		// answer is re-verified in the background (mechanics in
+		// core.ReverifyVisibilityIfStale) while this request still serves.
+		s.pipeline.ReverifyVisibilityIfStale(repo)
 		if currentUser(r) == nil {
 			// The anonymous render is briefly cacheable — these pages are
 			// the badge/SEO surface, so repeat crawler traffic should be

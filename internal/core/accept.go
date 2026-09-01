@@ -62,7 +62,13 @@ func (p *Pipeline) Accept(ctx context.Context, sub Submission) (*Result, error) 
 	if p.Forges != nil {
 		fg, fgErr = p.Forges.For(ctx, sub.Repo)
 	}
-	p.RefreshVisibility(ctx, fg, sub.Repo)
+	// Re-ask the repo's visibility while a forge client is at hand — but
+	// only when the cached answer has aged out, and never concurrently
+	// with another request's ask, so a commit uploading many parts costs
+	// one visibility round-trip whether they arrive in sequence or at once.
+	if !visibilityFresh(sub.Repo, p.uploadVisibilityTTL()) {
+		p.refreshVisibilityOnce(ctx, fg, sub.Repo)
+	}
 
 	covered, total := sub.Profile.Coverage()
 	totalPct := profile.Percent(covered, total)

@@ -68,6 +68,9 @@ func (s *Store) CreateRepo(_ context.Context, r *store.Repo) error {
 		r.CreatedAt = time.Now()
 	}
 	cp := *r
+	// Only SetRepoVisibility writes the stamp (see the Store contract); a
+	// fresh row starts as "never asked", mirroring Postgres's NULL default.
+	cp.VisibilityCheckedAt = time.Time{}
 	s.repos[r.ID] = &cp
 	return nil
 }
@@ -83,9 +86,11 @@ func (s *Store) UpdateRepo(_ context.Context, r *store.Repo) error {
 	if cp.CreatedAt.IsZero() {
 		cp.CreatedAt = existing.CreatedAt
 	}
-	// Visibility is SetRepoVisibility's alone (see the Store contract): a
-	// full-row save must not revert a concurrent refresh.
+	// Visibility and its checked-at stamp are SetRepoVisibility's alone
+	// (see the Store contract): a full-row save must not revert a
+	// concurrent refresh.
 	cp.Visibility = existing.Visibility
+	cp.VisibilityCheckedAt = existing.VisibilityCheckedAt
 	s.repos[r.ID] = &cp
 	return nil
 }
@@ -106,14 +111,19 @@ func (s *Store) PublicRepoSlugs(_ context.Context, limit int) ([]string, error) 
 	return out, nil
 }
 
-func (s *Store) SetRepoVisibility(_ context.Context, repoID int64, visibility string) error {
+func (s *Store) SetRepoVisibility(_ context.Context, repoID int64, visibility string, checkedAt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.repos[repoID]
 	if !ok {
 		return store.ErrNotFound
 	}
+	// A fresher answer already landed: skip, per the Store contract.
+	if !r.VisibilityCheckedAt.IsZero() && !r.VisibilityCheckedAt.Before(checkedAt) {
+		return nil
+	}
 	r.Visibility = visibility
+	r.VisibilityCheckedAt = checkedAt
 	return nil
 }
 

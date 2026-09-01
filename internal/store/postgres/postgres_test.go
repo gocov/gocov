@@ -115,13 +115,22 @@ func TestRepoLifecycle(t *testing.T) {
 		t.Error("old token still resolves after rotation")
 	}
 
-	// The public-reports switch rides UpdateRepo; visibility does not —
-	// only SetRepoVisibility writes it, so a full-row save carrying a
-	// stale value cannot revert a concurrent refresh.
-	if err := st.SetRepoVisibility(ctx, repo.ID, store.VisibilityPrivate); err != nil {
+	// Until the forge has ever answered, the checked-at stamp reads back
+	// as the zero value (NULL), not year one.
+	if got, _ = st.RepoByID(ctx, repo.ID); !got.VisibilityCheckedAt.IsZero() {
+		t.Errorf("VisibilityCheckedAt before any answer = %v, want zero", got.VisibilityCheckedAt)
+	}
+
+	// The public-reports switch rides UpdateRepo; visibility and its
+	// checked-at stamp do not — only SetRepoVisibility writes them, so a
+	// full-row save carrying stale values cannot revert a concurrent
+	// refresh.
+	flippedAt := time.Now()
+	if err := st.SetRepoVisibility(ctx, repo.ID, store.VisibilityPrivate, flippedAt); err != nil {
 		t.Fatal(err)
 	}
-	repo.Visibility = store.VisibilityPublic // stale in-memory value
+	repo.Visibility = store.VisibilityPublic // stale in-memory values
+	repo.VisibilityCheckedAt = time.Time{}
 	repo.PublicReportsDisabled = true
 	if err := st.UpdateRepo(ctx, repo); err != nil {
 		t.Fatal(err)
@@ -129,6 +138,24 @@ func TestRepoLifecycle(t *testing.T) {
 	if got, _ = st.RepoByID(ctx, repo.ID); got.Visibility != store.VisibilityPrivate || !got.PublicReportsDisabled ||
 		got.DefaultBranch != "develop" {
 		t.Errorf("after stale-visibility UpdateRepo: %+v", got)
+	}
+	if got.VisibilityCheckedAt.IsZero() {
+		t.Error("SetRepoVisibility did not stamp VisibilityCheckedAt (or UpdateRepo cleared it)")
+	}
+
+	// An answer whose ask predates the stored stamp lost the race and is
+	// skipped without error; a later ask wins.
+	if err := st.SetRepoVisibility(ctx, repo.ID, store.VisibilityPublic, flippedAt.Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.RepoByID(ctx, repo.ID); got.Visibility != store.VisibilityPrivate {
+		t.Errorf("a stale answer overwrote a fresher one: %q", got.Visibility)
+	}
+	if err := st.SetRepoVisibility(ctx, repo.ID, store.VisibilityPublic, flippedAt.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.RepoByID(ctx, repo.ID); got.Visibility != store.VisibilityPublic {
+		t.Errorf("a fresher answer was refused: %q", got.Visibility)
 	}
 
 	// Missing rows yield ErrNotFound.
@@ -138,7 +165,7 @@ func TestRepoLifecycle(t *testing.T) {
 	if _, err := st.RepoBySlug(ctx, "no/such"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("RepoBySlug missing = %v", err)
 	}
-	if err := st.SetRepoVisibility(ctx, 9999, store.VisibilityPublic); !errors.Is(err, store.ErrNotFound) {
+	if err := st.SetRepoVisibility(ctx, 9999, store.VisibilityPublic, time.Now()); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("SetRepoVisibility missing = %v", err)
 	}
 }

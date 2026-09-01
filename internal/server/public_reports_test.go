@@ -14,9 +14,11 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gocov/gocov/internal/auth"
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
+	forgefake "github.com/gocov/gocov/internal/forge/fake"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
@@ -326,7 +328,9 @@ func TestPrivateRepoSettingsHideTheSwitchAndKeepTheValue(t *testing.T) {
 }
 
 // TestUploadRefreshesVisibility drives the whole loop: a repo whose forge
-// flips it public becomes anonymously viewable by the next upload.
+// flips it public becomes anonymously viewable by the next upload — and
+// while the cached answer is fresh, further uploads skip the forge
+// round-trip instead of re-asking on every part.
 func TestUploadRefreshesVisibility(t *testing.T) {
 	f := newFixture(t, map[string]string{})
 	f.forge.Visibility = store.VisibilityPublic
@@ -342,11 +346,28 @@ func TestUploadRefreshesVisibility(t *testing.T) {
 	if repo.Visibility != store.VisibilityPublic {
 		t.Errorf("visibility after upload = %q, want %q", repo.Visibility, store.VisibilityPublic)
 	}
+	if got := len(f.forge.VisibilityCalls); got != 1 {
+		t.Fatalf("visibility calls after first upload = %d, want 1", got)
+	}
 
-	// Flipped back private on the forge: corrected on the next upload.
+	// The answer is fresh, so the next upload (another part, a retry)
+	// must not spend a forge round-trip on the same question.
 	f.forge.Visibility = store.VisibilityPrivate
 	if rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c2", "branch": "main"}, testProfile); rec.Code != http.StatusCreated {
 		t.Fatalf("second upload: status = %d", rec.Code)
+	}
+	if got := len(f.forge.VisibilityCalls); got != 1 {
+		t.Errorf("visibility calls after fresh-answer upload = %d, want still 1", got)
+	}
+	if repo, _ = f.store.RepoBySlug(context.Background(), "acme/widgets"); repo.Visibility != store.VisibilityPublic {
+		t.Errorf("fresh-answer upload rewrote visibility to %q", repo.Visibility)
+	}
+
+	// Once the answer has aged out, the next upload re-asks and picks up
+	// the private flip.
+	f.srv.pipeline.VisibilityUploadTTL = time.Nanosecond
+	if rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c3", "branch": "main"}, testProfile); rec.Code != http.StatusCreated {
+		t.Fatalf("third upload: status = %d", rec.Code)
 	}
 	repo, err = f.store.RepoBySlug(context.Background(), "acme/widgets")
 	if err != nil {
@@ -354,5 +375,76 @@ func TestUploadRefreshesVisibility(t *testing.T) {
 	}
 	if repo.Visibility != store.VisibilityPrivate {
 		t.Errorf("visibility after flip = %q, want %q", repo.Visibility, store.VisibilityPrivate)
+	}
+}
+
+// TestStalePublicAnswerIsReverifiedWhenServed covers the no-more-uploads
+// hole: a repo cached public whose CI went quiet is re-verified in the
+// background when its pages are served anonymously on a stale answer, so
+// a private flip on the forge closes the pages without any upload.
+func TestStalePublicAnswerIsReverifiedWhenServed(t *testing.T) {
+	ctx := context.Background()
+	st := storemem.New()
+	// Cached public, but the stamp is zero — the forge has never answered
+	// within any TTL — and the forge now says private.
+	repo := &store.Repo{
+		Forge: "bitbucket", Slug: "acme/widgets", Token: "secret-token",
+		DefaultBranch: "main", Visibility: store.VisibilityPublic,
+	}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	ws := &store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "ws-secret", DefaultBranch: "main"}
+	if err := st.CreateWorkspace(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetWorkspaceBitbucketGrant(ctx, ws.ID, "covbot", "rt-0", false); err != nil {
+		t.Fatal(err)
+	}
+	ff := forgefake.New()
+	ff.Visibility = store.VisibilityPrivate
+	blobs := blobmem.New()
+	srv := New(Config{
+		Store:            st,
+		Blobs:            blobs,
+		Parsers:          map[string]profile.Parser{"go": profile.GoParser{}},
+		BaseURL:          "https://gocov.example",
+		Auths:            []auth.Provider{&fakeProvider{identity: memberIdentity()}},
+		PublicReports:    true,
+		BitbucketConnect: &fakeBBConnect{grantForge: ff},
+	})
+	f := &fixture{srv: srv, store: st, blobs: blobs, forge: ff, repo: repo}
+	seedUpload(t, f)
+
+	// The stale answer still serves — the re-check must not cost this
+	// request a forge round-trip — but it kicks the re-verification off.
+	if rec := get(f, "/repos/acme/widgets"); rec.Code != http.StatusOK {
+		t.Fatalf("stale public page: status = %d", rec.Code)
+	}
+	waitForVisibility(t, st, "acme/widgets", store.VisibilityPrivate)
+
+	// The answer landed: the pages are closed for the requests after it.
+	wantLoginRedirect(t, get(f, "/repos/acme/widgets"), "/repos/acme/widgets")
+	wantLoginRedirect(t, get(f, "/uploads/1"), "/uploads/1")
+}
+
+// waitForVisibility polls the store until the repo's cached visibility
+// matches — the background re-check runs on its own goroutine. (Mirrors
+// the helper of the same name in internal/core's tests.)
+func waitForVisibility(t *testing.T, st *storemem.Store, slug, want string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		stored, err := st.RepoBySlug(context.Background(), slug)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stored.Visibility == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("visibility = %q, want %q (background re-check never landed)", stored.Visibility, want)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
