@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/gocov/gocov/compare/v0.14.0...v0.15.0) (2026-09-01)
+
+
+### Miscellaneous Chores
+
+* release 0.15.0 ([#91](https://github.com/gocov/gocov/issues/91)) ([9ef6c5a](https://github.com/gocov/gocov/commit/9ef6c5ab8b0140885921cd709372b088248258fd))
+
 ## [0.14.0](https://github.com/gocov/gocov/compare/v0.13.2...v0.14.0) (2026-08-29)
 
 
