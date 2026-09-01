@@ -12,8 +12,12 @@ import (
 )
 
 type uploadRequest struct {
-	Server       string
-	Token        string // empty on a tokenless upload
+	Server string
+	Token  string // empty on a tokenless or OIDC upload
+	// OIDCToken is a forge-minted OIDC identity token, sent in place of a
+	// bearer token when the workflow has the id-token permission but no
+	// pasted GOCOV_TOKEN. Empty otherwise.
+	OIDCToken    string
 	Format       string
 	PathPrefix   string
 	Part         string
@@ -77,7 +81,12 @@ func upload(req uploadRequest) (*uploadResponse, error) {
 		"commit_message": req.Meta.CommitMessage,
 		"commit_author":  req.Meta.CommitAuthor,
 	}
-	if req.Token == "" {
+	switch {
+	case req.Token != "":
+		// Bearer token authenticates; no form credential needed.
+	case req.OIDCToken != "":
+		fields["oidc_token"] = req.OIDCToken
+	default:
 		fields["run_id"] = req.Run.RunID
 		fields["run_attempt"] = req.Run.RunAttempt
 		fields["head_repo"] = req.Run.HeadRepo

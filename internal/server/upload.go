@@ -144,16 +144,29 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	var claim *tokenlessClaim // non-nil on the tokenless path
 	if hasToken && token != "" {
 		// Authenticate before touching the body so invalid tokens cost a
-		// lookup, not a 64MB multipart parse. The tokenless path cannot
-		// have that luxury: its credentials are form fields.
+		// lookup, not a 64MB multipart parse. The tokenless paths cannot
+		// have that luxury: their credentials are form fields.
 		var ok bool
 		if authedRepo, ws, ok = s.lookupUploadToken(w, r, token); !ok {
 			return
 		}
 	} else {
-		var ok bool
-		if claim, authedRepo, ok = s.authTokenless(w, r); !ok {
+		// No bearer token. The credential is a form field, so parse the body
+		// once and dispatch: a forge OIDC identity token (a repo's own CI,
+		// oidc.go), or a fork-PR workflow-run claim (tokenless.go).
+		if !s.parseUploadBody(w, r) {
 			return
+		}
+		var ok bool
+		switch {
+		case r.FormValue("oidc_token") != "":
+			if authedRepo, ok = s.authOIDC(w, r); !ok {
+				return
+			}
+		default:
+			if claim, authedRepo, ok = s.authTokenless(w, r); !ok {
+				return
+			}
 		}
 	}
 	req, ok := s.readUploadRequest(w, r, authedRepo, ws)
@@ -227,6 +240,20 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// parseUploadBody caps and parses the multipart request body, writing the
+// error response itself; a false return means the response is written.
+// ParseMultipartForm is idempotent, so the later readUploadRequest re-parse
+// is a no-op — this lets the no-token paths read their credential fields
+// before the request proper is validated.
+func (s *Server) parseUploadBody(w http.ResponseWriter, r *http.Request) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
+	if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
+		httpError(w, http.StatusBadRequest, "invalid multipart form: %v", err)
+		return false
+	}
+	return true
 }
 
 // uploadRequest is one accepted upload: the multipart form's fields after

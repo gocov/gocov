@@ -22,6 +22,38 @@ That's the whole setup:
   runs.
 - `files` takes a comma-separated list and globs.
 
+## Uploading without a token
+
+On your own repository's `push` and same-repo pull request builds you can drop the `GOCOV_TOKEN` secret
+altogether. Grant the workflow the `id-token: write` permission and the uploader asks GitHub for a
+short-lived, signed identity token that proves which repository the run belongs to; the server verifies it
+against GitHub and accepts the upload. Nothing to create in the settings UI, nothing to paste, nothing to
+rotate.
+
+```yaml
+permissions:
+  contents: read
+  id-token: write
+steps:
+  - run: go test ./... -covermode=atomic -coverprofile=coverage.out
+  - run: go run github.com/gocov/gocov/cmd/gocov@latest upload coverage.out
+```
+
+The repository must already be tracked in a workspace [connected](connecting.md) through the gocov GitHub
+App — the same connection that posts the PR comment and check run. OIDC replaces only the *upload* token;
+publishing still goes through that App identity, so the reported status looks exactly like a token upload
+(it is **not** marked unverified).
+
+A few things follow from how the identity token works:
+
+- The token's audience is bound to your gocov server, so a token minted for another service can't be replayed
+  here. When self-hosting, pass `-server`/`$GOCOV_SERVER` so the audience matches your instance.
+- If the `id-token` permission is missing, the uploader falls back to a pasted `GOCOV_TOKEN`, then to
+  [tokenless fork-PR verification](#fork-pull-requests) — the precedence never surprises an existing setup.
+- A rejected OIDC upload never fails the build: the job logs the reason and exits 0.
+
+The pasted-token setup above keeps working unchanged; OIDC is simply the recommended way to start a new repo.
+
 ## Options
 
 | input    | meaning                                                                                      |
