@@ -243,6 +243,12 @@ func (c *Client) GetRepoVisibility(ctx context.Context, repoSlug string) (string
 	return forge.VisibilityPublic, nil
 }
 
+// GetRepoID is not needed on GitHub: its Actions OIDC tokens name the repo
+// by slug (the "repository" claim), so there is no opaque id to resolve.
+func (c *Client) GetRepoID(ctx context.Context, repoSlug string) (string, error) {
+	return "", forge.ErrNotImplemented
+}
+
 // maxFileBytes bounds source files fetched for the source view.
 const maxFileBytes = 2 << 20
 

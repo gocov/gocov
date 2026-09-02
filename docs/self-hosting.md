@@ -121,6 +121,20 @@ Check it without touching the running service:
 docker run --rm --user 65532:65532 -v "$PWD/github-app.pem:/run/k.pem:ro" alpine:3.21 cat /run/k.pem > /dev/null && echo readable
 ```
 
+## Tokenless uploads from a self-managed GitLab
+
+Tokenless [OIDC uploads](cli.md#uploading-without-a-token) work out of the box for GitHub Actions, Bitbucket
+Pipelines and gitlab.com — gocov trusts those issuers already. A **self-managed GitLab** issues its OIDC tokens
+under its own instance URL, so gocov will not trust them until you say so: list that issuer (the instance's base
+URL, e.g. `https://gitlab.example.com`, https only) in [`GOCOV_OIDC_ISSUERS`](configuration.md).
+
+Setting it **replaces** the gitlab.com default rather than adding to it — a gocov deployment connects to a single
+GitLab, so it trusts that one instance's issuer. (Trusting gitlab.com and a self-managed instance at once would let
+a token from either authenticate an upload to a same-named project on the other, since GitLab tokens name the
+project by path and paths are not unique across instances.) GitHub and Bitbucket are always trusted, independently.
+The token's `aud` must still be this server's `GOCOV_BASE_URL`, so a token minted for another instance cannot be
+replayed here.
+
 ## Health checks
 
 `GET /healthz` reports readiness (it checks database connectivity) for load balancers and container orchestrators; it

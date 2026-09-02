@@ -66,6 +66,11 @@ type Forge struct {
 	Visibility    string
 	VisibilityErr error
 
+	// RepoID is returned by GetRepoID; empty means ErrNotImplemented.
+	// RepoIDErr wins when set.
+	RepoID    string
+	RepoIDErr error
+
 	StatusCalls        []StatusCall
 	CommentCalls       []CommentCall
 	UpdateCalls        []UpdateCall
@@ -75,6 +80,7 @@ type Forge struct {
 	FileCalls          []string // paths
 	ReportCalls        []ReportCall
 	VisibilityCalls    []string // repo slugs
+	RepoIDCalls        []string // repo slugs
 
 	// comments simulates the PR comment store: posted and updated bodies
 	// keyed by a fake incremental id, so FindPRComment behaves like the
@@ -166,6 +172,19 @@ func (f *Forge) GetRepoVisibility(_ context.Context, repoSlug string) (string, e
 		return "", forge.ErrNotImplemented
 	}
 	return f.Visibility, nil
+}
+
+func (f *Forge) GetRepoID(_ context.Context, repoSlug string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.RepoIDCalls = append(f.RepoIDCalls, repoSlug)
+	if f.RepoIDErr != nil {
+		return "", f.RepoIDErr
+	}
+	if f.RepoID == "" {
+		return "", forge.ErrNotImplemented
+	}
+	return f.RepoID, nil
 }
 
 func (f *Forge) GetFileContent(_ context.Context, repoSlug, commitSHA, path string) ([]byte, error) {

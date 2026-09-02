@@ -333,3 +333,41 @@ func TestLoadServerNoWarningsWhenParseFails(t *testing.T) {
 		t.Errorf("Warnings() = %q, want none from a config that never parsed", got)
 	}
 }
+
+func TestLoadServerOIDCIssuers(t *testing.T) {
+	cfg, err := LoadServerFrom(minimal(map[string]string{
+		"GOCOV_OIDC_ISSUERS": " https://gitlab.acme.example/ , ,https://gitlab.other.example ",
+	}))
+	if err != nil {
+		t.Fatalf("LoadServerFrom: %v", err)
+	}
+	want := []string{"https://gitlab.acme.example", "https://gitlab.other.example"}
+	if len(cfg.OIDCIssuers) != len(want) {
+		t.Fatalf("OIDCIssuers = %v, want %v", cfg.OIDCIssuers, want)
+	}
+	for i, w := range want {
+		if cfg.OIDCIssuers[i] != w {
+			t.Errorf("OIDCIssuers[%d] = %q, want %q (trimmed, slash-stripped, blanks dropped)", i, cfg.OIDCIssuers[i], w)
+		}
+	}
+
+	// Unset leaves it nil, not a slice with an empty string.
+	cfg, err = LoadServerFrom(minimal(nil))
+	if err != nil {
+		t.Fatalf("LoadServerFrom: %v", err)
+	}
+	if cfg.OIDCIssuers != nil {
+		t.Errorf("OIDCIssuers = %v, want nil when unset", cfg.OIDCIssuers)
+	}
+}
+
+func TestLoadServerOIDCIssuersMustBeHTTPS(t *testing.T) {
+	for _, bad := range []string{"gitlab.example.com", "http://gitlab.example.com", "ftp://x"} {
+		if _, err := LoadServerFrom(minimal(map[string]string{"GOCOV_OIDC_ISSUERS": bad})); err == nil {
+			t.Errorf("GOCOV_OIDC_ISSUERS=%q was accepted; want an https-URL error", bad)
+		}
+	}
+	if _, err := LoadServerFrom(minimal(map[string]string{"GOCOV_OIDC_ISSUERS": "https://gitlab.example.com"})); err != nil {
+		t.Errorf("valid https issuer rejected: %v", err)
+	}
+}

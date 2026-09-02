@@ -23,9 +23,24 @@ delta_pct, build_status}`. Uploads carrying a `pr_id` additionally get
 `diff_pct`, `diff_covered_lines`, `diff_total_lines`, `diff_status` and
 `pr_comment` when the repo's workspace is [connected to its forge](connecting.md).
 
+### OIDC uploads
+
+A request **without** the `Authorization` header may instead carry a forge-minted OIDC identity token in an
+`oidc_token` form part. The server verifies the token's signature against the forge's published keys and checks:
+
+- the issuer is one it trusts (GitHub Actions, Bitbucket Pipelines, and GitLab CI — plus any self-managed GitLab
+  issuers the operator configured);
+- the audience equals this server's URL — a token minted for another audience is rejected;
+- the repository claim maps to a tracked repo, and the request's own `repo` part (if sent) agrees with it.
+
+On success the upload proceeds like a token upload — fully verified, published through the workspace's forge
+connection. Refusals are explicit: `403 oidc_bad_audience`, `403 oidc_unknown_issuer`, `403 oidc_repo_mismatch`,
+`401 oidc_invalid_token`, and `404` for an untracked repo. See
+[GitHub Actions](github-actions.md#uploading-without-a-token).
+
 ### Tokenless fork-PR uploads
 
-A request **without** the `Authorization` header may instead authenticate as a running GitHub Actions `pull_request`
+A request **without** the `Authorization` header or an `oidc_token` may instead authenticate as a running GitHub Actions `pull_request`
 workflow — the [fork-PR path](pull-requests.md#fork-prs-without-a-token). It carries three extra parts, and `repo`,
 `commit` (the PR head SHA) and `pr_id` become required:
 

@@ -75,9 +75,7 @@ type tokenlessClaim struct {
 // competitor behavior this feature exists to not have.
 func (s *Server) authTokenless(w http.ResponseWriter, r *http.Request) (*tokenlessClaim, *store.Repo, bool) {
 	ctx := r.Context()
-	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
-	if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
-		httpError(w, http.StatusBadRequest, "invalid multipart form: %v", err)
+	if !s.parseUploadBody(w, r) {
 		return nil, nil, false
 	}
 	if r.FormValue("run_id") == "" {

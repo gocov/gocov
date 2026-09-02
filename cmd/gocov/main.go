@@ -77,19 +77,42 @@ func run(args []string) error {
 	if *server == "" {
 		return fmt.Errorf("server URL required: set -server or $GOCOV_SERVER")
 	}
-	// Without a token, a GitHub Actions pull_request workflow — the one CI
-	// context that legitimately has no secret to send (a fork PR) — falls
-	// back to tokenless mode: the server verifies the workflow run through
-	// the repo's GitHub App installation instead. Anywhere else a missing
-	// token stays an error.
+	// Auth precedence when no -token/$GOCOV_TOKEN is given (so existing
+	// token users are never affected): mint a forge OIDC identity token if
+	// the workflow granted the id-token permission, else fall back to
+	// tokenless fork-PR mode (a GitHub Actions pull_request run the server
+	// verifies through the App), else error. OIDC removes the pasted secret
+	// for a repo's own push and same-repo PR builds; tokenless covers the
+	// fork PR that has no secret and no id-token at all.
 	var run runInfo
-	tokenless := false
+	var oidcToken string
+	oidcMode, tokenless := false, false
 	if *token == "" {
-		run = detectGitHubRun(osEnv, os.ReadFile)
-		if !run.tokenlessEligible() {
-			return fmt.Errorf("upload token required: set -token or $GOCOV_TOKEN")
+		var err error
+		if oidcToken, err = mintGitHubOIDC(osEnv, defaultHTTPDoer, *server); err != nil {
+			// The id-token permission was present but the request failed.
+			// Report it and fall through to the next auth mode; if none
+			// applies the upload still errors below, exactly as a missing
+			// token would — this line just says why OIDC was not used.
+			fmt.Fprintf(os.Stderr, "gocov: OIDC token request failed: %v\n", err)
 		}
-		tokenless = true
+		if oidcToken == "" {
+			// Bitbucket and GitLab hand their OIDC token to the job through
+			// the environment directly (no request to make), so it is a
+			// read, not a mint.
+			oidcToken = envOIDCToken(osEnv)
+		}
+		if oidcToken != "" {
+			oidcMode = true
+		} else {
+			run = detectGitHubRun(osEnv, os.ReadFile)
+			if !run.tokenlessEligible() {
+				return fmt.Errorf("no upload credential: set -token or $GOCOV_TOKEN, or enable OIDC " +
+					"(GitHub Actions: grant permissions id-token: write; GitLab CI: an id_tokens entry named GOCOV_ID_TOKEN; " +
+					"Bitbucket Pipelines: oidc.audiences with the server URL)")
+			}
+			tokenless = true
+		}
 	}
 
 	build := detectBuild(osEnv, runGit, os.ReadFile)
@@ -117,6 +140,7 @@ func run(args []string) error {
 	resp, err := upload(uploadRequest{
 		Server:       *server,
 		Token:        *token,
+		OIDCToken:    oidcToken,
 		Format:       resolvedFormat,
 		PathPrefix:   prefix,
 		Part:         *part,
@@ -129,14 +153,18 @@ func run(args []string) error {
 		Run:          run,
 	})
 	if err != nil {
-		if tokenless {
-			// A fork contributor's build must never break over coverage
-			// plumbing: one readable line with the server's reason, exit 0.
+		if tokenless || oidcMode {
+			// A secret-less build must never break over coverage plumbing:
+			// one readable line with the server's reason, exit 0.
 			verb := "failed"
 			if _, ok := errors.AsType[*serverError](err); ok {
 				verb = "rejected"
 			}
-			fmt.Fprintf(os.Stderr, "gocov: tokenless upload %s — %v\n", verb, err)
+			mode := "tokenless"
+			if oidcMode {
+				mode = "OIDC"
+			}
+			fmt.Fprintf(os.Stderr, "gocov: %s upload %s — %v\n", mode, verb, err)
 			return nil
 		}
 		return err

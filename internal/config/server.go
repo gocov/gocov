@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 )
@@ -37,6 +38,17 @@ type Server struct {
 	// running gocov inside a private network turns the whole feature off
 	// in one move; per-repo control stays in repo settings.
 	PublicReports string `env:"GOCOV_PUBLIC_REPORTS" envDefault:"on"`
+
+	// OIDCIssuers sets the trusted GitLab OIDC issuer(s) for tokenless
+	// uploads. Unset means gitlab.com; set replaces that default with the
+	// listed self-managed GitLab instance issuer(s) — because a gocov
+	// deployment connects to one GitLab, and trusting gitlab.com and a
+	// self-managed instance at once would let a token from either
+	// authenticate an upload to a same-named project on the other. Each
+	// entry is the instance's issuer URL (its base URL, https), whose CI ID
+	// tokens name repos by project_path exactly as gitlab.com's do. GitHub
+	// Actions and Bitbucket Pipelines are always trusted, independently.
+	OIDCIssuers []string `env:"GOCOV_OIDC_ISSUERS" envSeparator:","`
 
 	Bitbucket OAuthApp `envPrefix:"GOCOV_OAUTH_BITBUCKET_"`
 	GitHub    OAuthApp `envPrefix:"GOCOV_OAUTH_GITHUB_"`
@@ -90,6 +102,16 @@ func (c *Server) normalize() {
 	if len(c.AllowedWorkspaces) == 0 {
 		c.AllowedWorkspaces = nil
 	}
+	issuers := c.OIDCIssuers[:0]
+	for _, iss := range c.OIDCIssuers {
+		if iss = strings.TrimRight(strings.TrimSpace(iss), "/"); iss != "" {
+			issuers = append(issuers, iss)
+		}
+	}
+	c.OIDCIssuers = issuers
+	if len(c.OIDCIssuers) == 0 {
+		c.OIDCIssuers = nil
+	}
 }
 
 // secretKeyPattern is the required shape of GOCOV_SECRET_KEY: exactly 64
@@ -127,6 +149,15 @@ func (c Server) validate() error {
 	case "on", "off":
 	default:
 		return fmt.Errorf("GOCOV_PUBLIC_REPORTS=%q: want on or off", c.PublicReports)
+	}
+	// OIDC issuers are trusted to hand out signing keys over their discovery
+	// endpoint, so they must be https URLs — a bare host or an http:// entry
+	// would have gocov fetch keys over a channel it never meant to trust.
+	for _, iss := range c.OIDCIssuers {
+		u, err := url.Parse(iss)
+		if err != nil || u.Scheme != "https" || u.Host == "" {
+			return fmt.Errorf("GOCOV_OIDC_ISSUERS entry %q must be an https URL (the GitLab instance's base URL)", iss)
+		}
 	}
 	return nil
 }

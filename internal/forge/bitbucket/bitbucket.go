@@ -289,6 +289,23 @@ func (c *Client) GetRepoVisibility(ctx context.Context, repoSlug string) (string
 	return forge.VisibilityPublic, nil
 }
 
+// GetRepoID reads the repo's UUID via GET /repositories/{slug} — the id a
+// Bitbucket Pipelines OIDC token names the repo by (its sub and
+// repositoryUuid claims). The braces Bitbucket wraps the UUID in are kept
+// as returned; the caller normalizes before comparing.
+func (c *Client) GetRepoID(ctx context.Context, repoSlug string) (string, error) {
+	var body struct {
+		UUID string `json:"uuid"`
+	}
+	if err := c.fetchRepository(ctx, repoSlug, &body); err != nil {
+		return "", err
+	}
+	if body.UUID == "" {
+		return "", fmt.Errorf("bitbucket: repository %s has no uuid", repoSlug)
+	}
+	return body.UUID, nil
+}
+
 // maxFileBytes bounds source files fetched for the source view.
 const maxFileBytes = 2 << 20
 

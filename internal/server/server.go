@@ -19,6 +19,7 @@ import (
 	"github.com/gocov/gocov/internal/blobstore"
 	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/diffcov"
+	"github.com/gocov/gocov/internal/oidc"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 )
@@ -77,6 +78,16 @@ type Config struct {
 	// forge reports public (GOCOV_PUBLIC_REPORTS). False keeps every page
 	// behind the login wall exactly as before.
 	PublicReports bool
+	// OIDCVerifier verifies the forge-minted OIDC identity tokens that let a
+	// repo's own CI upload without a pasted token (server/oidc.go). Nil
+	// builds the default: the public forge issuers, with this server's
+	// BaseURL as the required audience. Tests inject one pointed at a local
+	// issuer.
+	OIDCVerifier *oidc.Verifier
+	// OIDCIssuers lists extra trusted OIDC issuers beyond the public forge
+	// ones (GOCOV_OIDC_ISSUERS): self-managed GitLab instance URLs whose CI
+	// ID tokens name repos by project_path, the same as gitlab.com.
+	OIDCIssuers []string
 }
 
 // The forge connectors a deployment can configure. They are declared in
@@ -105,6 +116,13 @@ type Server struct {
 	pipeline *core.Pipeline
 	// tokenless rate-limits tokenless upload attempts per repo.
 	tokenless *tokenlessLimiter
+	// oidc verifies forge-minted OIDC identity tokens for tokenless uploads
+	// from a repo's own CI (server/oidc.go).
+	oidc *oidc.Verifier
+	// gitlabIssuers is the set of trusted GitLab OIDC issuers — gitlab.com
+	// plus any operator-configured self-managed instances — used to route a
+	// verified token to the gitlab claim mapping.
+	gitlabIssuers map[string]bool
 
 	// auths holds the sign-in providers by forge name; authOrder keeps
 	// the configured order for the login-page buttons.
@@ -168,6 +186,42 @@ func New(cfg Config) *Server {
 			"templates/layout.html", "templates/partials.html", "templates/"+name))
 	}
 
+	// The trusted GitLab issuers. A gocov deployment connects to exactly one
+	// GitLab, so it must trust exactly that instance's issuer — not gitlab.com
+	// *and* a self-managed one at once, which would let a token from either
+	// authenticate an upload to a same-named project on the other (GitLab
+	// resolves by project path, and paths are not unique across instances).
+	// So the operator's configured issuers replace the gitlab.com default
+	// rather than adding to it: unset means gitlab.com; set means exactly the
+	// listed self-managed instances. GitHub and Bitbucket are unaffected.
+	// Both the token router (oidcForge) and the verifier's issuer allowlist
+	// draw from this set.
+	gitlabIssuers := map[string]bool{}
+	for _, iss := range cfg.OIDCIssuers {
+		if iss = strings.TrimRight(iss, "/"); iss != "" {
+			gitlabIssuers[iss] = true
+		}
+	}
+	if len(gitlabIssuers) == 0 {
+		gitlabIssuers[gitLabDotComIssuer] = true
+	}
+
+	oidcVerifier := cfg.OIDCVerifier
+	if oidcVerifier == nil && cfg.BaseURL != "" {
+		// A token's aud must equal this server's public URL, so a token
+		// minted for another instance cannot be replayed here. Without a
+		// BaseURL there is no audience to bind to, so OIDC uploads stay off.
+		exactIssuers := []string{gitHubActionsIssuer}
+		for iss := range gitlabIssuers {
+			exactIssuers = append(exactIssuers, iss)
+		}
+		oidcVerifier = oidc.New(oidc.Config{
+			Audience:      cfg.BaseURL,
+			Issuers:       exactIssuers,
+			ResolveIssuer: bitbucketIssuerResolver(cfg.Store),
+		})
+	}
+
 	s := &Server{
 		store:         cfg.Store,
 		blobs:         cfg.Blobs,
@@ -180,6 +234,8 @@ func New(cfg Config) *Server {
 		forges:        core.NewForges(cfg.Store, log, cfg.BaseURL, cfg.GitHubApp, cfg.BitbucketConnect, cfg.GitLabConnect),
 		webhookSecret: cfg.GitHubWebhookSecret,
 		tokenless:     newTokenlessLimiter(),
+		oidc:          oidcVerifier,
+		gitlabIssuers: gitlabIssuers,
 
 		auths:             map[string]auth.Provider{},
 		authOrder:         cfg.Auths,
