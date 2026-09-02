@@ -17,8 +17,10 @@ import (
 // `permissions: id-token: write`; without them (no permission, a fork PR, or
 // not GitHub Actions at all) this returns ("", nil) and the caller falls
 // through to the next auth mode. A non-empty error means the permission was
-// present but the request failed — a real problem worth surfacing, though
-// the caller still degrades rather than breaking the build.
+// present but the request failed — a real problem worth surfacing; the
+// caller reports it and falls through, so the upload may still error like a
+// missing token (e.g. a push build with no other auth mode) rather than
+// always degrading to a warning.
 //
 // The token never touches argv: it is read from the environment and passed
 // on as a request field, the same discipline the bearer token follows.
