@@ -10,19 +10,20 @@
         {{if gt (len .Switcher) 1}}<span class="car">&#9662;</span>{{end}}
       </button>
       <span class="pop" role="menu">
+        {{if gt (len .Switcher) 7}}
         <span class="srch"><input class="input" type="search" placeholder="Find a workspace" aria-label="Find a workspace" id="wsq"></span>
+        {{end}}
         <span class="lst" id="wslst">
-          <span class="gl">Your workspaces</span>
           {{range .Switcher}}
           <a class="wsi" href="{{.Href}}"{{if .Current}} aria-current="true"{{end}} data-n="{{.Prefix}}">
             <span class="av {{.ForgeCls}}">{{with forgeicon .Forge}}{{.}}{{else}}{{.Initial}}{{end}}</span>
-            <span><span class="n">{{.Prefix}}</span><span class="m">{{.RepoCount}} {{if eq .RepoCount 1}}repository{{else}}repositories{{end}}{{if .Failing}} &middot; {{.Failing}} failing{{else if .HasCov}} &middot; all passing{{else}} &middot; no uploads yet{{end}}</span></span>
-            <span class="r">{{if .HasCov}}<span class="pct {{.PctClass}}">{{pct .Pct}}</span>{{else}}<span class="pct muted">&mdash;</span>{{end}}{{if .Current}}<span class="tick">&#10003;</span>{{end}}</span>
+            <span class="n">{{.Prefix}}</span>
+            {{if .HasCov}}<span class="pct">{{pct .Pct}}</span>{{else}}<span class="pct">&mdash;</span>{{end}}
           </a>
           {{end}}
         </span>
         {{if $.CanOnboard}}
-        <span class="ft"><a class="wsi" href="/onboarding"><span class="av">+</span><span><span class="n" style="font-family:inherit;font-size:13.5px">Connect a workspace</span><span class="m">GitHub, Bitbucket or GitLab</span></span><span class="r"></span></a></span>
+        <span class="ft"><a href="/onboarding">Connect a workspace</a></span>
         {{end}}
       </span>
     </h1>

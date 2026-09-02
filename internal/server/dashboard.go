@@ -47,10 +47,8 @@ type wsGroup struct {
 	ForgeCls  string // gh / bb / gl — avatar colour
 	ForgeName string // GitHub / Bitbucket / GitLab
 	RepoCount int
-	Failing   int
 	HasCov    bool
 	Pct       float64
-	PctClass  string
 	Current   bool
 	Href      string
 
@@ -238,9 +236,9 @@ func (s *Server) groupPrefix(repo *store.Repo, tracked []*store.Workspace) strin
 	return repo.Slug
 }
 
-// fillGroupMeta computes a group's switcher preview: repo count, weighted
-// coverage and failing-gate count over its repos' latest default-branch
-// reports. This runs for every group, so it stays to one report lookup per repo.
+// fillGroupMeta computes a group's switcher preview: repo count and weighted
+// coverage over its repos' latest default-branch reports. This runs for every
+// group, so it stays to one report lookup per repo.
 func (s *Server) fillGroupMeta(ctx context.Context, g *wsGroup) {
 	g.Initial, g.ForgeCls, g.ForgeName = forgeAvatar(g.Prefix, g.Forge)
 	g.RepoCount = len(g.repos)
@@ -252,14 +250,10 @@ func (s *Server) fillGroupMeta(ctx context.Context, g *wsGroup) {
 		}
 		covered += latest.CoveredStmts
 		total += latest.TotalStmts
-		if repo.Gate.Configured() && latest.GateFailed {
-			g.Failing++
-		}
 	}
 	if total > 0 {
 		g.HasCov = true
 		g.Pct = 100 * float64(covered) / float64(total)
-		g.PctClass = covClass(g.Pct)
 	}
 }
 
