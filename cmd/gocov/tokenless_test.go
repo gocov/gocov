@@ -173,6 +173,10 @@ func TestRunTokenlessRejectionExitsZero(t *testing.T) {
 	}
 	t.Setenv("GOCOV_TOKEN", "")
 	t.Setenv("GOCOV_SERVER", srv.URL)
+	// Without this, a CI job running with `id-token: write` would let the
+	// CLI's OIDC-mint path win over the fork-PR tokenless path under test.
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
 	t.Setenv("GITHUB_ACTIONS", "true")
 	t.Setenv("GITHUB_EVENT_NAME", "pull_request")
 	t.Setenv("GITHUB_RUN_ID", "9001")

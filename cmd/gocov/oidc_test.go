@@ -153,6 +153,12 @@ func TestRunBitbucketOIDCUpload(t *testing.T) {
 	}
 	t.Setenv("GOCOV_TOKEN", "")
 	t.Setenv("GOCOV_SERVER", srv.URL)
+	// Neutralize GitHub's id-token env, which a CI job running these tests
+	// with `id-token: write` really has set — otherwise the CLI's GitHub-mint
+	// path (which precedes the Bitbucket env token) would win and mint a real
+	// token instead of exercising the Bitbucket path under test.
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
 	// A Bitbucket Pipelines step with oidc: true.
 	t.Setenv("BITBUCKET_STEP_OIDC_TOKEN", "bb.jwt.token")
 	t.Setenv("BITBUCKET_REPO_FULL_NAME", "acme/widgets")
@@ -191,6 +197,10 @@ func TestRunGitLabOIDCUpload(t *testing.T) {
 	}
 	t.Setenv("GOCOV_TOKEN", "")
 	t.Setenv("GOCOV_SERVER", srv.URL)
+	// See the Bitbucket test: a job with `id-token: write` really has these
+	// set, and the GitHub-mint path precedes the GitLab env token.
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
 	t.Setenv("GITLAB_CI", "true")
 	t.Setenv("CI_PROJECT_PATH", "acme/widgets")
 	t.Setenv("CI_COMMIT_SHA", "abc123")
