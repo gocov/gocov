@@ -11,6 +11,12 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # id-token lets the coverage upload authenticate via OIDC instead of a
+    # pasted GOCOV_TOKEN — dogfooding the tokenless path on our own repo.
+    # A job-level block replaces the workflow default, so restate contents.
+    permissions:
+      contents: read
+      id-token: write
     services:
       postgres:
         image: postgres:18-alpine
@@ -41,7 +47,9 @@ jobs:
         uses: gocov/gocov-action@v1
         with:
           files: coverage.out
-          token: ${{ secrets.GOCOV_TOKEN }}
+          # No token: a push or same-repo PR uploads via OIDC (id-token
+          # above); a fork PR, which gets no id-token, falls back to the
+          # App-verified tokenless path automatically.
 
   docs:
     runs-on: ubuntu-latest
