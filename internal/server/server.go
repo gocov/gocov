@@ -216,9 +216,9 @@ func New(cfg Config) *Server {
 			exactIssuers = append(exactIssuers, iss)
 		}
 		oidcVerifier = oidc.New(oidc.Config{
-			Audience:    cfg.BaseURL,
-			Issuers:     exactIssuers,
-			IssuerMatch: bitbucketIssuerMatch,
+			Audience:      cfg.BaseURL,
+			Issuers:       exactIssuers,
+			ResolveIssuer: bitbucketIssuerResolver(cfg.Store),
 		})
 	}
 

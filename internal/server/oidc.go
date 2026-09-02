@@ -15,6 +15,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
@@ -38,26 +39,64 @@ const gitHubActionsIssuer = "https://token.actions.githubusercontent.com"
 // (server.Config.OIDCIssuers) replaces this default with those instances.
 const gitLabDotComIssuer = "https://gitlab.com"
 
-// bitbucketIssuerPath is the fixed path template of a Bitbucket Pipelines
-// OIDC issuer; only the workspace segment varies, so it is bounded to a
-// single path segment.
-var bitbucketIssuerPath = regexp.MustCompile(`^/2\.0/workspaces/[^/]+/pipelines-config/identity/oidc$`)
+// The fixed parts of a Bitbucket Pipelines OIDC issuer URL. Only the
+// workspace segment varies, so the issuer is validated by shape and then
+// rebuilt from a trusted workspace slug rather than trusted verbatim.
+const (
+	bitbucketIssuerPrefix = "https://api.bitbucket.org/2.0/workspaces/"
+	bitbucketIssuerSuffix = "/pipelines-config/identity/oidc"
+)
 
-// bitbucketIssuerMatch recognizes a Bitbucket Pipelines OIDC issuer. The
-// issuer is per-workspace (its path names the workspace), so it cannot be a
-// fixed allowlist entry; this pins the scheme and host — whatever it admits
-// the verifier will fetch discovery from — and bounds the workspace to one
-// path segment, leaving the actual trust to the signature and the repo-id
-// match. No credentials, query, or fragment: a real issuer carries none,
-// and admitting them would only widen what we fetch.
-func bitbucketIssuerMatch(issuer string) bool {
+// bitbucketIssuerPath captures the single workspace path segment of a
+// Bitbucket issuer.
+var bitbucketIssuerPath = regexp.MustCompile(`^/2\.0/workspaces/([^/]+)/pipelines-config/identity/oidc$`)
+
+// bitbucketIssuerWorkspace validates a Bitbucket Pipelines OIDC issuer by
+// shape and returns the workspace slug it names. The scheme and host are
+// pinned to Bitbucket's and the workspace is bounded to one path segment;
+// no credentials, query, or fragment (a real issuer carries none). ok=false
+// means it is not a Bitbucket issuer at all.
+func bitbucketIssuerWorkspace(issuer string) (workspace string, ok bool) {
 	u, err := url.Parse(issuer)
-	if err != nil {
-		return false
+	if err != nil || u.Scheme != "https" || u.Host != "api.bitbucket.org" ||
+		u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", false
 	}
-	return u.Scheme == "https" && u.Host == "api.bitbucket.org" &&
-		u.User == nil && u.RawQuery == "" && u.Fragment == "" &&
-		bitbucketIssuerPath.MatchString(u.Path)
+	m := bitbucketIssuerPath.FindStringSubmatch(u.Path)
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
+}
+
+// bitbucketIssuerMatch reports whether the issuer is a Bitbucket Pipelines
+// OIDC issuer — used only to route a verified token to the bitbucket claim
+// mapping, never to decide what to fetch.
+func bitbucketIssuerMatch(issuer string) bool {
+	_, ok := bitbucketIssuerWorkspace(issuer)
+	return ok
+}
+
+// bitbucketIssuerResolver admits a Bitbucket OIDC issuer only when its
+// workspace is a tracked Bitbucket workspace, and returns the discovery URL
+// rebuilt from that tracked workspace's stored slug — never the token's own
+// issuer string. This does two things at once: it keeps the fetch target
+// off attacker control (the URL is literals plus a slug read back from the
+// store), and it bounds which issuers can trigger an outbound fetch to the
+// workspaces this deployment actually tracks, so an unauthenticated caller
+// cannot cycle workspace names to drive requests at Bitbucket.
+func bitbucketIssuerResolver(st store.Store) func(context.Context, string) (string, bool) {
+	return func(ctx context.Context, issuer string) (string, bool) {
+		workspace, ok := bitbucketIssuerWorkspace(issuer)
+		if !ok {
+			return "", false
+		}
+		ws, err := st.WorkspaceByPrefix(ctx, workspace)
+		if err != nil || ws.Forge != "bitbucket" {
+			return "", false
+		}
+		return bitbucketIssuerPrefix + ws.Prefix + bitbucketIssuerSuffix, true
+	}
 }
 
 // oidcForge names the forge a verified token's issuer belongs to, or "" for

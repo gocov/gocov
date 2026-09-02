@@ -295,20 +295,23 @@ func TestVerifyDiscoveryIssuerMismatch(t *testing.T) {
 	}
 }
 
-// An issuer not on the exact allowlist is accepted when the matcher admits
-// it (Bitbucket's per-workspace issuer), and rejected when it does not.
-func TestVerifyIssuerMatcher(t *testing.T) {
+// An issuer not on the exact allowlist is accepted when the resolver admits
+// it, and rejected when it does not. The resolver returns the canonical URL
+// to fetch from — here the issuer itself, since the test serves its own keys.
+func TestVerifyResolver(t *testing.T) {
 	is := newIssuer(t)
-	// No exact issuers; only the matcher, which admits this test issuer.
+	// No exact issuers; only the resolver, which admits this test issuer.
 	v := New(Config{
-		Audience:    "https://gocov.example",
-		IssuerMatch: func(iss string) bool { return iss == is.URL },
+		Audience: "https://gocov.example",
+		ResolveIssuer: func(_ context.Context, iss string) (string, bool) {
+			return iss, iss == is.URL
+		},
 	})
 	if _, err := v.Verify(context.Background(), is.mint(t, is.kid, "RS256", is.goodClaims("https://gocov.example"))); err != nil {
-		t.Fatalf("matcher-admitted issuer rejected: %v", err)
+		t.Fatalf("resolver-admitted issuer rejected: %v", err)
 	}
 
-	// A different issuer the matcher does not admit is unknown.
+	// A different issuer the resolver does not admit is unknown.
 	claims := is.goodClaims("https://gocov.example")
 	claims["iss"] = "https://api.bitbucket.org/2.0/workspaces/evil/pipelines-config/identity/oidc"
 	if _, err := v.Verify(context.Background(), is.mint(t, is.kid, "RS256", claims)); !errors.Is(err, ErrUnknownIssuer) {

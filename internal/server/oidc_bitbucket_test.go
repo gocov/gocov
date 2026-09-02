@@ -117,9 +117,9 @@ func newBitbucketOIDCFixture(t *testing.T, forgeUUID string) (*fixture, *oidcIss
 
 	is, client := newBBIssuer(t)
 	verifier := oidc.New(oidc.Config{
-		Audience:    "https://gocov.example",
-		IssuerMatch: bitbucketIssuerMatch,
-		HTTPClient:  client,
+		Audience:      "https://gocov.example",
+		ResolveIssuer: bitbucketIssuerResolver(st),
+		HTTPClient:    client,
 	})
 	srv := New(Config{
 		Store:            st,
@@ -216,6 +216,25 @@ func TestBitbucketOIDCRequiresRepoField(t *testing.T) {
 	rec := doOIDCUpload(t, f, tok, map[string]string{"repo": ""})
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+}
+
+// A Bitbucket issuer whose workspace this server does not track is refused
+// at the resolver — before any discovery/JWKS fetch — so an unknown
+// workspace name can never drive an outbound request to Bitbucket.
+func TestBitbucketOIDCUntrackedWorkspaceIssuer(t *testing.T) {
+	f, is := newBitbucketOIDCFixture(t, bbRepoUUID)
+	claims := bbClaims(bbRepoUUID, []any{bbWorkspaceARI, "https://gocov.example"})
+	claims["iss"] = "https://api.bitbucket.org/2.0/workspaces/stranger/pipelines-config/identity/oidc"
+	tok := is.mint(t, claims)
+
+	rec := doOIDCUpload(t, f, tok, map[string]string{"repo": "acme/widgets"})
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	assertErrorContains(t, rec, "oidc_unknown_issuer")
+	if len(f.forge.RepoIDCalls) != 0 {
+		t.Errorf("untracked-workspace issuer reached the forge")
 	}
 }
 

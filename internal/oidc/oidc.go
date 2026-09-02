@@ -90,13 +90,17 @@ func (t *Token) Claim(name string) string {
 // caching each issuer's signing keys.
 type Verifier struct {
 	audience string
-	issuers  map[string]bool
-	match    func(string) bool
-	http     *http.Client
-	now      func() time.Time
+	// issuers maps a normalized exact-allowlist issuer to its canonical
+	// form. The value — not the token's issuer claim — is what discovery is
+	// fetched from, so the fetch target is always drawn from trusted config,
+	// never from attacker-controlled input.
+	issuers map[string]string
+	resolve func(context.Context, string) (string, bool)
+	http    *http.Client
+	now     func() time.Time
 
 	mu   sync.Mutex
-	keys map[string]*keySet // by issuer
+	keys map[string]*keySet // by canonical issuer
 }
 
 // keySet is one issuer's cached signing keys and when they were fetched.
@@ -114,32 +118,35 @@ type Config struct {
 	Audience string
 	// Issuers is the allowlist of exact trusted iss values (e.g. GitHub
 	// Actions' single issuer). A token from anything else is refused
-	// without a fetch, unless IssuerMatch admits it.
+	// without a fetch, unless ResolveIssuer admits it.
 	Issuers []string
-	// IssuerMatch optionally admits issuers that are not a fixed string —
-	// Bitbucket mints a per-workspace issuer, so its whole family is
-	// recognized by shape (fixed host, fixed path template) rather than
-	// enumerated. It runs only when the exact allowlist misses, and must
-	// itself pin the scheme and host: whatever it admits, this package will
-	// fetch discovery from. Nil means exact matches only.
-	IssuerMatch func(issuer string) bool
-	HTTPClient  *http.Client
-	Now         func() time.Time
+	// ResolveIssuer optionally admits issuers that are not a fixed string —
+	// Bitbucket mints a per-workspace issuer, so its family cannot be
+	// enumerated up front. It runs only when the exact allowlist misses, and
+	// returns the canonical URL discovery should be fetched from (ok=false
+	// rejects). That returned URL, not the token's issuer claim, is what gets
+	// fetched, so it MUST be built from trusted data — never the token —
+	// both to keep the fetch target off attacker control and to bound which
+	// issuers can trigger a fetch at all. Nil means exact matches only.
+	ResolveIssuer func(ctx context.Context, issuer string) (canonical string, ok bool)
+	HTTPClient    *http.Client
+	Now           func() time.Time
 }
 
 // New builds a Verifier. It panics on an empty audience, or when neither an
-// issuer allowlist nor an issuer matcher is given — a misconfiguration that
-// would silently accept or reject everything.
+// issuer allowlist nor a resolver is given — a misconfiguration that would
+// silently accept or reject everything.
 func New(cfg Config) *Verifier {
 	if strings.TrimSpace(cfg.Audience) == "" {
 		panic("oidc: audience is required")
 	}
-	if len(cfg.Issuers) == 0 && cfg.IssuerMatch == nil {
-		panic("oidc: at least one issuer or an issuer matcher is required")
+	if len(cfg.Issuers) == 0 && cfg.ResolveIssuer == nil {
+		panic("oidc: at least one issuer or a resolver is required")
 	}
-	issuers := make(map[string]bool, len(cfg.Issuers))
+	issuers := make(map[string]string, len(cfg.Issuers))
 	for _, iss := range cfg.Issuers {
-		issuers[strings.TrimRight(iss, "/")] = true
+		c := strings.TrimRight(iss, "/")
+		issuers[c] = c
 	}
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
@@ -152,17 +159,26 @@ func New(cfg Config) *Verifier {
 	return &Verifier{
 		audience: strings.TrimRight(cfg.Audience, "/"),
 		issuers:  issuers,
-		match:    cfg.IssuerMatch,
+		resolve:  cfg.ResolveIssuer,
 		http:     httpClient,
 		now:      now,
 		keys:     map[string]*keySet{},
 	}
 }
 
-// issuerAllowed reports whether the issuer is trusted: on the exact
-// allowlist, or admitted by the matcher.
-func (v *Verifier) issuerAllowed(issuer string) bool {
-	return v.issuers[issuer] || (v.match != nil && v.match(issuer))
+// resolveIssuer maps a token's issuer claim to the canonical URL to fetch
+// its keys from, or reports that the issuer is not trusted. The canonical
+// value comes from the exact allowlist (its stored key) or the resolver —
+// trusted sources both — so the token's own issuer string never reaches the
+// fetch, closing the request-forgery path a raw issuer would open.
+func (v *Verifier) resolveIssuer(ctx context.Context, issuer string) (string, bool) {
+	if canonical, ok := v.issuers[issuer]; ok {
+		return canonical, true
+	}
+	if v.resolve != nil {
+		return v.resolve(ctx, issuer)
+	}
+	return "", false
 }
 
 // Verify checks a raw compact-JWT identity token and returns its claims.
@@ -202,11 +218,16 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (*Token, error) {
 	}
 
 	issuer := strings.TrimRight(claims.Issuer, "/")
-	if !v.issuerAllowed(issuer) {
+	canonical, ok := v.resolveIssuer(ctx, issuer)
+	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrUnknownIssuer, claims.Issuer)
 	}
 
-	key, err := v.publicKey(ctx, issuer, hdr.KID)
+	// Fetch keys from the canonical (trusted) issuer, never the token's own
+	// issuer string. For the exact allowlist canonical equals issuer; a
+	// resolver may return a value rebuilt from trusted data (e.g. a tracked
+	// workspace slug), which is what makes the fetch target un-forgeable.
+	key, err := v.publicKey(ctx, canonical, hdr.KID)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +263,7 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (*Token, error) {
 		return nil, fmt.Errorf("%w: payload is not JSON", ErrInvalidToken)
 	}
 	return &Token{
-		Issuer:   issuer,
+		Issuer:   canonical,
 		Subject:  claims.Subject,
 		Audience: auds,
 		claims:   all,
