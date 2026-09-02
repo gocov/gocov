@@ -107,7 +107,9 @@ func run(args []string) error {
 		} else {
 			run = detectGitHubRun(osEnv, os.ReadFile)
 			if !run.tokenlessEligible() {
-				return fmt.Errorf("upload token required: set -token or $GOCOV_TOKEN")
+				return fmt.Errorf("no upload credential: set -token or $GOCOV_TOKEN, or enable OIDC " +
+					"(GitHub Actions: grant permissions id-token: write; GitLab CI: an id_tokens entry named GOCOV_ID_TOKEN; " +
+					"Bitbucket Pipelines: oidc.audiences with the server URL)")
 			}
 			tokenless = true
 		}

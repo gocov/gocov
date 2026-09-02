@@ -55,8 +55,13 @@ func mustPath(raw string) string {
 // bbIssuer is the acme workspace's Bitbucket Pipelines OIDC issuer.
 const bbIssuer = "https://api.bitbucket.org/2.0/workspaces/acme/pipelines-config/identity/oidc"
 
-// bbWorkspaceARI is the default audience Bitbucket always includes; gocov's
-// own audience is appended to it via the pipeline's oidc.audiences.
+// bbWorkspaceARI is the default audience Bitbucket always includes. A
+// pipeline adds gocov's own audience under the step's oidc.audiences, and
+// Bitbucket *appends* it to this default, so a real token's aud is an array
+// carrying both — which is why the tests mint aud as [ARI, serverURL] and
+// the verifier only requires the server URL to be present. See Atlassian's
+// "Bitbucket Pipelines OIDC now supports multiple audiences" and the
+// resource-server integration docs.
 const bbWorkspaceARI = "ari:cloud:bitbucket::workspace/{11111111-1111-1111-1111-111111111111}"
 
 // newBBIssuer serves the acme workspace's discovery + JWKS. The rewriting
