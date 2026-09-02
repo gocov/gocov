@@ -42,7 +42,7 @@ func newOIDCIssuer(t *testing.T) (*oidcIssuer, *http.Client) {
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
 		// Advertise the JWKS on the real issuer host; the rewriting transport
 		// sends the fetch to this test server.
-		_ = json.NewEncoder(w).Encode(map[string]string{"jwks_uri": gitHubActionsIssuer + "/jwks"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"issuer": gitHubActionsIssuer, "jwks_uri": gitHubActionsIssuer + "/jwks"})
 	})
 	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{

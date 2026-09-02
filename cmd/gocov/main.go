@@ -90,8 +90,10 @@ func run(args []string) error {
 	if *token == "" {
 		var err error
 		if oidcToken, err = mintGitHubOIDC(osEnv, defaultHTTPDoer, *server); err != nil {
-			// The id-token permission was present but the request failed;
-			// say so and fall through rather than breaking the build.
+			// The id-token permission was present but the request failed.
+			// Report it and fall through to the next auth mode; if none
+			// applies the upload still errors below, exactly as a missing
+			// token would — this line just says why OIDC was not used.
 			fmt.Fprintf(os.Stderr, "gocov: OIDC token request failed: %v\n", err)
 		}
 		if oidcToken == "" {

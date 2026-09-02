@@ -186,14 +186,24 @@ func New(cfg Config) *Server {
 			"templates/layout.html", "templates/partials.html", "templates/"+name))
 	}
 
-	// The trusted GitLab issuers: gitlab.com plus any self-managed instances
-	// the operator configured. Both the token router (oidcForge) and the
-	// verifier's issuer allowlist draw from this set.
-	gitlabIssuers := map[string]bool{gitLabDotComIssuer: true}
+	// The trusted GitLab issuers. A gocov deployment connects to exactly one
+	// GitLab, so it must trust exactly that instance's issuer — not gitlab.com
+	// *and* a self-managed one at once, which would let a token from either
+	// authenticate an upload to a same-named project on the other (GitLab
+	// resolves by project path, and paths are not unique across instances).
+	// So the operator's configured issuers replace the gitlab.com default
+	// rather than adding to it: unset means gitlab.com; set means exactly the
+	// listed self-managed instances. GitHub and Bitbucket are unaffected.
+	// Both the token router (oidcForge) and the verifier's issuer allowlist
+	// draw from this set.
+	gitlabIssuers := map[string]bool{}
 	for _, iss := range cfg.OIDCIssuers {
 		if iss = strings.TrimRight(iss, "/"); iss != "" {
 			gitlabIssuers[iss] = true
 		}
+	}
+	if len(gitlabIssuers) == 0 {
+		gitlabIssuers[gitLabDotComIssuer] = true
 	}
 
 	oidcVerifier := cfg.OIDCVerifier

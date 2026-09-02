@@ -360,3 +360,14 @@ func TestLoadServerOIDCIssuers(t *testing.T) {
 		t.Errorf("OIDCIssuers = %v, want nil when unset", cfg.OIDCIssuers)
 	}
 }
+
+func TestLoadServerOIDCIssuersMustBeHTTPS(t *testing.T) {
+	for _, bad := range []string{"gitlab.example.com", "http://gitlab.example.com", "ftp://x"} {
+		if _, err := LoadServerFrom(minimal(map[string]string{"GOCOV_OIDC_ISSUERS": bad})); err == nil {
+			t.Errorf("GOCOV_OIDC_ISSUERS=%q was accepted; want an https-URL error", bad)
+		}
+	}
+	if _, err := LoadServerFrom(minimal(map[string]string{"GOCOV_OIDC_ISSUERS": "https://gitlab.example.com"})); err != nil {
+		t.Errorf("valid https issuer rejected: %v", err)
+	}
+}

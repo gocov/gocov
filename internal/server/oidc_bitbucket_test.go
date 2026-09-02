@@ -67,7 +67,7 @@ func newBBIssuer(t *testing.T) (*oidcIssuer, *http.Client) {
 	is := &oidcIssuer{key: genTestKey(t), kid: "bb1"}
 	mux := http.NewServeMux()
 	mux.HandleFunc(mustPath(bbIssuer)+"/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]string{"jwks_uri": "https://api.bitbucket.org/jwks"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"issuer": bbIssuer, "jwks_uri": "https://api.bitbucket.org/jwks"})
 	})
 	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(jwksFor(is))
@@ -216,6 +216,27 @@ func TestBitbucketOIDCRequiresRepoField(t *testing.T) {
 	rec := doOIDCUpload(t, f, tok, map[string]string{"repo": ""})
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+}
+
+// The Bitbucket path rate-limits its live forge call per repo, so a valid
+// token replayed with a victim's slug cannot hammer that workspace's
+// Bitbucket connection.
+func TestBitbucketOIDCRateLimited(t *testing.T) {
+	f, is := newBitbucketOIDCFixture(t, bbRepoUUID)
+	// Exhaust the per-repo limiter for the target slug.
+	for range maxTokenlessPerRepoHour {
+		f.srv.tokenless.allow("acme/widgets", time.Now())
+	}
+	tok := is.mint(t, bbClaims(bbRepoUUID, []any{bbWorkspaceARI, "https://gocov.example"}))
+
+	rec := doOIDCUpload(t, f, tok, map[string]string{"repo": "acme/widgets"})
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429; body = %s", rec.Code, rec.Body)
+	}
+	// The forge UUID call was never reached.
+	if len(f.forge.RepoIDCalls) != 0 {
+		t.Errorf("rate-limited request still called GetRepoID (%d times)", len(f.forge.RepoIDCalls))
 	}
 }
 

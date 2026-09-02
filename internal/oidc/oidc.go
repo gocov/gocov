@@ -350,10 +350,19 @@ func (v *Verifier) cached(issuer, kid string) (key *rsa.PublicKey, fresh bool) {
 // RSA keys.
 func (v *Verifier) fetchKeys(ctx context.Context, issuer string) (*keySet, error) {
 	var disco struct {
+		Issuer  string `json:"issuer"`
 		JWKSURI string `json:"jwks_uri"`
 	}
 	if err := v.getJSON(ctx, issuer+"/.well-known/openid-configuration", &disco); err != nil {
 		return nil, fmt.Errorf("oidc: discovery for %s: %w", issuer, err)
+	}
+	// The discovery document must claim the issuer we asked for (OpenID
+	// Connect Discovery §4.3). A mismatch means the document was substituted
+	// — a misconfigured or hijacked endpoint pointing our key fetch at keys
+	// that belong to someone else — so refuse it rather than trust its
+	// jwks_uri.
+	if strings.TrimRight(disco.Issuer, "/") != issuer {
+		return nil, fmt.Errorf("oidc: discovery for %s claims issuer %q", issuer, disco.Issuer)
 	}
 	if disco.JWKSURI == "" {
 		return nil, fmt.Errorf("oidc: discovery for %s has no jwks_uri", issuer)

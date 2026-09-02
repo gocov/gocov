@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/gocov/gocov/internal/oidc"
 	"github.com/gocov/gocov/internal/store"
@@ -30,10 +31,11 @@ import (
 // to — the claim we map to a tracked repo.
 const gitHubActionsIssuer = "https://token.actions.githubusercontent.com"
 
-// gitLabDotComIssuer is gitlab.com's OIDC issuer. GitLab CI ID tokens carry
-// a "project_path" claim (group/project) — the slug we map to a tracked
-// repo. Self-managed GitLab instances issue under their own URL; operators
-// add those via GOCOV_OIDC_ISSUERS (server.Config.OIDCIssuers).
+// gitLabDotComIssuer is gitlab.com's OIDC issuer, and the default trusted
+// GitLab issuer. GitLab CI ID tokens carry a "project_path" claim
+// (group/project) — the slug we map to a tracked repo. A self-managed
+// GitLab issues under its own URL; setting GOCOV_OIDC_ISSUERS
+// (server.Config.OIDCIssuers) replaces this default with those instances.
 const gitLabDotComIssuer = "https://gitlab.com"
 
 // bitbucketIssuerPath is the fixed path template of a Bitbucket Pipelines
@@ -161,6 +163,15 @@ func (s *Server) oidcResolveBitbucket(w http.ResponseWriter, r *http.Request, to
 	}
 	repo, ok := s.oidcTrackedRepo(w, r, slug, "bitbucket")
 	if !ok {
+		return nil, false
+	}
+
+	// The UUID check below makes a live forge call through the repo's own
+	// connection, so — like the fork-PR path (tokenless.go) — rate-limit it
+	// per repo before making it: a valid token replayed with a victim's slug
+	// must not be able to hammer that workspace's Bitbucket connection.
+	if !s.tokenless.allow(repo.Slug, time.Now()) {
+		httpError(w, http.StatusTooManyRequests, "OIDC upload rate limit reached for %s; try again later", repo.Slug)
 		return nil, false
 	}
 

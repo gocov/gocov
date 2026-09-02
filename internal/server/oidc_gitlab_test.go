@@ -24,7 +24,7 @@ func newGLIssuer(t *testing.T, issuer string) (*oidcIssuer, *http.Client) {
 	is := &oidcIssuer{key: genTestKey(t), kid: "gl1"}
 	mux := http.NewServeMux()
 	mux.HandleFunc(mustPath(issuer)+"/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]string{"jwks_uri": issuer + "/jwks"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"issuer": issuer, "jwks_uri": issuer + "/jwks"})
 	})
 	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(jwksFor(is))
@@ -133,6 +133,41 @@ func TestGitLabOIDCSelfManagedIssuer(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
+}
+
+// Configuring a self-managed GitLab issuer replaces the gitlab.com default:
+// a deployment connects to one GitLab, so a gitlab.com token must not
+// authenticate an upload on an instance that trusts a self-managed issuer.
+// The real verifier (built by New from the config) rejects it at the issuer
+// check, before any key fetch.
+func TestGitLabOIDCConfigReplacesGitlabDotCom(t *testing.T) {
+	const selfManaged = "https://gitlab.acme.example"
+	ctx := context.Background()
+	st := storemem.New()
+	repo := &store.Repo{Forge: "gitlab", Slug: "acme/widgets", Token: "secret-token", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(Config{
+		Store:       st,
+		Blobs:       blobmem.New(),
+		Parsers:     map[string]profile.Parser{"go": profile.GoParser{}},
+		BaseURL:     "https://gocov.example",
+		OIDCIssuers: []string{selfManaged},
+	})
+	f := &fixture{srv: srv, store: st, repo: repo}
+
+	// A well-formed token from gitlab.com — rejected because gitlab.com is no
+	// longer trusted once a self-managed issuer is configured. Issuer is
+	// checked before signature/fetch, so any key signs it.
+	is := &oidcIssuer{key: genTestKey(t), kid: "x"}
+	tok := is.mint(t, glClaims(gitLabDotComIssuer, "acme/widgets", "https://gocov.example"))
+
+	rec := doOIDCUpload(t, f, tok, map[string]string{"repo": "acme/widgets"})
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	assertErrorContains(t, rec, "oidc_unknown_issuer")
 }
 
 // A self-managed issuer that the operator did not configure is unknown,

@@ -33,7 +33,7 @@ func newIssuer(t *testing.T) *issuerServer {
 	is := &issuerServer{key: key, kid: "test-key-1"}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]string{"jwks_uri": is.URL + "/jwks"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"issuer": is.URL, "jwks_uri": is.URL + "/jwks"})
 	})
 	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(is.jwks())
@@ -230,7 +230,7 @@ func TestVerifyCachesAndRotates(t *testing.T) {
 	var fetches int
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]string{"jwks_uri": is.URL + "/jwks"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"issuer": is.URL, "jwks_uri": is.URL + "/jwks"})
 	})
 	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
 		fetches++
@@ -270,6 +270,31 @@ func TestVerifyCachesAndRotates(t *testing.T) {
 	}
 }
 
+// A discovery document that claims a different issuer than the one asked
+// for is refused, so a substituted endpoint cannot redirect the key fetch.
+// The failure is transient (not a token verdict), so a caller maps it to a
+// gateway error, not a rejection.
+func TestVerifyDiscoveryIssuerMismatch(t *testing.T) {
+	is := newIssuer(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"issuer": "https://evil.example", "jwks_uri": is.URL + "/jwks"})
+	})
+	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(is.jwks())
+	})
+	is.Server.Config.Handler = mux
+
+	v := newVerifier(is, "https://gocov.example")
+	_, err := v.Verify(context.Background(), is.mint(t, is.kid, "RS256", is.goodClaims("https://gocov.example")))
+	if err == nil {
+		t.Fatal("mismatched discovery issuer accepted")
+	}
+	if errors.Is(err, ErrInvalidToken) || errors.Is(err, ErrBadAudience) || errors.Is(err, ErrUnknownIssuer) {
+		t.Fatalf("err = %v, want a transient (non-verdict) error", err)
+	}
+}
+
 // An issuer not on the exact allowlist is accepted when the matcher admits
 // it (Bitbucket's per-workspace issuer), and rejected when it does not.
 func TestVerifyIssuerMatcher(t *testing.T) {
@@ -298,7 +323,7 @@ func TestUnknownKidThrottled(t *testing.T) {
 	var fetches int
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]string{"jwks_uri": is.URL + "/jwks"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"issuer": is.URL, "jwks_uri": is.URL + "/jwks"})
 	})
 	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
 		fetches++
