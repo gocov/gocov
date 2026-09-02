@@ -74,6 +74,23 @@ func bitbucketOIDCToken(env envFunc) string {
 	return env("BITBUCKET_STEP_OIDC_TOKEN")
 }
 
+// gitlabOIDCToken returns the OIDC ID token a GitLab CI job mints through
+// its id_tokens: block — which the gocov snippet names GOCOV_ID_TOKEN.
+// GitLab, like Bitbucket, hands the token to the job in an environment
+// variable, so this is a read, not a mint. Empty when not set.
+func gitlabOIDCToken(env envFunc) string {
+	return env("GOCOV_ID_TOKEN")
+}
+
+// envOIDCToken returns the OIDC identity token a forge hands the job through
+// the environment (Bitbucket, GitLab), or "" when neither is present.
+func envOIDCToken(env envFunc) string {
+	if t := bitbucketOIDCToken(env); t != "" {
+		return t
+	}
+	return gitlabOIDCToken(env)
+}
+
 // httpDoer is the slice of *http.Client the OIDC mint needs, kept as an
 // interface so tests can stub the request.
 type httpDoer interface {

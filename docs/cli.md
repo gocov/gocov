@@ -49,11 +49,13 @@ environment.
 When no `-token`/`$GOCOV_TOKEN` is set, the CLI tries two secret-free paths in order before giving up:
 
 1. **OIDC.** If the CI job can provide an OIDC identity token — GitHub Actions with `permissions: id-token: write`,
-   or Bitbucket Pipelines with `oidc.audiences` — the CLI sends it in place of the token, scoped to the gocov
-   server's audience. The server verifies the forge's signature and the repository the token names, so the upload
-   is fully verified — not marked unverified. This is the recommended setup for a repo's own `push` and same-repo
-   PR builds; see [GitHub Actions](github-actions.md#uploading-without-a-token) and
-   [Bitbucket Pipelines](bitbucket-pipelines.md#uploading-without-a-token).
+   Bitbucket Pipelines with `oidc.audiences`, or GitLab CI with an `id_tokens` entry named `GOCOV_ID_TOKEN` — the
+   CLI sends it in place of the token, scoped to the gocov server's audience. The server verifies the forge's
+   signature and the repository the token names, so the upload is fully verified — not marked unverified. This is
+   the recommended setup for a repo's own `push` and same-repo PR builds; see
+   [GitHub Actions](github-actions.md#uploading-without-a-token),
+   [Bitbucket Pipelines](bitbucket-pipelines.md#uploading-without-a-token) and
+   [GitLab CI](gitlab-ci.md#uploading-without-a-token).
 2. **Tokenless fork-PR** (below), for the fork pull request that has neither a secret nor an `id-token`.
 
 An explicit token always wins, so existing setups are untouched. A rejected OIDC upload does not fail the

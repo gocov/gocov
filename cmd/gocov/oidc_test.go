@@ -170,6 +170,44 @@ func TestRunBitbucketOIDCUpload(t *testing.T) {
 	}
 }
 
+// On GitLab the id_tokens: block hands the job the token in GOCOV_ID_TOKEN,
+// which the CLI reads and sends as oidc_token.
+func TestRunGitLabOIDCUpload(t *testing.T) {
+	var gotOIDC, gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseMultipartForm(1 << 20)
+		gotOIDC = r.FormValue("oidc_token")
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(uploadResponse{TotalPct: 80, CoveredStmts: 8, TotalStmts: 10, BuildStatus: "posted"})
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	profPath := filepath.Join(dir, "coverage.out")
+	if err := os.WriteFile(profPath, []byte("mode: set\nexample.com/m/a.go:1.1,2.2 4 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOCOV_TOKEN", "")
+	t.Setenv("GOCOV_SERVER", srv.URL)
+	t.Setenv("GITLAB_CI", "true")
+	t.Setenv("CI_PROJECT_PATH", "acme/widgets")
+	t.Setenv("CI_COMMIT_SHA", "abc123")
+	t.Setenv("CI_COMMIT_BRANCH", "main")
+	t.Setenv("GOCOV_ID_TOKEN", "gl.jwt.token")
+
+	if err := run([]string{"upload", profPath}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if gotOIDC != "gl.jwt.token" {
+		t.Errorf("oidc_token field = %q", gotOIDC)
+	}
+	if gotAuth != "" {
+		t.Errorf("Authorization header set on OIDC upload: %q", gotAuth)
+	}
+}
+
 // With no token, no id-token permission, and not a fork PR, the upload has
 // no credential and stays an error — existing behavior is unchanged.
 func TestRunNoCredentialErrors(t *testing.T) {

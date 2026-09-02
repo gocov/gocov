@@ -59,6 +59,7 @@ func buildServerConfig(cfg config.Server, d deps, log *slog.Logger) (server.Conf
 		AllowedWorkspaces: cfg.AllowedWorkspaces,
 		Hosted:            cfg.Hosted(),
 		PublicReports:     cfg.PublicReportsEnabled(),
+		OIDCIssuers:       cfg.OIDCIssuers,
 	}
 	if cfg.Hosted() {
 		log.Info("hosted mode: self-service workspace registration enabled")

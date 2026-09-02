@@ -95,9 +95,10 @@ func run(args []string) error {
 			fmt.Fprintf(os.Stderr, "gocov: OIDC token request failed: %v\n", err)
 		}
 		if oidcToken == "" {
-			// Bitbucket hands its OIDC token to the step directly (no request
-			// to make), so it is a read, not a mint.
-			oidcToken = bitbucketOIDCToken(osEnv)
+			// Bitbucket and GitLab hand their OIDC token to the job through
+			// the environment directly (no request to make), so it is a
+			// read, not a mint.
+			oidcToken = envOIDCToken(osEnv)
 		}
 		if oidcToken != "" {
 			oidcMode = true

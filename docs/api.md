@@ -28,7 +28,8 @@ delta_pct, build_status}`. Uploads carrying a `pr_id` additionally get
 A request **without** the `Authorization` header may instead carry a forge-minted OIDC identity token in an
 `oidc_token` form part. The server verifies the token's signature against the forge's published keys and checks:
 
-- the issuer is one it trusts (GitHub Actions and Bitbucket Pipelines);
+- the issuer is one it trusts (GitHub Actions, Bitbucket Pipelines, and GitLab CI — plus any self-managed GitLab
+  issuers the operator configured);
 - the audience equals this server's URL — a token minted for another audience is rejected;
 - the repository claim maps to a tracked repo, and the request's own `repo` part (if sent) agrees with it.
 

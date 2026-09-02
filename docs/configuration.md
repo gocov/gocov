@@ -18,6 +18,7 @@
 | `GOCOV_ALLOWED_WORKSPACES`     | derived from tracked repos | comma-separated workspace/org slugs allowed to sign in                                                                                                       |
 | `GOCOV_MODE`                   | `private`                  | `hosted` opens sign-in to any forge account with self-service workspace registration                                                                         |
 | `GOCOV_PUBLIC_REPORTS`         | `on`                       | `off` disables the anonymous read-only report pages that public repos otherwise get                                                                          |
+| `GOCOV_OIDC_ISSUERS`           | —                          | comma-separated extra trusted OIDC issuers for tokenless uploads (self-managed GitLab instance URLs); gitlab.com, GitHub and Bitbucket are trusted already   |
 
 How the pieces fit together:
 

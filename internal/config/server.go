@@ -38,6 +38,15 @@ type Server struct {
 	// in one move; per-repo control stays in repo settings.
 	PublicReports string `env:"GOCOV_PUBLIC_REPORTS" envDefault:"on"`
 
+	// OIDCIssuers lists extra trusted OIDC issuers for tokenless uploads,
+	// beyond the public forge issuers gocov trusts out of the box (GitHub
+	// Actions, Bitbucket Pipelines, gitlab.com). Each is treated as a
+	// self-managed GitLab instance: its CI ID tokens name repos by
+	// project_path exactly as gitlab.com's do. Point it at the instance's
+	// issuer URL (its base URL) for a self-managed GitLab whose pipelines
+	// upload via OIDC.
+	OIDCIssuers []string `env:"GOCOV_OIDC_ISSUERS" envSeparator:","`
+
 	Bitbucket OAuthApp `envPrefix:"GOCOV_OAUTH_BITBUCKET_"`
 	GitHub    OAuthApp `envPrefix:"GOCOV_OAUTH_GITHUB_"`
 	GitLab    OAuthApp `envPrefix:"GOCOV_OAUTH_GITLAB_"`
@@ -89,6 +98,16 @@ func (c *Server) normalize() {
 	c.AllowedWorkspaces = workspaces
 	if len(c.AllowedWorkspaces) == 0 {
 		c.AllowedWorkspaces = nil
+	}
+	issuers := c.OIDCIssuers[:0]
+	for _, iss := range c.OIDCIssuers {
+		if iss = strings.TrimRight(strings.TrimSpace(iss), "/"); iss != "" {
+			issuers = append(issuers, iss)
+		}
+	}
+	c.OIDCIssuers = issuers
+	if len(c.OIDCIssuers) == 0 {
+		c.OIDCIssuers = nil
 	}
 }
 

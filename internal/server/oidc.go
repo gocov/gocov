@@ -30,13 +30,11 @@ import (
 // to — the claim we map to a tracked repo.
 const gitHubActionsIssuer = "https://token.actions.githubusercontent.com"
 
-// defaultOIDCIssuers is the allowlist of exact forge OIDC issuers gocov
-// trusts. Bitbucket's per-workspace issuer is recognized by shape instead
-// (bitbucketIssuerMatch); GitLab (and self-hosted GitLab, operator-config)
-// join as their support lands.
-func defaultOIDCIssuers() []string {
-	return []string{gitHubActionsIssuer}
-}
+// gitLabDotComIssuer is gitlab.com's OIDC issuer. GitLab CI ID tokens carry
+// a "project_path" claim (group/project) — the slug we map to a tracked
+// repo. Self-managed GitLab instances issue under their own URL; operators
+// add those via GOCOV_OIDC_ISSUERS (server.Config.OIDCIssuers).
+const gitLabDotComIssuer = "https://gitlab.com"
 
 // bitbucketIssuerPath is the fixed path template of a Bitbucket Pipelines
 // OIDC issuer; only the workspace segment varies, so it is bounded to a
@@ -61,13 +59,17 @@ func bitbucketIssuerMatch(issuer string) bool {
 }
 
 // oidcForge names the forge a verified token's issuer belongs to, or "" for
-// an issuer with no mapping (which the allowlist and matcher keep out).
-func oidcForge(issuer string) string {
+// an issuer with no mapping (which the allowlist and matcher keep out). The
+// GitLab set is per-instance — gitlab.com plus any operator-configured
+// self-managed issuers — so it lives on the server, not in a constant.
+func (s *Server) oidcForge(issuer string) string {
 	switch {
 	case issuer == gitHubActionsIssuer:
 		return "github"
 	case bitbucketIssuerMatch(issuer):
 		return "bitbucket"
+	case s.gitlabIssuers[issuer]:
+		return "gitlab"
 	}
 	return ""
 }
@@ -102,10 +104,13 @@ func (s *Server) authOIDC(w http.ResponseWriter, r *http.Request) (*store.Repo, 
 		return nil, false
 	}
 
-	switch oidcForge(tok.Issuer) {
+	switch s.oidcForge(tok.Issuer) {
 	case "github":
 		// GitHub names the repo by slug in the token itself.
 		return s.oidcResolveBySlug(w, r, tok.Claim("repository"), "github")
+	case "gitlab":
+		// GitLab names the project by its full path — the slug.
+		return s.oidcResolveBySlug(w, r, tok.Claim("project_path"), "gitlab")
 	case "bitbucket":
 		return s.oidcResolveBitbucket(w, r, tok)
 	default:
