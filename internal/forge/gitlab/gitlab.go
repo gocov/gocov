@@ -294,6 +294,12 @@ func (c *Client) GetRepoVisibility(ctx context.Context, repoSlug string) (string
 	return forge.VisibilityPrivate, nil
 }
 
+// GetRepoID is not needed on GitLab: its CI OIDC tokens name the project by
+// path (the "project_path" claim), so there is no opaque id to resolve.
+func (c *Client) GetRepoID(ctx context.Context, repoSlug string) (string, error) {
+	return "", forge.ErrNotImplemented
+}
+
 // maxFileBytes bounds source files fetched for the source view.
 const maxFileBytes = 2 << 20
 

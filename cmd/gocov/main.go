@@ -94,6 +94,11 @@ func run(args []string) error {
 			// say so and fall through rather than breaking the build.
 			fmt.Fprintf(os.Stderr, "gocov: OIDC token request failed: %v\n", err)
 		}
+		if oidcToken == "" {
+			// Bitbucket hands its OIDC token to the step directly (no request
+			// to make), so it is a read, not a mint.
+			oidcToken = bitbucketOIDCToken(osEnv)
+		}
 		if oidcToken != "" {
 			oidcMode = true
 		} else {

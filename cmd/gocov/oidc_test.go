@@ -132,6 +132,44 @@ func TestRunOIDCUpload(t *testing.T) {
 	}
 }
 
+// On Bitbucket the OIDC token is handed to the step in an env var, so the
+// CLI reads it (no mint request) and sends it as oidc_token.
+func TestRunBitbucketOIDCUpload(t *testing.T) {
+	var gotOIDC, gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseMultipartForm(1 << 20)
+		gotOIDC = r.FormValue("oidc_token")
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(uploadResponse{TotalPct: 80, CoveredStmts: 8, TotalStmts: 10, BuildStatus: "posted"})
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	profPath := filepath.Join(dir, "coverage.out")
+	if err := os.WriteFile(profPath, []byte("mode: set\nexample.com/m/a.go:1.1,2.2 4 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOCOV_TOKEN", "")
+	t.Setenv("GOCOV_SERVER", srv.URL)
+	// A Bitbucket Pipelines step with oidc: true.
+	t.Setenv("BITBUCKET_STEP_OIDC_TOKEN", "bb.jwt.token")
+	t.Setenv("BITBUCKET_REPO_FULL_NAME", "acme/widgets")
+	t.Setenv("BITBUCKET_COMMIT", "abc123")
+	t.Setenv("BITBUCKET_BRANCH", "main")
+
+	if err := run([]string{"upload", profPath}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if gotOIDC != "bb.jwt.token" {
+		t.Errorf("oidc_token field = %q", gotOIDC)
+	}
+	if gotAuth != "" {
+		t.Errorf("Authorization header set on OIDC upload: %q", gotAuth)
+	}
+}
+
 // With no token, no id-token permission, and not a fork PR, the upload has
 // no credential and stays an error — existing behavior is unchanged.
 func TestRunNoCredentialErrors(t *testing.T) {

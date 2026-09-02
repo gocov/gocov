@@ -183,7 +183,11 @@ func New(cfg Config) *Server {
 		// A token's aud must equal this server's public URL, so a token
 		// minted for another instance cannot be replayed here. Without a
 		// BaseURL there is no audience to bind to, so OIDC uploads stay off.
-		oidcVerifier = oidc.New(oidc.Config{Audience: cfg.BaseURL, Issuers: defaultOIDCIssuers()})
+		oidcVerifier = oidc.New(oidc.Config{
+			Audience:    cfg.BaseURL,
+			Issuers:     defaultOIDCIssuers(),
+			IssuerMatch: bitbucketIssuerMatch,
+		})
 	}
 
 	s := &Server{

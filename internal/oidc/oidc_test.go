@@ -270,6 +270,27 @@ func TestVerifyCachesAndRotates(t *testing.T) {
 	}
 }
 
+// An issuer not on the exact allowlist is accepted when the matcher admits
+// it (Bitbucket's per-workspace issuer), and rejected when it does not.
+func TestVerifyIssuerMatcher(t *testing.T) {
+	is := newIssuer(t)
+	// No exact issuers; only the matcher, which admits this test issuer.
+	v := New(Config{
+		Audience:    "https://gocov.example",
+		IssuerMatch: func(iss string) bool { return iss == is.URL },
+	})
+	if _, err := v.Verify(context.Background(), is.mint(t, is.kid, "RS256", is.goodClaims("https://gocov.example"))); err != nil {
+		t.Fatalf("matcher-admitted issuer rejected: %v", err)
+	}
+
+	// A different issuer the matcher does not admit is unknown.
+	claims := is.goodClaims("https://gocov.example")
+	claims["iss"] = "https://api.bitbucket.org/2.0/workspaces/evil/pipelines-config/identity/oidc"
+	if _, err := v.Verify(context.Background(), is.mint(t, is.kid, "RS256", claims)); !errors.Is(err, ErrUnknownIssuer) {
+		t.Fatalf("err = %v, want ErrUnknownIssuer", err)
+	}
+}
+
 // An unknown kid does not trigger a fresh fetch on every attempt: within the
 // throttle window the second miss is answered from cache.
 func TestUnknownKidThrottled(t *testing.T) {

@@ -91,6 +91,7 @@ func (t *Token) Claim(name string) string {
 type Verifier struct {
 	audience string
 	issuers  map[string]bool
+	match    func(string) bool
 	http     *http.Client
 	now      func() time.Time
 
@@ -111,21 +112,30 @@ type Config struct {
 	// Audience is the value a token's aud must carry — this server's public
 	// URL. A token minted for any other audience is refused.
 	Audience string
-	// Issuers is the allowlist of trusted iss values (the forge OIDC
-	// issuers). A token from anything else is refused without a fetch.
-	Issuers    []string
-	HTTPClient *http.Client
-	Now        func() time.Time
+	// Issuers is the allowlist of exact trusted iss values (e.g. GitHub
+	// Actions' single issuer). A token from anything else is refused
+	// without a fetch, unless IssuerMatch admits it.
+	Issuers []string
+	// IssuerMatch optionally admits issuers that are not a fixed string —
+	// Bitbucket mints a per-workspace issuer, so its whole family is
+	// recognized by shape (fixed host, fixed path template) rather than
+	// enumerated. It runs only when the exact allowlist misses, and must
+	// itself pin the scheme and host: whatever it admits, this package will
+	// fetch discovery from. Nil means exact matches only.
+	IssuerMatch func(issuer string) bool
+	HTTPClient  *http.Client
+	Now         func() time.Time
 }
 
-// New builds a Verifier. It panics on an empty audience or issuer list —
-// a misconfiguration that would silently accept or reject everything.
+// New builds a Verifier. It panics on an empty audience, or when neither an
+// issuer allowlist nor an issuer matcher is given — a misconfiguration that
+// would silently accept or reject everything.
 func New(cfg Config) *Verifier {
 	if strings.TrimSpace(cfg.Audience) == "" {
 		panic("oidc: audience is required")
 	}
-	if len(cfg.Issuers) == 0 {
-		panic("oidc: at least one issuer is required")
+	if len(cfg.Issuers) == 0 && cfg.IssuerMatch == nil {
+		panic("oidc: at least one issuer or an issuer matcher is required")
 	}
 	issuers := make(map[string]bool, len(cfg.Issuers))
 	for _, iss := range cfg.Issuers {
@@ -142,10 +152,17 @@ func New(cfg Config) *Verifier {
 	return &Verifier{
 		audience: strings.TrimRight(cfg.Audience, "/"),
 		issuers:  issuers,
+		match:    cfg.IssuerMatch,
 		http:     httpClient,
 		now:      now,
 		keys:     map[string]*keySet{},
 	}
+}
+
+// issuerAllowed reports whether the issuer is trusted: on the exact
+// allowlist, or admitted by the matcher.
+func (v *Verifier) issuerAllowed(issuer string) bool {
+	return v.issuers[issuer] || (v.match != nil && v.match(issuer))
 }
 
 // Verify checks a raw compact-JWT identity token and returns its claims.
@@ -185,7 +202,7 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (*Token, error) {
 	}
 
 	issuer := strings.TrimRight(claims.Issuer, "/")
-	if !v.issuers[issuer] {
+	if !v.issuerAllowed(issuer) {
 		return nil, fmt.Errorf("%w: %q", ErrUnknownIssuer, claims.Issuer)
 	}
 

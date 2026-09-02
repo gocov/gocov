@@ -65,6 +65,15 @@ func mintGitHubOIDC(env envFunc, doer httpDoer, audience string) (string, error)
 	return out.Value, nil
 }
 
+// bitbucketOIDCToken returns the OIDC identity token Bitbucket Pipelines
+// injects into a step that opted in with `oidc: true` (and named gocov in
+// its `oidc.audiences`). Unlike GitHub there is no request to make — the
+// token is handed to the step in an environment variable — so this is a
+// read, not a mint. Empty outside such a step, so the caller falls through.
+func bitbucketOIDCToken(env envFunc) string {
+	return env("BITBUCKET_STEP_OIDC_TOKEN")
+}
+
 // httpDoer is the slice of *http.Client the OIDC mint needs, kept as an
 // interface so tests can stub the request.
 type httpDoer interface {

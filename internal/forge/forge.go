@@ -114,6 +114,12 @@ type Forge interface {
 	// on the forge: VisibilityPublic or VisibilityPrivate. It decides
 	// whether the repo's report pages may be served anonymously.
 	GetRepoVisibility(ctx context.Context, repoSlug string) (string, error)
+	// GetRepoID returns the forge's own stable identifier for the repo —
+	// the id that a forge OIDC token names the repo by when its claims
+	// carry an opaque id rather than the slug (Bitbucket's repository
+	// UUID). Forges whose OIDC tokens already name the repo by slug return
+	// ErrNotImplemented; the caller then has nothing to resolve.
+	GetRepoID(ctx context.Context, repoSlug string) (string, error)
 	// GetFileContent returns a file's raw content at a commit, used by
 	// the source view. Returns ErrRepoNotFound-wrapped errors when the
 	// file does not exist at that commit.
