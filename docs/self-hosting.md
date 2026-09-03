@@ -41,9 +41,9 @@ single 2 vCPU / 2 GB VM.
 
 The repo ships a starting point for this shape under `deploy/`: `docker-compose.prod.yml` pulls the published image at
 the version pinned in `.env` and runs it behind a Caddy TLS terminator, expecting Postgres to be external; the
-`Caddyfile` next to it is the one quoted below. Every release brings that stack up from the freshly published image
-and checks it answers, so it does not rot. The root `docker-compose.yml` is the evaluation stack and is not the same
-thing — it brings its own Postgres and builds from source.
+`Caddyfile` next to it is the one quoted below. The root `docker-compose.yml` is the evaluation stack and is not the
+same thing — it brings its own Postgres and builds from source; every release brings it up from the freshly published
+image instead and checks it answers, so the compose path does not rot.
 
 ## TLS and the reverse proxy
 

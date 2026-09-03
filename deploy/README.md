@@ -40,7 +40,6 @@ a parameter with the same name would override one.
 
 - **Add or rotate a value**: `aws ssm put-parameter --name /gocov/NAME --type SecureString --value ... --overwrite`, then deploy (or re-deploy the current tag): a running task keeps the values it started with.
 - **Turn a forge off**: delete its parameters, then deploy. A missing parameter is not an empty variable — the template never mentions names, so removing the parameter removes the variable.
-- **Everything at once** — from a compose-style `.env` and an App key file: [`ecs/put-secrets.sh`](ecs/put-secrets.sh), run wherever those files are (step 5 of the setup did this once, on the old instance).
 - The GitHub App private key is the PEM itself in `GOCOV_GITHUB_APP_PRIVATE_KEY`; the server accepts either a path or the key, and a parameter cannot be a file.
 
 ## Deploys
@@ -156,14 +155,14 @@ aws iam put-role-policy --role-name gocov-deploy --policy-name gocov-deploy-ecs 
      \"Action\": [\"logs:DescribeLogGroups\", \"logs:DescribeLogStreams\", \"logs:GetLogEvents\", \"logs:FilterLogEvents\"], \"Resource\": \"*\"}]}"
 ```
 
-**5. Configuration into Parameter Store.** The values lived only on the
-old instance, so the copy ran there: its role got `ssm:PutParameter` on
-`/gocov/*` for the duration, the script ran over an SSM session, the
-grant came off again. Starting from scratch, the script runs wherever a
-`.env` and the App key are written.
+**5. Configuration into Parameter Store.** One SecureString per
+variable. The first fill was copied from the old instance's `.env` on the
+instance itself, so the values never left AWS; from scratch it is this,
+once per variable (the App key is the PEM file's contents):
 
 ```sh
-AWS_REGION=eu-central-1 deploy/ecs/put-secrets.sh path/to/.env path/to/github-app.pem
+aws ssm put-parameter --name /gocov/DATABASE_URL --type SecureString --value '...'
+aws ssm put-parameter --name /gocov/GOCOV_GITHUB_APP_PRIVATE_KEY --type SecureString --value "$(cat github-app.pem)"
 aws ssm describe-parameters --parameter-filters Key=Path,Values=/gocov/ --query 'Parameters[].Name'
 ```
 
