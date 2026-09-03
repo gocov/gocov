@@ -88,7 +88,7 @@ jobs:
           role-to-assume: arn:aws:iam::773658094601:role/gocov-deploy
           aws-region: ${{ env.AWS_REGION }}
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         # The task definition template comes from the same ref as this
         # workflow, not from the tag being deployed: the jq below and the
         # template are one unit, and the template describes the
@@ -180,7 +180,7 @@ jobs:
       - name: "Smoke: /healthz"
         run: curl -fsS --retry 5 --retry-delay 3 --retry-all-errors "$PUBLIC_URL/healthz"
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
           # The smoke build is tiny and the sparse checkout above carries
