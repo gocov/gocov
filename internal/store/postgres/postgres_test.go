@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -112,6 +113,33 @@ func TestRepoLifecycle(t *testing.T) {
 	}
 	if got, _ = st.RepoByID(ctx, repo.ID); got.Gate.Configured() {
 		t.Errorf("gate not cleared: %+v", got.Gate)
+	}
+
+	// Ignore patterns round-trip as a text[] and clear back to nil, so a
+	// repo that never had any and one that had them removed compare equal.
+	if got.IgnorePaths != nil {
+		t.Errorf("fresh repo has ignore paths: %q", got.IgnorePaths)
+	}
+	repo.IgnorePaths = []string{"cmd/preview/**", "*_mock.go"}
+	if err := st.UpdateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.RepoByID(ctx, repo.ID); !slices.Equal(got.IgnorePaths, repo.IgnorePaths) {
+		t.Errorf("ignore paths round trip: %q", got.IgnorePaths)
+	}
+	repo.IgnorePaths = nil
+	if err := st.UpdateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.RepoByID(ctx, repo.ID); got.IgnorePaths != nil {
+		t.Errorf("ignore paths not cleared: %q", got.IgnorePaths)
+	}
+	withIgnore := &store.Repo{Forge: "bitbucket", Slug: "acme/ignored", Token: "tok-3", DefaultBranch: "main", IgnorePaths: []string{"gen/**"}}
+	if err := st.CreateRepo(ctx, withIgnore); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.RepoByID(ctx, withIgnore.ID); !slices.Equal(got.IgnorePaths, []string{"gen/**"}) {
+		t.Errorf("ignore paths not stored at create: %q", got.IgnorePaths)
 	}
 	if _, err := st.RepoByToken(ctx, "tok-1"); !errors.Is(err, store.ErrNotFound) {
 		t.Error("old token still resolves after rotation")

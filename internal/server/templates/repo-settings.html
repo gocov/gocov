@@ -16,6 +16,7 @@
   <span class="grp">Repository</span>
   <a href="#general">General</a>
   <a href="#gates">Coverage gates</a>
+  <a href="#ignore">Ignored files</a>
   {{if .ShowPublicReports}}<a href="#public-reports">Public reports</a>{{end}}
   <a href="#uploads">Uploads</a>
   <a href="#badge">Badge</a>
@@ -74,6 +75,26 @@
   </div>
   <div class="card-ft"><button class="btn primary" type="submit">Save</button>
     <span class="hint">Applies to uploads received from now on. Past verdicts are not recalculated.</span></div>
+</div>
+
+<div class="card" id="ignore">
+  <div class="card-hd"><h2>Ignored files</h2><span class="spacer"></span>
+    {{with .Repo.IgnorePaths}}<span class="chip info">{{len .}} pattern{{if ne (len .) 1}}s{{end}}</span>{{else}}<span class="chip info">None</span>{{end}}</div>
+  <div class="card-bd">
+    <p>Files matching these patterns are left out of every report — generated code, mocks, a
+    dev harness — before totals, diff coverage and the gate are computed. One pattern per
+    line, matched at any directory level of the paths shown in reports: <code>*</code> stays
+    within one directory, <code>**</code> crosses them, a directory covers everything under it,
+    and a leading <code>/</code> pins the pattern to the root.</p>
+    <div class="fields">
+      <span class="f"><label for="ignore_paths">Ignore patterns</label>
+        <textarea class="input mono" id="ignore_paths" name="ignore_paths" rows="4"
+          placeholder="cmd/preview/**&#10;**/*.pb.go&#10;*_mock.go" spellcheck="false">{{.IgnorePaths}}</textarea>
+        <span class="h">A pattern matching every file is refused at upload time rather than landing a 0% report.</span></span>
+    </div>
+  </div>
+  <div class="card-ft"><button class="btn primary" type="submit">Save</button>
+    <span class="hint">Applies to uploads received from now on. Past reports keep their numbers.</span></div>
 </div>
 
 {{if .ShowPublicReports}}

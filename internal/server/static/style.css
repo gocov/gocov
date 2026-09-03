@@ -173,6 +173,7 @@ td.path { min-width: 220px; }
   border-radius: var(--radius-sm); padding: 7px 12px; font-size: 13.5px; min-width: 220px;
   font-family: inherit; transition: border-color .15s, box-shadow .15s;
 }
+textarea.input { min-height: 96px; line-height: 1.5; resize: vertical; }
 .input:hover { border-color: var(--text-3); }
 .input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 

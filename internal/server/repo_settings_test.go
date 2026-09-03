@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -94,5 +95,52 @@ func TestRepoSettingsSaveRotateDelete(t *testing.T) {
 	}
 	if _, err := f.store.RepoBySlug(ctx, "acme/widgets"); err == nil {
 		t.Error("repo still present after delete")
+	}
+}
+
+// The Ignored files card saves one pattern per line, shows them back, and
+// refuses a pattern the matcher cannot compile.
+func TestRepoSettingsSaveIgnorePaths(t *testing.T) {
+	f, sess := newWorkspaceFixture(t, true)
+	ctx := context.Background()
+
+	rec := postForm(f, "/repo-settings/save/acme/widgets", url.Values{
+		"default_branch": {"main"},
+		"ignore_paths":   {"cmd/preview/**\r\n\r\n# generated\r\n*_mock.go\r\n"},
+	}, sess)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("save: status = %d, body = %s", rec.Code, rec.Body)
+	}
+	repo, err := f.store.RepoBySlug(ctx, "acme/widgets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"cmd/preview/**", "*_mock.go"}; !slices.Equal(repo.IgnorePaths, want) {
+		t.Errorf("ignore paths = %q, want %q", repo.IgnorePaths, want)
+	}
+
+	page := get(f, "/repo-settings/acme/widgets", sess)
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "cmd/preview/**\n*_mock.go") {
+		t.Errorf("settings page (%d) does not show the saved patterns", page.Code)
+	}
+
+	// An uncompilable pattern is refused and nothing changes.
+	if rec := postForm(f, "/repo-settings/save/acme/widgets", url.Values{
+		"default_branch": {"main"}, "ignore_paths": {"src/["},
+	}, sess); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "ignore pattern") {
+		t.Errorf("bad pattern: status = %d", rec.Code)
+	}
+	if repo, _ = f.store.RepoBySlug(ctx, "acme/widgets"); len(repo.IgnorePaths) != 2 {
+		t.Errorf("bad save changed the patterns: %q", repo.IgnorePaths)
+	}
+
+	// Clearing the field clears the patterns.
+	if rec := postForm(f, "/repo-settings/save/acme/widgets", url.Values{
+		"default_branch": {"main"}, "ignore_paths": {""},
+	}, sess); rec.Code != http.StatusSeeOther {
+		t.Errorf("clear: status = %d", rec.Code)
+	}
+	if repo, _ = f.store.RepoBySlug(ctx, "acme/widgets"); repo.IgnorePaths != nil {
+		t.Errorf("patterns not cleared: %q", repo.IgnorePaths)
 	}
 }

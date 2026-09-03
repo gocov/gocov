@@ -11,13 +11,22 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/gocov/gocov/internal/diffcov"
 	"github.com/gocov/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/ignore"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 )
+
+// ErrAllIgnored is returned by Accept when the ignore patterns matched
+// every file in the report. A report with nothing left in it would land
+// as 0% — failing the gate, painting the badge red and becoming the next
+// delta's baseline — so it is refused instead, and the transport can tell
+// the uploader why.
+var ErrAllIgnored = errors.New("ignore patterns matched every file in the report")
 
 // Submission is one upload as the transport parsed it: the fields of the
 // request after validation, and the profile they named. Anything that had
@@ -35,6 +44,9 @@ type Submission struct {
 	Raw        []byte
 	Profile    *profile.Profile
 	Meta       store.UploadMeta
+	// Ignore is the upload's own ignore patterns (internal/ignore), applied
+	// on top of the repo's. Validated by the transport.
+	Ignore []string
 }
 
 // Result is what the uploader is told: the row that was stored, the merged
@@ -70,6 +82,15 @@ func (p *Pipeline) Accept(ctx context.Context, sub Submission) (*Result, error) 
 		p.refreshVisibilityOnce(ctx, fg, sub.Repo)
 	}
 
+	// Drop ignored files first, so that totals, per-file rows, diff
+	// coverage, the gate and the merge all measure the same trimmed
+	// report. The raw profile stored below is kept as posted.
+	rules, ignored, err := applyIgnore(&sub)
+	if err != nil {
+		return nil, err
+	}
+	sub.Meta.IgnoredFiles = ignored
+
 	covered, total := sub.Profile.Coverage()
 	totalPct := profile.Percent(covered, total)
 
@@ -85,7 +106,7 @@ func (p *Pipeline) Accept(ctx context.Context, sub Submission) (*Result, error) 
 	var diffResult *diffcov.Result
 	var diffStatus string
 	if sub.PRID != "" {
-		diffResult, diffStatus = p.diffCoverage(ctx, fg, fgErr, sub.Repo, sub.PRID, sub.Profile, sub.Format, sub.PathPrefix)
+		diffResult, diffStatus = p.diffCoverage(ctx, fg, fgErr, sub.Repo, sub.PRID, sub.Profile, sub.Format, sub.PathPrefix, rules)
 	}
 
 	gate := EvaluateGate(sub.Repo.Gate, totalPct, dropDelta, diffResult)
@@ -130,7 +151,7 @@ var sourceExts = map[string][]string{
 // diffCoverage fetches the PR diff from the forge and intersects it
 // with the parsed profile. Best effort: any failure is reported in the
 // returned status, never as an upload error.
-func (p *Pipeline) diffCoverage(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, prID string, prof *profile.Profile, format, pathPrefix string) (*diffcov.Result, string) {
+func (p *Pipeline) diffCoverage(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, prID string, prof *profile.Profile, format, pathPrefix string, ignored *ignore.Rules) (*diffcov.Result, string) {
 	if fgErr != nil {
 		return nil, "error: " + fgErr.Error()
 	}
@@ -158,20 +179,42 @@ func (p *Pipeline) diffCoverage(ctx context.Context, fg forge.Forge, fgErr error
 	result := diffcov.Compute(files, added, pathPrefix)
 
 	// Keep only source files in the "changed but no coverage data" list;
-	// docs, configs etc. are expected to be absent from the profile.
-	if exts := sourceExts[format]; len(exts) > 0 {
-		var src []string
-		for _, p := range result.UnmatchedFiles {
-			for _, ext := range exts {
-				if strings.HasSuffix(p, ext) {
-					src = append(src, p)
-					break
-				}
-			}
+	// docs, configs etc. are expected to be absent from the profile. So
+	// are ignored files — they were dropped from the profile above, and
+	// flagging them as untested would count them against the PR after all.
+	exts := sourceExts[format]
+	result.UnmatchedFiles = slices.DeleteFunc(result.UnmatchedFiles, func(p string) bool {
+		if ignored.Match(p, "") { // diff paths are repo-relative already
+			return true
 		}
-		result.UnmatchedFiles = src
-	}
+		return len(exts) > 0 && !slices.ContainsFunc(exts, func(ext string) bool { return strings.HasSuffix(p, ext) })
+	})
 	return result, "computed"
+}
+
+// applyIgnore removes from the profile every file the repo's and the
+// upload's ignore patterns match, returning the compiled rules (nil when
+// there are none) and how many files went. Both pattern lists were
+// validated where they came in (the settings form, the upload request),
+// so a compile error here is a bug, not bad input.
+func applyIgnore(sub *Submission) (*ignore.Rules, int, error) {
+	patterns := slices.Concat(sub.Repo.IgnorePaths, sub.Ignore)
+	if len(patterns) == 0 {
+		return nil, 0, nil
+	}
+	rules, err := ignore.Compile(patterns)
+	if err != nil {
+		return nil, 0, fmt.Errorf("ignore patterns: %w", err)
+	}
+	before := len(sub.Profile.Files)
+	sub.Profile.Files = slices.DeleteFunc(sub.Profile.Files, func(f profile.File) bool {
+		return rules.Match(f.Path, sub.PathPrefix)
+	})
+	ignored := before - len(sub.Profile.Files)
+	if ignored > 0 && len(sub.Profile.Files) == 0 {
+		return nil, 0, ErrAllIgnored
+	}
+	return rules, ignored, nil
 }
 
 func (p *Pipeline) storeRaw(ctx context.Context, repoID int64, raw []byte) (string, error) {

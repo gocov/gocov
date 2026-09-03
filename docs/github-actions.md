@@ -61,6 +61,7 @@ The pasted-token setup above keeps working unchanged; OIDC is simply the recomme
 | `files`  | coverage file(s) to upload — comma-separated, globs allowed                                  |
 | `token`  | the workspace upload token                                                                   |
 | `part`   | names one slice of a matrix or multi-job build — see [Parts](parts.md)                       |
+| `ignore` | glob patterns for files to leave out, comma-separated or one per line — see [Ignoring files](ignoring-files.md) |
 | `server` | only when self-hosting: your instance's URL. On the hosted service the server is implicit    |
 
 ## Fork pull requests

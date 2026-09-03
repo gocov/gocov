@@ -201,6 +201,7 @@ type provView struct {
 	Part         string // the upload's part, "" for the default single profile
 	PartsNote    string // "single profile, no merge" or "merged from N parts"
 	Processed    string // server processing time, "" when not recorded
+	Ignored      string // "3 files ignored", "" when no pattern matched
 	// Tokenless marks an upload authenticated by workflow-run verification
 	// instead of a token — rendered as "unverified contributor upload".
 	Tokenless bool
@@ -237,6 +238,12 @@ func (s *Server) uploadProvenance(ctx context.Context, u *store.Upload) provView
 	}
 	if u.Part != "" && u.Part != "default" {
 		p.Part = u.Part
+	}
+	switch n := m.IgnoredFiles; {
+	case n == 1:
+		p.Ignored = "1 file ignored"
+	case n > 1:
+		p.Ignored = fmt.Sprintf("%d files ignored", n)
 	}
 	switch ms := m.ProcessMillis; {
 	case ms >= 1000:

@@ -32,6 +32,7 @@ nav = [
     { "Connect your forge" = "connecting.md" },
     { "Coverage gate" = "coverage-gate.md" },
     { Parts = "parts.md" },
+    { "Ignoring files" = "ignoring-files.md" },
     { "Why coverage changed" = "coverage-changed.md" },
   ] },
   { Reference = [

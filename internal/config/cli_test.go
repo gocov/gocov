@@ -7,11 +7,12 @@ func TestLoadCLI(t *testing.T) {
 		"GOCOV_SERVER": "https://gocov.example",
 		"GOCOV_TOKEN":  "tok",
 		"GOCOV_PART":   "backend",
+		"GOCOV_IGNORE": "cmd/preview/**,*_mock.go",
 	})
 	if err != nil {
 		t.Fatalf("LoadCLIFrom: %v", err)
 	}
-	if cfg.Server != "https://gocov.example" || cfg.Token != "tok" || cfg.Part != "backend" {
+	if cfg.Server != "https://gocov.example" || cfg.Token != "tok" || cfg.Part != "backend" || cfg.Ignore != "cmd/preview/**,*_mock.go" {
 		t.Errorf("got %+v, want the environment's values", cfg)
 	}
 }

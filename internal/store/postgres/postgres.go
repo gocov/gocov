@@ -136,12 +136,12 @@ func (s *Store) CreateRepo(ctx context.Context, r *store.Repo) error {
 	return s.pool.QueryRow(ctx, `
 		INSERT INTO repos (forge, slug, token, default_branch,
 			min_coverage, min_diff_coverage, max_coverage_drop,
-			visibility, public_reports_disabled)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			visibility, public_reports_disabled, ignore_paths)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id, created_at`,
 		r.Forge, r.Slug, r.Token, r.DefaultBranch,
 		r.Gate.MinCoverage, r.Gate.MinDiffCoverage, r.Gate.MaxCoverageDrop,
-		r.Visibility, r.PublicReportsDisabled,
+		r.Visibility, r.PublicReportsDisabled, textArray(r.IgnorePaths),
 	).Scan(&r.ID, &r.CreatedAt)
 }
 
@@ -155,11 +155,11 @@ func (s *Store) UpdateRepo(ctx context.Context, r *store.Repo) error {
 		UPDATE repos SET forge = $2, slug = $3, token = $4,
 			default_branch = $5,
 			min_coverage = $6, min_diff_coverage = $7, max_coverage_drop = $8,
-			public_reports_disabled = $9
+			public_reports_disabled = $9, ignore_paths = $10
 		WHERE id = $1`,
 		r.ID, r.Forge, r.Slug, r.Token, r.DefaultBranch,
 		r.Gate.MinCoverage, r.Gate.MinDiffCoverage, r.Gate.MaxCoverageDrop,
-		r.PublicReportsDisabled)
+		r.PublicReportsDisabled, textArray(r.IgnorePaths))
 	if err != nil {
 		return err
 	}
@@ -223,7 +223,16 @@ func (s *Store) SetRepoVisibility(ctx context.Context, repoID int64, visibility 
 
 const repoCols = `id, forge, slug, token, default_branch,
 	min_coverage, min_diff_coverage, max_coverage_drop,
-	visibility, public_reports_disabled, visibility_checked_at, created_at`
+	visibility, public_reports_disabled, visibility_checked_at, ignore_paths, created_at`
+
+// textArray is a nil-safe text[] parameter: a nil slice would bind as
+// NULL and trip the column's NOT NULL constraint.
+func textArray(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
 
 func (s *Store) DeleteRepo(ctx context.Context, id int64) error {
 	tag, err := s.pool.Exec(ctx, `DELETE FROM repos WHERE id = $1`, id)
@@ -286,9 +295,12 @@ func (s *Store) scanRepo(row rowScanner) (*store.Repo, error) {
 	var checkedAt *time.Time // NULL = the forge has never answered
 	err := row.Scan(&r.ID, &r.Forge, &r.Slug, &r.Token, &r.DefaultBranch,
 		&r.Gate.MinCoverage, &r.Gate.MinDiffCoverage, &r.Gate.MaxCoverageDrop,
-		&r.Visibility, &r.PublicReportsDisabled, &checkedAt, &r.CreatedAt)
+		&r.Visibility, &r.PublicReportsDisabled, &checkedAt, &r.IgnorePaths, &r.CreatedAt)
 	if checkedAt != nil {
 		r.VisibilityCheckedAt = *checkedAt
+	}
+	if len(r.IgnorePaths) == 0 {
+		r.IgnorePaths = nil // an empty array reads back as the zero value
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
