@@ -1,10 +1,13 @@
-# Production compose for the hosted gocov instance: the app plus a Caddy
-# TLS terminator. Postgres is external (RDS) — set DATABASE_URL in .env.
-# Run from this directory:  docker compose -f docker-compose.prod.yml up -d
+# Production compose for a self-hosted gocov: the app plus a Caddy TLS
+# terminator. Postgres is external — set DATABASE_URL in .env. Run from
+# this directory:  docker compose -f docker-compose.prod.yml up -d
 #
 # The image is pulled from GHCR, never built here: GOCOV_VERSION in .env
-# pins the exact release, and the deploy workflow is what changes it
-# (see .github/workflows/deploy.yml). Rollback = older tag, same pull.
+# pins the exact release; an upgrade is editing it and pulling again, and
+# a rollback is the older tag, same pull. This is what the hosted instance
+# ran on a single VM until September 2026 (it is on Fargate now, see
+# README.md), with the hostname and the certificate swapped for Caddy's
+# own ACME: put your hostname in the Caddyfile and open 80/443.
 services:
   server:
     image: ghcr.io/gocov/gocov-server:${GOCOV_VERSION:?pin a release tag in .env, e.g. GOCOV_VERSION=v0.12.0}
@@ -18,7 +21,9 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       GOCOV_ADDR: ":8080"
       GOCOV_BASE_URL: ${GOCOV_BASE_URL}
-      GOCOV_MODE: ${GOCOV_MODE:-hosted}
+      # private (default) restricts sign-in to tracked-workspace members;
+      # hosted opens self-service registration. See docs/sign-in.md.
+      GOCOV_MODE: ${GOCOV_MODE:-private}
       GOCOV_SECRET_KEY: ${GOCOV_SECRET_KEY}
       GOCOV_GITHUB_APP_ID: ${GOCOV_GITHUB_APP_ID:-}
       GOCOV_GITHUB_APP_PRIVATE_KEY: ${GOCOV_GITHUB_APP_PRIVATE_KEY:-/run/gocov-app-key.pem}
@@ -56,7 +61,6 @@ services:
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./certs:/etc/caddy/certs:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:

@@ -1,5 +1,8 @@
-app.gocov.dev {
-	tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin.key
+# TLS in front of the server, for docker-compose.prod.yml. Replace the
+# hostname; Caddy obtains and renews the certificate itself. The body
+# limit must stay above the server's own 64 MiB upload cap, or the proxy
+# rejects large reports before gocov sees them (docs/self-hosting.md).
+gocov.example.com {
 	request_body {
 		max_size 100MB
 	}

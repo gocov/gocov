@@ -3,10 +3,12 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -848,6 +850,81 @@ func TestSessionLifecycle(t *testing.T) {
 	}
 	if _, err := st.UserBySession(ctx, "hash-cascade"); !errors.Is(err, store.ErrNotFound) {
 		t.Error("session survived user deletion")
+	}
+}
+
+func TestWithGrantLock(t *testing.T) {
+	st := newTestStore(t)
+	box, err := secretbox.New(testSecretKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SetCipher(box)
+	ctx := t.Context()
+
+	ws := &store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateWorkspace(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetWorkspaceBitbucketGrant(ctx, ws.ID, "covbot", "rt-0", false); err != nil {
+		t.Fatal(err)
+	}
+
+	// The same stress as TestWithCommitReportTx: far more simultaneous
+	// refreshes of one grant than the pool has connections, each reading
+	// the stored token and rotating it *inside* the lock, which must run
+	// on the locked transaction's own connection or the pool deadlocks.
+	// Serialization shows in the result: every refresh sees the token
+	// the previous one stored, so the chain rt-0 → rt-1 → … never skips.
+	const n = 32
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	var rotations atomic.Int64
+	for i := range n {
+		wg.Go(func() {
+			cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			defer cancel()
+			errs[i] = st.WithGrantLock(cctx, ws.ID, func(ctx context.Context, tx store.GrantTx) error {
+				fresh, err := tx.WorkspaceByPrefix(ctx, "acme")
+				if err != nil {
+					return err
+				}
+				var seq int
+				if _, err := fmt.Sscanf(fresh.BitbucketRefreshToken, "rt-%d", &seq); err != nil {
+					return fmt.Errorf("stored token %q: %w", fresh.BitbucketRefreshToken, err)
+				}
+				if got := rotations.Load(); int64(seq) != got {
+					return fmt.Errorf("read rt-%d under the lock, but %d rotations have happened", seq, got)
+				}
+				rotations.Add(1)
+				return tx.SetWorkspaceBitbucketGrant(ctx, ws.ID, "covbot", fmt.Sprintf("rt-%d", seq+1), false)
+			})
+		})
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("refresh %d: %v", i, err)
+		}
+	}
+	fresh, err := st.WorkspaceByPrefix(ctx, "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := fmt.Sprintf("rt-%d", n); fresh.BitbucketRefreshToken != want {
+		t.Errorf("stored token = %q, want %q after %d serialized rotations", fresh.BitbucketRefreshToken, want, n)
+	}
+
+	// The lock is transaction-scoped: fn's error rolls back and releases
+	// it, so the next holder is not stuck behind a failed refresh.
+	boom := errors.New("forge is down")
+	if err := st.WithGrantLock(ctx, ws.ID, func(context.Context, store.GrantTx) error { return boom }); !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want %v", err, boom)
+	}
+	lctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := st.WithGrantLock(lctx, ws.ID, func(context.Context, store.GrantTx) error { return nil }); err != nil {
+		t.Fatalf("lock not released after a failed fn: %v", err)
 	}
 }
 

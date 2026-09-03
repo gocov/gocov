@@ -11,10 +11,15 @@ name: deploy
 #     here at all, so a rollback is a pull of the old image — seconds,
 #     not a rebuild.
 #
+# A deploy is a new task-definition revision that differs from the last
+# one only in the image tag, a service update, and a wait for the
+# rollout; ECS's own circuit breaker rolls a failed rollout back to the
+# previous revision before this job even reports it.
+#
 # The job is gated by the `production` environment, whose required
 # reviewer is the human approval every deploy waits for. The AWS side is
-# an OIDC role that may do exactly one thing: run a command on the one
-# production instance via SSM. Setup for both is in deploy/README.md.
+# an OIDC role that may do only what a deploy needs: register a task
+# definition and update the one service. Setup is in deploy/README.md.
 
 on:
   workflow_call:
@@ -35,8 +40,12 @@ permissions:
 
 env:
   IMAGE: ghcr.io/gocov/gocov-server
-  INSTANCE_ID: i-0ec3687170963f061
   AWS_REGION: eu-central-1
+  AWS_ACCOUNT: "773658094601"
+  CLUSTER: gocov
+  SERVICE: gocov-server
+  LOG_GROUP: /gocov/server
+  PUBLIC_URL: https://app.gocov.dev
 
 jobs:
   deploy:
@@ -64,9 +73,9 @@ jobs:
             echo "not a release tag: $TAG" >&2; exit 1; }
 
       - name: Image exists for both architectures
-        # Before touching the server: the image is public, so this needs
+        # Before touching the service: the image is public, so this needs
         # no login, and it fails a rollback to a tag that predates GHCR
-        # publishing here instead of on the instance.
+        # publishing here instead of in the rollout.
         run: |
           docker buildx imagetools inspect "$IMAGE:$TAG" --raw >manifest.json
           for arch in amd64 arm64; do
@@ -79,77 +88,86 @@ jobs:
           role-to-assume: arn:aws:iam::773658094601:role/gocov-deploy
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Roll the server to the tag (SSM)
+      - uses: actions/checkout@v5
+        # The task definition template comes from the same ref as this
+        # workflow, not from the tag being deployed: the jq below and the
+        # template are one unit, and the template describes the
+        # infrastructure (size, logging, health check), which a rollback
+        # of the application should not roll back with it.
+        with:
+          sparse-checkout: deploy/ecs
+          sparse-checkout-cone-mode: false
+
+      - name: Register the task definition for the tag
+        id: taskdef
         run: |
           set -euo pipefail
+          # Every /gocov/<NAME> parameter is a secret the container gets
+          # as NAME. Names only — the values are resolved by ECS at task
+          # start through the execution role, never by this job. A
+          # parameter whose name is not a variable name is a typo, and
+          # a name the template also sets as plain environment yields to
+          # the parameter, so rotating something into a secret needs no
+          # template change.
+          aws ssm describe-parameters \
+            --parameter-filters "Key=Path,Values=/gocov/" \
+            --query 'Parameters[].Name' --output json >params.json
+          jq -e 'all(.[]; test("^/gocov/[A-Z][A-Z0-9_]*$"))' params.json >/dev/null || {
+            echo "a /gocov/ parameter is not named like an environment variable:" >&2
+            cat params.json >&2; exit 1; }
+          jq --arg image "$IMAGE:$TAG" \
+             --arg prefix "arn:aws:ssm:$AWS_REGION:$AWS_ACCOUNT:parameter" \
+             --slurpfile names params.json '
+            ($names[0] | map(ltrimstr("/gocov/"))) as $secret
+            | .containerDefinitions[0].image = $image
+            | .containerDefinitions[0].secrets =
+                [ $names[0][] | {name: ltrimstr("/gocov/"), valueFrom: ($prefix + .)} ]
+            | .containerDefinitions[0].environment |=
+                map(select(.name as $n | $secret | index($n) | not))
+          ' deploy/ecs/task-definition.json >taskdef.json
+          arn=$(aws ecs register-task-definition --cli-input-json file://taskdef.json \
+            --query taskDefinition.taskDefinitionArn --output text)
+          echo "registered $arn"
+          echo "arn=$arn" >>"$GITHUB_OUTPUT"
 
-          # The script that runs on the instance: sync the checkout to
-          # the tag, pin GOCOV_VERSION in .env, pull, restart, and refuse
-          # to report success until the container's own healthcheck does.
-          cat >remote.sh <<REMOTE
+      - name: Roll the service to it
+        env:
+          TASKDEF: ${{ steps.taskdef.outputs.arn }}
+        run: |
           set -euo pipefail
-          # The compose file and Caddyfile live in this checkout, so a
-          # deploy has to bring them to the released version too — the
-          # first v0.13.0 deploy failed exactly here, pulling nothing
-          # because the box still had the compose that said "build".
-          # Deliberately no -f: unexpected local edits should fail the
-          # deploy loudly, not be discarded silently.
-          git -C /opt/gocov fetch --tags --force origin
-          git -C /opt/gocov -c advice.detachedHead=false checkout '$TAG'
-          cd /opt/gocov/deploy
-          if grep -q '^GOCOV_VERSION=' .env; then
-            sed -i 's|^GOCOV_VERSION=.*|GOCOV_VERSION=$TAG|' .env
-          else
-            echo 'GOCOV_VERSION=$TAG' >> .env
-          fi
-          docker compose -f docker-compose.prod.yml pull --quiet server
-          docker compose -f docker-compose.prod.yml up -d server
-          for i in \$(seq 1 30); do
-            state=\$(docker inspect --format '{{.State.Health.Status}}' \
-              \$(docker compose -f docker-compose.prod.yml ps -q server))
-            [ "\$state" = healthy ] && break
-            sleep 2
-          done
-          if [ "\$state" != healthy ]; then
-            echo "server container is \$state, not healthy" >&2
-            docker compose -f docker-compose.prod.yml logs --tail 50 server >&2
+          aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
+            --task-definition "$TASKDEF" --query service.serviceArn --output text
+
+          # services-stable polls for up to 10 minutes; a rollout that
+          # the circuit breaker rolled back also ends "stable", on the
+          # old revision, so stability alone is not success.
+          aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE" || true
+          aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+            --query 'services[0].deployments[?status==`PRIMARY`] | [0].{taskDefinition: taskDefinition, state: rolloutState, reason: rolloutStateReason, running: runningCount}' \
+            --output json | tee primary.json
+          if [ "$(jq -r .taskDefinition primary.json)" != "$TASKDEF" ] ||
+             [ "$(jq -r .state primary.json)" != COMPLETED ]; then
+            echo "::error::rollout of $TASKDEF did not complete — the service is on $(jq -r .taskDefinition primary.json)" >&2
+            echo "--- last 10 minutes of $LOG_GROUP" >&2
+            aws logs tail "$LOG_GROUP" --since 10m --format short >&2 || true
             exit 1
           fi
-          docker compose -f docker-compose.prod.yml exec -T server \
-            /usr/local/bin/gocov-server version | grep -F "$TAG"
-          REMOTE
 
-          cmd_id=$(aws ssm send-command \
-            --instance-ids "$INSTANCE_ID" \
-            --document-name AWS-RunShellScript \
-            --comment "deploy gocov-server $TAG" \
-            --parameters "$(jq -n --rawfile s remote.sh '{commands: [$s]}')" \
-            --query Command.CommandId --output text)
-
-          # send-command returns immediately; poll the invocation until it
-          # lands somewhere terminal and surface its output either way.
-          # (The invocation record itself takes a moment to exist, hence
-          # the fallback to Pending on a failed read.)
-          for i in $(seq 1 60); do
-            status=$(aws ssm get-command-invocation --command-id "$cmd_id" \
-              --instance-id "$INSTANCE_ID" --query Status --output text \
-              2>/dev/null) || status=Pending
-            case "$status" in Pending|InProgress|Delayed) sleep 5 ;; *) break ;; esac
-          done
-          aws ssm get-command-invocation --command-id "$cmd_id" \
-            --instance-id "$INSTANCE_ID" \
-            --query '{status: Status, stdout: StandardOutputContent, stderr: StandardErrorContent}' \
-            --output json | jq -r '"status: \(.status)\n--- stdout\n\(.stdout)\n--- stderr\n\(.stderr)"'
-          [ "$status" = Success ]
+          # The running task really is the released image: its container
+          # reports the exact tag it was started from.
+          task=$(aws ecs list-tasks --cluster "$CLUSTER" --service-name "$SERVICE" \
+            --desired-status RUNNING --query 'taskArns[0]' --output text)
+          aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$task" \
+            --query 'tasks[0].containers[0].image' --output text | grep -Fx "$IMAGE:$TAG"
 
       - name: "Smoke: /healthz"
-        run: curl -fsS --retry 5 --retry-delay 3 --retry-all-errors https://app.gocov.dev/healthz
+        run: curl -fsS --retry 5 --retry-delay 3 --retry-all-errors "$PUBLIC_URL/healthz"
 
       - uses: actions/setup-go@v6
         with:
           go-version: stable
-          # This job never checks the repo out — there is no go.mod for
-          # the module cache to key on, and the smoke build is tiny.
+          # The smoke build is tiny and the sparse checkout above carries
+          # no go.mod for a module cache to key on.
           cache: false
 
       - name: "Smoke: a real upload"

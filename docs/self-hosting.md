@@ -35,13 +35,15 @@ windows on amd64 and arm64, with `checksums.txt` alongside.
 All of it is AGPL-3.0. The server contacts nothing but your database and the forge APIs — no telemetry, no license
 check, no call home — so a running deployment depends on this project only for the next version you choose to run.
 
-The footprint is modest. gocov's own hosted instance runs the server and a TLS terminator on a single 2 vCPU / 2 GB
-arm64 VM, in front of a 2 vCPU / 1 GB managed Postgres.
+The footprint is modest. gocov's own hosted instance is one 0.5 vCPU / 1 GB arm64 container behind a managed load
+balancer, in front of a 2 vCPU / 1 GB managed Postgres — and until it moved there it ran the compose file below on a
+single 2 vCPU / 2 GB VM.
 
 The repo ships a starting point for this shape under `deploy/`: `docker-compose.prod.yml` pulls the published image at
 the version pinned in `.env` and runs it behind a Caddy TLS terminator, expecting Postgres to be external; the
 `Caddyfile` next to it is the one quoted below. The root `docker-compose.yml` is the evaluation stack and is not the
-same thing — it brings its own Postgres and builds from source.
+same thing — it brings its own Postgres and builds from source; every release brings it up from the freshly published
+image instead and checks it answers, so the compose path does not rot.
 
 ## TLS and the reverse proxy
 

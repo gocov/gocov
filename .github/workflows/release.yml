@@ -132,6 +132,43 @@ jobs:
             ghcr.io/gocov/gocov-server:${{ steps.tags.outputs.minor }}
             ghcr.io/gocov/gocov-server:latest
 
+  # The self-host path, exercised on every release with the image just
+  # pushed: the root compose file (Postgres + server, the way a self-hoster
+  # runs it) comes up from the pulled image, migrates, answers /healthz and
+  # the home page, and turns an upload with a bad token away. Production
+  # no longer runs compose, so nothing else would notice this path rotting.
+  selfhost-smoke:
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - name: Bring the self-host compose up from the released image
+        run: |
+          GOCOV_VERSION=$TAG docker compose -f docker-compose.yml -f .github/compose-smoke.yml \
+            up -d --wait --wait-timeout 120
+      - name: Smoke
+        run: |
+          set -euo pipefail
+          curl -fsS http://localhost:8080/healthz
+          curl -fsS -o /dev/null http://localhost:8080/
+          # A fresh instance has no workspace, so the upload API's answer
+          # to a made-up token is the one thing it can prove: the
+          # authenticated path is up and refuses cleanly.
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer not-a-token" \
+            -F "repo=gocov/smoke" -F "commit=0000000000000000000000000000000000000000" \
+            -F "file=@go.mod" http://localhost:8080/api/v1/upload)
+          [ "$code" = 401 ] || { echo "upload with a bad token answered $code, want 401" >&2; exit 1; }
+      - name: Logs
+        if: failure()
+        run: docker compose -f docker-compose.yml -f .github/compose-smoke.yml logs
+
   # A release is not finished until the wrappers follow: this opens a bump
   # PR in gocov-action (action.yml's pinned CLI) and upload-pipe
   # (Dockerfile ARG + pipe.yml + CHANGELOG), authored by the cross-repo

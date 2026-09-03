@@ -1,0 +1,10 @@
+# Overlay for the self-host smoke job in release.yml: the root compose
+# file builds from source, this swaps in the image the release just
+# pushed, so what gets exercised is exactly what a self-hoster pulls.
+#
+#   GOCOV_VERSION=vX.Y.Z docker compose -f docker-compose.yml -f .github/compose-smoke.yml up -d --wait
+services:
+  server:
+    build: !reset null
+    image: ghcr.io/gocov/gocov-server:${GOCOV_VERSION:?}
+    pull_policy: always

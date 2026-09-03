@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -90,6 +91,34 @@ func TestGrantTokenIsCachedBetweenUploads(t *testing.T) {
 	}
 	if bb.refreshes != 2 {
 		t.Errorf("refreshes = %d, want 2 after dropping the cached token", bb.refreshes)
+	}
+}
+
+func TestConcurrentUploadsShareOneRefresh(t *testing.T) {
+	// A cold cache and a burst of uploads for one workspace: every
+	// request misses the cache at once, and only the first to take the
+	// grant lock may spend a refresh — the rest must find the token it
+	// cached, not each rotate the refresh token in turn and hand out a
+	// token minted from a stale one.
+	bb := &fakeBB{client: forgefake.New()}
+	f, st := newForges(t, bb)
+	ws := connectedWorkspace(t, st, "acme")
+	ctx := t.Context()
+
+	const n = 16
+	var wg sync.WaitGroup
+	clients := make([]forge.Forge, n)
+	for i := range n {
+		wg.Go(func() { clients[i] = f.Connected(ctx, ws, "bitbucket") })
+	}
+	wg.Wait()
+	for i, c := range clients {
+		if c == nil {
+			t.Errorf("upload %d: no forge client", i)
+		}
+	}
+	if bb.refreshes != 1 {
+		t.Errorf("refreshes = %d, want 1: the lock should let one refresh serve the burst", bb.refreshes)
 	}
 }
 

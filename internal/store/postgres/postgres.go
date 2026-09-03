@@ -381,11 +381,15 @@ func (s *Store) UpdateWorkspace(ctx context.Context, w *store.Workspace) error {
 }
 
 func (s *Store) SetWorkspaceBitbucketGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
+	return s.setWorkspaceBitbucketGrant(ctx, s.pool, workspaceID, account, refreshToken, broken)
+}
+
+func (s *Store) setWorkspaceBitbucketGrant(ctx context.Context, q querier, workspaceID int64, account, refreshToken string, broken bool) error {
 	sealed, err := s.sealToken(refreshToken)
 	if err != nil {
 		return err
 	}
-	tag, err := s.pool.Exec(ctx, `
+	tag, err := q.Exec(ctx, `
 		UPDATE workspaces SET bitbucket_grant_account = $2,
 			bitbucket_refresh_token = $3, bitbucket_grant_broken = $4
 		WHERE id = $1`,
@@ -400,11 +404,15 @@ func (s *Store) SetWorkspaceBitbucketGrant(ctx context.Context, workspaceID int6
 }
 
 func (s *Store) SetWorkspaceGitLabGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
+	return s.setWorkspaceGitLabGrant(ctx, s.pool, workspaceID, account, refreshToken, broken)
+}
+
+func (s *Store) setWorkspaceGitLabGrant(ctx context.Context, q querier, workspaceID int64, account, refreshToken string, broken bool) error {
 	sealed, err := s.sealToken(refreshToken)
 	if err != nil {
 		return err
 	}
-	tag, err := s.pool.Exec(ctx, `
+	tag, err := q.Exec(ctx, `
 		UPDATE workspaces SET gitlab_grant_account = $2,
 			gitlab_refresh_token = $3, gitlab_grant_broken = $4
 		WHERE id = $1`,
@@ -454,8 +462,56 @@ func likePrefix(s string) string {
 }
 
 func (s *Store) WorkspaceByPrefix(ctx context.Context, prefix string) (*store.Workspace, error) {
-	return s.scanWorkspace(s.pool.QueryRow(ctx,
+	return s.workspaceByPrefix(ctx, s.pool, prefix)
+}
+
+func (s *Store) workspaceByPrefix(ctx context.Context, q querier, prefix string) (*store.Workspace, error) {
+	return s.scanWorkspace(q.QueryRow(ctx,
 		`SELECT `+workspaceCols+` FROM workspaces WHERE prefix = $1`, prefix))
+}
+
+// WithGrantLock runs fn inside a transaction holding a transaction-scoped
+// advisory lock keyed by the workspace, so a grant refresh serializes
+// across all server instances sharing the database — the cross-process
+// guarantee a rolling deploy needs, since Bitbucket and GitLab rotate the
+// refresh token on every use. fn's read of the stored token and its write
+// of the rotated one go through the locked transaction's own connection,
+// so a burst of cold-cache uploads of one workspace cannot deadlock the
+// pool the way a lock-on-one-connection, query-on-another design would
+// (see WithCommitReportTx). The lock is released when the transaction
+// ends, on commit or rollback.
+func (s *Store) WithGrantLock(ctx context.Context, workspaceID int64, fn func(context.Context, store.GrantTx) error) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", advisoryKey("grant", workspaceID, "")); err != nil {
+		return err
+	}
+	if err := fn(ctx, &grantTx{s: s, tx: tx}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// grantTx binds a refresh's token read and rotated-token write to one
+// locked transaction. It satisfies store.GrantTx.
+type grantTx struct {
+	s  *Store
+	tx pgx.Tx
+}
+
+func (g *grantTx) WorkspaceByPrefix(ctx context.Context, prefix string) (*store.Workspace, error) {
+	return g.s.workspaceByPrefix(ctx, g.tx, prefix)
+}
+
+func (g *grantTx) SetWorkspaceBitbucketGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
+	return g.s.setWorkspaceBitbucketGrant(ctx, g.tx, workspaceID, account, refreshToken, broken)
+}
+
+func (g *grantTx) SetWorkspaceGitLabGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
+	return g.s.setWorkspaceGitLabGrant(ctx, g.tx, workspaceID, account, refreshToken, broken)
 }
 
 func (s *Store) WorkspaceByToken(ctx context.Context, token string) (*store.Workspace, error) {
@@ -950,13 +1006,14 @@ func (c *commitReportTx) UpsertCommitReport(ctx context.Context, cr *store.Commi
 	return c.s.upsertCommitReport(ctx, c.tx, cr)
 }
 
-// advisoryKey hashes a namespace and (repo, commit) into the signed 64-bit
-// space Postgres advisory locks use. The namespace keeps the recompute lock
-// and the status-push lock in separate spaces so they never block each other
-// for the same commit.
-func advisoryKey(namespace string, repoID int64, commitSHA string) int64 {
+// advisoryKey hashes a namespace and (id, name) into the signed 64-bit
+// space Postgres advisory locks use. The namespace keeps the recompute
+// lock, the status-push lock and the grant-refresh lock (keyed by
+// workspace id, with an empty name) in separate spaces so they never block
+// each other for the same id.
+func advisoryKey(namespace string, id int64, name string) int64 {
 	h := fnv.New64a()
-	fmt.Fprintf(h, "%s:%d:%s", namespace, repoID, commitSHA)
+	fmt.Fprintf(h, "%s:%d:%s", namespace, id, name)
 	return int64(h.Sum64()) //nolint:gosec // intentional bit reinterpretation into the advisory key space
 }
 
