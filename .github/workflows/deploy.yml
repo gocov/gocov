@@ -138,13 +138,30 @@ jobs:
           aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
             --task-definition "$TASKDEF" --query service.serviceArn --output text
 
-          # services-stable polls for up to 10 minutes; a rollout that
-          # the circuit breaker rolled back also ends "stable", on the
-          # old revision, so stability alone is not success.
+          # services-stable polls for up to 10 minutes and returns once the
+          # deployments collapse to one with running == desired. That alone
+          # is not success, twice over: a rollout the circuit breaker rolled
+          # back also ends "stable", on the old revision — and ECS flips the
+          # PRIMARY deployment's rolloutState to COMPLETED a few seconds
+          # *after* the last old task stops, so one look right after the
+          # waiter returns can still read IN_PROGRESS on a deploy that is
+          # done (v0.17.0 went red exactly that way). So: wait, then poll
+          # the state for a bounded time, stopping early on a verdict.
           aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE" || true
-          aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
-            --query 'services[0].deployments[?status==`PRIMARY`] | [0].{taskDefinition: taskDefinition, state: rolloutState, reason: rolloutStateReason, running: runningCount}' \
-            --output json | tee primary.json
+          primary() {
+            aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+              --query 'services[0].deployments[?status==`PRIMARY`] | [0].{taskDefinition: taskDefinition, state: rolloutState, reason: rolloutStateReason, running: runningCount}' \
+              --output json >primary.json
+          }
+          for _ in $(seq 1 30); do # up to 5 minutes, 10 s apart
+            primary
+            state=$(jq -r .state primary.json)
+            if [ "$state" = COMPLETED ] || [ "$state" = FAILED ]; then
+              break
+            fi
+            sleep 10
+          done
+          cat primary.json
           if [ "$(jq -r .taskDefinition primary.json)" != "$TASKDEF" ] ||
              [ "$(jq -r .state primary.json)" != COMPLETED ]; then
             echo "::error::rollout of $TASKDEF did not complete — the service is on $(jq -r .taskDefinition primary.json)" >&2
