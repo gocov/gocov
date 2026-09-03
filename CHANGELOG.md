@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.17.0](https://github.com/gocov/gocov/compare/v0.16.0...v0.17.0) (2026-09-03)
+
+
+### Features
+
+* ignore patterns for files that should not count toward coverage ([#100](https://github.com/gocov/gocov/issues/100)) ([92f94dd](https://github.com/gocov/gocov/commit/92f94dd5db07e9a7e7e636498d6ccda310510faa))
+
+
+### Miscellaneous Chores
+
+* release 0.17.0 ([#102](https://github.com/gocov/gocov/issues/102)) ([2825caa](https://github.com/gocov/gocov/commit/2825caad1ce00f87441a27ec3c7de3c5568410f1))
+
 ## [0.16.0](https://github.com/gocov/gocov/compare/v0.15.0...v0.16.0) (2026-09-02)
 
 
