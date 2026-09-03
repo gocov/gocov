@@ -78,7 +78,7 @@ recovery, not a redeploy.
 - **There is no shell to get into.** The image is distroless — no `sh`, so ECS Exec cannot start a session in it, and there is nothing on a task's disk to look at: the container writes nothing. Logs are the whole story.
 - **Database access**: there is no standing bastion. `gocov-db` accepts 5432 from `gocov-ecs` only, so the way in is a throwaway EC2 (or a one-off Fargate task) in that security group with `psql`, deleted afterwards.
 - **Resize**: `cpu`/`memory` in the task template (then a deploy), `--desired-count` on the service. Horizontal scale is *possible* — the locks above are what made it so — but not needed at this load.
-- **Cost** (approx., ARM Fargate): task ≈ $15/month, ALB ≈ $20 + two public IPv4 ≈ $7, task IPv4 ≈ $4, logs ≈ $1–3. About $25–30/month more than the instance was, bought against: no machine to patch, no disk or Docker log to fill, deploy and rollback in a minute, and a rolling deploy instead of a restart gap.
+- **Cost** (approx., ARM Fargate): task ≈ $15/month, ALB ≈ $20 + its three public IPv4 (one per subnet) ≈ $11, task IPv4 ≈ $4, logs ≈ $1–3. About $30–35/month more than the instance was, bought against: no machine to patch, no disk or Docker log to fill, deploy and rollback in a minute, and a rolling deploy instead of a restart gap.
 
 ## One-time setup
 
