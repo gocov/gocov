@@ -11,23 +11,15 @@ name: deploy
 #     here at all, so a rollback is a pull of the old image — seconds,
 #     not a rebuild.
 #
-# Two targets, chosen by the DEPLOY_TARGET repository variable (or the
-# dispatch input, to try the other one without flipping the default):
-#
-#   ecs — the Fargate service behind the ALB (deploy/README.md, "Fargate").
-#     A deploy is a new task-definition revision that differs only in the
-#     image tag, a service update, and a wait for the rollout; ECS's own
-#     circuit breaker rolls a failed rollout back to the previous revision
-#     before this job even reports it.
-#   ec2 — the single instance, over SSM. The pre-Fargate path; it stays
-#     until the instance is retired, so a Cloudflare origin flip back to
-#     it can still be followed by a deploy.
+# A deploy is a new task-definition revision that differs from the last
+# one only in the image tag, a service update, and a wait for the
+# rollout; ECS's own circuit breaker rolls a failed rollout back to the
+# previous revision before this job even reports it.
 #
 # The job is gated by the `production` environment, whose required
 # reviewer is the human approval every deploy waits for. The AWS side is
 # an OIDC role that may do only what a deploy needs: register a task
-# definition and update the one service, or run a command on the one
-# instance. Setup for both is in deploy/README.md.
+# definition and update the one service. Setup is in deploy/README.md.
 
 on:
   workflow_call:
@@ -42,11 +34,6 @@ on:
         description: Existing release tag to deploy (an older one = rollback).
         required: true
         type: string
-      target:
-        description: Where to deploy. "default" follows the DEPLOY_TARGET repository variable.
-        type: choice
-        default: default
-        options: [default, ecs, ec2]
 
 permissions:
   contents: read
@@ -55,12 +42,14 @@ env:
   IMAGE: ghcr.io/gocov/gocov-server
   AWS_REGION: eu-central-1
   AWS_ACCOUNT: "773658094601"
-  # ecs
   CLUSTER: gocov
   SERVICE: gocov-server
   LOG_GROUP: /gocov/server
-  # ec2
-  INSTANCE_ID: i-0ec3687170963f061
+  # The ALB's own hostname (Cloudflare DNS-only), so the smoke test proves
+  # our stack rather than Cloudflare's cache; the user-facing hostname is
+  # checked too, once, because that is what people reach.
+  ORIGIN_URL: https://origin.gocov.dev
+  PUBLIC_URL: https://app.gocov.dev
 
 jobs:
   deploy:
@@ -79,15 +68,6 @@ jobs:
       contents: read
     env:
       TAG: ${{ inputs.tag }}
-      # An explicit dispatch choice wins; otherwise the repository
-      # variable; otherwise the instance, which is where production lived
-      # before the variable existed.
-      TARGET: ${{ (inputs.target != '' && inputs.target != 'default') && inputs.target || vars.DEPLOY_TARGET || 'ec2' }}
-      # Where the smoke test points. The Fargate path is smoked through
-      # the ALB's own hostname, so it proves our stack rather than
-      # Cloudflare's cache and works before the origin is flipped to it;
-      # the instance has no such name and is reached the way users do.
-      SMOKE_URL: ${{ ((inputs.target != '' && inputs.target != 'default') && inputs.target || vars.DEPLOY_TARGET || 'ec2') == 'ecs' && 'https://origin.gocov.dev' || 'https://app.gocov.dev' }}
     steps:
       - name: Tag looks like a release
         # $TAG is spliced into a shell script that runs as root on the
@@ -95,12 +75,11 @@ jobs:
         run: |
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
             echo "not a release tag: $TAG" >&2; exit 1; }
-          echo "deploying $TAG to $TARGET (smoke: $SMOKE_URL)"
 
       - name: Image exists for both architectures
-        # Before touching anything: the image is public, so this needs
+        # Before touching the service: the image is public, so this needs
         # no login, and it fails a rollback to a tag that predates GHCR
-        # publishing here instead of on the service.
+        # publishing here instead of in the rollout.
         run: |
           docker buildx imagetools inspect "$IMAGE:$TAG" --raw >manifest.json
           for arch in amd64 arm64; do
@@ -113,20 +92,17 @@ jobs:
           role-to-assume: arn:aws:iam::773658094601:role/gocov-deploy
           aws-region: ${{ env.AWS_REGION }}
 
-      # ---- ecs ---------------------------------------------------------
-
       - uses: actions/checkout@v5
-        if: env.TARGET == 'ecs'
-        # The task definition template is versioned with the release, so
-        # a deploy (and a rollback) uses the one that shipped with the
-        # tag — the same reason the instance path syncs its checkout.
+        # The task definition template comes from the same ref as this
+        # workflow, not from the tag being deployed: the jq below and the
+        # template are one unit, and the template describes the
+        # infrastructure (size, logging, health check), which a rollback
+        # of the application should not roll back with it.
         with:
-          ref: ${{ inputs.tag }}
           sparse-checkout: deploy/ecs
           sparse-checkout-cone-mode: false
 
-      - name: Register the task definition for the tag (ECS)
-        if: env.TARGET == 'ecs'
+      - name: Register the task definition for the tag
         id: taskdef
         run: |
           set -euo pipefail
@@ -158,8 +134,7 @@ jobs:
           echo "registered $arn"
           echo "arn=$arn" >>"$GITHUB_OUTPUT"
 
-      - name: Roll the service to it (ECS)
-        if: env.TARGET == 'ecs'
+      - name: Roll the service to it
         env:
           TASKDEF: ${{ steps.taskdef.outputs.arn }}
         run: |
@@ -189,84 +164,16 @@ jobs:
           aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$task" \
             --query 'tasks[0].containers[0].image' --output text | grep -Fx "$IMAGE:$TAG"
 
-      # ---- ec2 ---------------------------------------------------------
-
-      - name: Roll the server to the tag (SSM)
-        if: env.TARGET == 'ec2'
-        run: |
-          set -euo pipefail
-
-          # The script that runs on the instance: sync the checkout to
-          # the tag, pin GOCOV_VERSION in .env, pull, restart, and refuse
-          # to report success until the container's own healthcheck does.
-          cat >remote.sh <<REMOTE
-          set -euo pipefail
-          # The compose file and Caddyfile live in this checkout, so a
-          # deploy has to bring them to the released version too — the
-          # first v0.13.0 deploy failed exactly here, pulling nothing
-          # because the box still had the compose that said "build".
-          # Deliberately no -f: unexpected local edits should fail the
-          # deploy loudly, not be discarded silently.
-          git -C /opt/gocov fetch --tags --force origin
-          git -C /opt/gocov -c advice.detachedHead=false checkout '$TAG'
-          cd /opt/gocov/deploy
-          if grep -q '^GOCOV_VERSION=' .env; then
-            sed -i 's|^GOCOV_VERSION=.*|GOCOV_VERSION=$TAG|' .env
-          else
-            echo 'GOCOV_VERSION=$TAG' >> .env
-          fi
-          docker compose -f docker-compose.prod.yml pull --quiet server
-          # No service name: compose recreates only what changed, which
-          # brings a release's Caddyfile or caddy definition along too.
-          docker compose -f docker-compose.prod.yml up -d
-          for i in \$(seq 1 30); do
-            state=\$(docker inspect --format '{{.State.Health.Status}}' \
-              \$(docker compose -f docker-compose.prod.yml ps -q server))
-            [ "\$state" = healthy ] && break
-            sleep 2
-          done
-          if [ "\$state" != healthy ]; then
-            echo "server container is \$state, not healthy" >&2
-            docker compose -f docker-compose.prod.yml logs --tail 50 server >&2
-            exit 1
-          fi
-          docker compose -f docker-compose.prod.yml exec -T server \
-            /usr/local/bin/gocov-server version | grep -F "$TAG"
-          REMOTE
-
-          cmd_id=$(aws ssm send-command \
-            --instance-ids "$INSTANCE_ID" \
-            --document-name AWS-RunShellScript \
-            --comment "deploy gocov-server $TAG" \
-            --parameters "$(jq -n --rawfile s remote.sh '{commands: [$s]}')" \
-            --query Command.CommandId --output text)
-
-          # send-command returns immediately; poll the invocation until it
-          # lands somewhere terminal and surface its output either way.
-          # (The invocation record itself takes a moment to exist, hence
-          # the fallback to Pending on a failed read.)
-          for i in $(seq 1 60); do
-            status=$(aws ssm get-command-invocation --command-id "$cmd_id" \
-              --instance-id "$INSTANCE_ID" --query Status --output text \
-              2>/dev/null) || status=Pending
-            case "$status" in Pending|InProgress|Delayed) sleep 5 ;; *) break ;; esac
-          done
-          aws ssm get-command-invocation --command-id "$cmd_id" \
-            --instance-id "$INSTANCE_ID" \
-            --query '{status: Status, stdout: StandardOutputContent, stderr: StandardErrorContent}' \
-            --output json | jq -r '"status: \(.status)\n--- stdout\n\(.stdout)\n--- stderr\n\(.stderr)"'
-          [ "$status" = Success ]
-
-      # ---- smoke, either way ---------------------------------------------
-
       - name: "Smoke: /healthz"
-        run: curl -fsS --retry 5 --retry-delay 3 --retry-all-errors "$SMOKE_URL/healthz"
+        run: |
+          curl -fsS --retry 5 --retry-delay 3 --retry-all-errors "$ORIGIN_URL/healthz"
+          curl -fsS --retry 5 --retry-delay 3 --retry-all-errors "$PUBLIC_URL/healthz"
 
       - uses: actions/setup-go@v6
         with:
           go-version: stable
-          # The smoke build is tiny and the sparse checkout above (when
-          # there is one) carries no go.mod for a module cache to key on.
+          # The smoke build is tiny and the sparse checkout above carries
+          # no go.mod for a module cache to key on.
           cache: false
 
       - name: "Smoke: a real upload"
@@ -284,7 +191,7 @@ jobs:
           cd smoke
           go test ./... -covermode=atomic -coverprofile=coverage.out
           ../gocov upload \
-            -server "$SMOKE_URL" \
+            -server "$ORIGIN_URL" \
             -repo gocov/smoke \
             -commit "$(git rev-parse HEAD)" \
             -branch main \

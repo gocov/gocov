@@ -6,13 +6,10 @@ on Full (strict); the ALB terminates TLS with an ACM certificate. Nothing
 is built or configured on a machine: the image comes from GHCR by exact
 version, configuration comes from SSM Parameter Store, logs go to
 CloudWatch, and a deploy is a task-definition revision that differs from
-the last one only in the image tag.
-
-> **Migration status.** Until the Cloudflare origin is flipped (see
-> [Cutover](#cutover)), production is still the EC2 instance described at
-> the [end of this page](#the-instance-until-it-is-retired); the Fargate
-> service runs beside it. The `DEPLOY_TARGET` repository variable says
-> which one a release deploys to.
+the last one only in the image tag. (Until September 2026 this was one
+EC2 instance running [`docker-compose.prod.yml`](docker-compose.prod.yml)
+plus Caddy; that file stays as the self-host starting point and is smoked
+on every release.)
 
 ## What runs where (eu-central-1)
 
@@ -27,9 +24,9 @@ the last one only in the image tag.
 | Alarms | SNS `gocov-alarms` → email | Task CPU/memory, ALB 5xx, unhealthy targets. |
 | Database | RDS `gocov-db` | db.t4g.micro, Postgres 18, 20 GB gp3, encrypted, 7-day backups, not public. Unchanged by the migration. |
 | Network | default VPC, the three public subnets | Tasks get a public IP for outbound (GHCR, the forges) — no NAT gateway. |
-| Security groups | `gocov-alb` 443 ← internet · `gocov-ecs` 8080 ← `gocov-alb` · `gocov-db` 5432 ← `gocov-ecs` (and ← `gocov-web` until the instance is retired) | |
+| Security groups | `gocov-alb` 443 ← internet · `gocov-ecs` 8080 ← `gocov-alb` · `gocov-db` 5432 ← `gocov-ecs` | |
 | IAM | `gocov-ecs-execution` (task execution: logs, `/gocov/*` parameters) · `gocov-deploy` (the workflow's OIDC role) | The task itself has no AWS role: the server calls no AWS API. |
-| DNS (Cloudflare) | `app.gocov.dev` → CNAME to the ALB, proxied · `origin.gocov.dev` → CNAME to the ALB, DNS only | The second name is what the deploy smoke test and any direct check use; it bypasses Cloudflare the way the instance's public IP always did. |
+| DNS (Cloudflare) | `app.gocov.dev` → CNAME to the ALB, proxied · `origin.gocov.dev` → CNAME to the ALB, DNS only | The second name is what the deploy smoke test and any direct check use; it bypasses Cloudflare the way the old instance's public IP always did. |
 
 ## Configuration
 
@@ -43,7 +40,7 @@ a parameter with the same name would override one.
 
 - **Add or rotate a value**: `aws ssm put-parameter --name /gocov/NAME --type SecureString --value ... --overwrite`, then deploy (or re-deploy the current tag): a running task keeps the values it started with.
 - **Turn a forge off**: delete its parameters, then deploy. A missing parameter is not an empty variable — the template never mentions names, so removing the parameter removes the variable.
-- **Everything at once** — the first fill, from the instance's `.env` and App key: [`ecs/put-secrets.sh`](ecs/put-secrets.sh), run where those files live (step 5 of the setup).
+- **Everything at once** — from a compose-style `.env` and an App key file: [`ecs/put-secrets.sh`](ecs/put-secrets.sh), run wherever those files are (step 5 of the setup did this once, on the old instance).
 - The GitHub App private key is the PEM itself in `GOCOV_GITHUB_APP_PRIVATE_KEY`; the server accepts either a path or the key, and a parameter cannot be a file.
 
 ## Deploys
@@ -51,13 +48,13 @@ a parameter with the same name would override one.
 Every release deploys itself: `release.yml` builds the multi-arch image,
 pushes it to GHCR, then calls `deploy.yml`, which waits on the
 `production` environment for approval. Approving is the whole human part
-of a deploy. The workflow then assumes the `gocov-deploy` OIDC role and,
-for the Fargate target: registers a task definition for the tag,
-updates the service, waits for the rollout, checks that the primary
-deployment is the new revision and that the running container reports the
-released image, then smoke-tests through `origin.gocov.dev` — `/healthz`
-plus a real upload to `gocov/smoke` with the release's own CLI binary.
-Migrations apply automatically on start, as always.
+of a deploy. The workflow then assumes the `gocov-deploy` OIDC role,
+registers a task definition for the tag, updates the service, waits for
+the rollout, checks that the primary deployment is the new revision and
+that the running container reports the released image, then smoke-tests:
+`/healthz` through `origin.gocov.dev` and `app.gocov.dev`, plus a real
+upload to `gocov/smoke` through the origin with the release's own CLI
+binary. Migrations apply automatically on start, as always.
 
 **Rolling means two tasks for a moment.** The new task must be healthy
 before the old one is stopped, so for ~30 seconds both serve traffic and
@@ -75,18 +72,12 @@ Migrations are forward-only, so rolling the image back never rolls the
 schema back; if the schema itself is suspect, that is RDS point-in-time
 recovery, not a redeploy.
 
-**Target**: `DEPLOY_TARGET` (repository variable, `ecs` or `ec2`) picks
-where a release goes; the dispatch form's `target` input overrides it for
-one run, which is how the Fargate path was exercised before the cutover
-and how the instance can be deployed to after a flip back. Unset means
-`ec2`.
-
 ## Operating it
 
 - **Logs**: `aws logs tail /gocov/server --follow` (or `--since 1h`).
 - **What is running**: `aws ecs describe-services --cluster gocov --services gocov-server --query 'services[0].deployments'`.
 - **There is no shell to get into.** The image is distroless — no `sh`, so ECS Exec cannot start a session in it, and there is nothing on a task's disk to look at: the container writes nothing. Logs are the whole story.
-- **Database access**: the instance, while it exists, sits in `gocov-web`, which `gocov-db` accepts. After it is retired, a throwaway EC2 in `gocov-web` with `psql` (or a one-off Fargate task in `gocov-ecs`) is the way in; there is no standing bastion.
+- **Database access**: there is no standing bastion. `gocov-db` accepts 5432 from `gocov-ecs` only, so the way in is a throwaway EC2 (or a one-off Fargate task) in that security group with `psql`, deleted afterwards.
 - **Resize**: `cpu`/`memory` in the task template (then a deploy), `--desired-count` on the service. Horizontal scale is *possible* — the locks above are what made it so — but not needed at this load.
 - **Cost** (approx., ARM Fargate): task ≈ $15/month, ALB ≈ $20 + two public IPv4 ≈ $7, task IPv4 ≈ $4, logs ≈ $1–3. About $25–30/month more than the instance was, bought against: no machine to patch, no disk or Docker log to fill, deploy and rollback in a minute, and a rolling deploy instead of a restart gap.
 
@@ -143,8 +134,8 @@ aws iam put-role-policy --role-name gocov-ecs-execution --policy-name gocov-para
 ```
 
 **4. The deploy role learns ECS.** `gocov-deploy` (OIDC, trusted only for
-`repo:gocov/gocov:environment:production`) keeps its SSM policy for the
-instance and gains exactly what the Fargate path needs:
+`repo:gocov/gocov:environment:production`) may do exactly what a deploy
+needs and nothing else:
 
 ```sh
 aws iam put-role-policy --role-name gocov-deploy --policy-name gocov-deploy-ecs --policy-document "{
@@ -165,18 +156,14 @@ aws iam put-role-policy --role-name gocov-deploy --policy-name gocov-deploy-ecs 
      \"Action\": [\"logs:DescribeLogGroups\", \"logs:DescribeLogStreams\", \"logs:GetLogEvents\", \"logs:FilterLogEvents\"], \"Resource\": \"*\"}]}"
 ```
 
-**5. Configuration into Parameter Store.** The values live only on the
-instance, so the copy runs there: give its role `ssm:PutParameter` on
-`/gocov/*` for the duration, run the script over an SSM session, take the
-grant away.
+**5. Configuration into Parameter Store.** The values lived only on the
+old instance, so the copy ran there: its role got `ssm:PutParameter` on
+`/gocov/*` for the duration, the script ran over an SSM session, the
+grant came off again. Starting from scratch, the script runs wherever a
+`.env` and the App key are written.
 
 ```sh
-aws iam put-role-policy --role-name gocov-ec2 --policy-name gocov-put-parameters-temp --policy-document "{
-  \"Version\": \"2012-10-17\",
-  \"Statement\": [{\"Effect\": \"Allow\", \"Action\": \"ssm:PutParameter\", \"Resource\": \"arn:aws:ssm:${AWS_REGION}:${ACCOUNT}:parameter/gocov/*\"}]}"
-aws ssm start-session --target i-0ec3687170963f061
-#   sudo AWS_REGION=eu-central-1 /opt/gocov/deploy/ecs/put-secrets.sh     # on the instance; prints each name it wrote
-aws iam delete-role-policy --role-name gocov-ec2 --policy-name gocov-put-parameters-temp
+AWS_REGION=eu-central-1 deploy/ecs/put-secrets.sh path/to/.env path/to/github-app.pem
 aws ssm describe-parameters --parameter-filters Key=Path,Values=/gocov/ --query 'Parameters[].Name'
 ```
 
@@ -221,7 +208,7 @@ revisions.
 
 ```sh
 aws ecs create-cluster --cluster-name gocov
-TAG=v0.16.0   # the release running on the instance at the time
+TAG=v0.16.0   # the release in production at the time
 aws ssm describe-parameters --parameter-filters Key=Path,Values=/gocov/ \
   --query 'Parameters[].Name' --output json >params.json
 jq --arg image "ghcr.io/gocov/gocov-server:$TAG" \
@@ -268,33 +255,13 @@ aws cloudwatch put-metric-alarm --alarm-name gocov-unhealthy-targets --namespace
   --alarm-actions $TOPIC --ok-actions $TOPIC
 ```
 
-**10. DNS and the workflow.** In Cloudflare, `origin.gocov.dev` → CNAME to
-the ALB's DNS name, **DNS only**. Then the smoke test has its hostname
-and the Fargate path can be deployed to by dispatching `deploy.yml` with
-`target: ecs` while `app.gocov.dev` still points at the instance.
-
-### Cutover
-
-1. With `app.gocov.dev` still on the instance, check the service end to
-   end through the ALB: `https://origin.gocov.dev/healthz`, a dispatch of
-   `deploy.yml` with `target: ecs` (which uploads for real), and the web
-   UI by pointing `app.gocov.dev` at the ALB's address in `/etc/hosts` —
-   the certificate covers it, so sign-in, the dashboard, a badge and a
-   Connect flow can all be walked without touching DNS.
-2. Flip the origin: in Cloudflare change `app.gocov.dev` from the A record
-   to a CNAME to the ALB's DNS name, still proxied. Users see nothing —
-   the proxy holds the edge, only the origin behind it moves.
-3. `gh variable set DEPLOY_TARGET --body ecs` so the next release deploys
-   to the service. UptimeRobot stays as it is.
-4. Watch for a week or two: the alarms above, UptimeRobot, and the RDS
-   connection count (two hosts share it until the instance stops).
-5. Retire the instance: stop it (do not terminate) and, a week later,
-   terminate it and release the Elastic IP; remove `gocov-web` from
-   `gocov-db`'s ingress, the `ec2` target and the SSM policy from
-   `deploy.yml` and `gocov-deploy`, and the section below from this page.
-
-Going back at any point before step 5 is the origin flip in reverse plus
-`DEPLOY_TARGET=ec2`; the instance keeps running the release it had.
+**10. DNS.** In Cloudflare: `origin.gocov.dev` → CNAME to the ALB's DNS
+name, DNS only; `app.gocov.dev` → CNAME to the same name, proxied. (The
+cutover itself was the second record: it had been an A record to the
+instance's Elastic IP, and moving it behind the proxy was invisible to
+users. The instance was then stopped, terminated, and its Elastic IP,
+`gocov-web` security group, `gocov-ec2` role and the `gocov-deploy` SSM
+policy removed.)
 
 ### GitHub side
 
@@ -306,59 +273,9 @@ Going back at any point before step 5 is the origin flip in reverse plus
   unattended.
 - **AWS OIDC**: an IAM OIDC provider for `token.actions.githubusercontent.com`
   (audience `sts.amazonaws.com`) and the role `gocov-deploy`, trusted only
-  for `repo:gocov/gocov:environment:production`. Its two inline policies
-  are the instance one (`ssm:SendCommand` on the one instance + the
-  `AWS-RunShellScript` document, `ssm:GetCommandInvocation`) and the ECS
-  one from step 4.
+  for `repo:gocov/gocov:environment:production`, with the inline policy
+  from step 4.
 - **Smoke repo `gocov/smoke`**: a public repo with a trivial Go module
   and one test, tracked in the gocov workspace on app.gocov.dev, so the
   workspace's `GOCOV_TOKEN` secret (already used by ci.yml) accepts its
   uploads.
-- **`DEPLOY_TARGET`** repository variable, per the cutover.
-
-## The instance (until it is retired)
-
-Single EC2 instance (`gocov-server`, t4g.small, AL2023 arm64, 30 GB gp3,
-Elastic IP `18.159.247.90`, security group `gocov-web` with 80/443 open,
-instance profile `gocov-ec2` with `AmazonSSMManagedInstanceCore`) running
-docker compose: gocov-server + Caddy, the latter serving a Cloudflare
-Origin CA certificate from `deploy/certs/` behind Cloudflare's proxy.
-Management via SSM Session Manager — no SSH port.
-
-Server layout: repo cloned at `/opt/gocov`, checked out at the deployed
-release tag (detached — a deploy syncs it, and a local edit to a tracked
-file makes the next deploy fail loudly at that checkout, on purpose),
-secrets in `/opt/gocov/deploy/.env` (never committed, `chmod 600`), run
-with:
-
-```sh
-cd /opt/gocov/deploy && docker compose -f docker-compose.prod.yml up -d
-```
-
-The compose file pulls `ghcr.io/gocov/gocov-server` at the exact version
-pinned by `GOCOV_VERSION` in `.env` — nothing is built on this machine.
-
-`.env` keys: GOCOV_VERSION (the deployed release tag — written by the
-deploy workflow, not by hand), DATABASE_URL (RDS),
-GOCOV_BASE_URL=https://app.gocov.dev, GOCOV_MODE=hosted, GOCOV_SECRET_KEY,
-GOCOV_GITHUB_APP_ID, GOCOV_OAUTH_GITHUB_KEY/SECRET,
-GOCOV_OAUTH_BITBUCKET_KEY/SECRET, GOCOV_GITHUB_WEBHOOK_SECRET.
-
-The GitHub App private key is the exception: it is not in .env. The compose
-file defaults GOCOV_GITHUB_APP_PRIVATE_KEY to `/run/gocov-app-key.pem` and
-mounts `/opt/gocov/deploy/github-app.pem` there. The container runs as
-**uid 65532** (distroless nonroot), so that file must be readable by that
-uid — `chmod 600` and `sudo chown 65532 /opt/gocov/deploy/github-app.pem`;
-getting it wrong is a crash loop at boot, not a degraded feature. Check
-without touching the running service:
-
-```sh
-docker run --rm --user 65532:65532 -v /opt/gocov/deploy/github-app.pem:/run/k.pem:ro alpine:3.21 cat /run/k.pem > /dev/null && echo readable
-```
-
-A deploy to it (`DEPLOY_TARGET=ec2`, or `target: ec2` on a dispatch) runs
-the roll script over SSM: sync the checkout to the tag, pin
-`GOCOV_VERSION`, `pull`, `up -d`, wait for the container healthcheck,
-assert the running binary's version — then the same smoke test, through
-`app.gocov.dev`. The manual equivalent is editing `GOCOV_VERSION` in
-`.env` and `docker compose -f docker-compose.prod.yml pull server && docker compose -f docker-compose.prod.yml up -d`.
