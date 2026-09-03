@@ -45,10 +45,6 @@ env:
   CLUSTER: gocov
   SERVICE: gocov-server
   LOG_GROUP: /gocov/server
-  # The ALB's own hostname (Cloudflare DNS-only), so the smoke test proves
-  # our stack rather than Cloudflare's cache; the user-facing hostname is
-  # checked too, once, because that is what people reach.
-  ORIGIN_URL: https://origin.gocov.dev
   PUBLIC_URL: https://app.gocov.dev
 
 jobs:
@@ -165,9 +161,7 @@ jobs:
             --query 'tasks[0].containers[0].image' --output text | grep -Fx "$IMAGE:$TAG"
 
       - name: "Smoke: /healthz"
-        run: |
-          curl -fsS --retry 5 --retry-delay 3 --retry-all-errors "$ORIGIN_URL/healthz"
-          curl -fsS --retry 5 --retry-delay 3 --retry-all-errors "$PUBLIC_URL/healthz"
+        run: curl -fsS --retry 5 --retry-delay 3 --retry-all-errors "$PUBLIC_URL/healthz"
 
       - uses: actions/setup-go@v6
         with:
@@ -179,7 +173,9 @@ jobs:
       - name: "Smoke: a real upload"
         # The whole path a user's CI takes: the released CLI binary from
         # this tag's assets, a real coverage profile from a real checkout,
-        # uploaded to the smoke repo on the freshly deployed server.
+        # uploaded to the smoke repo on the freshly deployed server. The
+        # CLI's default server URL is the hosted instance, which is
+        # exactly the thing under test, so no -server flag.
         env:
           GOCOV_TOKEN: ${{ secrets.GOCOV_TOKEN }}
         run: |
@@ -191,7 +187,6 @@ jobs:
           cd smoke
           go test ./... -covermode=atomic -coverprofile=coverage.out
           ../gocov upload \
-            -server "$ORIGIN_URL" \
             -repo gocov/smoke \
             -commit "$(git rev-parse HEAD)" \
             -branch main \

@@ -18,15 +18,15 @@ on every release.)
 | ECS cluster / service | `gocov` / `gocov-server` | 1 task, Fargate, ARM64 (Graviton), 0.5 vCPU / 1 GB. Rolling deploys with the circuit breaker on: a revision whose task never turns healthy is rolled back by ECS itself. |
 | Task definition | family `gocov-server` | Registered by `deploy.yml` from [`ecs/task-definition.json`](ecs/task-definition.json); the workflow fills in the image and the secrets. |
 | Load balancer | ALB `gocov`, target group `gocov-server` | HTTPS 443 only, `ELBSecurityPolicy-TLS13-1-2-2021-06`, idle timeout 120 s for large uploads; target health is `GET /healthz`. |
-| Certificate | ACM, `app.gocov.dev` + `origin.gocov.dev` | DNS-validated, auto-renews. |
+| Certificate | ACM, `app.gocov.dev` | DNS-validated, auto-renews. |
 | Configuration | SSM Parameter Store `/gocov/*` | One SecureString per variable, [below](#configuration). |
 | Logs | CloudWatch `/gocov/server` | 30-day retention. |
 | Alarms | SNS `gocov-alarms` → email | Task CPU/memory, ALB 5xx, unhealthy targets. |
 | Database | RDS `gocov-db` | db.t4g.micro, Postgres 18, 20 GB gp3, encrypted, 7-day backups, not public. Unchanged by the migration. |
 | Network | default VPC, the three public subnets | Tasks get a public IP for outbound (GHCR, the forges) — no NAT gateway. |
-| Security groups | `gocov-alb` 443 ← internet · `gocov-ecs` 8080 ← `gocov-alb` · `gocov-db` 5432 ← `gocov-ecs` | |
+| Security groups | `gocov-alb` 443 ← Cloudflare's published ranges only · `gocov-ecs` 8080 ← `gocov-alb` · `gocov-db` 5432 ← `gocov-ecs` | Nothing reaches the origin except through the proxy; the deploy smoke test goes the way users do. |
 | IAM | `gocov-ecs-execution` (task execution: logs, `/gocov/*` parameters) · `gocov-deploy` (the workflow's OIDC role) | The task itself has no AWS role: the server calls no AWS API. |
-| DNS (Cloudflare) | `app.gocov.dev` → CNAME to the ALB, proxied · `origin.gocov.dev` → CNAME to the ALB, DNS only | The second name is what the deploy smoke test and any direct check use; it bypasses Cloudflare the way the old instance's public IP always did. |
+| DNS (Cloudflare) | `app.gocov.dev` → CNAME to the ALB, proxied | One name. Full (strict): Cloudflare verifies the ACM certificate on the ALB. |
 
 ## Configuration
 
@@ -50,10 +50,10 @@ pushes it to GHCR, then calls `deploy.yml`, which waits on the
 of a deploy. The workflow then assumes the `gocov-deploy` OIDC role,
 registers a task definition for the tag, updates the service, waits for
 the rollout, checks that the primary deployment is the new revision and
-that the running container reports the released image, then smoke-tests:
-`/healthz` through `origin.gocov.dev` and `app.gocov.dev`, plus a real
-upload to `gocov/smoke` through the origin with the release's own CLI
-binary. Migrations apply automatically on start, as always.
+that the running container reports the released image, then smoke-tests
+`app.gocov.dev` the way a user reaches it: `/healthz`, plus a real upload
+to `gocov/smoke` with the release's own CLI binary. Migrations apply
+automatically on start, as always.
 
 **Rolling means two tasks for a moment.** The new task must be healthy
 before the old one is stopped, so for ~30 seconds both serve traffic and
@@ -94,13 +94,19 @@ SUBNETS=subnet-04d8167fc69c04518,subnet-0501b5d54ff086ec4,subnet-092f316c9d744e6
 DB_SG=sg-0112b298a08335eff   # gocov-db
 ```
 
-**1. Security groups.** The ALB is the only thing the internet reaches; the
-tasks only hear from the ALB; the database only from the tasks.
+**1. Security groups.** Only Cloudflare reaches the ALB (its published
+ranges; re-run the loop if the list changes); the tasks only hear from
+the ALB; the database only from the tasks.
 
 ```sh
 ALB_SG=$(aws ec2 create-security-group --group-name gocov-alb --vpc-id $VPC \
-  --description "gocov ALB: 443 from the internet" --query GroupId --output text)
-aws ec2 authorize-security-group-ingress --group-id $ALB_SG --protocol tcp --port 443 --cidr 0.0.0.0/0
+  --description "gocov ALB: 443 from Cloudflare" --query GroupId --output text)
+for cidr in $(curl -fsS https://www.cloudflare.com/ips-v4); do
+  aws ec2 authorize-security-group-ingress --group-id $ALB_SG --protocol tcp --port 443 --cidr $cidr
+done
+for cidr in $(curl -fsS https://www.cloudflare.com/ips-v6); do
+  aws ec2 authorize-security-group-ingress --group-id $ALB_SG --ip-permissions "IpProtocol=tcp,FromPort=443,ToPort=443,Ipv6Ranges=[{CidrIpv6=$cidr}]"
+done
 ECS_SG=$(aws ec2 create-security-group --group-name gocov-ecs --vpc-id $VPC \
   --description "gocov Fargate tasks: 8080 from the ALB" --query GroupId --output text)
 aws ec2 authorize-security-group-ingress --group-id $ECS_SG --protocol tcp --port 8080 --source-group $ALB_SG
@@ -166,12 +172,11 @@ aws ssm put-parameter --name /gocov/GOCOV_GITHUB_APP_PRIVATE_KEY --type SecureSt
 aws ssm describe-parameters --parameter-filters Key=Path,Values=/gocov/ --query 'Parameters[].Name'
 ```
 
-**6. Certificate.** Request, then create the validation CNAMEs it asks for
+**6. Certificate.** Request, then create the validation CNAME it asks for
 in Cloudflare (DNS only — a proxied validation record does not validate).
 
 ```sh
-CERT=$(aws acm request-certificate --domain-name app.gocov.dev \
-  --subject-alternative-names origin.gocov.dev --validation-method DNS \
+CERT=$(aws acm request-certificate --domain-name app.gocov.dev --validation-method DNS \
   --query CertificateArn --output text)
 aws acm describe-certificate --certificate-arn $CERT \
   --query 'Certificate.DomainValidationOptions[].ResourceRecord'
@@ -254,13 +259,12 @@ aws cloudwatch put-metric-alarm --alarm-name gocov-unhealthy-targets --namespace
   --alarm-actions $TOPIC --ok-actions $TOPIC
 ```
 
-**10. DNS.** In Cloudflare: `origin.gocov.dev` → CNAME to the ALB's DNS
-name, DNS only; `app.gocov.dev` → CNAME to the same name, proxied. (The
-cutover itself was the second record: it had been an A record to the
-instance's Elastic IP, and moving it behind the proxy was invisible to
-users. The instance was then stopped, terminated, and its Elastic IP,
-`gocov-web` security group, `gocov-ec2` role and the `gocov-deploy` SSM
-policy removed.)
+**10. DNS.** In Cloudflare: `app.gocov.dev` → CNAME to the ALB's DNS
+name, proxied. (The cutover was exactly this record: it had been an A
+record to the instance's Elastic IP, and moving it behind the proxy was
+invisible to users. The instance was then stopped, terminated, and its
+Elastic IP, `gocov-web` security group, `gocov-ec2` role and the
+`gocov-deploy` SSM policy removed.)
 
 ### GitHub side
 
