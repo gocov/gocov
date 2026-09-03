@@ -25,6 +25,7 @@ type Store struct {
 	files      map[int64][]*store.UploadFile // keyed by upload ID
 	reports    map[int64]*store.CommitReport // merged reports, keyed by report ID
 	crLocks    map[string]*sync.Mutex        // per-commit recompute locks
+	grantLocks map[int64]*sync.Mutex         // per-workspace grant-refresh locks
 	crPush     map[string]*sync.Mutex        // per-commit status-push locks
 	crStatus   map[string]int64              // last pushed status version, keyed repoID:sha
 	workspaces map[int64]*store.Workspace
@@ -42,6 +43,7 @@ func New() *Store {
 		files:      map[int64][]*store.UploadFile{},
 		reports:    map[int64]*store.CommitReport{},
 		crLocks:    map[string]*sync.Mutex{},
+		grantLocks: map[int64]*sync.Mutex{},
 		crPush:     map[string]*sync.Mutex{},
 		crStatus:   map[string]int64{},
 		workspaces: map[int64]*store.Workspace{},
@@ -601,6 +603,22 @@ func (s *Store) WithCommitReportTx(ctx context.Context, repoID int64, commitSHA 
 	defer m.Unlock()
 	// The store's own methods satisfy store.CommitTx; the per-commit mutex
 	// gives the same serialization the Postgres advisory lock does.
+	return fn(ctx, s)
+}
+
+// WithGrantLock serializes fn per workspace with a mutex — within one
+// process that is exactly the guarantee the Postgres advisory lock gives
+// across many. The store's own methods satisfy store.GrantTx.
+func (s *Store) WithGrantLock(ctx context.Context, workspaceID int64, fn func(context.Context, store.GrantTx) error) error {
+	s.mu.Lock()
+	m := s.grantLocks[workspaceID]
+	if m == nil {
+		m = new(sync.Mutex)
+		s.grantLocks[workspaceID] = m
+	}
+	s.mu.Unlock()
+	m.Lock()
+	defer m.Unlock()
 	return fn(ctx, s)
 }
 

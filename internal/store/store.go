@@ -303,6 +303,17 @@ type Store interface {
 	// SetWorkspaceGitLabGrant is SetWorkspaceBitbucketGrant's GitLab
 	// twin, with the same rotation-safety contract.
 	SetWorkspaceGitLabGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error
+	// WithGrantLock serializes refreshes of one workspace's Bitbucket or
+	// GitLab grant across every server instance sharing the store, not
+	// just within one process. Both forges rotate the refresh token on
+	// every use, so two instances refreshing the same grant at once would
+	// each invalidate the token the other just stored and drop the grant
+	// — the one thing a rolling deploy, which briefly runs two instances,
+	// must not do. fn re-reads the stored token through the passed
+	// GrantTx (the freshest one, from whoever held the lock before it)
+	// and persists the rotated one through it too; the lock is released
+	// when fn returns. Locks on different workspaces never contend.
+	WithGrantLock(ctx context.Context, workspaceID int64, fn func(ctx context.Context, tx GrantTx) error) error
 
 	// SetUserWorkspaces replaces a user's workspace memberships with the
 	// given set: memberships not listed are removed and listed ones are
@@ -405,4 +416,15 @@ type CommitTx interface {
 	UploadFiles(ctx context.Context, uploadID int64) ([]*UploadFile, error)
 	LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*CommitReport, error)
 	UpsertCommitReport(ctx context.Context, cr *CommitReport) error
+}
+
+// GrantTx is the store access available inside WithGrantLock. On Postgres
+// every call runs on the one locked transaction, for the same reason as
+// CommitTx: a refresh that held the lock on one pooled connection and
+// reached for a second to read or persist the token would deadlock the
+// pool under enough simultaneous cold-cache uploads of one workspace.
+type GrantTx interface {
+	WorkspaceByPrefix(ctx context.Context, prefix string) (*Workspace, error)
+	SetWorkspaceBitbucketGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error
+	SetWorkspaceGitLabGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error
 }

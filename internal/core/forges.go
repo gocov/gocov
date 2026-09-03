@@ -12,6 +12,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -145,12 +146,13 @@ type GitHubApp interface {
 // tokenLeeway retires cached access tokens before their 2h expiry.
 const tokenLeeway = 5 * time.Minute
 
-// tokenCache holds grant access tokens in memory — never the store —
-// and a per-workspace mutex that serializes refreshes.
+// tokenCache holds grant access tokens in memory — never the store.
+// Refreshes are not serialized here: that lock has to hold across
+// every instance sharing the database, so it is the store's
+// WithGrantLock, not a mutex in this process.
 type tokenCache struct {
 	mu     sync.Mutex
 	tokens map[int64]cachedToken
-	locks  map[int64]*sync.Mutex
 }
 
 type cachedToken struct {
@@ -159,7 +161,7 @@ type cachedToken struct {
 }
 
 func newTokenCache() *tokenCache {
-	return &tokenCache{tokens: map[int64]cachedToken{}, locks: map[int64]*sync.Mutex{}}
+	return &tokenCache{tokens: map[int64]cachedToken{}}
 }
 
 func (c *tokenCache) get(workspaceID int64) (string, bool) {
@@ -182,17 +184,6 @@ func (c *tokenCache) drop(workspaceID int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.tokens, workspaceID)
-}
-
-func (c *tokenCache) lock(workspaceID int64) *sync.Mutex {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	l, ok := c.locks[workspaceID]
-	if !ok {
-		l = &sync.Mutex{}
-		c.locks[workspaceID] = l
-	}
-	return l
 }
 
 // For builds a forge client for the repo through the workspace's
@@ -360,47 +351,52 @@ func (f *Forges) grantForge(ctx context.Context, ws *store.Workspace, forgeName 
 
 // bitbucketAccessToken returns a live access token for the workspace's
 // grant, refreshing when the in-memory cache is empty or near expiry.
-// Refreshes are serialized per workspace and re-read the stored refresh
-// token under the lock, because every refresh rotates it: the rotated
-// token is persisted (narrow UPDATE, broken flag cleared) before the
-// access token is handed out.
+// Refreshes are serialized per workspace across every instance sharing
+// the store (WithGrantLock) and re-read the stored refresh token under
+// the lock, because every refresh rotates it: the rotated token is
+// persisted (narrow UPDATE, broken flag cleared) before the access token
+// is handed out.
 func (f *Forges) bitbucketAccessToken(ctx context.Context, ws *store.Workspace) (string, error) {
-	lock := f.bbTokens.lock(ws.ID)
-	lock.Lock()
-	defer lock.Unlock()
-
 	if token, ok := f.bbTokens.get(ws.ID); ok {
 		return token, nil
 	}
-	// The freshest stored token — a request holding the lock before us
-	// may have rotated it since our caller read the workspace.
-	fresh, err := f.Store.WorkspaceByPrefix(ctx, ws.Prefix)
-	if err != nil {
-		return "", err
-	}
-	if fresh.BitbucketRefreshToken == "" {
-		// Disconnected under our feet, or the stored token could not be
-		// decrypted (rotated GOCOV_SECRET_KEY) — either way a reconnect
-		// is the fix.
-		return "", fmt.Errorf("%w: workspace %s has no usable grant", forge.ErrCredentialsRevoked, ws.Prefix)
-	}
-	grant, err := f.Bitbucket.Refresh(ctx, fresh.BitbucketRefreshToken)
-	if err != nil {
-		return "", err
-	}
-	newRefresh := grant.RefreshToken
-	if newRefresh == "" {
+	var token string
+	err := f.Store.WithGrantLock(ctx, ws.ID, func(ctx context.Context, tx store.GrantTx) error {
+		// A request in this process that held the lock before us has
+		// filled the cache; one in another instance has rotated the
+		// stored token, which is why it is re-read here.
+		if t, ok := f.bbTokens.get(ws.ID); ok {
+			token = t
+			return nil
+		}
+		fresh, err := tx.WorkspaceByPrefix(ctx, ws.Prefix)
+		if err != nil {
+			return err
+		}
+		if fresh.BitbucketRefreshToken == "" {
+			// Disconnected under our feet, or the stored token could not
+			// be decrypted (rotated GOCOV_SECRET_KEY) — either way a
+			// reconnect is the fix.
+			return fmt.Errorf("%w: workspace %s has no usable grant", forge.ErrCredentialsRevoked, ws.Prefix)
+		}
+		grant, err := f.Bitbucket.Refresh(ctx, fresh.BitbucketRefreshToken)
+		if err != nil {
+			return err
+		}
 		// Defensive: a non-rotating answer keeps the stored token.
-		newRefresh = fresh.BitbucketRefreshToken
-	}
-	if err := f.Store.SetWorkspaceBitbucketGrant(ctx, ws.ID, fresh.BitbucketGrantAccount, newRefresh, false); err != nil {
-		// The old token is already invalidated by the rotation; losing
-		// the new one breaks the next refresh, not this upload — loud
-		// log so the operator sees it before the 2h cache runs out.
-		f.Log.Error("persisting rotated bitbucket refresh token", "workspace", ws.Prefix, "err", err)
-	}
-	f.bbTokens.put(ws.ID, grant.AccessToken, grant.TTL)
-	return grant.AccessToken, nil
+		newRefresh := cmp.Or(grant.RefreshToken, fresh.BitbucketRefreshToken)
+		if err := tx.SetWorkspaceBitbucketGrant(ctx, ws.ID, fresh.BitbucketGrantAccount, newRefresh, false); err != nil {
+			// The old token is already invalidated by the rotation;
+			// losing the new one breaks the next refresh, not this
+			// upload — loud log so the operator sees it before the 2h
+			// cache runs out.
+			f.Log.Error("persisting rotated bitbucket refresh token", "workspace", ws.Prefix, "err", err)
+		}
+		f.bbTokens.put(ws.ID, grant.AccessToken, grant.TTL)
+		token = grant.AccessToken
+		return nil
+	})
+	return token, err
 }
 
 // markGrantBroken records the revoked grant so the settings page shows
@@ -439,49 +435,38 @@ func (f *Forges) gitlabGrantForge(ctx context.Context, ws *store.Workspace, forg
 	return f.GitLab.ForgeClient(token)
 }
 
-// gitlabAccessToken returns a live access token for the workspace's
-// grant, refreshing when the in-memory cache is empty or near expiry.
-// Refreshes are serialized per workspace and re-read the stored refresh
-// token under the lock, because every refresh rotates it: the rotated
-// token is persisted (narrow UPDATE, broken flag cleared) before the
-// access token is handed out.
+// gitlabAccessToken is bitbucketAccessToken's GitLab twin: same cache,
+// same cross-instance lock, same rotate-then-persist order.
 func (f *Forges) gitlabAccessToken(ctx context.Context, ws *store.Workspace) (string, error) {
-	lock := f.glTokens.lock(ws.ID)
-	lock.Lock()
-	defer lock.Unlock()
-
 	if token, ok := f.glTokens.get(ws.ID); ok {
 		return token, nil
 	}
-	// The freshest stored token — a request holding the lock before us
-	// may have rotated it since our caller read the workspace.
-	fresh, err := f.Store.WorkspaceByPrefix(ctx, ws.Prefix)
-	if err != nil {
-		return "", err
-	}
-	if fresh.GitLabRefreshToken == "" {
-		// Disconnected under our feet, or the stored token could not be
-		// decrypted (rotated GOCOV_SECRET_KEY) — either way a reconnect
-		// is the fix.
-		return "", fmt.Errorf("%w: workspace %s has no usable grant", forge.ErrCredentialsRevoked, ws.Prefix)
-	}
-	grant, err := f.GitLab.Refresh(ctx, fresh.GitLabRefreshToken, RedirectURI(f.BaseURL, "gitlab"))
-	if err != nil {
-		return "", err
-	}
-	newRefresh := grant.RefreshToken
-	if newRefresh == "" {
-		// Defensive: a non-rotating answer keeps the stored token.
-		newRefresh = fresh.GitLabRefreshToken
-	}
-	if err := f.Store.SetWorkspaceGitLabGrant(ctx, ws.ID, fresh.GitLabGrantAccount, newRefresh, false); err != nil {
-		// The old token is already invalidated by the rotation; losing
-		// the new one breaks the next refresh, not this upload — loud
-		// log so the operator sees it before the cache runs out.
-		f.Log.Error("persisting rotated gitlab refresh token", "workspace", ws.Prefix, "err", err)
-	}
-	f.glTokens.put(ws.ID, grant.AccessToken, grant.TTL)
-	return grant.AccessToken, nil
+	var token string
+	err := f.Store.WithGrantLock(ctx, ws.ID, func(ctx context.Context, tx store.GrantTx) error {
+		if t, ok := f.glTokens.get(ws.ID); ok {
+			token = t
+			return nil
+		}
+		fresh, err := tx.WorkspaceByPrefix(ctx, ws.Prefix)
+		if err != nil {
+			return err
+		}
+		if fresh.GitLabRefreshToken == "" {
+			return fmt.Errorf("%w: workspace %s has no usable grant", forge.ErrCredentialsRevoked, ws.Prefix)
+		}
+		grant, err := f.GitLab.Refresh(ctx, fresh.GitLabRefreshToken, RedirectURI(f.BaseURL, "gitlab"))
+		if err != nil {
+			return err
+		}
+		newRefresh := cmp.Or(grant.RefreshToken, fresh.GitLabRefreshToken)
+		if err := tx.SetWorkspaceGitLabGrant(ctx, ws.ID, fresh.GitLabGrantAccount, newRefresh, false); err != nil {
+			f.Log.Error("persisting rotated gitlab refresh token", "workspace", ws.Prefix, "err", err)
+		}
+		f.glTokens.put(ws.ID, grant.AccessToken, grant.TTL)
+		token = grant.AccessToken
+		return nil
+	})
+	return token, err
 }
 
 // markGitLabGrantBroken records the revoked grant so the settings page

@@ -1,0 +1,39 @@
+{
+  "family": "gocov-server",
+  "requiresCompatibilities": ["FARGATE"],
+  "networkMode": "awsvpc",
+  "cpu": "512",
+  "memory": "1024",
+  "runtimePlatform": { "cpuArchitecture": "ARM64", "operatingSystemFamily": "LINUX" },
+  "executionRoleArn": "arn:aws:iam::773658094601:role/gocov-ecs-execution",
+  "containerDefinitions": [
+    {
+      "name": "server",
+      "image": "ghcr.io/gocov/gocov-server:SET-BY-DEPLOY-WORKFLOW",
+      "essential": true,
+      "portMappings": [{ "containerPort": 8080, "protocol": "tcp" }],
+      "environment": [
+        { "name": "GOCOV_ADDR", "value": ":8080" },
+        { "name": "GOCOV_BASE_URL", "value": "https://app.gocov.dev" },
+        { "name": "GOCOV_MODE", "value": "hosted" }
+      ],
+      "secrets": [],
+      "healthCheck": {
+        "command": ["CMD", "/usr/local/bin/gocov-server", "healthcheck"],
+        "interval": 10,
+        "timeout": 3,
+        "retries": 3,
+        "startPeriod": 30
+      },
+      "stopTimeout": 30,
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/gocov/server",
+          "awslogs-region": "eu-central-1",
+          "awslogs-stream-prefix": "server"
+        }
+      }
+    }
+  ]
+}
