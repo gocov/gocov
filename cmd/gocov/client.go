@@ -21,6 +21,7 @@ type uploadRequest struct {
 	Format       string
 	PathPrefix   string
 	Part         string
+	Ignore       []string // ignore patterns, one `ignore` field each
 	ProfileData  []byte
 	ProfileName  string
 	Uploader     string
@@ -42,6 +43,7 @@ type uploadResponse struct {
 	BuildStatus  string   `json:"build_status"`
 	CodeInsights string   `json:"code_insights"`
 	RepoCreated  bool     `json:"repo_created"`
+	IgnoredFiles int      `json:"ignored_files"`
 	Gate         string   `json:"gate"`
 
 	DiffPct          *float64 `json:"diff_pct"`
@@ -96,6 +98,11 @@ func upload(req uploadRequest) (*uploadResponse, error) {
 			continue
 		}
 		if err := mw.WriteField(k, v); err != nil {
+			return nil, err
+		}
+	}
+	for _, p := range req.Ignore {
+		if err := mw.WriteField("ignore", p); err != nil {
 			return nil, err
 		}
 	}

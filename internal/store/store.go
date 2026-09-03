@@ -115,7 +115,12 @@ type Repo struct {
 	// inverted so the zero value keeps the default: a public repo's
 	// report pages are anonymously viewable unless a member turns them off.
 	PublicReportsDisabled bool
-	CreatedAt             time.Time
+	// IgnorePaths are the repo's ignore patterns (internal/ignore): report
+	// paths matching any of them are dropped from every upload before its
+	// totals, diff coverage, gate and merge are computed. Validated on
+	// save; the upload path may add its own on top.
+	IgnorePaths []string
+	CreatedAt   time.Time
 }
 
 // ReportsPublic reports whether the repo's report pages may be served to
@@ -178,6 +183,10 @@ type UploadMeta struct {
 	// the server only, never from a request field: the UI renders it as
 	// "unverified contributor upload".
 	Tokenless bool `json:"tokenless,omitzero"`
+	// IgnoredFiles is how many report files the repo's and the upload's
+	// ignore patterns dropped before the upload was measured; 0 when none
+	// matched or no pattern was set.
+	IgnoredFiles int `json:"ignored_files,omitzero"`
 }
 
 // User is a web UI account, identified by the forge account it signed in

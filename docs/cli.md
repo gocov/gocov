@@ -31,6 +31,7 @@ variables, falling back to `git`.
 | `-format`      | detect from content              | `go`, `lcov`, `jacoco`, `cobertura`, `clover` or `simplecov`                                   |
 | `-path-prefix` | from `go.mod` for Go profiles    | prefix mapping profile paths to repo paths, e.g. the Go module path — see below                |
 | `-part`        | `$GOCOV_PART`, else `default`    | names this slice of the commit's coverage when several jobs upload — see [Parts](parts.md)     |
+| `-ignore`      | `$GOCOV_IGNORE`, else none       | leave matching files out of the report, e.g. `cmd/preview/**`; repeatable or comma-separated — see [Ignoring files](ignoring-files.md) |
 | `-fail-on-gate`| off                              | exit non-zero when the server reports a failed [coverage gate](coverage-gate.md)               |
 
 ## Environment variables
@@ -40,9 +41,10 @@ variables, falling back to `git`.
 | `GOCOV_TOKEN`  | `-token`        |
 | `GOCOV_SERVER` | `-server`       |
 | `GOCOV_PART`   | `-part`         |
+| `GOCOV_IGNORE` | `-ignore`       |
 
-`GOCOV_PART` is handy for matrix jobs that already expose the variant in the environment. Flags win over the
-environment.
+`GOCOV_PART` is handy for matrix jobs that already expose the variant in the environment. `GOCOV_IGNORE` takes
+several patterns separated by commas or newlines. Flags win over the environment.
 
 ## Uploading without a token
 
@@ -81,12 +83,13 @@ matched by suffix and usually need nothing. Symptoms and details:
 
 ## Output and exit code
 
-A successful upload prints the totals the server computed — coverage, delta, diff coverage, and the status of each
-forge surface (`build status`, `pr comment`, `code insights`: `posted`, or `skipped` with the reason) plus the gate
-verdict:
+A successful upload prints the totals the server computed — coverage, delta, how many files the
+[ignore patterns](ignoring-files.md) dropped (when any did), diff coverage, and the status of each forge surface
+(`build status`, `pr comment`, `code insights`: `posted`, or `skipped` with the reason) plus the gate verdict:
 
 ```
 uploaded: 82.0% (1230/1500 statements), delta +0.4%
+ignored: 3 files
 diff coverage: 91.7% (22/24 changed lines)
 build status: posted
 pr comment: posted

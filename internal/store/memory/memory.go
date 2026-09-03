@@ -4,6 +4,7 @@ package memory
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -69,12 +70,21 @@ func (s *Store) CreateRepo(_ context.Context, r *store.Repo) error {
 	if r.CreatedAt.IsZero() {
 		r.CreatedAt = time.Now()
 	}
-	cp := *r
+	cp := copyRepo(r)
 	// Only SetRepoVisibility writes the stamp (see the Store contract); a
 	// fresh row starts as "never asked", mirroring Postgres's NULL default.
 	cp.VisibilityCheckedAt = time.Time{}
-	s.repos[r.ID] = &cp
+	s.repos[r.ID] = cp
 	return nil
+}
+
+// copyRepo deep-copies a repo so callers and the store never alias: the
+// slice field would otherwise be shared, and Postgres hands back a fresh
+// one on every read.
+func copyRepo(r *store.Repo) *store.Repo {
+	cp := *r
+	cp.IgnorePaths = slices.Clone(r.IgnorePaths)
+	return &cp
 }
 
 func (s *Store) UpdateRepo(_ context.Context, r *store.Repo) error {
@@ -84,7 +94,7 @@ func (s *Store) UpdateRepo(_ context.Context, r *store.Repo) error {
 	if !ok {
 		return store.ErrNotFound
 	}
-	cp := *r
+	cp := copyRepo(r)
 	if cp.CreatedAt.IsZero() {
 		cp.CreatedAt = existing.CreatedAt
 	}
@@ -93,7 +103,7 @@ func (s *Store) UpdateRepo(_ context.Context, r *store.Repo) error {
 	// concurrent refresh.
 	cp.Visibility = existing.Visibility
 	cp.VisibilityCheckedAt = existing.VisibilityCheckedAt
-	s.repos[r.ID] = &cp
+	s.repos[r.ID] = cp
 	return nil
 }
 
@@ -152,8 +162,7 @@ func (s *Store) RepoByID(_ context.Context, id int64) (*store.Repo, error) {
 	if !ok {
 		return nil, store.ErrNotFound
 	}
-	cp := *r
-	return &cp, nil
+	return copyRepo(r), nil
 }
 
 func (s *Store) RepoBySlug(_ context.Context, slug string) (*store.Repo, error) {
@@ -161,8 +170,7 @@ func (s *Store) RepoBySlug(_ context.Context, slug string) (*store.Repo, error) 
 	defer s.mu.Unlock()
 	for _, r := range s.repos {
 		if r.Slug == slug {
-			cp := *r
-			return &cp, nil
+			return copyRepo(r), nil
 		}
 	}
 	return nil, store.ErrNotFound
@@ -173,8 +181,7 @@ func (s *Store) RepoByToken(_ context.Context, token string) (*store.Repo, error
 	defer s.mu.Unlock()
 	for _, r := range s.repos {
 		if r.Token == token {
-			cp := *r
-			return &cp, nil
+			return copyRepo(r), nil
 		}
 	}
 	return nil, store.ErrNotFound
@@ -185,8 +192,7 @@ func (s *Store) ListRepos(_ context.Context) ([]*store.Repo, error) {
 	defer s.mu.Unlock()
 	out := make([]*store.Repo, 0, len(s.repos))
 	for _, r := range s.repos {
-		cp := *r
-		out = append(out, &cp)
+		out = append(out, copyRepo(r))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Slug < out[j].Slug })
 	return out, nil

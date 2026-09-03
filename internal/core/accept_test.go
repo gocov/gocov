@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
@@ -83,5 +84,80 @@ func TestAcceptStoresMergesAndReports(t *testing.T) {
 	}
 	if len(parts) != 2 {
 		t.Errorf("commit has %d parts, want 2", len(parts))
+	}
+}
+
+// Ignore patterns — the repo's and the upload's together — drop files
+// before anything measures the profile, so the stored rows, the totals
+// and the merged report all agree, and the upload records how many went.
+func TestAcceptAppliesIgnorePatterns(t *testing.T) {
+	p, st, repo := newPipeline(t, store.Gate{})
+	p.Blobs = blobmem.New()
+	ctx := context.Background()
+	repo.IgnorePaths = []string{"**/*.pb.go"}
+	if err := st.UpdateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+
+	files := func(paths ...string) *profile.Profile {
+		var out profile.Profile
+		for _, path := range paths {
+			out.Files = append(out.Files, prof(path, 1, 2).Files...)
+		}
+		return &out
+	}
+	res, err := p.Accept(ctx, Submission{
+		Repo: repo, Commit: "c1", Branch: "main", Part: "default", Format: "go",
+		PathPrefix: "example.com/m",
+		Raw:        []byte("mode: set\n"),
+		Profile:    files("example.com/m/a.go", "example.com/m/api/types.pb.go", "example.com/m/cmd/preview/main.go"),
+		Ignore:     []string{"cmd/preview/**"}, // matches through the path prefix
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Upload.Meta.IgnoredFiles != 2 {
+		t.Errorf("ignored files = %d, want 2", res.Upload.Meta.IgnoredFiles)
+	}
+	if res.Upload.TotalStmts != 2 || res.Merged.Upload.TotalStmts != 2 {
+		t.Errorf("upload %d, merged %d statements, want 2 (a.go only)", res.Upload.TotalStmts, res.Merged.Upload.TotalStmts)
+	}
+	rows, err := st.UploadFiles(ctx, res.Upload.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Path != "example.com/m/a.go" {
+		t.Errorf("stored files = %+v, want a.go alone", rows)
+	}
+
+	// No patterns anywhere: nothing is dropped and nothing is recorded.
+	repo.IgnorePaths = nil
+	res, err = p.Accept(ctx, Submission{
+		Repo: repo, Commit: "c2", Branch: "main", Part: "default", Format: "go",
+		Raw: []byte("mode: set\n"), Profile: files("example.com/m/a.go", "example.com/m/api/types.pb.go"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Upload.Meta.IgnoredFiles != 0 || res.Upload.TotalStmts != 4 {
+		t.Errorf("without patterns: %d ignored, %d statements; want 0 and 4", res.Upload.Meta.IgnoredFiles, res.Upload.TotalStmts)
+	}
+}
+
+// A pattern set that leaves nothing to measure is refused: a 0/0 report
+// would fail the gate, paint the badge red and become the next baseline.
+func TestAcceptRefusesAllIgnored(t *testing.T) {
+	p, _, repo := newPipeline(t, store.Gate{})
+	p.Blobs = blobmem.New()
+	repo.IgnorePaths = []string{"**"}
+	_, err := p.Accept(context.Background(), Submission{
+		Repo: repo, Commit: "c1", Branch: "main", Part: "default", Format: "go",
+		Raw: []byte("mode: set\n"), Profile: prof("example.com/m/a.go", 1, 2),
+	})
+	if !errors.Is(err, ErrAllIgnored) {
+		t.Fatalf("err = %v, want ErrAllIgnored", err)
+	}
+	if uploads, _ := p.Store.ListUploads(context.Background(), repo.ID, 10); len(uploads) != 0 {
+		t.Errorf("refused upload was stored: %d rows", len(uploads))
 	}
 }

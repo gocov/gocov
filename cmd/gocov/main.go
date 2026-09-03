@@ -19,6 +19,7 @@ import (
 
 	"github.com/gocov/gocov/internal/config"
 	"github.com/gocov/gocov/internal/hosted"
+	"github.com/gocov/gocov/internal/ignore"
 	"github.com/gocov/gocov/internal/profile"
 )
 
@@ -65,6 +66,8 @@ func run(args []string) error {
 	format := fs.String("format", "", "coverage profile format: go, lcov, jacoco, cobertura, clover or simplecov (default: detect from content)")
 	pathPrefix := fs.String("path-prefix", "", "prefix mapping profile paths to repo paths, e.g. the Go module path (default: from go.mod)")
 	part := fs.String("part", cfg.Part, "name this slice of the commit's coverage (e.g. backend, frontend) when uploading from separate CI jobs (or $GOCOV_PART)")
+	ignorePats := patternList{patterns: ignore.Parse(cfg.Ignore)}
+	fs.Var(&ignorePats, "ignore", "leave files matching this pattern out of the report, e.g. 'cmd/preview/**' or '*_mock.go'; repeatable or comma-separated (or $GOCOV_IGNORE)")
 	failOnGate := fs.Bool("fail-on-gate", false, "exit with a non-zero code when the server reports a failed coverage gate")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
@@ -73,6 +76,9 @@ func run(args []string) error {
 		return fmt.Errorf("usage: gocov upload [flags] <profile file>")
 	}
 	profilePath := fs.Arg(0)
+	if err := ignore.Validate(ignorePats.patterns); err != nil {
+		return err
+	}
 
 	if *server == "" {
 		return fmt.Errorf("server URL required: set -server or $GOCOV_SERVER")
@@ -144,6 +150,7 @@ func run(args []string) error {
 		Format:       resolvedFormat,
 		PathPrefix:   prefix,
 		Part:         *part,
+		Ignore:       ignorePats.patterns,
 		ProfileData:  profileData,
 		ProfileName:  filepath.Base(profilePath),
 		Uploader:     "gocov " + version,
@@ -178,6 +185,12 @@ func run(args []string) error {
 	if resp.RepoCreated {
 		fmt.Println("repo registered on first upload")
 	}
+	switch n := resp.IgnoredFiles; {
+	case n == 1:
+		fmt.Println("ignored: 1 file")
+	case n > 1:
+		fmt.Printf("ignored: %d files\n", n)
+	}
 	if resp.DiffPct != nil && resp.DiffCoveredLines != nil && resp.DiffTotalLines != nil {
 		fmt.Printf("diff coverage: %.1f%% (%d/%d changed lines)\n",
 			*resp.DiffPct, *resp.DiffCoveredLines, *resp.DiffTotalLines)
@@ -201,3 +214,22 @@ func run(args []string) error {
 }
 
 func osEnv(key string) string { return os.Getenv(key) }
+
+// patternList is the -ignore flag: repeatable, each value one pattern or a
+// comma-separated list. It starts out holding $GOCOV_IGNORE; the first
+// -ignore on the command line replaces that rather than adding to it, so
+// the flag wins over the environment like every other flag.
+type patternList struct {
+	patterns []string
+	fromFlag bool
+}
+
+func (l *patternList) String() string { return strings.Join(l.patterns, ",") }
+
+func (l *patternList) Set(v string) error {
+	if !l.fromFlag {
+		l.patterns, l.fromFlag = nil, true
+	}
+	l.patterns = append(l.patterns, ignore.Parse(v)...)
+	return nil
+}

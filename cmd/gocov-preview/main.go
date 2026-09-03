@@ -104,7 +104,8 @@ func main() {
 	repo := &store.Repo{
 		Forge: "bitbucket", Slug: "acme/widgets", Token: "tok",
 		DefaultBranch: "main", Gate: store.Gate{MinCoverage: new(float64(70))},
-		Visibility: store.VisibilityPublic,
+		IgnorePaths: []string{"**/*.pb.go", "cmd/preview/**"},
+		Visibility:  store.VisibilityPublic,
 	}
 	if err := st.CreateRepo(ctx, repo); err != nil {
 		log.Fatal(err)

@@ -95,7 +95,7 @@
     <span class="row"><span class="k">Profile</span><span class="v"><span class="mono">{{.ProfileName}}</span> <span class="chip plain">{{.Format}}</span>{{with .ProfileSize}} <span class="muted small">&middot; {{.}}</span>{{end}}</span></span>
     {{if .CILabel}}<span class="row"><span class="k">CI run</span><span class="v">{{.CILabel}}{{with .CIRunURL}} &middot; <a href="{{.}}" rel="nofollow noopener">view run</a>{{end}}</span></span>{{end}}
     {{if .Uploader}}<span class="row"><span class="k">Uploader</span><span class="v"><span class="mono">{{.Uploader}}</span>{{with .UploaderKind}} <span class="muted small">&middot; {{.}}</span>{{end}}</span></span>{{end}}
-    <span class="row"><span class="k">Flags</span><span class="v">{{with .Part}}<span class="chip plain">{{.}}</span> {{end}}<span class="muted small">{{.PartsNote}}</span></span></span>
+    <span class="row"><span class="k">Flags</span><span class="v">{{with .Part}}<span class="chip plain">{{.}}</span> {{end}}<span class="muted small">{{.PartsNote}}{{with .Ignored}} &middot; {{.}}{{end}}</span></span></span>
     {{with .Processed}}<span class="row"><span class="k">Processed in</span><span class="v">{{.}}</span></span>{{end}}
     {{end}}
   </div>

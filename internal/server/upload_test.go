@@ -750,3 +750,129 @@ func TestBuildUploadMetaRejectsBadInput(t *testing.T) {
 		t.Errorf("non-http ci_run_url kept: %q", m.CIRunURL)
 	}
 }
+
+// The repo's ignore patterns and the request's own `ignore` fields both
+// trim the report before it is measured; a bad pattern is refused up front.
+func TestUploadIgnorePatterns(t *testing.T) {
+	f := newFixture(t, nil)
+	ctx := context.Background()
+	f.repo.IgnorePaths = []string{"**/b.go"}
+	if err := f.store.UpdateRepo(ctx, f.repo); err != nil {
+		t.Fatal(err)
+	}
+
+	// testProfile: a.go 6/8, b.go 2/2. The repo pattern drops b.go.
+	rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c1"}, testProfile)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	var resp uploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.IgnoredFiles != 1 || resp.TotalStmts != 8 || resp.TotalPct != 75 {
+		t.Errorf("repo pattern: %+v, want 1 ignored and 6/8 = 75%%", resp)
+	}
+	if files, _ := f.store.UploadFiles(ctx, resp.ID); len(files) != 1 || files[0].Path != "example.com/m/a.go" {
+		t.Errorf("stored files = %+v, want a.go alone", files)
+	}
+
+	// The request adds its own, matched through the path prefix, and the
+	// upload page says how many files went.
+	f.repo.IgnorePaths = nil
+	if err := f.store.UpdateRepo(ctx, f.repo); err != nil {
+		t.Fatal(err)
+	}
+	rec = doUpload(t, f, "secret-token", map[string]string{
+		"commit": "c2", "path_prefix": "example.com", "ignore": "m/b.go, nothing/**",
+	}, testProfile)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.IgnoredFiles != 1 || resp.TotalPct != 75 {
+		t.Errorf("request pattern: %+v, want 1 ignored and 75%%", resp)
+	}
+	page := doGet(t, f, fmt.Sprintf("/uploads/%d", resp.ID))
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "1 file ignored") {
+		t.Errorf("upload page (%d) does not mention the ignored file", page.Code)
+	}
+
+	// Patterns that leave nothing to measure are refused, not landed as 0%.
+	rec = doUpload(t, f, "secret-token", map[string]string{"commit": "c3", "ignore": "**"}, testProfile)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "matched every file") {
+		t.Errorf("all ignored: status = %d, body = %s", rec.Code, rec.Body)
+	}
+
+	// Malformed and oversized pattern lists are 400s with the reason.
+	rec = doUpload(t, f, "secret-token", map[string]string{"commit": "c3", "ignore": "src/["}, testProfile)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "ignore pattern") {
+		t.Errorf("bad pattern: status = %d, body = %s", rec.Code, rec.Body)
+	}
+	rec = doUpload(t, f, "secret-token", map[string]string{
+		"commit": "c3", "ignore": strings.Repeat("x,", 101),
+	}, testProfile)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "too many ignore patterns") {
+		t.Errorf("too many patterns: status = %d, body = %s", rec.Code, rec.Body)
+	}
+}
+
+// A changed file that the ignore patterns dropped must not resurface as
+// "changed but no coverage data": it neither counts for nor against the PR.
+func TestUploadIgnoredFilesLeaveDiffCoverage(t *testing.T) {
+	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+	ctx := context.Background()
+	f.repo.IgnorePaths = []string{"**/b.go", "**/untested.go"}
+	if err := f.store.UpdateRepo(ctx, f.repo); err != nil {
+		t.Fatal(err)
+	}
+	// The PR touches a.go (covered line 2), b.go (ignored, in the profile)
+	// and untested.go (ignored, never in the profile).
+	f.forge.DiffText = `diff --git a/m/a.go b/m/a.go
+--- a/m/a.go
++++ b/m/a.go
+@@ -1,3 +1,3 @@
+ ctx
+-old
++added 2
+ ctx
+diff --git a/m/b.go b/m/b.go
+--- a/m/b.go
++++ b/m/b.go
+@@ -1,2 +1,2 @@
+-old
++added 1
+ ctx
+diff --git a/m/untested.go b/m/untested.go
+--- a/m/untested.go
++++ b/m/untested.go
+@@ -1,1 +1,1 @@
+-old
++added 1
+`
+	rec := doUpload(t, f, "secret-token", map[string]string{
+		"commit": "c1", "pr_id": "42", "path_prefix": "example.com",
+	}, testProfile)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	var resp uploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.IgnoredFiles != 1 {
+		t.Errorf("ignored_files = %d, want 1 (b.go)", resp.IgnoredFiles)
+	}
+	if resp.DiffTotalLines == nil || *resp.DiffTotalLines != 1 || resp.DiffCoveredLines == nil || *resp.DiffCoveredLines != 1 {
+		t.Fatalf("diff lines = %v/%v, want 1/1 (a.go only); body = %s", resp.DiffCoveredLines, resp.DiffTotalLines, rec.Body)
+	}
+	u, err := f.store.Upload(ctx, resp.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(u.DiffCoverage.UnmatchedFiles) != 0 {
+		t.Errorf("unmatched = %v, want none: ignored files must not be flagged as untested", u.DiffCoverage.UnmatchedFiles)
+	}
+}

@@ -6,6 +6,9 @@ type CLI struct {
 	Server string `env:"GOCOV_SERVER"`
 	Token  string `env:"GOCOV_TOKEN"`
 	Part   string `env:"GOCOV_PART"`
+	// Ignore is the upload's ignore patterns, one per line or comma-
+	// separated (internal/ignore); -ignore replaces it.
+	Ignore string `env:"GOCOV_IGNORE"`
 
 	// UploaderKind is set by the gocov-action so the upload page can tell
 	// action uploads from bare CLI ones; read it through Kind.

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gocov/gocov/internal/core"
+	"github.com/gocov/gocov/internal/ignore"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -72,6 +73,7 @@ func (s *Server) repoSettingsData(repo *store.Repo, wsPrefix, newToken, notice, 
 		"Notice":            notice,
 		"Error":             errMsg,
 		"GateActive":        gateActiveCount(repo.Gate),
+		"IgnorePaths":       strings.Join(repo.IgnorePaths, "\n"),
 		"BadgeMarkdown":     s.badgeMarkdown(repo.Slug),
 		"ShowPublicReports": s.publicReportsSwitch(repo),
 	}
@@ -109,7 +111,7 @@ func (s *Server) handleRepoSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleRepoSettingsSave implements POST /repo-settings/{slug}/save: the base
-// branch and coverage gates for this repository.
+// branch, coverage gates and ignore patterns for this repository.
 func (s *Server) handleRepoSettingsSave(w http.ResponseWriter, r *http.Request) {
 	repo, prefix := s.memberRepo(w, r)
 	if repo == nil {
@@ -125,8 +127,14 @@ func (s *Server) handleRepoSettingsSave(w http.ResponseWriter, r *http.Request) 
 		s.repoSettingsError(w, r, repo, prefix, errLabel)
 		return
 	}
+	ignorePaths := ignore.Parse(r.FormValue("ignore_paths"))
+	if err := ignore.Validate(ignorePaths); err != nil {
+		s.repoSettingsError(w, r, repo, prefix, "Ignored files not saved: "+err.Error()+".")
+		return
+	}
 	repo.DefaultBranch = branch
 	repo.Gate = gate
+	repo.IgnorePaths = ignorePaths
 	// The "Public reports" switch only renders (and may only change) where
 	// it is meaningful; a private repo's save must not flip the stored
 	// value just because the form had no checkbox to send.

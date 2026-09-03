@@ -44,6 +44,21 @@ func TestUploadEndToEnd(t *testing.T) {
 		t.Errorf("resp = %+v, want 80%% 4/5", resp)
 	}
 
+	// Ignore patterns ride along and the server reports what they dropped.
+	resp, err = upload(uploadRequest{
+		Server: srv.URL, Token: "tok", Format: "go",
+		ProfileData: []byte("mode: set\nexample.com/m/a.go:1.1,2.2 4 1\nexample.com/m/gen/b.go:1.1,2.2 6 0\n"),
+		Ignore:      []string{"gen/**"},
+		PathPrefix:  "example.com/m",
+		Build:       buildInfo{Repo: "acme/widgets", Commit: "abc2", Branch: "main"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.IgnoredFiles != 1 || resp.TotalStmts != 4 || resp.TotalPct != 100 {
+		t.Errorf("with ignore: %+v, want 1 ignored file and 4/4 statements", resp)
+	}
+
 	// Wrong token surfaces the server error.
 	if _, err := upload(uploadRequest{
 		Server: srv.URL, Token: "bad", Format: "go", ProfileData: prof,

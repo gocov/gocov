@@ -17,9 +17,10 @@ anything they don't cover.
 | `format`      | `go`, `lcov`, `jacoco`, `cobertura`, `clover` or `simplecov`; omitted → detected from content                                                                                                                                                                   |
 | `path_prefix` | maps profile paths to repo paths for diff coverage, e.g. the Go module path (the CLI fills it from go.mod)                                                                                                                                                      |
 | `part`        | optional; names one slice of the commit's coverage (`backend`, `frontend`, `e2e`, …) uploaded from a separate CI job. Normalized to a lowercase slug (`[a-z0-9._-]`, ≤64); omitted or blank → `default`. Re-uploading a part replaces it. See [Parts](parts.md) |
+| `ignore`      | optional, repeatable; a glob pattern (or a comma/newline-separated list) for files to leave out of this upload, applied on top of the repo's own patterns. At most 100 patterns of 200 characters; an invalid one is a `400`. See [Ignoring files](ignoring-files.md)                |
 
 Returns `201` with `{id, total_pct, covered_stmts, total_stmts,
-delta_pct, build_status}`. Uploads carrying a `pr_id` additionally get
+delta_pct, build_status}`, plus `ignored_files` when ignore patterns dropped any. Uploads carrying a `pr_id` additionally get
 `diff_pct`, `diff_covered_lines`, `diff_total_lines`, `diff_status` and
 `pr_comment` when the repo's workspace is [connected to its forge](connecting.md).
 

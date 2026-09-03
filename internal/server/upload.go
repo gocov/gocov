@@ -9,6 +9,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/gocov/gocov/internal/core"
+	"github.com/gocov/gocov/internal/ignore"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 )
@@ -47,6 +49,10 @@ type uploadResponse struct {
 	// Gate reports the coverage-gate outcome: "passed" or
 	// "failed: <reasons>". Omitted when the repo has no gate configured.
 	Gate string `json:"gate,omitempty"`
+
+	// IgnoredFiles is how many report files the repo's and the request's
+	// ignore patterns dropped before measuring. Omitted when none.
+	IgnoredFiles int `json:"ignored_files,omitempty"`
 
 	// Warnings carries non-fatal notices about how the merged report was
 	// built — e.g. a diff-coverage file merged conservatively because its
@@ -202,6 +208,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		Raw:        req.raw,
 		Profile:    req.prof,
 		Meta:       meta,
+		Ignore:     req.ignore,
 	})
 	if err != nil {
 		if claim != nil {
@@ -210,6 +217,12 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 			if relErr := s.store.ReleaseTokenlessUpload(r.Context(), req.repo.ID, claim.runID, claim.runAttempt, req.part); relErr != nil {
 				s.log.Error("releasing tokenless claim", "repo", req.repo.Slug, "run", claim.runID, "err", relErr)
 			}
+		}
+		if errors.Is(err, core.ErrAllIgnored) {
+			// Bad input, not a server fault: the patterns left nothing
+			// to measure. Say so rather than landing a 0% report.
+			httpError(w, http.StatusBadRequest, "%v", err)
+			return
 		}
 		s.internalError(w, "accepting upload", err)
 		return
@@ -222,6 +235,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		TotalStmts:   res.Merged.Upload.TotalStmts,
 		DeltaPct:     res.Merged.Delta,
 		RepoCreated:  req.repoCreated,
+		IgnoredFiles: res.Upload.Meta.IgnoredFiles,
 		DiffStatus:   res.DiffStatus,
 		Warnings:     res.Merged.Warnings,
 		BuildStatus:  res.Push.BuildStatus,
@@ -270,6 +284,7 @@ type uploadRequest struct {
 	part       string
 	format     string
 	pathPrefix string
+	ignore     []string // the request's own ignore patterns, validated
 
 	filename string // as the client named it, for provenance
 	raw      []byte
@@ -340,6 +355,17 @@ func (s *Server) readUploadRequest(w http.ResponseWriter, r *http.Request, authe
 			httpError(w, http.StatusBadRequest, "commit %s already has %d coverage parts (the maximum); check that the upload's part name is stable across CI jobs", req.commit, len(parts))
 			return nil, false
 		}
+	}
+
+	// Ignore patterns ride as repeated `ignore` fields, each holding one
+	// pattern or a comma/newline-separated list. Validated here so a typo
+	// is a 400 with the reason rather than a silently unfiltered upload.
+	for _, v := range r.Form["ignore"] {
+		req.ignore = append(req.ignore, ignore.Parse(v)...)
+	}
+	if err := ignore.Validate(req.ignore); err != nil {
+		httpError(w, http.StatusBadRequest, "%v", err)
+		return nil, false
 	}
 
 	file, fileHdr, err := r.FormFile("profile")
