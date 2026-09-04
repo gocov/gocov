@@ -78,28 +78,8 @@
 {{if .Thresh}}<p class="hint" style="margin:8px 0 0">Red points failed the gate. The dashed line is the current minimum, {{.Thresh.Label}}.</p>{{end}}
 {{end}}
 
-{{with .Miss}}
-<div class="sec">
-  <h2>Where coverage is missing</h2>
-  <span class="spacer"></span>
-  <span class="note">Files on <span class="mono">{{.Branch}}</span>, most uncovered first</span>
-</div>
-<div class="card">
-<table>
-<thead><tr><th>File</th><th>Coverage</th><th class="num">Uncovered</th><th>Uncovered ranges</th></tr></thead>
-<tbody>
-{{range .Files}}
-<tr>
-<td class="path"><a class="mono path" href="/uploads/{{$.Miss.UploadID}}/files/{{.Path}}">{{with .Dir}}<span class="dir">{{.}}</span>{{end}}{{.Base}}</a></td>
-<td>{{template "covbar" .Pct}}</td>
-<td class="num">{{.Uncovered}}</td>
-<td>{{if .Ranges}}<span class="mono muted small">{{.Ranges}}</span>{{else}}<span class="muted small">&mdash;</span>{{end}}</td>
-</tr>
-{{end}}
-</tbody>
-</table>
-</div>
-<p class="hint" style="margin:8px 0 0">{{if .Projection}}Fully covering the top {{if eq .ProjFiles 1}}file{{else}}two files{{end}} would take total coverage to about {{.Projection}}. {{end}}{{if gt .Total (len .Files)}}<a href="/uploads/{{.UploadID}}">See all {{.Total}} files</a>{{end}}</p>
+{{with .FilesView}}
+{{template "filesview" .}}
 {{end}}
 
 <div class="sec">

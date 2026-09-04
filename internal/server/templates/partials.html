@@ -16,3 +16,143 @@
   </span>
 </div>
 {{end}}
+
+{{define "filesview"}}
+<div class="sec">
+  <h2>{{.Heading}}</h2>
+  <span class="spacer"></span>
+  <span class="seg" role="group" aria-label="View mode" id="view-mode">
+    <button type="button" aria-pressed="true" data-view="tree" title="Directory tree view">Tree</button>
+    <button type="button" aria-pressed="false" data-view="list" title="Flat list view">List <span class="n">{{.Counts.Total}}</span></button>
+  </span>
+  {{if .HasBase}}
+  <span class="seg" role="group" aria-label="Filter files" id="file-filters">
+    <button type="button" aria-pressed="true" data-filter="all">All<span class="n">{{.Counts.Total}}</span></button>
+    <button type="button" aria-pressed="false" data-filter="changed">Changed<span class="n">{{.Counts.Changed}}</span></button>
+    <button type="button" aria-pressed="false" data-filter="source">Source Changed<span class="n">{{.Counts.Source}}</span></button>
+    <button type="button" aria-pressed="false" data-filter="coverage">Coverage Changed<span class="n">{{.Counts.Coverage}}</span></button>
+  </span>
+  {{end}}
+</div>
+<div class="toolbar file-toolbar">
+  <input class="input" type="search" id="file-search" placeholder="Search files&hellip;" aria-label="Search files">
+  <span class="spacer"></span>
+  <span class="hint small muted" id="file-matches">{{.Counts.Total}} files</span>
+</div>
+<div class="card files-card" id="files-card" data-view="tree" data-filter="all">
+{{if .Files}}
+{{$upID := .UploadID}}
+{{if .HasBase}}
+<table id="filetable">
+<thead><tr><th>File</th><th>Coverage</th><th>Before &rarr; after</th><th class="num">&Delta;</th><th>Newly uncovered</th></tr></thead>
+<tbody>
+{{range .Files}}
+<tr data-path="{{.Path}}" data-changed="{{.Changed}}" data-source="{{.IsSourceChanged}}" data-coverage="{{.IsCoverageChanged}}">
+<td class="path"><a class="mono path" href="/uploads/{{$upID}}/files/{{.Path}}">{{with .Dir}}<span class="dir">{{.}}</span>{{end}}{{.Base}}</a></td>
+<td>{{template "covbar" .Pct}}</td>
+<td>{{if .NewFile}}<span class="ba"><span class="from">&mdash;</span><span class="arw">&rarr;</span><span class="to {{covclass .Pct}}">{{pct .Pct}}</span></span>
+    {{else if .HasBefore}}<span class="ba"><span class="from">{{.BeforeStr}}</span><span class="arw">&rarr;</span><span class="to {{covclass .Pct}}">{{pct .Pct}}</span></span>
+    {{else}}<span class="muted small">&mdash;</span>{{end}}</td>
+<td class="num">{{if .NewFile}}<span class="delta flat">new file</span>{{else}}{{template "delta" .Delta}}{{end}}</td>
+<td>{{if .NewlyMiss}}<span class="uncov">{{.NewlyMiss}}</span>{{else}}<span class="muted small">&mdash;</span>{{end}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+
+{{if .TreeRows}}
+<table id="filetable-tree" class="filetable-tree">
+<thead><tr><th>File</th><th>Coverage</th><th>Before &rarr; after</th><th class="num">&Delta;</th><th>Newly uncovered</th></tr></thead>
+<tbody>
+{{range .TreeRows}}
+{{if .IsDir}}
+<tr class="tree-row tree-dir" data-path="{{.Path}}" data-parent="{{.ParentPath}}" data-depth="{{.Depth}}" data-changed="{{.Changed}}" data-source="{{.IsSourceChanged}}" data-coverage="{{.IsCoverageChanged}}"{{if .Hidden}} style="display:none"{{end}}>
+<td class="path">
+  <span class="tree-indent" style="padding-left: calc({{.Depth}} * 16px)"></span>
+  <button type="button" class="tree-toggle" aria-expanded="{{.Open}}" title="Toggle directory">{{if .Open}}&#9662;{{else}}&#9656;{{end}}</button>
+  <span class="tree-icon">&#128193;</span>
+  <span class="mono tree-name">{{.Name}}/</span>
+</td>
+<td>{{template "covbar" .Pct}}</td>
+<td>{{if .HasBefore}}<span class="ba"><span class="from">{{.BeforeStr}}</span><span class="arw">&rarr;</span><span class="to {{covclass .Pct}}">{{pct .Pct}}</span></span>{{else}}<span class="muted small">&mdash;</span>{{end}}</td>
+<td class="num">{{template "delta" .Delta}}</td>
+<td><span class="muted small">&mdash;</span></td>
+</tr>
+{{else}}
+<tr class="tree-row tree-file" data-path="{{.Path}}" data-parent="{{.ParentPath}}" data-depth="{{.Depth}}" data-changed="{{.Changed}}" data-source="{{.IsSourceChanged}}" data-coverage="{{.IsCoverageChanged}}"{{if .Hidden}} style="display:none"{{end}}>
+<td class="path">
+  <span class="tree-indent" style="padding-left: calc({{.Depth}} * 16px)"></span>
+  <span class="tree-spacer"></span>
+  <span class="tree-icon">&#128196;</span>
+  <a class="mono path" href="/uploads/{{$upID}}/files/{{.Path}}">{{.Name}}</a>
+</td>
+<td>{{template "covbar" .Pct}}</td>
+<td>{{if .NewFile}}<span class="ba"><span class="from">&mdash;</span><span class="arw">&rarr;</span><span class="to {{covclass .Pct}}">{{pct .Pct}}</span></span>
+    {{else if .HasBefore}}<span class="ba"><span class="from">{{.BeforeStr}}</span><span class="arw">&rarr;</span><span class="to {{covclass .Pct}}">{{pct .Pct}}</span></span>
+    {{else}}<span class="muted small">&mdash;</span>{{end}}</td>
+<td class="num">{{if .NewFile}}<span class="delta flat">new file</span>{{else}}{{template "delta" .Delta}}{{end}}</td>
+<td>{{if .NewlyMiss}}<span class="uncov">{{.NewlyMiss}}</span>{{else}}<span class="muted small">&mdash;</span>{{end}}</td>
+</tr>
+{{end}}
+{{end}}
+</tbody>
+</table>
+{{end}}
+
+{{else}}
+<table id="filetable">
+<thead><tr><th>File</th><th>Coverage</th><th class="num">Statements</th><th>Uncovered lines</th></tr></thead>
+<tbody>
+{{range .Files}}
+<tr data-path="{{.Path}}" data-changed="{{.Changed}}" data-source="{{.IsSourceChanged}}" data-coverage="{{.IsCoverageChanged}}">
+<td class="path"><a class="mono path" href="/uploads/{{$upID}}/files/{{.Path}}">{{with .Dir}}<span class="dir">{{.}}</span>{{end}}{{.Base}}</a></td>
+<td>{{template "covbar" .Pct}}</td>
+<td class="num muted small">{{.CoveredStmts}}/{{.TotalStmts}}</td>
+<td>{{if .Uncovered}}<span class="uncov">{{.Uncovered}}</span>{{else}}<span class="muted small">&mdash;</span>{{end}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+
+{{if .TreeRows}}
+<table id="filetable-tree" class="filetable-tree">
+<thead><tr><th>File</th><th>Coverage</th><th class="num">Statements</th><th>Uncovered lines</th></tr></thead>
+<tbody>
+{{range .TreeRows}}
+{{if .IsDir}}
+<tr class="tree-row tree-dir" data-path="{{.Path}}" data-parent="{{.ParentPath}}" data-depth="{{.Depth}}" data-changed="{{.Changed}}" data-source="{{.IsSourceChanged}}" data-coverage="{{.IsCoverageChanged}}"{{if .Hidden}} style="display:none"{{end}}>
+<td class="path">
+  <span class="tree-indent" style="padding-left: calc({{.Depth}} * 16px)"></span>
+  <button type="button" class="tree-toggle" aria-expanded="{{.Open}}" title="Toggle directory">{{if .Open}}&#9662;{{else}}&#9656;{{end}}</button>
+  <span class="tree-icon">&#128193;</span>
+  <span class="mono tree-name">{{.Name}}/</span>
+</td>
+<td>{{template "covbar" .Pct}}</td>
+<td class="num muted small">{{.CoveredStmts}}/{{.TotalStmts}}</td>
+<td><span class="muted small">&mdash;</span></td>
+</tr>
+{{else}}
+<tr class="tree-row tree-file" data-path="{{.Path}}" data-parent="{{.ParentPath}}" data-depth="{{.Depth}}" data-changed="{{.Changed}}" data-source="{{.IsSourceChanged}}" data-coverage="{{.IsCoverageChanged}}"{{if .Hidden}} style="display:none"{{end}}>
+<td class="path">
+  <span class="tree-indent" style="padding-left: calc({{.Depth}} * 16px)"></span>
+  <span class="tree-spacer"></span>
+  <span class="tree-icon">&#128196;</span>
+  <a class="mono path" href="/uploads/{{$upID}}/files/{{.Path}}">{{.Name}}</a>
+</td>
+<td>{{template "covbar" .Pct}}</td>
+<td class="num muted small">{{.CoveredStmts}}/{{.TotalStmts}}</td>
+<td>{{if .Uncovered}}<span class="uncov">{{.Uncovered}}</span>{{else}}<span class="muted small">&mdash;</span>{{end}}</td>
+</tr>
+{{end}}
+{{end}}
+</tbody>
+</table>
+{{end}}
+
+{{end}}
+<div class="empty" id="files-empty" hidden>No files match the selected filter.</div>
+{{else}}
+<div class="empty">No per-file data.</div>
+{{end}}
+</div>
+{{end}}

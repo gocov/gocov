@@ -10,7 +10,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -39,11 +41,6 @@ func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "loading upload", err)
 		return
 	}
-	files, err := s.store.UploadFiles(r.Context(), id)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		s.internalError(w, "loading upload files", err)
-		return
-	}
 	repo, err := s.store.RepoByID(r.Context(), upload.RepoID)
 	if err != nil {
 		s.internalError(w, "loading repo for upload", err)
@@ -57,6 +54,55 @@ func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
 	// branch; its per-file coverage feeds the before → after column, and its
 	// total feeds the headline delta — the same baseline the source view uses.
 	base, baseFiles := s.baselineUpload(r.Context(), repo, upload)
+	fv, err := s.buildFilesViewData(r.Context(), upload, base, baseFiles, "")
+	if err != nil {
+		s.internalError(w, "loading upload files", err)
+		return
+	}
+
+	s.render(w, r, "upload.html", map[string]any{
+		"Upload":      upload,
+		"Repo":        repo,
+		"FilesView":   fv,
+		"Verdict":     s.uploadVerdict(upload, repo, base, fv.TotalFiles),
+		"Prov":        s.uploadProvenance(r.Context(), upload),
+		"CanDownload": upload.RawBlobKey != "",
+		"Download":    fmt.Sprintf("/uploads/%d/profile", upload.ID),
+		"PublicView":  s.publicView(r),
+	})
+}
+
+// filesViewData is the model behind the "filesview" partial — the files
+// card with its Tree/List switch and filter tabs — shared by the upload page
+// and the repo page.
+type filesViewData struct {
+	UploadID   int64
+	Files      []uploadFileRow
+	TreeRows   []treeRow
+	Counts     fileCounts
+	HasBase    bool
+	TotalFiles int
+	Heading    string
+}
+
+// buildFilesViewData loads an upload's files and builds the flat list and
+// the directory tree with their filter counts and baseline comparisons. An
+// upload without per-file data yields an empty view, not an error.
+func (s *Server) buildFilesViewData(ctx context.Context, upload *store.Upload, base *store.Upload, baseFiles map[string]*store.UploadFile, heading string) (filesViewData, error) {
+	files, err := s.store.UploadFiles(ctx, upload.ID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return filesViewData{}, err
+	}
+
+	diffFiles := make(map[string]bool)
+	if upload.DiffCoverage != nil {
+		for _, df := range upload.DiffCoverage.Files {
+			diffFiles[df.Path] = true
+		}
+		for _, uf := range upload.DiffCoverage.UnmatchedFiles {
+			diffFiles[uf] = true
+		}
+	}
 
 	rows := make([]uploadFileRow, 0, len(files))
 	for _, f := range files {
@@ -65,27 +111,44 @@ func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
 		if base != nil {
 			if bf, ok := baseFiles[f.Path]; ok {
 				row.HasBefore = true
+				row.BeforeCovered = bf.CoveredStmts
+				row.BeforeTotal = bf.TotalStmts
 				row.BeforeStr = fmt.Sprintf("%.1f%%", bf.Pct)
 				row.DeltaVal = f.Pct - bf.Pct
 				row.Delta = newDeltaView(row.DeltaVal)
 				if row.Delta.Class != "flat" {
-					row.Changed = true
+					row.IsCoverageChanged = true
 				}
 				if nm := newlyUncovered(f.Blocks, bf.Blocks); nm != "" {
 					row.NewlyMiss = nm
-					row.Changed = true
+					row.IsCoverageChanged = true
 				}
 			} else {
 				row.NewFile = true
-				row.Changed = true
+				row.IsCoverageChanged = true
 			}
 		}
+		if isSourceChanged(f.Path, upload.PathPrefix, diffFiles) {
+			row.IsSourceChanged = true
+		}
+		row.Changed = row.IsCoverageChanged || row.IsSourceChanged
 		rows = append(rows, row)
 	}
-	// With a baseline, surface the files this upload moved first — biggest
-	// drops at the top — then the rest alphabetically. Without one, keep the
-	// store's path order.
-	changed := 0
+
+	var counts fileCounts
+	counts.Total = len(files)
+	for _, row := range rows {
+		if row.Changed {
+			counts.Changed++
+		}
+		if row.IsSourceChanged {
+			counts.Source++
+		}
+		if row.IsCoverageChanged {
+			counts.Coverage++
+		}
+	}
+
 	if base != nil {
 		sort.SliceStable(rows, func(i, j int) bool {
 			if rows[i].Changed != rows[j].Changed {
@@ -96,30 +159,22 @@ func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
 			}
 			return rows[i].Path < rows[j].Path
 		})
-		for _, row := range rows {
-			if row.Changed {
-				changed++
-			}
-		}
 	}
 
-	s.render(w, r, "upload.html", map[string]any{
-		"Upload":  upload,
-		"Repo":    repo,
-		"Files":   rows,
-		"HasBase": base != nil,
-		// Touched: the commit moved at least one file's coverage, so the
-		// table leads with those. Collapse: there are also unchanged files to
-		// tuck behind a "show all" toggle.
-		"Touched":      base != nil && changed > 0,
-		"Collapse":     base != nil && changed > 0 && changed < len(rows),
-		"ChangedCount": changed,
-		"Verdict":      s.uploadVerdict(upload, repo, base, len(files)),
-		"Prov":         s.uploadProvenance(r.Context(), upload),
-		"CanDownload":  upload.RawBlobKey != "",
-		"Download":     fmt.Sprintf("/uploads/%d/profile", upload.ID),
-		"PublicView":   s.publicView(r),
-	})
+	treeRows := buildFileTree(rows, base != nil)
+	if heading == "" {
+		heading = "Files"
+	}
+
+	return filesViewData{
+		UploadID:   upload.ID,
+		Files:      rows,
+		TreeRows:   treeRows,
+		Counts:     counts,
+		HasBase:    base != nil,
+		TotalFiles: len(files),
+		Heading:    heading,
+	}, nil
 }
 
 // uploadFileRow decorates a stored file with its coverage history for the
@@ -128,15 +183,277 @@ func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
 // baseline fields are empty when there is no baseline to compare against.
 type uploadFileRow struct {
 	*store.UploadFile
-	Dir, Base string     // path split for display (directory prefix, file name)
-	Uncovered string     // all-time uncovered ranges, shown when there is no baseline
-	HasBefore bool       // the file existed at the baseline
-	BeforeStr string     // baseline coverage, preformatted
-	Delta     *deltaView // after − before
-	DeltaVal  float64    // after − before, for ordering
-	NewFile   bool       // absent from the baseline upload
-	NewlyMiss string     // ranges covered at the baseline but uncovered now
-	Changed   bool       // coverage moved, the file is new, or it regressed
+	Dir, Base         string     // path split for display (directory prefix, file name)
+	Uncovered         string     // all-time uncovered ranges, shown when there is no baseline
+	HasBefore         bool       // the file existed at the baseline
+	BeforeCovered     int64      // baseline covered statements
+	BeforeTotal       int64      // baseline total statements
+	BeforeStr         string     // baseline coverage, preformatted
+	Delta             *deltaView // after − before
+	DeltaVal          float64    // after − before, for ordering
+	NewFile           bool       // absent from the baseline upload
+	NewlyMiss         string     // ranges covered at the baseline but uncovered now
+	Changed           bool       // coverage moved, source changed, file is new, or regressed
+	IsSourceChanged   bool       // changed in git diff (diff coverage)
+	IsCoverageChanged bool       // coverage percentage changed or newly uncovered lines
+}
+
+// fileCounts records the totals for the view filter tabs.
+type fileCounts struct {
+	Total    int
+	Changed  int
+	Source   int
+	Coverage int
+}
+
+// treeRow represents a row in the hierarchical directory tree view.
+type treeRow struct {
+	IsDir             bool
+	Path              string
+	Name              string
+	Depth             int
+	Open              bool // directory rendered expanded
+	Hidden            bool // tucked under a collapsed ancestor
+	ParentPath        string
+	CoveredStmts      int64
+	TotalStmts        int64
+	Pct               float64
+	HasBefore         bool
+	BeforeCovered     int64
+	BeforeTotal       int64
+	BeforeStr         string
+	Delta             *deltaView
+	DeltaVal          float64
+	NewFile           bool
+	NewlyMiss         string
+	Changed           bool
+	IsSourceChanged   bool
+	IsCoverageChanged bool
+	Uncovered         string
+}
+
+type dirBuilderNode struct {
+	name       string
+	fullPath   string
+	parentPath string
+	subdirs    map[string]*dirBuilderNode
+	files      []*uploadFileRow
+
+	coveredStmts    int64
+	totalStmts      int64
+	beforeCovered   int64
+	beforeTotal     int64
+	hasBefore       bool
+	changed         bool
+	isSourceChanged bool
+	isCovChanged    bool
+}
+
+// isSourceChanged reports whether a profile path is one of the diff's files,
+// matching the way diffcov pairs the two: exact (after the upload's path
+// prefix) when a prefix is known, otherwise by a directory-aligned suffix in
+// either direction. A bare file name never matches by suffix — "main.go"
+// in the diff must not flag every main.go in the profile.
+func isSourceChanged(fPath, pathPrefix string, diffFiles map[string]bool) bool {
+	if diffFiles[fPath] {
+		return true
+	}
+	if pathPrefix != "" {
+		repoPath, _ := strings.CutPrefix(fPath, strings.TrimSuffix(pathPrefix, "/")+"/")
+		return diffFiles[repoPath]
+	}
+	for dp := range diffFiles {
+		if strings.Contains(dp, "/") && strings.HasSuffix(fPath, "/"+dp) {
+			return true
+		}
+		if strings.Contains(fPath, "/") && strings.HasSuffix(dp, "/"+fPath) {
+			return true
+		}
+	}
+	return false
+}
+
+func buildFileTree(rows []uploadFileRow, hasBase bool) []treeRow {
+	root := &dirBuilderNode{
+		subdirs: make(map[string]*dirBuilderNode),
+	}
+
+	for i := range rows {
+		row := &rows[i]
+		parts := strings.Split(row.Path, "/")
+		if len(parts) == 1 {
+			root.files = append(root.files, row)
+			continue
+		}
+		curr := root
+		var pathAcc string
+		for _, p := range parts[:len(parts)-1] {
+			if pathAcc == "" {
+				pathAcc = p
+			} else {
+				pathAcc += "/" + p
+			}
+			child, ok := curr.subdirs[p]
+			if !ok {
+				child = &dirBuilderNode{
+					name:       p,
+					fullPath:   pathAcc,
+					parentPath: curr.fullPath,
+					subdirs:    make(map[string]*dirBuilderNode),
+				}
+				curr.subdirs[p] = child
+			}
+			curr = child
+		}
+		curr.files = append(curr.files, row)
+	}
+
+	compactDir(root)
+	calcDirStats(root)
+
+	var result []treeRow
+	anyChanged := slices.ContainsFunc(rows, func(r uploadFileRow) bool { return r.Changed })
+	flattenTree(root, 0, &result, hasBase, anyChanged, false)
+	return result
+}
+
+func compactDir(n *dirBuilderNode) {
+	for _, sub := range n.subdirs {
+		compactDir(sub)
+	}
+	if n.fullPath != "" && len(n.files) == 0 && len(n.subdirs) == 1 {
+		var child *dirBuilderNode
+		for _, c := range n.subdirs {
+			child = c
+		}
+		n.name = n.name + "/" + child.name
+		n.fullPath = child.fullPath
+		n.files = child.files
+		n.subdirs = child.subdirs
+		for _, grand := range n.subdirs {
+			grand.parentPath = n.fullPath
+		}
+	}
+}
+
+func calcDirStats(n *dirBuilderNode) {
+	for _, f := range n.files {
+		n.totalStmts += f.TotalStmts
+		n.coveredStmts += f.CoveredStmts
+		if f.HasBefore {
+			n.hasBefore = true
+			n.beforeCovered += f.BeforeCovered
+			n.beforeTotal += f.BeforeTotal
+		}
+		if f.Changed {
+			n.changed = true
+		}
+		if f.IsSourceChanged {
+			n.isSourceChanged = true
+		}
+		if f.IsCoverageChanged {
+			n.isCovChanged = true
+		}
+	}
+	for _, sub := range n.subdirs {
+		calcDirStats(sub)
+		n.totalStmts += sub.totalStmts
+		n.coveredStmts += sub.coveredStmts
+		if sub.hasBefore {
+			n.hasBefore = true
+			n.beforeCovered += sub.beforeCovered
+			n.beforeTotal += sub.beforeTotal
+		}
+		if sub.changed {
+			n.changed = true
+		}
+		if sub.isSourceChanged {
+			n.isSourceChanged = true
+		}
+		if sub.isCovChanged {
+			n.isCovChanged = true
+		}
+	}
+}
+
+// flattenTree emits the tree in display order. Directories start collapsed
+// except the ones on the way to a changed file, so a large repo opens as a
+// short list of top-level folders with the commit's changes already in view;
+// when nothing changed (or there is no baseline to change against) the
+// top level is open instead. hidden is inherited from a collapsed ancestor.
+func flattenTree(n *dirBuilderNode, depth int, out *[]treeRow, hasBase, anyChanged, hidden bool) {
+	if n.fullPath != "" {
+		open := n.changed || (!anyChanged && depth == 0)
+		var pct float64
+		if n.totalStmts > 0 {
+			pct = float64(n.coveredStmts) / float64(n.totalStmts) * 100
+		}
+		var beforeStr string
+		var delta *deltaView
+		var deltaVal float64
+		if hasBase && n.hasBefore && n.beforeTotal > 0 {
+			beforePct := float64(n.beforeCovered) / float64(n.beforeTotal) * 100
+			deltaVal = pct - beforePct
+			delta = newDeltaView(deltaVal)
+			beforeStr = fmt.Sprintf("%.1f%%", beforePct)
+		}
+		row := treeRow{
+			IsDir:             true,
+			Path:              n.fullPath,
+			Name:              n.name,
+			Depth:             depth,
+			Open:              open,
+			Hidden:            hidden,
+			ParentPath:        n.parentPath,
+			CoveredStmts:      n.coveredStmts,
+			TotalStmts:        n.totalStmts,
+			Pct:               pct,
+			HasBefore:         n.hasBefore && n.beforeTotal > 0,
+			BeforeCovered:     n.beforeCovered,
+			BeforeTotal:       n.beforeTotal,
+			BeforeStr:         beforeStr,
+			Delta:             delta,
+			DeltaVal:          deltaVal,
+			Changed:           n.changed,
+			IsSourceChanged:   n.isSourceChanged,
+			IsCoverageChanged: n.isCovChanged,
+		}
+		*out = append(*out, row)
+		depth++
+		hidden = hidden || !open
+	}
+
+	for _, name := range slices.Sorted(maps.Keys(n.subdirs)) {
+		flattenTree(n.subdirs[name], depth, out, hasBase, anyChanged, hidden)
+	}
+
+	slices.SortFunc(n.files, func(a, b *uploadFileRow) int { return strings.Compare(a.Base, b.Base) })
+	for _, f := range n.files {
+		row := treeRow{
+			IsDir:             false,
+			Path:              f.Path,
+			Name:              f.Base,
+			Depth:             depth,
+			Hidden:            hidden,
+			ParentPath:        n.fullPath,
+			CoveredStmts:      f.CoveredStmts,
+			TotalStmts:        f.TotalStmts,
+			Pct:               f.Pct,
+			HasBefore:         f.HasBefore,
+			BeforeCovered:     f.BeforeCovered,
+			BeforeTotal:       f.BeforeTotal,
+			BeforeStr:         f.BeforeStr,
+			Delta:             f.Delta,
+			DeltaVal:          f.DeltaVal,
+			NewFile:           f.NewFile,
+			NewlyMiss:         f.NewlyMiss,
+			Changed:           f.Changed,
+			IsSourceChanged:   f.IsSourceChanged,
+			IsCoverageChanged: f.IsCoverageChanged,
+			Uncovered:         f.Uncovered,
+		}
+		*out = append(*out, row)
+	}
 }
 
 // verdictView is the coverage verdict rendered at the top of the upload page.

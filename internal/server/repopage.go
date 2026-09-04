@@ -1,6 +1,6 @@
 // The repo page (GET /repos/{slug...}): one repo's current verdict, its
-// coverage trend, the files dragging it down, and a paged list of the
-// uploads behind it.
+// coverage trend, the files behind its latest upload, and a paged list of
+// the uploads behind it.
 
 package server
 
@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -92,7 +91,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The verdict, stats and "where coverage is missing" all describe the
+	// The verdict, stats and files view all describe the
 	// selected branch's current standing (the default branch when "All
 	// branches" is chosen); they ride inside the branch-filtered region so the
 	// selector moves them together with the trend and history.
@@ -107,8 +106,8 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	var (
 		verdict   *repoVerdictView
 		lastProv  *provView
-		miss      *missView
 		uncovered int64
+		filesView *filesViewData
 	)
 	if latest != nil {
 		_, base := s.branchBaseReport(r.Context(), repo.ID, trendBranch)
@@ -117,7 +116,12 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		if lu, err := s.store.Upload(r.Context(), latest.UploadID); err == nil {
 			p := s.uploadProvenance(r.Context(), lu)
 			lastProv = &p
-			miss = s.buildMissView(r.Context(), lu)
+			baseUpload, baseFiles := s.baselineUpload(r.Context(), repo, lu)
+			if fv, err := s.buildFilesViewData(r.Context(), lu, baseUpload, baseFiles, "Files on "+trendBranch); err == nil {
+				filesView = &fv
+			} else {
+				s.log.Warn("loading files for repo page", "upload", lu.ID, "err", err)
+			}
 		}
 	}
 
@@ -142,7 +146,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		"Verdict":       verdict,
 		"Uncovered":     uncovered,
 		"LastUpload":    lastProv,
-		"Miss":          miss,
+		"FilesView":     filesView,
 		"WSPrefix":      wsPrefix,
 		"PublicView":    s.publicView(r),
 		"BadgeMarkdown": s.badgeMarkdown(repo.Slug),
@@ -267,87 +271,6 @@ func (s *Server) repoVerdict(latest *store.CommitReport, repo *store.Repo, base 
 }
 
 // missFile is one file in the "where coverage is missing" table.
-type missFile struct {
-	Dir, Base, Path string
-	Pct             float64
-	Uncovered       int64 // uncovered statements
-	Ranges          string
-}
-
-// missView lists the files with the most uncovered statements for a branch's
-// latest upload, so a reader sees where to aim next.
-type missView struct {
-	UploadID   int64
-	Branch     string
-	Files      []missFile // top offenders, most uncovered first
-	Total      int        // files with any uncovered statement
-	Projection string     // total coverage if the top files were fully covered
-	ProjFiles  int        // how many top files that projection assumes (1 or 2)
-}
-
-// missTop caps the rows shown in the table.
-const missTop = 6
-
-// buildMissView ranks an upload's files by uncovered statements and projects
-// where total coverage would land if the worst were fully covered. Returns nil
-// when the upload has no per-file data or nothing is uncovered.
-func (s *Server) buildMissView(ctx context.Context, u *store.Upload) *missView {
-	files, err := s.store.UploadFiles(ctx, u.ID)
-	if err != nil || len(files) == 0 {
-		return nil
-	}
-	type ranked struct {
-		f   *store.UploadFile
-		unc int64
-	}
-	var offenders []ranked
-	for _, f := range files {
-		if unc := f.TotalStmts - f.CoveredStmts; unc > 0 {
-			offenders = append(offenders, ranked{f, unc})
-		}
-	}
-	if len(offenders) == 0 {
-		return nil
-	}
-	sort.Slice(offenders, func(i, j int) bool {
-		if offenders[i].unc != offenders[j].unc {
-			return offenders[i].unc > offenders[j].unc
-		}
-		return offenders[i].f.Path < offenders[j].f.Path
-	})
-
-	mv := &missView{UploadID: u.ID, Branch: u.Branch, Total: len(offenders)}
-	for i, o := range offenders {
-		if i == missTop {
-			break
-		}
-		dir, base := splitPath(o.f.Path)
-		mv.Files = append(mv.Files, missFile{
-			Dir: dir, Base: base, Path: o.f.Path,
-			Pct: o.f.Pct, Uncovered: o.unc, Ranges: uncoveredRanges(o.f.Blocks),
-		})
-	}
-
-	// Projection: cover the top one or two offenders completely and see where
-	// the total lands. Only shown when it moves the needle.
-	if u.TotalStmts > 0 {
-		n := 2
-		if len(offenders) < 2 {
-			n = 1
-		}
-		var recovered int64
-		for i := 0; i < n; i++ {
-			recovered += offenders[i].unc
-		}
-		proj := float64(u.CoveredStmts+recovered) / float64(u.TotalStmts) * 100
-		if proj-u.TotalPct >= 0.1 {
-			mv.Projection = fmt.Sprintf("%.0f%%", math.Floor(proj))
-			mv.ProjFiles = n
-		}
-	}
-	return mv
-}
-
 // repoWorkspacePrefix resolves the tracked workspace a repo belongs to — its
 // most specific registered slug prefix on the same forge — so the page can
 // link to that workspace's settings. Returns "" when none is tracked.
