@@ -12,6 +12,13 @@
 // Bitbucket's carries an opaque UUID — resolved against the tracked repo's
 // own forge-reported id, so the untrusted slug the request also sends can
 // only ever agree with the signed identity, never override it.
+//
+// A repo seen for the first time is registered on the spot, the way a
+// workspace token's first upload registers it (uploadrepo.go): the forge
+// signed the repo's identity, which is a stronger claim than holding the
+// workspace token. What OIDC cannot do is create the workspace — that
+// stays an owner's move — so a slug under no registered workspace is
+// refused, and the CI log says which workspace to register.
 package server
 
 import (
@@ -23,6 +30,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gocov/gocov/internal/core"
+	"github.com/gocov/gocov/internal/forge"
 	"github.com/gocov/gocov/internal/oidc"
 	"github.com/gocov/gocov/internal/store"
 )
@@ -168,13 +177,20 @@ func (s *Server) oidcResolveBySlug(w http.ResponseWriter, r *http.Request, slug,
 		httpError(w, http.StatusForbidden, "oidc_invalid_token: the OIDC token has no repository claim")
 		return nil, false
 	}
-	repo, ok := s.oidcTrackedRepo(w, r, slug, forgeName)
+	if formRepo := r.FormValue("repo"); formRepo != "" && formRepo != slug {
+		httpError(w, http.StatusForbidden, "oidc_repo_mismatch: the OIDC token is for %q, not %q", slug, formRepo)
+		return nil, false
+	}
+	repo, ws, ok := s.oidcLookup(w, r, slug, forgeName)
 	if !ok {
 		return nil, false
 	}
-	if formRepo := r.FormValue("repo"); formRepo != "" && formRepo != repo.Slug {
-		httpError(w, http.StatusForbidden, "oidc_repo_mismatch: the OIDC token is for %q, not %q", repo.Slug, formRepo)
-		return nil, false
+	if repo == nil {
+		// The slug is signed by the forge, so nothing more has to be
+		// checked before registering it under its workspace.
+		if repo, ok = s.oidcRegisterRepo(w, r, ws, slug); !ok {
+			return nil, false
+		}
 	}
 	s.log.Info("oidc upload verified", "repo", repo.Slug, "forge", forgeName)
 	return repo, true
@@ -200,7 +216,7 @@ func (s *Server) oidcResolveBitbucket(w http.ResponseWriter, r *http.Request, to
 		httpError(w, http.StatusBadRequest, "Bitbucket OIDC uploads require the repo field")
 		return nil, false
 	}
-	repo, ok := s.oidcTrackedRepo(w, r, slug, "bitbucket")
+	repo, ws, ok := s.oidcLookup(w, r, slug, "bitbucket")
 	if !ok {
 		return nil, false
 	}
@@ -209,52 +225,126 @@ func (s *Server) oidcResolveBitbucket(w http.ResponseWriter, r *http.Request, to
 	// connection, so — like the fork-PR path (tokenless.go) — rate-limit it
 	// per repo before making it: a valid token replayed with a victim's slug
 	// must not be able to hammer that workspace's Bitbucket connection.
-	if !s.tokenless.allow(repo.Slug, time.Now()) {
-		httpError(w, http.StatusTooManyRequests, "OIDC upload rate limit reached for %s; try again later", repo.Slug)
+	if !s.tokenless.allow(slug, time.Now()) {
+		httpError(w, http.StatusTooManyRequests, "OIDC upload rate limit reached for %s; try again later", slug)
 		return nil, false
 	}
 
 	// Verify the slug→UUID binding through the repo's own workspace
 	// connection: the caller does not choose which credentials answer this.
-	fg, err := s.forges.For(ctx, repo)
-	if err != nil {
-		s.internalError(w, "resolving forge connection", err)
-		return nil, false
+	// An untracked slug is verified through the workspace it would be
+	// registered under — and registered only once the binding holds, so a
+	// token replayed with a victim's slug cannot leave a repo row behind.
+	var fg forge.Forge
+	if repo != nil {
+		var err error
+		if fg, err = s.forges.For(ctx, repo); err != nil {
+			s.internalError(w, "resolving forge connection", err)
+			return nil, false
+		}
+	} else {
+		fg = s.forges.Connected(ctx, ws, "bitbucket")
 	}
 	if fg == nil {
-		httpError(w, http.StatusForbidden, "OIDC uploads for %s need its workspace connected to Bitbucket; a workspace owner can connect it from the workspace settings", ownerOf(repo.Slug))
+		httpError(w, http.StatusForbidden, "OIDC uploads for %s need its workspace connected to Bitbucket; a workspace owner can connect it from the workspace settings", ownerOf(slug))
 		return nil, false
 	}
-	gotUUID, err := fg.GetRepoID(ctx, repo.Slug)
+	gotUUID, err := fg.GetRepoID(ctx, slug)
 	if err != nil {
-		s.log.Error("oidc bitbucket repo id", "repo", repo.Slug, "err", err)
+		s.log.Error("oidc bitbucket repo id", "repo", slug, "err", err)
 		httpError(w, http.StatusBadGateway, "could not verify the repository identity with Bitbucket; retrying may help")
 		return nil, false
 	}
 	if normalizeUUID(gotUUID) != normalizeUUID(wantUUID) {
-		httpError(w, http.StatusForbidden, "oidc_repo_mismatch: the OIDC token's repository does not match %q", repo.Slug)
+		httpError(w, http.StatusForbidden, "oidc_repo_mismatch: the OIDC token's repository does not match %q", slug)
 		return nil, false
+	}
+	if repo == nil {
+		if repo, ok = s.oidcRegisterRepo(w, r, ws, slug); !ok {
+			return nil, false
+		}
 	}
 	s.log.Info("oidc upload verified", "repo", repo.Slug, "forge", "bitbucket")
 	return repo, true
 }
 
-// oidcTrackedRepo resolves a slug to a repo tracked on the expected forge,
-// writing the 404 itself when it is not.
-func (s *Server) oidcTrackedRepo(w http.ResponseWriter, r *http.Request, slug, forgeName string) (*store.Repo, bool) {
-	repo, err := s.store.RepoBySlug(r.Context(), slug)
-	if errors.Is(err, store.ErrNotFound) {
-		httpError(w, http.StatusNotFound, "repo %q is not tracked on this server; OIDC uploads cannot register repos", slug)
+// oidcLookup resolves a slug to what an OIDC upload may target: the repo
+// when it is tracked on the expected forge (ws is then nil — the caller
+// has no use for it), or the registered workspace the slug falls under
+// when it is not (repo is then nil, and the caller registers it once its
+// own checks pass). A slug under no registered workspace is the one
+// thing OIDC cannot create; that 404 is written here.
+func (s *Server) oidcLookup(w http.ResponseWriter, r *http.Request, slug, forgeName string) (repo *store.Repo, ws *store.Workspace, ok bool) {
+	ctx := r.Context()
+	repo, err := s.store.RepoBySlug(ctx, slug)
+	switch {
+	case err == nil:
+		if repo.Forge != forgeName {
+			httpError(w, http.StatusNotFound, "repo %q is not tracked as a %s repo", slug, forgeName)
+			return nil, nil, false
+		}
+		return repo, nil, true
+	case !errors.Is(err, store.ErrNotFound):
+		s.internalError(w, "looking up repo", err)
+		return nil, nil, false
+	}
+
+	ws, err = s.oidcWorkspaceFor(ctx, slug, forgeName)
+	if err != nil {
+		s.internalError(w, "looking up workspace", err)
+		return nil, nil, false
+	}
+	if ws == nil {
+		httpError(w, http.StatusNotFound, "repo %q is not tracked on this server and its workspace is not registered here; "+
+			"an OIDC upload registers the repo by itself once a workspace owner has registered %s", slug, ownerOf(slug))
+		return nil, nil, false
+	}
+	return nil, ws, true
+}
+
+// oidcWorkspaceFor returns the registered workspace owning the slug's
+// prefix on the given forge, nil when there is none. Prefixes are tried
+// longest first, like core.Forges.WorkspaceFor, so a GitLab project below
+// a registered subgroup lands in that subgroup's workspace. A same-named
+// workspace on another forge is not a match: prefixes are globally
+// unique, so the name is simply taken.
+func (s *Server) oidcWorkspaceFor(ctx context.Context, slug, forgeName string) (*store.Workspace, error) {
+	for _, prefix := range core.SlugPrefixes(slug) {
+		ws, err := s.store.WorkspaceByPrefix(ctx, prefix)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if ws.Forge != forgeName {
+			return nil, nil
+		}
+		return ws, nil
+	}
+	return nil, nil
+}
+
+// oidcRegisterRepo registers a forge-verified slug under its workspace,
+// with the same naming rules and forge existence check a workspace
+// token's first upload goes through (resolveUploadRepo), writing the
+// error response itself.
+func (s *Server) oidcRegisterRepo(w http.ResponseWriter, r *http.Request, ws *store.Workspace, slug string) (*store.Repo, bool) {
+	name := strings.TrimPrefix(slug, ws.Prefix+"/")
+	if !core.ValidRepoName(ws.Forge, name) {
+		httpError(w, http.StatusBadRequest, "invalid repo name %q under workspace %q", slug, ws.Prefix)
+		return nil, false
+	}
+	repo, err := s.pipeline.RegisterRepo(r.Context(), ws, slug)
+	if errors.Is(err, forge.ErrRepoNotFound) {
+		httpError(w, http.StatusNotFound, "repo %q not found on %s", slug, ws.Forge)
 		return nil, false
 	}
 	if err != nil {
-		s.internalError(w, "looking up repo", err)
+		s.internalError(w, "auto-registering repo", err)
 		return nil, false
 	}
-	if repo.Forge != forgeName {
-		httpError(w, http.StatusNotFound, "repo %q is not tracked as a %s repo", slug, forgeName)
-		return nil, false
-	}
+	s.log.Info("oidc upload registered repo", "repo", slug, "workspace", ws.Prefix)
 	return repo, true
 }
 

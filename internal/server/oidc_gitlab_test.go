@@ -109,6 +109,29 @@ func TestGitLabOIDCHappyPath(t *testing.T) {
 	}
 }
 
+// A project below the registered group is registered on its first OIDC
+// upload, keeping its subgroup path as the repo name the way a workspace
+// token's registration does.
+func TestGitLabOIDCRegistersNestedProject(t *testing.T) {
+	f, is := newGitLabOIDCFixture(t, gitLabDotComIssuer, nil)
+	tok := is.mint(t, glClaims(gitLabDotComIssuer, "acme/tools/gadgets", "https://gocov.example"))
+
+	rec := doOIDCUpload(t, f, tok, map[string]string{"repo": "acme/tools/gadgets"})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	repo, err := f.store.RepoBySlug(t.Context(), "acme/tools/gadgets")
+	if err != nil {
+		t.Fatalf("repo not registered: %v", err)
+	}
+	if repo.Forge != "gitlab" {
+		t.Errorf("registered repo forge = %q, want gitlab", repo.Forge)
+	}
+	if len(f.forge.StatusCalls) != 1 {
+		t.Errorf("got %d status calls, want 1", len(f.forge.StatusCalls))
+	}
+}
+
 // A token whose project_path is not this repo's slug is a mismatch.
 func TestGitLabOIDCRepoMismatch(t *testing.T) {
 	f, is := newGitLabOIDCFixture(t, gitLabDotComIssuer, nil)

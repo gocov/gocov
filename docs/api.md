@@ -32,11 +32,13 @@ A request **without** the `Authorization` header may instead carry a forge-minte
 - the issuer is one it trusts (GitHub Actions, Bitbucket Pipelines, and GitLab CI — plus any self-managed GitLab
   issuers the operator configured);
 - the audience equals this server's URL — a token minted for another audience is rejected;
-- the repository claim maps to a tracked repo, and the request's own `repo` part (if sent) agrees with it.
+- the repository claim falls under a registered workspace on that forge, and the request's own `repo` part (if
+  sent) agrees with it. A repo not yet tracked is registered by this upload, as a workspace token's first upload
+  would register it; the workspace itself must already exist.
 
 On success the upload proceeds like a token upload — fully verified, published through the workspace's forge
 connection. Refusals are explicit: `403 oidc_bad_audience`, `403 oidc_unknown_issuer`, `403 oidc_repo_mismatch`,
-`401 oidc_invalid_token`, and `404` for an untracked repo. See
+`401 oidc_invalid_token`, and `404` for a repo under no registered workspace. See
 [GitHub Actions](github-actions.md#uploading-without-a-token).
 
 ### Tokenless fork-PR uploads
