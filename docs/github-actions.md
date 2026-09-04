@@ -39,10 +39,11 @@ steps:
   - run: go run github.com/gocov/gocov/cmd/gocov@latest upload coverage.out
 ```
 
-The repository must already be tracked in a workspace [connected](connecting.md) through the gocov GitHub
-App — the same connection that posts the PR comment and check run. OIDC replaces only the *upload* token;
-publishing still goes through that App identity, so the reported status looks exactly like a token upload
-(it is **not** marked unverified).
+The repository's workspace (its GitHub org or user) must already be registered on gocov and
+[connected](connecting.md) through the gocov GitHub App — the same connection that posts the PR comment and
+check run. The repository itself needs no setup: its first OIDC upload registers it, exactly as a token upload
+would. OIDC replaces only the *upload* token; publishing still goes through that App identity, so the reported
+status looks exactly like a token upload (it is **not** marked unverified).
 
 A few things follow from how the identity token works:
 

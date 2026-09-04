@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -186,6 +187,45 @@ func TestBitbucketOIDCSubFallback(t *testing.T) {
 
 // A token whose repository UUID does not match the tracked repo's forge id
 // is refused — the slug cannot redirect the upload onto another repo.
+// An untracked slug is verified through the workspace it would join —
+// the forge's UUID for it must be the signed one — and registered only
+// then.
+func TestBitbucketOIDCRegistersRepo(t *testing.T) {
+	f, is := newBitbucketOIDCFixture(t, bbRepoUUID)
+	tok := is.mint(t, bbClaims(bbRepoUUID, []any{bbWorkspaceARI, "https://gocov.example"}))
+
+	rec := doOIDCUpload(t, f, tok, map[string]string{"repo": "acme/gadgets"})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	repo, err := f.store.RepoBySlug(t.Context(), "acme/gadgets")
+	if err != nil {
+		t.Fatalf("repo not registered: %v", err)
+	}
+	if repo.Forge != "bitbucket" {
+		t.Errorf("registered repo forge = %q, want bitbucket", repo.Forge)
+	}
+	if got := f.forge.RepoIDCalls; len(got) != 1 || got[0] != "acme/gadgets" {
+		t.Errorf("GetRepoID calls = %v, want one for acme/gadgets", got)
+	}
+}
+
+// A valid token replayed with a victim's untracked slug fails the UUID
+// binding before anything is registered: no repo row is left behind.
+func TestBitbucketOIDCMismatchRegistersNothing(t *testing.T) {
+	f, is := newBitbucketOIDCFixture(t, bbRepoUUID)
+	tok := is.mint(t, bbClaims("{99999999-9999-9999-9999-999999999999}", []any{bbWorkspaceARI, "https://gocov.example"}))
+
+	rec := doOIDCUpload(t, f, tok, map[string]string{"repo": "acme/gadgets"})
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	assertErrorContains(t, rec, "oidc_repo_mismatch")
+	if _, err := f.store.RepoBySlug(t.Context(), "acme/gadgets"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("repo registered despite the UUID mismatch (err = %v)", err)
+	}
+}
+
 func TestBitbucketOIDCRepoMismatch(t *testing.T) {
 	f, is := newBitbucketOIDCFixture(t, bbRepoUUID)
 	tok := is.mint(t, bbClaims("{99999999-9999-9999-9999-999999999999}", []any{bbWorkspaceARI, "https://gocov.example"}))

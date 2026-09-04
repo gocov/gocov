@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
+	"github.com/gocov/gocov/internal/forge"
 	forgefake "github.com/gocov/gocov/internal/forge/fake"
 	"github.com/gocov/gocov/internal/oidc"
 	"github.com/gocov/gocov/internal/profile"
@@ -216,10 +218,60 @@ func TestOIDCUntracked(t *testing.T) {
 	tok := is.mint(t, claims)
 
 	// The form repo is omitted so the mismatch check does not fire first;
-	// the untracked repository is what must be reported.
+	// the untracked repository is what must be reported. Its workspace is
+	// not registered, which is the one thing an OIDC upload cannot fix —
+	// the reason names it so the CI log says what to do.
 	rec := doOIDCUpload(t, f, tok, map[string]string{"repo": ""})
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	assertErrorContains(t, rec, "registered stranger")
+	if _, err := f.store.RepoBySlug(t.Context(), "stranger/repo"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("repo registered under no workspace (err = %v)", err)
+	}
+}
+
+// A repo the forge vouches for is registered on its first OIDC upload,
+// exactly as a workspace token's first upload would register it: under
+// the tracked workspace, with the default branch asked through the App.
+func TestOIDCRegistersRepo(t *testing.T) {
+	f, is := newOIDCFixture(t)
+	f.forge.DefaultBranch = "trunk"
+	claims := githubClaims("https://gocov.example")
+	claims["repository"] = "acme/gadgets"
+	tok := is.mint(t, claims)
+
+	rec := doOIDCUpload(t, f, tok, map[string]string{"repo": "acme/gadgets"})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	repo, err := f.store.RepoBySlug(t.Context(), "acme/gadgets")
+	if err != nil {
+		t.Fatalf("repo not registered: %v", err)
+	}
+	if repo.Forge != "github" || repo.DefaultBranch != "trunk" {
+		t.Errorf("registered repo = %+v, want github repo on trunk", repo)
+	}
+	if len(f.forge.StatusCalls) != 1 {
+		t.Errorf("got %d status calls, want 1", len(f.forge.StatusCalls))
+	}
+}
+
+// The forge existence check a workspace token's registration makes
+// applies here too: a repo the App says does not exist is not registered.
+func TestOIDCRegisterRefusedWhenForgeHasNoRepo(t *testing.T) {
+	f, is := newOIDCFixture(t)
+	f.forge.DefaultBranchErr = forge.ErrRepoNotFound
+	claims := githubClaims("https://gocov.example")
+	claims["repository"] = "acme/ghost"
+	tok := is.mint(t, claims)
+
+	rec := doOIDCUpload(t, f, tok, map[string]string{"repo": ""})
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	if _, err := f.store.RepoBySlug(t.Context(), "acme/ghost"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("repo registered despite the forge refusing it (err = %v)", err)
 	}
 }
 

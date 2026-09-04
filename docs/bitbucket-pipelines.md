@@ -40,9 +40,10 @@ The audience must equal your gocov server's URL (`https://app.gocov.dev` on the 
 URL when self-hosting). Bitbucket appends it to the default workspace audience, so the token can carry your
 server alongside any other resource servers the pipeline already targets.
 
-The repository must already be tracked in a workspace [connected](connecting.md) to Bitbucket — the same
-connection that posts the build status and Code Insights report. OIDC replaces only the upload token; publishing
-still goes through that connection. A pasted `GOCOV_TOKEN` always takes precedence, so existing setups are
+The repository's Bitbucket workspace must already be registered on gocov and [connected](connecting.md) to
+Bitbucket — the same connection that posts the build status and Code Insights report. The repository itself needs
+no setup: its first OIDC upload registers it, exactly as a token upload would. OIDC replaces only the upload token;
+publishing still goes through that connection. A pasted `GOCOV_TOKEN` always takes precedence, so existing setups are
 untouched, and a rejected OIDC upload logs the reason and exits 0 rather than failing the build.
 
 ## Without Docker

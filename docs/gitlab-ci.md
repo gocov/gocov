@@ -54,9 +54,10 @@ coverage:
 The `aud` must equal your gocov server's URL (`https://app.gocov.dev` on the hosted service, your instance's URL
 when self-hosting). The variable must be named `GOCOV_ID_TOKEN` — that is where the uploader looks.
 
-The project must already be tracked in a workspace [connected](connecting.md) to GitLab — the same connection that
-posts the commit status and merge-request note. OIDC replaces only the upload token; publishing still goes through
-that connection. A pasted `GOCOV_TOKEN` always takes precedence, so existing setups are untouched, and a rejected
+The project's workspace (its GitLab group) must already be registered on gocov and [connected](connecting.md) to
+GitLab — the same connection that posts the commit status and merge-request note. The project itself needs no
+setup: its first OIDC upload registers it, exactly as a token upload would. OIDC replaces only the upload token;
+publishing still goes through that connection. A pasted `GOCOV_TOKEN` always takes precedence, so existing setups are untouched, and a rejected
 OIDC upload logs the reason and exits 0 rather than failing the build.
 
 On a self-managed GitLab, the OIDC tokens are issued under your instance's own URL; the gocov operator has to
