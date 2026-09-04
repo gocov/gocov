@@ -2,12 +2,9 @@ package bitbucket
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/gocov/gocov/internal/forge"
@@ -123,23 +120,14 @@ func (c *Consumer) ForgeClient(accessToken string) forge.Forge {
 // token runs one grant against the token endpoint with HTTP Basic
 // consumer auth.
 func (c *Consumer) token(ctx context.Context, form url.Values) (*Grant, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.authBase()+"/access_token", strings.NewReader(form.Encode()))
-	if err != nil {
-		return nil, err
+	var tok struct {
+		AccessToken  string  `json:"access_token"`
+		RefreshToken string  `json:"refresh_token"`
+		ExpiresIn    float64 `json:"expires_in"`
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.SetBasicAuth(c.Key, c.Secret)
-	resp, err := c.client().Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("bitbucket: token grant: %w", err)
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, fmt.Errorf("bitbucket: token grant: %w", err)
-	}
-	if resp.StatusCode >= 300 {
+	api := &rest.Client{Name: "bitbucket", BaseURL: c.authBase(), HTTPClient: c.client(), Authorize: rest.Basic(c.Key, c.Secret)}
+	err := api.PostForm(ctx, "/access_token", form, &tok)
+	if code := rest.OAuthErrorCode(err); code != "" {
 		// Dead-grant answers the lazy-detection path keys off. RFC 6749
 		// says invalid_grant, but live Bitbucket (probed 2026-08-09)
 		// answers a rotated-away refresh token with unauthorized_client
@@ -154,23 +142,13 @@ func (c *Consumer) token(ctx context.Context, form url.Values) (*Grant, error) {
 		// reconnect prompt forever. On a code exchange the same answer
 		// far more likely means misconfigured consumer credentials,
 		// which must not read as a revoked workspace.
-		var oauthErr struct {
-			Error string `json:"error"`
-		}
-		_ = json.Unmarshal(data, &oauthErr)
 		refreshing := form.Get("grant_type") == "refresh_token"
-		if oauthErr.Error == "invalid_grant" || (refreshing && oauthErr.Error == "unauthorized_client") {
-			return nil, fmt.Errorf("%w: bitbucket grant: %s", forge.ErrCredentialsRevoked, data)
+		if code == "invalid_grant" || (refreshing && code == "unauthorized_client") {
+			return nil, fmt.Errorf("%w: %w", forge.ErrCredentialsRevoked, err)
 		}
-		return nil, fmt.Errorf("bitbucket: token grant: status %d: %s", resp.StatusCode, data)
 	}
-	var tok struct {
-		AccessToken  string  `json:"access_token"`
-		RefreshToken string  `json:"refresh_token"`
-		ExpiresIn    float64 `json:"expires_in"`
-	}
-	if err := json.Unmarshal(data, &tok); err != nil {
-		return nil, fmt.Errorf("bitbucket: token grant: %w", err)
+	if err != nil {
+		return nil, fmt.Errorf("token grant: %w", err)
 	}
 	if tok.AccessToken == "" {
 		return nil, fmt.Errorf("bitbucket: token grant returned no access token")

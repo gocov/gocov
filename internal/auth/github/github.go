@@ -5,13 +5,10 @@ package github
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gocov/gocov/internal/auth"
@@ -138,30 +135,14 @@ func (p *Provider) exchange(ctx context.Context, code, redirectURI string) (stri
 		"code":          {code},
 		"redirect_uri":  {redirectURI},
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		p.authBase()+"/access_token", strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	// Without this GitHub answers in the legacy query-string format.
-	req.Header.Set("Accept", "application/json")
-	resp, err := p.client().Do(req)
-	if err != nil {
-		return "", fmt.Errorf("github: token exchange: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("github: token exchange: status %d: %s", resp.StatusCode, body)
-	}
 	// A bad code still comes back 200, with the error in the body.
 	var tok struct {
 		AccessToken string `json:"access_token"`
 		Error       string `json:"error"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&tok); err != nil {
-		return "", fmt.Errorf("github: token exchange: %w", err)
+	c := &rest.Client{Name: "github", HTTPClient: p.client()}
+	if err := c.PostForm(ctx, p.authBase()+"/access_token", form, &tok); err != nil {
+		return "", fmt.Errorf("token exchange: %w", err)
 	}
 	if tok.Error != "" {
 		return "", fmt.Errorf("github: token exchange: %s", tok.Error)

@@ -80,6 +80,24 @@ func (LCOVParser) Parse(r io.Reader) (*Profile, error) {
 	return p, nil
 }
 
+// fromLineHits is the tail every line-oriented parser shares: one File
+// per path with any lines, sorted by path, and a format-named error when
+// the report carried no line coverage at all.
+func fromLineHits(format string, files map[string]map[int]int) (*Profile, error) {
+	p := &Profile{Files: make([]File, 0, len(files))}
+	for path, lines := range files {
+		if len(lines) == 0 {
+			continue
+		}
+		p.Files = append(p.Files, File{Path: path, Blocks: blocksFromLineHits(lines)})
+	}
+	if len(p.Files) == 0 {
+		return nil, errors.New(format + ": no line coverage data found")
+	}
+	slices.SortFunc(p.Files, func(a, b File) int { return cmp.Compare(a.Path, b.Path) })
+	return p, nil
+}
+
 // blocksFromLineHits converts per-line hit counts to blocks, collapsing
 // only strictly consecutive lines with equal counts — a gap must never end
 // up inside a block, or diff coverage would treat non-executable lines as

@@ -5,12 +5,9 @@ package bitbucket
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/gocov/gocov/internal/auth"
@@ -116,27 +113,12 @@ func (p *Provider) exchange(ctx context.Context, code, redirectURI string) (stri
 		"code":         {code},
 		"redirect_uri": {redirectURI},
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		p.authBase()+"/access_token", strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.SetBasicAuth(p.Key, p.Secret)
-	resp, err := p.client().Do(req)
-	if err != nil {
-		return "", fmt.Errorf("bitbucket: token exchange: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("bitbucket: token exchange: status %d: %s", resp.StatusCode, body)
-	}
 	var tok struct {
 		AccessToken string `json:"access_token"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&tok); err != nil {
-		return "", fmt.Errorf("bitbucket: token exchange: %w", err)
+	c := &rest.Client{Name: "bitbucket", HTTPClient: p.client(), Authorize: rest.Basic(p.Key, p.Secret)}
+	if err := c.PostForm(ctx, p.authBase()+"/access_token", form, &tok); err != nil {
+		return "", fmt.Errorf("token exchange: %w", err)
 	}
 	if tok.AccessToken == "" {
 		return "", fmt.Errorf("bitbucket: token exchange returned no access token")

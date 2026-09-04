@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"strings"
 )
 
@@ -34,6 +35,15 @@ type Client struct {
 func Bearer(token string) func(*http.Request) {
 	return func(req *http.Request) {
 		req.Header.Set("Authorization", "Bearer "+token)
+	}
+}
+
+// Basic authorizes requests with HTTP Basic credentials — how an OAuth
+// token endpoint takes the client id and secret when it does not want
+// them in the form.
+func Basic(user, password string) func(*http.Request) {
+	return func(req *http.Request) {
+		req.SetBasicAuth(user, password)
 	}
 }
 
@@ -59,6 +69,21 @@ func Status(err error) int {
 	return 0
 }
 
+// OAuthErrorCode returns the "error" code a token endpoint put in the
+// refusal behind err — "invalid_grant" and the like — or "" when err is
+// anything else or the body is not such an answer.
+func OAuthErrorCode(err error) string {
+	e, ok := errors.AsType[*Error](err)
+	if !ok {
+		return ""
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	_ = json.Unmarshal([]byte(e.Body), &body)
+	return body.Error
+}
+
 const (
 	// maxErrorBody bounds what a refusal's message carries.
 	maxErrorBody = 4096
@@ -82,6 +107,26 @@ func (c *Client) Send(ctx context.Context, method, url string, payload any) erro
 // is non-nil, decodes the answer into it.
 func (c *Client) JSON(ctx context.Context, method, url string, payload, out any) error {
 	resp, err := c.Do(ctx, method, url, payload, "")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return c.decode(resp, url, out)
+}
+
+// PostForm sends form-encoded fields and decodes the JSON answer into
+// out — the shape of an OAuth token endpoint. The Accept header names
+// JSON because GitHub otherwise answers in its legacy query-string form.
+// A refused answer is an *Error whose Body carries the endpoint's own
+// error code, which is how a dead grant is told from a transient fault.
+func (c *Client) PostForm(ctx context.Context, url string, form neturl.Values, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.target(url), strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.send(req, url)
 	if err != nil {
 		return err
 	}
@@ -137,22 +182,33 @@ func (c *Client) Do(ctx context.Context, method, url string, payload any, accept
 		}
 		body = bytes.NewReader(data)
 	}
-	target := url
-	if strings.HasPrefix(url, "/") {
-		target = c.BaseURL + url
-	}
-	req, err := http.NewRequestWithContext(ctx, method, target, body)
+	req, err := http.NewRequestWithContext(ctx, method, c.target(url), body)
 	if err != nil {
 		return nil, err
-	}
-	if c.Authorize != nil {
-		c.Authorize(req)
 	}
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	if accept != "" {
 		req.Header.Set("Accept", accept)
+	}
+	return c.send(req, url)
+}
+
+// target resolves a call's URL: a path is joined to BaseURL, an absolute
+// URL — a pagination link, a token endpoint — is used as is.
+func (c *Client) target(url string) string {
+	if strings.HasPrefix(url, "/") {
+		return c.BaseURL + url
+	}
+	return url
+}
+
+// send authorizes a built request, sends it and applies the answer
+// rule every call shares: 2xx comes back open, anything else as *Error.
+func (c *Client) send(req *http.Request, url string) (*http.Response, error) {
+	if c.Authorize != nil {
+		c.Authorize(req)
 	}
 	client := c.HTTPClient
 	if client == nil {

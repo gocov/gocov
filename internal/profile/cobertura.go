@@ -1,12 +1,10 @@
 package profile
 
 import (
-	"cmp"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"strings"
 )
 
@@ -69,16 +67,5 @@ func (CoberturaParser) Parse(r io.Reader) (*Profile, error) {
 		}
 	}
 
-	p := &Profile{Files: make([]File, 0, len(files))}
-	for path, lines := range files {
-		if len(lines) == 0 {
-			continue
-		}
-		p.Files = append(p.Files, File{Path: path, Blocks: blocksFromLineHits(lines)})
-	}
-	if len(p.Files) == 0 {
-		return nil, errors.New("cobertura: no line coverage data found")
-	}
-	slices.SortFunc(p.Files, func(a, b File) int { return cmp.Compare(a.Path, b.Path) })
-	return p, nil
+	return fromLineHits("cobertura", files)
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	neturl "net/url"
 	"strings"
 	"testing"
 )
@@ -90,5 +91,39 @@ func TestSendShapesBody(t *testing.T) {
 	next, err := c.GetPage(t.Context(), "/x", &out)
 	if err != nil || next != "http://next" {
 		t.Errorf("GetPage next = %q, err %v", next, err)
+	}
+}
+
+func TestPostFormIsATokenEndpointCall(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, pass, _ := r.BasicAuth()
+		if r.Method != http.MethodPost || user != "id" || pass != "secret" ||
+			r.Header.Get("Content-Type") != "application/x-www-form-urlencoded" ||
+			r.Header.Get("Accept") != "application/json" {
+			t.Errorf("request = %s %v auth %s:%s", r.Method, r.Header, user, pass)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		switch r.PostForm.Get("code") {
+		case "good":
+			_, _ = w.Write([]byte(`{"access_token":"tok"}`))
+		default:
+			http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+	c := &Client{Name: "test", BaseURL: srv.URL, HTTPClient: srv.Client(), Authorize: Basic("id", "secret")}
+
+	var tok struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := c.PostForm(t.Context(), "/token", neturl.Values{"code": {"good"}}, &tok); err != nil || tok.AccessToken != "tok" {
+		t.Fatalf("PostForm = %+v, %v", tok, err)
+	}
+	// A refusal keeps the endpoint's own error code readable.
+	err := c.PostForm(t.Context(), srv.URL+"/token", neturl.Values{"code": {"bad"}}, &tok)
+	if e, ok := errors.AsType[*Error](err); !ok || e.Status != http.StatusBadRequest || !strings.Contains(e.Body, "invalid_grant") {
+		t.Errorf("refusal = %#v", err)
 	}
 }
