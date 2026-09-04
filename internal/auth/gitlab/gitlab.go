@@ -113,14 +113,19 @@ func (p *Provider) Identity(ctx context.Context, code, redirectURI string) (*aut
 	if id.DisplayName == "" {
 		id.DisplayName = user.Username
 	}
-	groups, err := p.groups(ctx, token)
+	groups, err := p.groups(ctx, token, accessLevelMember)
+	if err != nil {
+		return nil, err
+	}
+	owned, err := p.groups(ctx, token, accessLevelOwner)
 	if err != nil {
 		return nil, err
 	}
 	// The username counts as a workspace of its own, so projects under
 	// the user's personal namespace admit their owner (same rule as
-	// GitHub).
+	// GitHub) — and that account owns it.
 	id.Workspaces = append(groups, user.Username)
+	id.OwnedWorkspaces = append(owned, user.Username)
 	return id, nil
 }
 
@@ -164,13 +169,23 @@ func (p *Provider) exchange(ctx context.Context, code, redirectURI string) (stri
 	return tok.AccessToken, nil
 }
 
-// groups lists the full paths of the groups the account is a member of
-// (GET /groups?min_access_level=10), subgroups included — a workspace can
-// be registered at any level of the namespace tree (D2), so every path
-// the user belongs to is a candidate. Follows Link-header pagination.
-func (p *Provider) groups(ctx context.Context, token string) ([]string, error) {
+// GitLab access levels, as the groups listing's min_access_level filter
+// takes them. Guest (10) is the lowest level that is still membership;
+// Owner (50) is the level that administers the group. Maintainer (40)
+// deliberately does not count as an owner here.
+const (
+	accessLevelMember = 10
+	accessLevelOwner  = 50
+)
+
+// groups lists the full paths of the groups the account belongs to at
+// minAccess or above (GET /groups?min_access_level=N), subgroups included
+// — a workspace can be registered at any level of the namespace tree
+// (D2), so every path the user belongs to is a candidate. Follows
+// Link-header pagination.
+func (p *Provider) groups(ctx context.Context, token string, minAccess int) ([]string, error) {
 	var out []string
-	next := p.apiBase() + "/groups?min_access_level=10&per_page=100"
+	next := p.apiBase() + "/groups?min_access_level=" + strconv.Itoa(minAccess) + "&per_page=100"
 	for range maxGroupPages {
 		var page []struct {
 			FullPath string `json:"full_path"`

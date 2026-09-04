@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -283,13 +284,14 @@ func (s *Server) provisionUser(w http.ResponseWriter, r *http.Request, forge str
 		DisplayName: id.DisplayName,
 		// The workspace snapshot the registration page renders from
 		// (M3/D3); refreshed on every login, stale in between.
-		ForgeWorkspaces: id.Workspaces,
+		ForgeWorkspaces:      id.Workspaces,
+		ForgeOwnedWorkspaces: id.OwnedWorkspaces,
 	}
 	if err := s.store.UpsertUser(r.Context(), u); err != nil {
 		s.internalError(w, "provisioning user", err)
 		return nil, 0, false
 	}
-	memberships, err := s.syncMemberships(r.Context(), u, id.Workspaces)
+	memberships, err := s.syncMemberships(r.Context(), u)
 	if err != nil {
 		s.internalError(w, "syncing workspace memberships", err)
 		return nil, 0, false
@@ -329,27 +331,35 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, u *store.U
 
 // syncMemberships persists the user's workspace memberships (M2/D2): the
 // tracked workspaces on this forge whose prefix the forge reports the user
-// belongs to. It runs on every sign-in with full-sync semantics, so a
-// membership the forge no longer reports is dropped at the next login.
-// Matching is per provider (forge + prefix), so two forges sharing a prefix
-// stay distinct tenants. Returns how many memberships the user ends up
-// with, which decides a hosted user's post-login landing page.
-func (s *Server) syncMemberships(ctx context.Context, u *store.User, forgeWorkspaces []string) (int, error) {
-	forgeSet := make(map[string]bool, len(forgeWorkspaces))
-	for _, ws := range forgeWorkspaces {
-		forgeSet[ws] = true
-	}
+// belongs to, each with the role the forge's own role maps to. It runs on
+// every sign-in with full-sync semantics, so a membership the forge no
+// longer reports is dropped at the next login and a demoted owner
+// becomes a member. Matching is per provider (forge + prefix), so two
+// forges sharing a prefix stay distinct tenants. Returns how many
+// memberships the user ends up with, which decides a hosted user's
+// post-login landing page.
+func (s *Server) syncMemberships(ctx context.Context, u *store.User) (int, error) {
 	tracked, err := s.store.ListWorkspaces(ctx)
 	if err != nil {
 		return 0, err
 	}
-	var ids []int64
+	var memberships []store.Membership
 	for _, ws := range tracked {
-		if ws.Forge == u.Forge && forgeSet[ws.Prefix] {
-			ids = append(ids, ws.ID)
+		if ws.Forge == u.Forge && slices.Contains(u.ForgeWorkspaces, ws.Prefix) {
+			memberships = append(memberships, store.Membership{WorkspaceID: ws.ID, Role: forgeRole(u, ws.Prefix)})
 		}
 	}
-	return len(ids), s.store.SetUserWorkspaces(ctx, u.ID, ids)
+	return len(memberships), s.store.SetUserMemberships(ctx, u.ID, memberships)
+}
+
+// forgeRole is the role the user's forge snapshot grants in the workspace
+// registered at prefix: owner when the forge says the account administers
+// it, member otherwise.
+func forgeRole(u *store.User, prefix string) store.Role {
+	if slices.Contains(u.ForgeOwnedWorkspaces, prefix) {
+		return store.RoleOwner
+	}
+	return store.RoleMember
 }
 
 func (s *Server) redirectURI(forge string) string {

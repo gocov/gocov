@@ -15,6 +15,11 @@ type Identity struct {
 	// Workspaces are the slugs of the workspaces the account is a member
 	// of, used for the login-time authorization check.
 	Workspaces []string
+	// OwnedWorkspaces is the subset of Workspaces the account administers
+	// on the forge — org admin on GitHub, group Owner on GitLab, workspace
+	// administrator on Bitbucket. It decides the owner role of the
+	// matching gocov memberships.
+	OwnedWorkspaces []string
 }
 
 // Provider implements one forge's OAuth 2.0 authorization-code flow.

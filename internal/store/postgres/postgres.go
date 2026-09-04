@@ -362,8 +362,8 @@ func (s *Store) RegisterWorkspace(ctx context.Context, w *store.Workspace, userI
 		return err
 	}
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO workspace_members (workspace_id, user_id) VALUES ($1, $2)`,
-		w.ID, userID); err != nil {
+		`INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, $3)`,
+		w.ID, userID, store.RoleOwner); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -577,7 +577,7 @@ func (s *Store) scanWorkspace(row rowScanner) (*store.Workspace, error) {
 	return &w, nil
 }
 
-func (s *Store) SetUserWorkspaces(ctx context.Context, userID int64, workspaceIDs []int64) error {
+func (s *Store) SetUserMemberships(ctx context.Context, userID int64, memberships []store.Membership) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -586,21 +586,45 @@ func (s *Store) SetUserWorkspaces(ctx context.Context, userID int64, workspaceID
 
 	// Drop memberships the forge no longer reports. An empty set matches
 	// every row (<> ALL of nothing is true), clearing the user entirely.
+	ids := make([]int64, len(memberships))
+	for i, m := range memberships {
+		ids[i] = m.WorkspaceID
+	}
 	if _, err := tx.Exec(ctx,
 		`DELETE FROM workspace_members WHERE user_id = $1 AND workspace_id <> ALL($2)`,
-		userID, workspaceIDs); err != nil {
+		userID, ids); err != nil {
 		return err
 	}
-	// Add the current set; rows that already exist stay untouched.
-	for _, wsID := range workspaceIDs {
+	// Add the current set; a row that already exists only has its role
+	// brought up to date, so a same-set re-sync leaves nothing changed.
+	for _, m := range memberships {
 		if _, err := tx.Exec(ctx,
-			`INSERT INTO workspace_members (workspace_id, user_id) VALUES ($1, $2)
-				ON CONFLICT DO NOTHING`,
-			wsID, userID); err != nil {
+			`INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, $3)
+				ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = EXCLUDED.role`,
+			m.WorkspaceID, userID, m.Role); err != nil {
 			return err
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+func (s *Store) ListMembershipsForUser(ctx context.Context, userID int64) ([]store.Membership, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT workspace_id, role FROM workspace_members
+		WHERE user_id = $1 ORDER BY workspace_id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.Membership
+	for rows.Next() {
+		var m store.Membership
+		if err := rows.Scan(&m.WorkspaceID, &m.Role); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) ListWorkspacesForUser(ctx context.Context, userID int64) ([]*store.Workspace, error) {
@@ -630,7 +654,8 @@ func (s *Store) ListWorkspacesForUser(ctx context.Context, userID int64) ([]*sto
 }
 
 const userCols = `id, forge, forge_uuid, email, display_name,
-	COALESCE(forge_workspaces, 'null'::jsonb), created_at, last_login_at`
+	COALESCE(forge_workspaces, 'null'::jsonb), COALESCE(forge_owned_workspaces, 'null'::jsonb),
+	created_at, last_login_at`
 
 func (s *Store) UpsertUser(ctx context.Context, u *store.User) error {
 	// The forge workspace snapshot is replaced wholesale: the identity
@@ -640,16 +665,21 @@ func (s *Store) UpsertUser(ctx context.Context, u *store.User) error {
 	if err != nil {
 		return err
 	}
+	owned, err := marshalStrings(u.ForgeOwnedWorkspaces)
+	if err != nil {
+		return err
+	}
 	return s.pool.QueryRow(ctx, `
-		INSERT INTO users (forge, forge_uuid, email, display_name, forge_workspaces)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO users (forge, forge_uuid, email, display_name, forge_workspaces, forge_owned_workspaces)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (forge, forge_uuid) DO UPDATE
 			SET email = EXCLUDED.email,
 				display_name = EXCLUDED.display_name,
 				forge_workspaces = EXCLUDED.forge_workspaces,
+				forge_owned_workspaces = EXCLUDED.forge_owned_workspaces,
 				last_login_at = now()
 		RETURNING id, created_at, last_login_at`,
-		u.Forge, u.ForgeUUID, u.Email, u.DisplayName, wss,
+		u.Forge, u.ForgeUUID, u.Email, u.DisplayName, wss, owned,
 	).Scan(&u.ID, &u.CreatedAt, &u.LastLoginAt)
 }
 
@@ -696,21 +726,31 @@ func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 
 func (s *Store) scanUser(row rowScanner) (*store.User, error) {
 	var u store.User
-	var wss []byte
+	var wss, owned []byte
 	err := row.Scan(&u.ID, &u.Forge, &u.ForgeUUID, &u.Email, &u.DisplayName,
-		&wss, &u.CreatedAt, &u.LastLoginAt)
+		&wss, &owned, &u.CreatedAt, &u.LastLoginAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	if len(wss) > 0 && string(wss) != "null" {
-		if err := json.Unmarshal(wss, &u.ForgeWorkspaces); err != nil {
-			return nil, fmt.Errorf("user %d: bad forge_workspaces: %w", u.ID, err)
-		}
+	if err := unmarshalStrings(wss, &u.ForgeWorkspaces); err != nil {
+		return nil, fmt.Errorf("user %d: bad forge_workspaces: %w", u.ID, err)
+	}
+	if err := unmarshalStrings(owned, &u.ForgeOwnedWorkspaces); err != nil {
+		return nil, fmt.Errorf("user %d: bad forge_owned_workspaces: %w", u.ID, err)
 	}
 	return &u, nil
+}
+
+// unmarshalStrings is marshalStrings' inverse: a NULL column (read as
+// "null") leaves dst nil.
+func unmarshalStrings(raw []byte, dst *[]string) error {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	return json.Unmarshal(raw, dst)
 }
 
 func (s *Store) CreateSession(ctx context.Context, sess *store.Session) error {
@@ -727,7 +767,8 @@ func (s *Store) UserBySession(ctx context.Context, tokenHash string) (*store.Use
 	// when the same token is presented again.
 	u, err := s.scanUser(s.pool.QueryRow(ctx, `
 		SELECT u.id, u.forge, u.forge_uuid, u.email, u.display_name,
-			COALESCE(u.forge_workspaces, 'null'::jsonb), u.created_at, u.last_login_at
+			COALESCE(u.forge_workspaces, 'null'::jsonb), COALESCE(u.forge_owned_workspaces, 'null'::jsonb),
+			u.created_at, u.last_login_at
 		FROM users u JOIN sessions s ON s.user_id = u.id
 		WHERE s.token_hash = $1 AND s.expires_at > now()`,
 		tokenHash))

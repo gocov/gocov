@@ -31,9 +31,9 @@ type Store struct {
 	crStatus   map[string]int64              // last pushed status version, keyed repoID:sha
 	workspaces map[int64]*store.Workspace
 	users      map[int64]*store.User
-	sessions   map[string]*store.Session // keyed by token hash
-	members    map[int64]map[int64]bool  // userID -> set of workspace IDs
-	tokenless  map[string]bool           // accepted tokenless (repo, run, attempt, part) triples
+	sessions   map[string]*store.Session      // keyed by token hash
+	members    map[int64]map[int64]store.Role // userID -> workspace ID -> role
+	tokenless  map[string]bool                // accepted tokenless (repo, run, attempt, part) triples
 }
 
 // New returns an empty in-memory store.
@@ -50,7 +50,7 @@ func New() *Store {
 		workspaces: map[int64]*store.Workspace{},
 		users:      map[int64]*store.User{},
 		sessions:   map[string]*store.Session{},
-		members:    map[int64]map[int64]bool{},
+		members:    map[int64]map[int64]store.Role{},
 		tokenless:  map[string]bool{},
 	}
 }
@@ -230,9 +230,9 @@ func (s *Store) RegisterWorkspace(_ context.Context, w *store.Workspace, userID 
 		return err
 	}
 	if s.members[userID] == nil {
-		s.members[userID] = map[int64]bool{}
+		s.members[userID] = map[int64]store.Role{}
 	}
-	s.members[userID][w.ID] = true
+	s.members[userID][w.ID] = store.RoleOwner
 	return nil
 }
 
@@ -356,19 +356,32 @@ func (s *Store) ListWorkspaces(_ context.Context) ([]*store.Workspace, error) {
 	return out, nil
 }
 
-func (s *Store) SetUserWorkspaces(_ context.Context, userID int64, workspaceIDs []int64) error {
+func (s *Store) SetUserMemberships(_ context.Context, userID int64, memberships []store.Membership) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(workspaceIDs) == 0 {
+	if len(memberships) == 0 {
 		delete(s.members, userID)
 		return nil
 	}
-	set := make(map[int64]bool, len(workspaceIDs))
-	for _, id := range workspaceIDs {
-		set[id] = true
+	set := make(map[int64]store.Role, len(memberships))
+	for _, m := range memberships {
+		set[m.WorkspaceID] = m.Role
 	}
 	s.members[userID] = set
 	return nil
+}
+
+func (s *Store) ListMembershipsForUser(_ context.Context, userID int64) ([]store.Membership, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]store.Membership, 0, len(s.members[userID]))
+	for wsID, role := range s.members[userID] {
+		if _, ok := s.workspaces[wsID]; ok {
+			out = append(out, store.Membership{WorkspaceID: wsID, Role: role})
+		}
+	}
+	slices.SortFunc(out, func(a, b store.Membership) int { return cmp.Compare(a.WorkspaceID, b.WorkspaceID) })
+	return out, nil
 }
 
 func (s *Store) ListWorkspacesForUser(_ context.Context, userID int64) ([]*store.Workspace, error) {
@@ -394,6 +407,7 @@ func (s *Store) UpsertUser(_ context.Context, u *store.User) error {
 			existing.Email = u.Email
 			existing.DisplayName = u.DisplayName
 			existing.ForgeWorkspaces = u.ForgeWorkspaces
+			existing.ForgeOwnedWorkspaces = u.ForgeOwnedWorkspaces
 			existing.LastLoginAt = now
 			*u = *existing
 			return nil

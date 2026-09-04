@@ -205,8 +205,29 @@ type User struct {
 	// snapshot is what the registration page renders from; it goes stale
 	// until the next login, never fresher.
 	ForgeWorkspaces []string
-	CreatedAt       time.Time
-	LastLoginAt     time.Time
+	// ForgeOwnedWorkspaces is the subset of ForgeWorkspaces the account
+	// administers on the forge, captured alongside it.
+	ForgeOwnedWorkspaces []string
+	CreatedAt            time.Time
+	LastLoginAt          time.Time
+}
+
+// Role is what a membership lets its holder do in a workspace. It mirrors
+// the forge's own role for the account and is re-synced at every sign-in.
+type Role string
+
+const (
+	// RoleOwner administers the workspace: tokens, gates, forge
+	// connection, deletion.
+	RoleOwner Role = "owner"
+	// RoleMember sees the workspace's reports and nothing more.
+	RoleMember Role = "member"
+)
+
+// Membership is one user's seat in one workspace.
+type Membership struct {
+	WorkspaceID int64
+	Role        Role
 }
 
 // Session is a server-side web UI session. Only a hash of the session
@@ -301,8 +322,8 @@ type Store interface {
 	WorkspaceByToken(ctx context.Context, token string) (*Workspace, error)
 	ListWorkspaces(ctx context.Context) ([]*Workspace, error)
 	// RegisterWorkspace creates the workspace and makes userID its first
-	// member atomically — self-service registration (M3) must never leave
-	// a workspace nobody can see.
+	// member — an owner — atomically: self-service registration (M3) must
+	// never leave a workspace nobody can see or administer.
 	RegisterWorkspace(ctx context.Context, w *Workspace, userID int64) error
 	// SetWorkspaceBitbucketGrant updates only the Bitbucket grant fields.
 	// Bitbucket rotates refresh tokens on every use, so the swap must be
@@ -324,18 +345,22 @@ type Store interface {
 	// when fn returns. Locks on different workspaces never contend.
 	WithGrantLock(ctx context.Context, workspaceID int64, fn func(ctx context.Context, tx GrantTx) error) error
 
-	// SetUserWorkspaces replaces a user's workspace memberships with the
-	// given set: memberships not listed are removed and listed ones are
-	// added, so re-running it with the same IDs is a no-op. Called at login
-	// to mirror the user's current forge membership (M2).
-	SetUserWorkspaces(ctx context.Context, userID int64, workspaceIDs []int64) error
+	// SetUserMemberships replaces a user's workspace memberships with the
+	// given set: memberships not listed are removed, listed ones are added
+	// or have their role updated, so re-running it with the same set is a
+	// no-op. Called at login to mirror the user's current forge membership
+	// and role (M2).
+	SetUserMemberships(ctx context.Context, userID int64, memberships []Membership) error
 	// ListWorkspacesForUser returns the workspaces the user is a member of,
 	// ordered by prefix.
 	ListWorkspacesForUser(ctx context.Context, userID int64) ([]*Workspace, error)
+	// ListMembershipsForUser returns the user's memberships with their
+	// roles, ordered by workspace ID.
+	ListMembershipsForUser(ctx context.Context, userID int64) ([]Membership, error)
 
 	// UpsertUser creates the user on first login or, when a row with the
 	// same forge+ForgeUUID exists, refreshes its email, display name,
-	// forge workspaces and last-login time. ID, CreatedAt and LastLoginAt
+	// forge workspaces (owned ones included) and last-login time. ID, CreatedAt and LastLoginAt
 	// are set on u.
 	UpsertUser(ctx context.Context, u *User) error
 	UserByID(ctx context.Context, id int64) (*User, error)
