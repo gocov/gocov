@@ -225,7 +225,7 @@ func (c *tokenCache) get(workspaceID int64) (string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	t, ok := c.tokens[workspaceID]
-	if !ok || time.Now().After(t.expiresAt.Add(-tokenLeeway)) {
+	if !ok || time.Until(t.expiresAt) < tokenLeeway {
 		return "", false
 	}
 	return t.value, true

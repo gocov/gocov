@@ -34,14 +34,7 @@ var errStatusPushFailed = errors.New("build status push failed")
 // forge; a failed coverage gate turns the state into FAILED so the forge
 // can block the merge. Best effort: push failures are reported in the
 // response but do not fail the upload.
-func (p *Pipeline) pushBuildStatus(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, u *store.Upload, deltaPct *float64, gate Verdict) string {
-	if fgErr != nil {
-		return "error: " + fgErr.Error()
-	}
-	if fg == nil {
-		return "skipped"
-	}
-
+func (p *Pipeline) pushBuildStatus(ctx context.Context, fg forge.Forge, repo *store.Repo, u *store.Upload, deltaPct *float64, gate Verdict) string {
 	desc := fmt.Sprintf("coverage: %.1f%%", u.TotalPct)
 	if deltaPct != nil {
 		desc += fmt.Sprintf(" (%+.1f%%)", *deltaPct)
@@ -74,14 +67,7 @@ const insightsMaxAnnotations = 100
 // PR uploads, annotates uncovered changed lines inline in the diff. Best
 // effort like the build status: failures land in the response field and
 // the log, never in the upload result.
-func (p *Pipeline) pushCodeInsights(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, u *store.Upload, deltaPct *float64, gate Verdict) string {
-	if fgErr != nil {
-		return "error: " + fgErr.Error()
-	}
-	if fg == nil {
-		p.Log.Debug("code insights skipped: no forge connection", "repo", repo.Slug)
-		return "skipped"
-	}
+func (p *Pipeline) pushCodeInsights(ctx context.Context, fg forge.Forge, repo *store.Repo, u *store.Upload, deltaPct *float64, gate Verdict) string {
 	report, annotations := p.insightsReport(u, deltaPct, gate)
 	err := fg.PublishReport(ctx, repo.Slug, u.CommitSHA, report, annotations)
 	if errors.Is(err, forge.ErrNotImplemented) {
@@ -165,12 +151,7 @@ const insightsMaxDataFields = 10
 // Fully covered files say nothing a reviewer needs, so they never claim
 // a field.
 func appendPerFileData(data []forge.ReportData, dc *diffcov.Result) []forge.ReportData {
-	var files []diffcov.FileCoverage
-	for _, f := range dc.Files {
-		if len(f.UncoveredLines) > 0 {
-			files = append(files, f)
-		}
-	}
+	files := uncoveredFiles(dc)
 	slices.SortFunc(files, func(a, b diffcov.FileCoverage) int {
 		pa := float64(a.CoveredLines) * float64(b.TotalLines)
 		pb := float64(b.CoveredLines) * float64(a.TotalLines)
@@ -190,6 +171,18 @@ func appendPerFileData(data []forge.ReportData, dc *diffcov.Result) []forge.Repo
 		})
 	}
 	return data
+}
+
+// uncoveredFiles is the changed files with at least one uncovered line,
+// in dc's path order — the only ones a reviewer needs to hear about.
+func uncoveredFiles(dc *diffcov.Result) []diffcov.FileCoverage {
+	var files []diffcov.FileCoverage
+	for _, f := range dc.Files {
+		if len(f.UncoveredLines) > 0 {
+			files = append(files, f)
+		}
+	}
+	return files
 }
 
 // dataFieldPath keeps report data titles readable for deep paths: long
@@ -252,15 +245,9 @@ const PRCommentMarker = "**gocov**"
 // pushPRComment posts or updates the coverage summary comment on the pull
 // request. Returns "" for non-PR uploads so the field is omitted from the
 // response.
-func (p *Pipeline) pushPRComment(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, u *store.Upload, deltaPct *float64, gate Verdict) string {
+func (p *Pipeline) pushPRComment(ctx context.Context, fg forge.Forge, repo *store.Repo, u *store.Upload, deltaPct *float64, gate Verdict) string {
 	if u.PRID == "" {
 		return ""
-	}
-	if fgErr != nil {
-		return "error: " + fgErr.Error()
-	}
-	if fg == nil {
-		return "skipped"
 	}
 	body := p.prCommentBody(u, deltaPct, gate)
 
@@ -271,11 +258,11 @@ func (p *Pipeline) pushPRComment(ctx context.Context, fg forge.Forge, fgErr erro
 		p.Log.Warn("find PR comment", "repo", repo.Slug, "pr", u.PRID, "err", err)
 	}
 	if commentID != "" {
-		if err := fg.UpdatePRComment(ctx, repo.Slug, u.PRID, commentID, body); err == nil {
+		err := fg.UpdatePRComment(ctx, repo.Slug, u.PRID, commentID, body)
+		if err == nil {
 			return "updated"
-		} else {
-			p.Log.Warn("update PR comment", "repo", repo.Slug, "pr", u.PRID, "comment", commentID, "err", err)
 		}
+		p.Log.Warn("update PR comment", "repo", repo.Slug, "pr", u.PRID, "comment", commentID, "err", err)
 	}
 
 	if err := fg.PostPRComment(ctx, repo.Slug, u.PRID, body); err != nil {
@@ -290,10 +277,7 @@ const prCommentMaxFiles = 20
 
 func (p *Pipeline) prCommentBody(u *store.Upload, deltaPct *float64, gate Verdict) string {
 	var sb strings.Builder
-	short := u.CommitSHA
-	if len(short) > 12 {
-		short = short[:12]
-	}
+	short := u.CommitSHA[:min(12, len(u.CommitSHA))]
 	fmt.Fprintf(&sb, "**gocov** report for `%s`\n\n", short)
 	fmt.Fprintf(&sb, "- Total coverage: **%.1f%%**", u.TotalPct)
 	if deltaPct != nil {
@@ -316,13 +300,7 @@ func (p *Pipeline) prCommentBody(u *store.Upload, deltaPct *float64, gate Verdic
 				dc.Percent(), dc.CoveredLines, dc.TotalLines)
 		}
 
-		var uncovered []diffcov.FileCoverage
-		for _, f := range dc.Files {
-			if len(f.UncoveredLines) > 0 {
-				uncovered = append(uncovered, f)
-			}
-		}
-		if len(uncovered) > 0 {
+		if uncovered := uncoveredFiles(dc); len(uncovered) > 0 {
 			sb.WriteString("\nUncovered changed lines:\n\n| File | Lines |\n| --- | --- |\n")
 			for i, f := range uncovered {
 				if i == prCommentMaxFiles {
@@ -333,10 +311,7 @@ func (p *Pipeline) prCommentBody(u *store.Upload, deltaPct *float64, gate Verdic
 			}
 		}
 		if n := len(dc.UnmatchedFiles); n > 0 {
-			shown := dc.UnmatchedFiles
-			if n > prCommentMaxFiles {
-				shown = shown[:prCommentMaxFiles]
-			}
+			shown := dc.UnmatchedFiles[:min(n, prCommentMaxFiles)]
 			escaped := make([]string, len(shown))
 			for i, p := range shown {
 				escaped[i] = mdPath(p)
@@ -400,9 +375,7 @@ func (p *Pipeline) Push(ctx context.Context, fg forge.Forge, fgErr error, repo *
 	pushCtx, cancel := context.WithTimeout(ctx, statusPushTimeout)
 	defer cancel()
 	pushed, err := p.Store.TryPushStatus(pushCtx, repo.ID, upload.CommitSHA, upload.ID, func(ctx context.Context) error {
-		res.BuildStatus = p.pushBuildStatus(ctx, fg, fgErr, repo, merged, mergedDelta, mergedGate)
-		res.CodeInsights = p.pushCodeInsights(ctx, fg, fgErr, repo, merged, mergedDelta, mergedGate)
-		res.PRComment = p.pushPRComment(ctx, fg, fgErr, repo, merged, mergedDelta, mergedGate)
+		res = p.pushSurfaces(ctx, fg, fgErr, repo, merged, mergedDelta, mergedGate)
 		// The build status gates merges; if it didn't post, signal failure so
 		// the version isn't advanced and a later part retries. Insights and
 		// PR comment are best effort and don't hold back the version.
@@ -423,11 +396,37 @@ func (p *Pipeline) Push(ctx context.Context, fg forge.Forge, fgErr error, repo *
 			res.CodeInsights = "error: " + err.Error()
 		}
 	case !pushed:
-		res.BuildStatus = "skipped: superseded"
-		res.CodeInsights = "skipped: superseded"
-		if merged.PRID != "" {
-			res.PRComment = "skipped: superseded"
-		}
+		res = everySurface("skipped: superseded", merged.PRID != "")
+	}
+	return res
+}
+
+// pushSurfaces drives the three surfaces through the repo's forge client.
+// Without one — the lookup failed, or the workspace has no connection —
+// no surface can do better than the lookup did, so all of them report
+// its outcome.
+func (p *Pipeline) pushSurfaces(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, u *store.Upload, deltaPct *float64, gate Verdict) PushResult {
+	switch {
+	case fgErr != nil:
+		return everySurface("error: "+fgErr.Error(), u.PRID != "")
+	case fg == nil:
+		p.Log.Debug("code insights skipped: no forge connection", "repo", repo.Slug)
+		return everySurface("skipped", u.PRID != "")
+	}
+	var res PushResult
+	res.BuildStatus = p.pushBuildStatus(ctx, fg, repo, u, deltaPct, gate)
+	res.CodeInsights = p.pushCodeInsights(ctx, fg, repo, u, deltaPct, gate)
+	res.PRComment = p.pushPRComment(ctx, fg, repo, u, deltaPct, gate)
+	return res
+}
+
+// everySurface reports one outcome on every surface the upload has. The
+// PR comment exists only for PR uploads; otherwise its field stays empty
+// and is omitted from the response.
+func everySurface(outcome string, pr bool) PushResult {
+	res := PushResult{BuildStatus: outcome, CodeInsights: outcome}
+	if pr {
+		res.PRComment = outcome
 	}
 	return res
 }
