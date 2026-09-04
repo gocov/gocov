@@ -16,7 +16,7 @@ import (
 	"strings"
 
 	"github.com/gocov/gocov/internal/forge"
-	"github.com/gocov/gocov/internal/forge/internal/rest"
+	"github.com/gocov/gocov/internal/rest"
 )
 
 // DefaultBaseURL is the GitLab REST API root. Kept a field on Client so

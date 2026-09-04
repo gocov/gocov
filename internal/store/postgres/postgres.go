@@ -265,20 +265,27 @@ func (s *Store) ListRepos(ctx context.Context) ([]*store.Repo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*store.Repo
-	for rows.Next() {
-		r, err := s.scanRepo(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
+	return collect(rows, s.scanRepo)
 }
 
 type rowScanner interface {
 	Scan(dest ...any) error
+}
+
+// collect drains rows through scan — one of the scanX helpers, which
+// read a row into a struct — and closes them either way. It is the body
+// of every List* query.
+func collect[T any](rows pgx.Rows, scan func(rowScanner) (*T, error)) ([]*T, error) {
+	defer rows.Close()
+	var out []*T
+	for rows.Next() {
+		v, err := scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }
 
 // querier is the subset of pgx shared by *pgxpool.Pool and pgx.Tx, so the
@@ -526,16 +533,7 @@ func (s *Store) ListWorkspaces(ctx context.Context) ([]*store.Workspace, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*store.Workspace
-	for rows.Next() {
-		w, err := s.scanWorkspace(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, w)
-	}
-	return out, rows.Err()
+	return collect(rows, s.scanWorkspace)
 }
 
 func (s *Store) scanWorkspace(row rowScanner) (*store.Workspace, error) {
@@ -631,16 +629,7 @@ func (s *Store) ListWorkspacesForUser(ctx context.Context, userID int64) ([]*sto
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*store.Workspace
-	for rows.Next() {
-		w, err := s.scanWorkspace(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, w)
-	}
-	return out, rows.Err()
+	return collect(rows, s.scanWorkspace)
 }
 
 const userCols = `id, forge, forge_uuid, email, display_name,
@@ -690,16 +679,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]*store.User, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*store.User
-	for rows.Next() {
-		u, err := s.scanUser(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, u)
-	}
-	return out, rows.Err()
+	return collect(rows, s.scanUser)
 }
 
 func (s *Store) DeleteUser(ctx context.Context, id int64) error {
@@ -855,16 +835,7 @@ func (s *Store) ListUploads(ctx context.Context, repoID int64, limit int) ([]*st
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*store.Upload
-	for rows.Next() {
-		u, err := s.scanUpload(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, u)
-	}
-	return out, rows.Err()
+	return collect(rows, s.scanUpload)
 }
 
 func (s *Store) ListBranchUploads(ctx context.Context, repoID int64, branch string, limit int) ([]*store.Upload, error) {
@@ -879,16 +850,7 @@ func (s *Store) ListBranchUploads(ctx context.Context, repoID int64, branch stri
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*store.Upload
-	for rows.Next() {
-		u, err := s.scanUpload(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, u)
-	}
-	return out, rows.Err()
+	return collect(rows, s.scanUpload)
 }
 
 func (s *Store) scanUpload(row rowScanner) (*store.Upload, error) {
@@ -988,16 +950,7 @@ func (s *Store) latestUploadsPerPart(ctx context.Context, q querier, repoID int6
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*store.Upload
-	for rows.Next() {
-		u, err := s.scanUpload(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, u)
-	}
-	return out, rows.Err()
+	return collect(rows, s.scanUpload)
 }
 
 // WithCommitReportTx runs fn inside a transaction that holds a
@@ -1207,16 +1160,7 @@ func (s *Store) ListBranchCommitReports(ctx context.Context, repoID int64, branc
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*store.CommitReport
-	for rows.Next() {
-		cr, err := s.scanCommitReport(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, cr)
-	}
-	return out, rows.Err()
+	return collect(rows, s.scanCommitReport)
 }
 
 func (s *Store) scanCommitReport(row rowScanner) (*store.CommitReport, error) {

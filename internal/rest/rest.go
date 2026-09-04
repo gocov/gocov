@@ -1,8 +1,9 @@
-// Package rest is the request plumbing the forge clients share: one
-// place that builds a call, authorizes it, bounds what it reads back and
-// turns a refused answer into an error every forge shapes the same way.
-// What a path means, what to send and which status means what stay in
-// the forge packages — this knows REST, not GitHub.
+// Package rest is the request plumbing the forge clients and the sign-in
+// providers share: one place that builds a call, authorizes it, bounds
+// what it reads back and turns a refused answer into an error every forge
+// shapes the same way. What a path means, what to send and which status
+// means what stay in the forge and auth packages — this knows REST, not
+// GitHub.
 package rest
 
 import (

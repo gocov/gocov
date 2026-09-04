@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/gocov/gocov/internal/forge"
-	"github.com/gocov/gocov/internal/forge/internal/rest"
+	"github.com/gocov/gocov/internal/rest"
 )
 
 // Workspace-connect OAuth grant (GitLab Connect, the P2 one-click item).

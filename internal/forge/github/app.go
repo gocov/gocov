@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/gocov/gocov/internal/forge"
-	"github.com/gocov/gocov/internal/forge/internal/rest"
+	"github.com/gocov/gocov/internal/rest"
 )
 
 // App is a GitHub App identity (One-Click Connect D1/D2): the hosted

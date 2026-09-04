@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/gocov/gocov/internal/forge"
-	"github.com/gocov/gocov/internal/forge/internal/rest"
+	"github.com/gocov/gocov/internal/rest"
 )
 
 // DefaultBaseURL is the Bitbucket Cloud REST API root.
