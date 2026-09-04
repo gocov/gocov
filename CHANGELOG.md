@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/gocov/gocov/compare/v0.17.0...v0.18.0) (2026-09-04)
+
+
+### Features
+
+* directory tree with filters and search for the files card ([#106](https://github.com/gocov/gocov/issues/106)) ([467aa50](https://github.com/gocov/gocov/commit/467aa503e73ea544b3dd336afc67b4023acd86ac))
+
 ## [0.17.0](https://github.com/gocov/gocov/compare/v0.16.0...v0.17.0) (2026-09-03)
 
 
