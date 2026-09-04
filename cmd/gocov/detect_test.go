@@ -180,7 +180,7 @@ func TestDetectBuild(t *testing.T) {
 				}
 				return []byte(out), nil
 			}
-			got := detectBuild(env, git, readFile)
+			got := detectBuild(env, git, readGitHubEvent(env, readFile))
 			if got != tt.want {
 				t.Errorf("detectBuild() = %+v, want %+v", got, tt.want)
 			}

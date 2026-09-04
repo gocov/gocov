@@ -83,7 +83,12 @@ func NewApp(appID string, pemKey []byte) (*App, error) {
 
 func (a *App) baseURL() string { return cmp.Or(a.BaseURL, DefaultBaseURL) }
 
-func (a *App) client() *http.Client { return cmp.Or(a.HTTPClient, rest.NewHTTPClient()) }
+func (a *App) client() *http.Client {
+	if a.HTTPClient != nil {
+		return a.HTTPClient
+	}
+	return rest.NewHTTPClient()
+}
 
 // appJWT builds the app-authentication JWT: RS256 over the standard iss /
 // iat / exp claims, nothing else. iat is backdated a minute against clock

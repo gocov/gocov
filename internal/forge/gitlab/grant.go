@@ -54,7 +54,12 @@ func (a *Application) authBase() string { return cmp.Or(a.AuthBaseURL, DefaultAu
 
 func (a *Application) apiBase() string { return cmp.Or(a.APIBaseURL, DefaultBaseURL) }
 
-func (a *Application) client() *http.Client { return cmp.Or(a.HTTPClient, rest.NewHTTPClient()) }
+func (a *Application) client() *http.Client {
+	if a.HTTPClient != nil {
+		return a.HTTPClient
+	}
+	return rest.NewHTTPClient()
+}
 
 // AuthorizeURL is the consent page for the connect grant. Unlike
 // sign-in's read-only scopes, connect asks for "api" — statuses, notes

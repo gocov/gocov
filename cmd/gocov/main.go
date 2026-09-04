@@ -93,6 +93,9 @@ func run(args []string) error {
 	// — and stays empty when a token is sent, which is what decides below
 	// whether a refused upload fails the build.
 	var mode, oidcToken string
+	// The Actions event payload feeds both the tokenless run identity and
+	// build detection; read it once.
+	ghEvent := readGitHubEvent(osEnv, os.ReadFile)
 	var ghRun runInfo
 	if *token == "" {
 		minted, err := mintGitHubOIDC(osEnv, defaultHTTPDoer, *server)
@@ -109,7 +112,7 @@ func run(args []string) error {
 		oidcToken = cmp.Or(minted, envOIDCToken(osEnv))
 		mode = "OIDC"
 		if oidcToken == "" {
-			ghRun = detectGitHubRun(osEnv, os.ReadFile)
+			ghRun = detectGitHubRun(osEnv, ghEvent)
 			if !ghRun.tokenlessEligible() {
 				return errors.New("no upload credential: set -token or $GOCOV_TOKEN, or enable OIDC " +
 					"(GitHub Actions: grant permissions id-token: write; GitLab CI: an id_tokens entry named GOCOV_ID_TOKEN; " +
@@ -122,7 +125,7 @@ func run(args []string) error {
 	// Flags win over detection: they are the base, and detection only
 	// answers what they left open.
 	build := buildInfo{Repo: *repo, Commit: *commit, Branch: *branch, PRID: *pr}
-	build.fill(detectBuild(osEnv, runGit, os.ReadFile))
+	build.fill(detectBuild(osEnv, runGit, ghEvent))
 	if build.Commit == "" {
 		return errors.New("could not detect commit SHA: pass -commit")
 	}
@@ -131,7 +134,10 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	resolvedFormat := cmp.Or(*format, profile.Detect(profileData))
+	resolvedFormat := *format
+	if resolvedFormat == "" {
+		resolvedFormat = profile.Detect(profileData)
+	}
 	if resolvedFormat == "" {
 		return fmt.Errorf("could not detect the coverage format of %s: pass -format go|lcov|jacoco|cobertura|clover|simplecov", profilePath)
 	}

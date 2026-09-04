@@ -62,7 +62,7 @@ func TestDetectGitHubRun(t *testing.T) {
 				}
 				return nil, os.ErrNotExist
 			}
-			if got := detectGitHubRun(env, readFile); got != tt.want {
+			if got := detectGitHubRun(env, readGitHubEvent(env, readFile)); got != tt.want {
 				t.Errorf("detectGitHubRun = %+v, want %+v", got, tt.want)
 			}
 		})

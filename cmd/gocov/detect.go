@@ -35,14 +35,14 @@ type readFileFunc func(path string) ([]byte, error)
 // detectBuild resolves build metadata from the CI environment — Bitbucket
 // Pipelines, GitHub Actions or GitLab CI variables — falling back to git
 // for anything missing.
-func detectBuild(env envFunc, git gitFunc, readFile readFileFunc) buildInfo {
+func detectBuild(env envFunc, git gitFunc, ev githubEvent) buildInfo {
 	b := buildInfo{
 		Repo:   env("BITBUCKET_REPO_FULL_NAME"),
 		Commit: env("BITBUCKET_COMMIT"),
 		Branch: env("BITBUCKET_BRANCH"),
 		PRID:   env("BITBUCKET_PR_ID"),
 	}
-	b.fill(githubBuild(env, readFile))
+	b.fill(githubBuild(env, ev))
 	b.fill(gitlabBuild(env))
 	if b.Commit == "" {
 		if out, err := git("rev-parse", "HEAD"); err == nil {
@@ -122,7 +122,7 @@ func (ri runInfo) tokenlessEligible() bool {
 
 // detectGitHubRun reads the workflow-run identity from the GitHub Actions
 // environment; zero outside Actions.
-func detectGitHubRun(env envFunc, readFile readFileFunc) runInfo {
+func detectGitHubRun(env envFunc, ev githubEvent) runInfo {
 	if env("GITHUB_ACTIONS") == "" {
 		return runInfo{}
 	}
@@ -130,7 +130,7 @@ func detectGitHubRun(env envFunc, readFile readFileFunc) runInfo {
 		EventName:  env("GITHUB_EVENT_NAME"),
 		RunID:      env("GITHUB_RUN_ID"),
 		RunAttempt: cmp.Or(env("GITHUB_RUN_ATTEMPT"), "1"),
-		HeadRepo:   readGitHubEvent(env, readFile).PullRequest.Head.Repo.FullName,
+		HeadRepo:   ev.PullRequest.Head.Repo.FullName,
 	}
 }
 
@@ -186,7 +186,7 @@ func readGitHubEvent(env envFunc, readFile readFileFunc) githubEvent {
 // throwaway merge commit ("42/merge"), which no status or comment can
 // reach — the event payload's head SHA and branch, and GITHUB_HEAD_REF,
 // take precedence for those runs.
-func githubBuild(env envFunc, readFile readFileFunc) buildInfo {
+func githubBuild(env envFunc, ev githubEvent) buildInfo {
 	if env("GITHUB_ACTIONS") == "" {
 		return buildInfo{}
 	}
@@ -198,7 +198,7 @@ func githubBuild(env envFunc, readFile readFileFunc) buildInfo {
 	if m := githubPRRefRe.FindStringSubmatch(env("GITHUB_REF")); m != nil {
 		b.PRID = m[1]
 	}
-	if pr := readGitHubEvent(env, readFile).PullRequest; pr.Head.SHA != "" {
+	if pr := ev.PullRequest; pr.Head.SHA != "" {
 		b.Commit = pr.Head.SHA
 		b.Branch = cmp.Or(pr.Head.Ref, b.Branch)
 		if pr.Number > 0 {

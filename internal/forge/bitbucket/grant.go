@@ -45,7 +45,12 @@ func (c *Consumer) authBase() string { return cmp.Or(c.AuthBaseURL, DefaultAuthB
 
 func (c *Consumer) apiBase() string { return cmp.Or(c.APIBaseURL, DefaultBaseURL) }
 
-func (c *Consumer) client() *http.Client { return cmp.Or(c.HTTPClient, rest.NewHTTPClient()) }
+func (c *Consumer) client() *http.Client {
+	if c.HTTPClient != nil {
+		return c.HTTPClient
+	}
+	return rest.NewHTTPClient()
+}
 
 // AuthorizeURL is the consent page for the connect grant. No scope
 // parameter: Bitbucket scopes are configured on the consumer, and the
