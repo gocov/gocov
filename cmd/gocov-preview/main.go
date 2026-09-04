@@ -33,7 +33,9 @@ import (
 // with GOCOV_PREVIEW_AUTH=1 (hosted mode; sign-in lands a member of the
 // seeded acme workspace with the unregistered "personal" also on offer).
 // The "github" instance signs in a member of the gh-* workspaces, which
-// are seeded in the three GitHub App connection states.
+// are seeded in the three GitHub App connection states. The dev user
+// owns every workspace except the last of each list, so both the owner
+// and the member view of the settings pages are previewable.
 type devAuth struct {
 	forge      string
 	workspaces []string
@@ -46,7 +48,8 @@ func (a devAuth) AuthorizeURL(state, redirectURI string) string {
 func (a devAuth) Identity(context.Context, string, string) (*auth.Identity, error) {
 	return &auth.Identity{
 		ForgeUUID: "{dev-" + a.forge + "}", DisplayName: "Dev User", Email: "dev@example.com",
-		Workspaces: a.workspaces,
+		Workspaces:      a.workspaces,
+		OwnedWorkspaces: a.workspaces[:len(a.workspaces)-1],
 	}, nil
 }
 

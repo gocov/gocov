@@ -74,15 +74,25 @@ func TestIdentity(t *testing.T) {
 			{"email": "jane@example.com", "primary": true},
 		})
 	})
-	mux.HandleFunc("GET /api/user/orgs", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/user/memberships/orgs", func(w http.ResponseWriter, r *http.Request) {
 		requireBearer(r)
+		if got := r.URL.Query().Get("state"); got != "active" {
+			t.Errorf("state = %q, want active (a pending invitation is not membership)", got)
+		}
 		if r.URL.Query().Get("page") == "2" {
-			_ = json.NewEncoder(w).Encode([]map[string]any{{"login": "acme"}})
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"role": "member", "state": "active", "organization": map[string]any{"login": "acme"}},
+			})
 			return
 		}
 		// First page links to a second one to exercise Link pagination.
-		w.Header().Set("Link", "<"+apiBase+"/user/orgs?page=2>; rel=\"next\"")
-		_ = json.NewEncoder(w).Encode([]map[string]any{{"login": "widgets-inc"}})
+		w.Header().Set("Link", "<"+apiBase+"/user/memberships/orgs?state=active&page=2>; rel=\"next\"")
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"role": "admin", "state": "active", "organization": map[string]any{"login": "widgets-inc"}},
+		})
+	})
+	mux.HandleFunc("GET /api/user/orgs", func(w http.ResponseWriter, r *http.Request) {
+		t.Error("/user/orgs must not be called: it carries no role")
 	})
 
 	p := testProvider(t, mux)
@@ -103,6 +113,10 @@ func TestIdentity(t *testing.T) {
 	if !reflect.DeepEqual(id.Workspaces, want) {
 		t.Errorf("workspaces = %v, want %v", id.Workspaces, want)
 	}
+	// Owned: the org the account is admin of, plus its own login.
+	if want := []string{"widgets-inc", "janedev"}; !reflect.DeepEqual(id.OwnedWorkspaces, want) {
+		t.Errorf("owned workspaces = %v, want %v", id.OwnedWorkspaces, want)
+	}
 }
 
 func TestIdentityPublicEmailSkipsEmailsCall(t *testing.T) {
@@ -118,7 +132,7 @@ func TestIdentityPublicEmailSkipsEmailsCall(t *testing.T) {
 	mux.HandleFunc("GET /api/user/emails", func(w http.ResponseWriter, r *http.Request) {
 		t.Error("emails must not be fetched when the profile has one")
 	})
-	mux.HandleFunc("GET /api/user/orgs", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/user/memberships/orgs", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode([]map[string]any{})
 	})
 
@@ -127,12 +141,15 @@ func TestIdentityPublicEmailSkipsEmailsCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	// No profile name: the login doubles as the display name; no orgs:
-	// the login alone is the workspace list.
+	// the login alone is the workspace list, and the account owns it.
 	if id.Email != "solo@example.com" || id.DisplayName != "solo" {
 		t.Errorf("identity = %+v", id)
 	}
 	if !reflect.DeepEqual(id.Workspaces, []string{"solo"}) {
 		t.Errorf("workspaces = %v, want just the login", id.Workspaces)
+	}
+	if !reflect.DeepEqual(id.OwnedWorkspaces, []string{"solo"}) {
+		t.Errorf("owned workspaces = %v, want just the login", id.OwnedWorkspaces)
 	}
 }
 
@@ -187,7 +204,7 @@ func TestIdentityErrors(t *testing.T) {
 			"GET /api/user": func(w http.ResponseWriter, r *http.Request) {
 				_ = json.NewEncoder(w).Encode(map[string]any{"id": 1, "login": "x", "email": "x@y"})
 			},
-			"GET /api/user/orgs": func(w http.ResponseWriter, r *http.Request) {
+			"GET /api/user/memberships/orgs": func(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "nope", http.StatusForbidden)
 			},
 		})

@@ -66,17 +66,21 @@ func TestIdentity(t *testing.T) {
 	})
 	mux.HandleFunc("GET /api/groups", func(w http.ResponseWriter, r *http.Request) {
 		requireBearer(r)
-		if got := r.URL.Query().Get("min_access_level"); got != "10" {
-			t.Errorf("min_access_level = %q, want 10 (membership, not visibility)", got)
-		}
-		if r.URL.Query().Get("page") == "2" {
-			// Subgroups arrive as full paths — each is a workspace candidate.
+		switch r.URL.Query().Get("min_access_level") {
+		case "10": // membership, not visibility
+			if r.URL.Query().Get("page") == "2" {
+				// Subgroups arrive as full paths — each is a workspace candidate.
+				_ = json.NewEncoder(w).Encode([]map[string]any{{"full_path": "acme/platform"}})
+				return
+			}
+			// First page links to a second one to exercise Link pagination.
+			w.Header().Set("Link", "<"+apiBase+"/groups?page=2&min_access_level=10>; rel=\"next\"")
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"full_path": "widgets-inc"}})
+		case "50": // Owner: the groups the account administers
 			_ = json.NewEncoder(w).Encode([]map[string]any{{"full_path": "acme/platform"}})
-			return
+		default:
+			t.Errorf("min_access_level = %q, want 10 or 50", r.URL.Query().Get("min_access_level"))
 		}
-		// First page links to a second one to exercise Link pagination.
-		w.Header().Set("Link", "<"+apiBase+"/groups?page=2&min_access_level=10>; rel=\"next\"")
-		_ = json.NewEncoder(w).Encode([]map[string]any{{"full_path": "widgets-inc"}})
 	})
 
 	p := testProvider(t, mux)
@@ -97,6 +101,10 @@ func TestIdentity(t *testing.T) {
 	want := []string{"widgets-inc", "acme/platform", "janedev"}
 	if !reflect.DeepEqual(id.Workspaces, want) {
 		t.Errorf("workspaces = %v, want %v", id.Workspaces, want)
+	}
+	// Owned: the Owner-level group plus the personal namespace.
+	if want := []string{"acme/platform", "janedev"}; !reflect.DeepEqual(id.OwnedWorkspaces, want) {
+		t.Errorf("owned workspaces = %v, want %v", id.OwnedWorkspaces, want)
 	}
 }
 
@@ -125,6 +133,9 @@ func TestIdentityNoNameNoGroups(t *testing.T) {
 	}
 	if !reflect.DeepEqual(id.Workspaces, []string{"solo"}) {
 		t.Errorf("workspaces = %v, want just the username", id.Workspaces)
+	}
+	if !reflect.DeepEqual(id.OwnedWorkspaces, []string{"solo"}) {
+		t.Errorf("owned workspaces = %v, want just the username", id.OwnedWorkspaces)
 	}
 }
 

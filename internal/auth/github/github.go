@@ -118,13 +118,14 @@ func (p *Provider) Identity(ctx context.Context, code, redirectURI string) (*aut
 			return nil, err
 		}
 	}
-	orgs, err := p.orgs(ctx, token)
+	orgs, admin, err := p.orgs(ctx, token)
 	if err != nil {
 		return nil, err
 	}
 	// The login counts as a workspace of its own, so repos under the
-	// user's personal namespace admit their owner.
+	// user's personal namespace admit their owner — who owns it.
 	id.Workspaces = append(orgs, user.Login)
+	id.OwnedWorkspaces = append(admin, user.Login)
 	return id, nil
 }
 
@@ -192,29 +193,38 @@ func (p *Provider) primaryEmail(ctx context.Context, token string) (string, erro
 }
 
 // orgs lists the login slugs of the organizations the account belongs to
-// ("read:org" scope, GET /user/orgs), following Link-header pagination.
-func (p *Provider) orgs(ctx context.Context, token string) ([]string, error) {
-	var out []string
-	next := p.apiBase() + "/user/orgs?per_page=100"
+// and, separately, those it administers ("read:org" scope,
+// GET /user/memberships/orgs — the same listing as /user/orgs but with
+// the account's role in each org), following Link-header pagination.
+// Only active memberships count: a pending invitation is not membership.
+func (p *Provider) orgs(ctx context.Context, token string) (all, admin []string, err error) {
+	next := p.apiBase() + "/user/memberships/orgs?state=active&per_page=100"
 	for range maxOrgPages {
 		var page []struct {
-			Login string `json:"login"`
+			Role         string `json:"role"`
+			Organization struct {
+				Login string `json:"login"`
+			} `json:"organization"`
 		}
 		link, err := p.getURL(ctx, token, next, &page)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		for _, o := range page {
-			if o.Login != "" {
-				out = append(out, o.Login)
+		for _, m := range page {
+			if m.Organization.Login == "" {
+				continue
+			}
+			all = append(all, m.Organization.Login)
+			if m.Role == "admin" {
+				admin = append(admin, m.Organization.Login)
 			}
 		}
 		next = nextLink(link)
 		if next == "" {
-			return out, nil
+			return all, admin, nil
 		}
 	}
-	return out, nil
+	return all, admin, nil
 }
 
 // nextLink extracts the rel="next" URL from a Link response header, or ""

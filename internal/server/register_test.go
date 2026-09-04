@@ -203,11 +203,14 @@ func TestRegisterCreatesWorkspaceAndShowsTokenOnce(t *testing.T) {
 		t.Errorf("setup page (status %d) does not show the upload token:\n%s", setup.Code, setup.Body)
 	}
 
-	// Registration made the user a member atomically (R2)...
+	// Registration made the user a member atomically (R2), as the owner...
 	users, _ := f.store.ListUsers(ctx)
 	wss, err := f.store.ListWorkspacesForUser(ctx, users[0].ID)
 	if err != nil || len(wss) != 1 || wss[0].Prefix != "personal" {
 		t.Fatalf("memberships after registration = %v, %v", wss, err)
+	}
+	if got := membershipRoles(t, f, users[0].ID); !reflect.DeepEqual(got, map[string]store.Role{"personal": store.RoleOwner}) {
+		t.Errorf("roles after registration = %v, want the founder as owner", got)
 	}
 	// ...so the dashboard opens instead of bouncing back to /register.
 	if rec := get(f, "/", sess); rec.Code != http.StatusOK {
@@ -273,6 +276,10 @@ func TestRegisterAlreadyRegisteredJoins(t *testing.T) {
 	if err != nil || len(wss) != 1 || wss[0].Prefix != "acme" {
 		t.Errorf("memberships after join = %v, %v", wss, err)
 	}
+	// The forge snapshot says plain member, so that is the seat granted.
+	if got := membershipRoles(t, f, users[0].ID); !reflect.DeepEqual(got, map[string]store.Role{"acme": store.RoleMember}) {
+		t.Errorf("roles after join = %v, want member", got)
+	}
 	// Idempotent: joining again keeps the single membership.
 	if rec := postRegister(f, "acme", sess); rec.Code != http.StatusFound {
 		t.Errorf("second join: status = %d", rec.Code)
@@ -282,18 +289,99 @@ func TestRegisterAlreadyRegisteredJoins(t *testing.T) {
 	}
 }
 
+func TestJoinTakesTheForgeRole(t *testing.T) {
+	// Same join, but the forge says the account administers acme: the
+	// seat granted is an owner's, exactly what the next login sync gives.
+	identity := memberIdentity()
+	identity.OwnedWorkspaces = []string{"acme"}
+	f := newHostedFixture(t, &fakeProvider{identity: identity})
+	sess := hostedSignIn(t, f, "/", "/onboarding")
+	if err := f.store.CreateWorkspace(t.Context(),
+		&store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "ws-tok", DefaultBranch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if rec := postRegister(f, "acme", sess); rec.Code != http.StatusFound {
+		t.Fatalf("join: status = %d", rec.Code)
+	}
+	users, _ := f.store.ListUsers(t.Context())
+	if got := membershipRoles(t, f, users[0].ID); !reflect.DeepEqual(got, map[string]store.Role{"acme": store.RoleOwner}) {
+		t.Errorf("roles after join = %v, want owner", got)
+	}
+}
+
 func TestReLoginRefreshesForgeWorkspaces(t *testing.T) {
 	provider := &fakeProvider{identity: memberIdentity()}
 	f := newHostedFixture(t, provider)
 	hostedSignIn(t, f, "/", "/onboarding")
 
 	provider.identity.Workspaces = []string{"acme", "personal", "newco"}
+	provider.identity.OwnedWorkspaces = []string{"newco"}
 	hostedSignIn(t, f, "/", "/onboarding")
 
 	users, _ := f.store.ListUsers(t.Context())
 	if len(users) != 1 || !reflect.DeepEqual(users[0].ForgeWorkspaces, []string{"acme", "personal", "newco"}) {
 		t.Errorf("stored list not refreshed: %+v", users)
 	}
+	if len(users) != 1 || !reflect.DeepEqual(users[0].ForgeOwnedWorkspaces, []string{"newco"}) {
+		t.Errorf("stored owned list not refreshed: %+v", users)
+	}
+}
+
+func TestLoginSyncsRolesFromTheForge(t *testing.T) {
+	// Roles mirror the forge like membership does: an admin there is an
+	// owner here, and the next sign-in re-syncs both directions —
+	// promotion and demotion — without touching the membership itself.
+	identity := memberIdentity() // acme and personal, owner of neither
+	provider := &fakeProvider{identity: identity}
+	f := newHostedFixture(t, provider)
+	ctx := t.Context()
+	for _, prefix := range []string{"acme", "personal"} {
+		if err := f.store.CreateWorkspace(ctx,
+			&store.Workspace{Forge: "bitbucket", Prefix: prefix, Token: prefix + "-tok", DefaultBranch: "main"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	identity.OwnedWorkspaces = []string{"personal"}
+	hostedSignIn(t, f, "/", "/")
+	users, _ := f.store.ListUsers(ctx)
+	want := map[string]store.Role{"acme": store.RoleMember, "personal": store.RoleOwner}
+	if got := membershipRoles(t, f, users[0].ID); !reflect.DeepEqual(got, want) {
+		t.Errorf("roles after first sign-in = %v, want %v", got, want)
+	}
+
+	// Swapped on the forge: promoted in acme, demoted in personal.
+	identity.OwnedWorkspaces = []string{"acme"}
+	hostedSignIn(t, f, "/", "/")
+	want = map[string]store.Role{"acme": store.RoleOwner, "personal": store.RoleMember}
+	if got := membershipRoles(t, f, users[0].ID); !reflect.DeepEqual(got, want) {
+		t.Errorf("roles after re-sync = %v, want %v", got, want)
+	}
+}
+
+// membershipRoles maps the user's memberships to their roles by workspace
+// prefix.
+func membershipRoles(t *testing.T, f *fixture, userID int64) map[string]store.Role {
+	t.Helper()
+	ctx := t.Context()
+	ms, err := f.store.ListMembershipsForUser(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wss, err := f.store.ListWorkspaces(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefixes := make(map[int64]string, len(wss))
+	for _, ws := range wss {
+		prefixes[ws.ID] = ws.Prefix
+	}
+	out := make(map[string]store.Role, len(ms))
+	for _, m := range ms {
+		out[prefixes[m.WorkspaceID]] = m.Role
+	}
+	return out
 }
 
 func TestHostedLoginPageHasNoDenialOrWorkspaceHints(t *testing.T) {

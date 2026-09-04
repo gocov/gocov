@@ -101,7 +101,7 @@ func (p *Provider) Identity(ctx context.Context, code, redirectURI string) (*aut
 	if err != nil {
 		return nil, err
 	}
-	id.Workspaces, err = p.workspaces(ctx, token)
+	id.Workspaces, id.OwnedWorkspaces, err = p.workspaces(ctx, token)
 	if err != nil {
 		return nil, err
 	}
@@ -167,36 +167,45 @@ func (p *Provider) primaryEmail(ctx context.Context, token string) (string, erro
 }
 
 // workspaces lists the slugs of the workspaces the account is a member of
-// ("account" scope, GET /user/workspaces), following pagination. This is
-// the CHANGE-3022 replacement API; the older GET /workspaces and
+// and, separately, those it administers ("account" scope,
+// GET /user/workspaces), following pagination. This is the CHANGE-3022
+// replacement API; the older GET /workspaces and
 // GET /user/permissions/workspaces listings were sunset by CHANGE-2770
-// and answer 410.
-func (p *Provider) workspaces(ctx context.Context, token string) ([]string, error) {
-	var out []string
+// and answer 410. Each value is a workspace access record: the listing
+// flags administrators with an "administrator" boolean, and a
+// workspace_membership-shaped record says the same with
+// permission "owner" — both are honoured.
+func (p *Provider) workspaces(ctx context.Context, token string) (all, admin []string, err error) {
 	next := p.apiBase() + "/user/workspaces?" + url.Values{"pagelen": {"100"}}.Encode()
 	for range maxWorkspacePages {
 		var page struct {
 			Values []struct {
-				Workspace struct {
+				Administrator bool   `json:"administrator"`
+				Permission    string `json:"permission"`
+				Workspace     struct {
 					Slug string `json:"slug"`
 				} `json:"workspace"`
 			} `json:"values"`
 			Next string `json:"next"`
 		}
 		if err := p.getURL(ctx, token, next, &page); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, v := range page.Values {
-			if v.Workspace.Slug != "" {
-				out = append(out, v.Workspace.Slug)
+			if v.Workspace.Slug == "" {
+				continue
+			}
+			all = append(all, v.Workspace.Slug)
+			if v.Administrator || v.Permission == "owner" {
+				admin = append(admin, v.Workspace.Slug)
 			}
 		}
 		if page.Next == "" {
-			return out, nil
+			return all, admin, nil
 		}
 		next = page.Next
 	}
-	return out, nil
+	return all, admin, nil
 }
 
 func (p *Provider) get(ctx context.Context, token, path string, dst any) error {

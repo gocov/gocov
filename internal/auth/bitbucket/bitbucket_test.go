@@ -74,8 +74,14 @@ func TestIdentity(t *testing.T) {
 	mux.HandleFunc("GET /2.0/user/workspaces", func(w http.ResponseWriter, r *http.Request) {
 		requireBearer(r)
 		if r.URL.Query().Get("page") == "2" {
+			// Both spellings of "administers": the access record's flag
+			// and a membership's permission.
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"values": []map[string]any{{"workspace": map[string]any{"slug": "acme"}}},
+				"values": []map[string]any{
+					{"workspace": map[string]any{"slug": "acme"}, "administrator": false, "permission": "member"},
+					{"workspace": map[string]any{"slug": "owned-flag"}, "administrator": true},
+					{"workspace": map[string]any{"slug": "owned-perm"}, "permission": "owner"},
+				},
 			})
 			return
 		}
@@ -97,8 +103,11 @@ func TestIdentity(t *testing.T) {
 	if id.ForgeUUID != "{abc-123}" || id.DisplayName != "Jane Dev" || id.Email != "jane@example.com" {
 		t.Errorf("identity = %+v", id)
 	}
-	if !reflect.DeepEqual(id.Workspaces, []string{"personal", "acme"}) {
-		t.Errorf("workspaces = %v", id.Workspaces)
+	if want := []string{"personal", "acme", "owned-flag", "owned-perm"}; !reflect.DeepEqual(id.Workspaces, want) {
+		t.Errorf("workspaces = %v, want %v", id.Workspaces, want)
+	}
+	if want := []string{"owned-flag", "owned-perm"}; !reflect.DeepEqual(id.OwnedWorkspaces, want) {
+		t.Errorf("owned workspaces = %v, want %v", id.OwnedWorkspaces, want)
 	}
 }
 

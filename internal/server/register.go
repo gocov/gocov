@@ -177,18 +177,17 @@ func (s *Server) claimWorkspace(r *http.Request, u *store.User, prefix string) (
 	return ws, nil, nil
 }
 
-// joinWorkspace adds ws to the user's memberships, keeping the rest.
+// joinWorkspace adds ws to the user's memberships, keeping the rest, in
+// the role the forge snapshot grants — the same answer the next login
+// sync would give.
 func (s *Server) joinWorkspace(r *http.Request, u *store.User, ws *store.Workspace) error {
-	memberOf, err := s.store.ListWorkspacesForUser(r.Context(), u.ID)
+	memberships, err := s.store.ListMembershipsForUser(r.Context(), u.ID)
 	if err != nil {
 		return err
 	}
-	ids := make([]int64, 0, len(memberOf)+1)
-	for _, m := range memberOf {
-		if m.ID == ws.ID {
-			return nil // already a member
-		}
-		ids = append(ids, m.ID)
+	if slices.ContainsFunc(memberships, func(m store.Membership) bool { return m.WorkspaceID == ws.ID }) {
+		return nil // already a member
 	}
-	return s.store.SetUserWorkspaces(r.Context(), u.ID, append(ids, ws.ID))
+	memberships = append(memberships, store.Membership{WorkspaceID: ws.ID, Role: forgeRole(u, ws.Prefix)})
+	return s.store.SetUserMemberships(r.Context(), u.ID, memberships)
 }

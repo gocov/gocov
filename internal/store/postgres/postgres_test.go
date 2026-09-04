@@ -766,7 +766,7 @@ func TestUserLifecycle(t *testing.T) {
 	ctx := t.Context()
 
 	u := &store.User{Forge: "bitbucket", ForgeUUID: "{u1}", Email: "jane@example.com", DisplayName: "Jane Dev",
-		ForgeWorkspaces: []string{"acme", "personal"}}
+		ForgeWorkspaces: []string{"acme", "personal"}, ForgeOwnedWorkspaces: []string{"personal"}}
 	if err := st.UpsertUser(ctx, u); err != nil {
 		t.Fatal(err)
 	}
@@ -777,7 +777,7 @@ func TestUserLifecycle(t *testing.T) {
 	// A second login by the same forge account refreshes the same row (R1),
 	// including the forge workspace snapshot (M3/D3).
 	again := &store.User{Forge: "bitbucket", ForgeUUID: "{u1}", Email: "jane@new.example", DisplayName: "Jane Renamed",
-		ForgeWorkspaces: []string{"acme", "newco"}}
+		ForgeWorkspaces: []string{"acme", "newco"}, ForgeOwnedWorkspaces: []string{"acme", "newco"}}
 	if err := st.UpsertUser(ctx, again); err != nil {
 		t.Fatal(err)
 	}
@@ -793,6 +793,9 @@ func TestUserLifecycle(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.ForgeWorkspaces, []string{"acme", "newco"}) {
 		t.Errorf("forge workspaces not refreshed: %v", got.ForgeWorkspaces)
+	}
+	if !reflect.DeepEqual(got.ForgeOwnedWorkspaces, []string{"acme", "newco"}) {
+		t.Errorf("owned forge workspaces not refreshed: %v", got.ForgeOwnedWorkspaces)
 	}
 	if got.LastLoginAt.Before(u.LastLoginAt) {
 		t.Errorf("last_login_at went backwards: %v < %v", got.LastLoginAt, u.LastLoginAt)
@@ -990,24 +993,59 @@ func TestWorkspaceMembership(t *testing.T) {
 		return n
 	}
 
-	// Initial sync attaches both, ordered by prefix.
-	if err := st.SetUserWorkspaces(ctx, u.ID, []int64{beta.ID, acme.ID}); err != nil {
+	roles := func() []store.Membership {
+		t.Helper()
+		ms, err := st.ListMembershipsForUser(ctx, u.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ms
+	}
+	owner := func(ws *store.Workspace) store.Membership {
+		return store.Membership{WorkspaceID: ws.ID, Role: store.RoleOwner}
+	}
+	member := func(ws *store.Workspace) store.Membership {
+		return store.Membership{WorkspaceID: ws.ID, Role: store.RoleMember}
+	}
+
+	// Initial sync attaches both, ordered by prefix, each in its role.
+	if err := st.SetUserMemberships(ctx, u.ID, []store.Membership{member(beta), owner(acme)}); err != nil {
 		t.Fatal(err)
 	}
 	if got := prefixes(); !reflect.DeepEqual(got, []string{"acme", "beta"}) {
 		t.Fatalf("after sync: %v, want [acme beta]", got)
 	}
+	if got := roles(); !reflect.DeepEqual(got, []store.Membership{owner(acme), member(beta)}) {
+		t.Fatalf("roles after sync: %+v", got)
+	}
 
 	// Re-running with the same set is idempotent (no duplicate rows).
-	if err := st.SetUserWorkspaces(ctx, u.ID, []int64{acme.ID, beta.ID}); err != nil {
+	if err := st.SetUserMemberships(ctx, u.ID, []store.Membership{owner(acme), member(beta)}); err != nil {
 		t.Fatal(err)
 	}
 	if n := memberRows(); n != 2 {
 		t.Fatalf("idempotent re-sync produced %d rows, want 2", n)
 	}
 
+	// A role change on the forge lands on the existing row: demoted in
+	// acme, promoted in beta.
+	if err := st.SetUserMemberships(ctx, u.ID, []store.Membership{member(acme), owner(beta)}); err != nil {
+		t.Fatal(err)
+	}
+	if got := roles(); !reflect.DeepEqual(got, []store.Membership{member(acme), owner(beta)}) {
+		t.Fatalf("roles after role change: %+v", got)
+	}
+	if n := memberRows(); n != 2 {
+		t.Fatalf("role change produced %d rows, want 2", n)
+	}
+
+	// The column admits nothing but the two roles.
+	if err := st.SetUserMemberships(ctx, u.ID, []store.Membership{{WorkspaceID: acme.ID, Role: "admin"}}); err == nil {
+		t.Fatal("an unknown role must be rejected")
+	}
+
 	// Dropping beta on the forge removes only that membership.
-	if err := st.SetUserWorkspaces(ctx, u.ID, []int64{acme.ID}); err != nil {
+	if err := st.SetUserMemberships(ctx, u.ID, []store.Membership{owner(acme)}); err != nil {
 		t.Fatal(err)
 	}
 	if got := prefixes(); !reflect.DeepEqual(got, []string{"acme"}) {
@@ -1023,7 +1061,7 @@ func TestWorkspaceMembership(t *testing.T) {
 	}
 
 	// Re-attach, then delete the user: memberships cascade on that side too.
-	if err := st.SetUserWorkspaces(ctx, u.ID, []int64{beta.ID}); err != nil {
+	if err := st.SetUserMemberships(ctx, u.ID, []store.Membership{member(beta)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.DeleteUser(ctx, u.ID); err != nil {
@@ -1038,8 +1076,53 @@ func TestWorkspaceMembership(t *testing.T) {
 	if err := st.UpsertUser(ctx, other); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetUserWorkspaces(ctx, other.ID, nil); err != nil {
+	if err := st.SetUserMemberships(ctx, other.ID, nil); err != nil {
 		t.Fatalf("empty sync on fresh user: %v", err)
+	}
+	if got, err := st.ListMembershipsForUser(ctx, other.ID); err != nil || len(got) != 0 {
+		t.Fatalf("memberships of a fresh user = %v, %v", got, err)
+	}
+}
+
+func TestMembershipRolesGrandfatherExistingSeats(t *testing.T) {
+	// Before roles existed every member had full rights, so the migration
+	// promotes the seats it finds rather than silently demoting them; the
+	// next login replaces each with the forge's answer.
+	pool := testpg.Pool(t)
+	st := postgres.New(pool)
+	ctx := t.Context()
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	u := &store.User{Forge: "bitbucket", ForgeUUID: "{g1}", DisplayName: "Early Adopter"}
+	if err := st.UpsertUser(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	ws := &store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "tok-acme"}
+	if err := st.CreateWorkspace(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+	// A pre-roles seat: the row as the previous schema wrote it, which the
+	// column's default now reads as a plain member.
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO workspace_members (workspace_id, user_id) VALUES ($1, $2)`, ws.ID, u.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run the real migration file, not a copy that could drift from it —
+	// this is what a deploy executes. Its ALTERs are IF NOT EXISTS, so
+	// re-running after Migrate already applied it is safe.
+	sql, err := os.ReadFile("migrations/0022_membership_roles.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(sql)); err != nil {
+		t.Fatalf("migration: %v", err)
+	}
+
+	ms, err := st.ListMembershipsForUser(ctx, u.ID)
+	if err != nil || !reflect.DeepEqual(ms, []store.Membership{{WorkspaceID: ws.ID, Role: store.RoleOwner}}) {
+		t.Fatalf("grandfathered seat = %+v, %v (want owner)", ms, err)
 	}
 }
 
@@ -1063,6 +1146,11 @@ func TestRegisterWorkspace(t *testing.T) {
 	wss, err := st.ListWorkspacesForUser(ctx, u.ID)
 	if err != nil || len(wss) != 1 || wss[0].Prefix != "startup" {
 		t.Fatalf("memberships after registration = %v, %v", wss, err)
+	}
+	// ...and the founder is its owner.
+	ms, err := st.ListMembershipsForUser(ctx, u.ID)
+	if err != nil || !reflect.DeepEqual(ms, []store.Membership{{WorkspaceID: w.ID, Role: store.RoleOwner}}) {
+		t.Fatalf("roles after registration = %+v, %v", ms, err)
 	}
 
 	// A losing duplicate claim fails atomically: no workspace row, no
