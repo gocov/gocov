@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0](https://github.com/gocov/gocov/compare/v0.20.0...v0.21.0) (2026-09-04)
+
+
+### Features
+
+* register repos on their first OIDC upload ([#116](https://github.com/gocov/gocov/issues/116)) ([922aebf](https://github.com/gocov/gocov/commit/922aebf1b40cafa396764205df8581b226a502b1))
+
 ## [0.20.0](https://github.com/gocov/gocov/compare/v0.19.0...v0.20.0) (2026-09-04)
 
 
