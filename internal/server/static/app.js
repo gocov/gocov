@@ -103,3 +103,172 @@ document.addEventListener("click", (e) => {
     legacyCopy();
   }
 });
+
+// Files view: Tree/List toggle, filter tabs (All/Changed/Source/Coverage), search, and tree collapsible directories.
+(function () {
+  function getRows(table) {
+    return table ? Array.prototype.slice.call(table.querySelectorAll('tbody tr')) : [];
+  }
+
+  function applyFileFilters() {
+    var card = document.getElementById('files-card');
+    if (!card) return;
+    var searchInput = document.getElementById('file-search');
+    var matchCount = document.getElementById('file-matches');
+    var emptyMsg = document.getElementById('files-empty');
+    var activeFilter = card.dataset.filter || 'all';
+
+    var q = (searchInput ? searchInput.value : '').trim().toLowerCase();
+    var f = activeFilter;
+    var listTable = document.getElementById('filetable');
+    var treeTable = document.getElementById('filetable-tree');
+
+    // Filter List table
+    var listRows = getRows(listTable);
+    var matchedFiles = 0;
+    listRows.forEach(function (tr) {
+      var p = (tr.dataset.path || '').toLowerCase();
+      var okSearch = !q || p.indexOf(q) >= 0;
+      var okFilter = f === 'all' ||
+        (f === 'changed' && tr.dataset.changed === 'true') ||
+        (f === 'source' && tr.dataset.source === 'true') ||
+        (f === 'coverage' && tr.dataset.coverage === 'true');
+      var show = okSearch && okFilter;
+      tr.style.display = show ? '' : 'none';
+      if (show) matchedFiles++;
+    });
+
+    // Filter Tree table
+    if (treeTable) {
+      var treeRows = getRows(treeTable);
+      var visiblePaths = {};
+      treeRows.forEach(function (tr) {
+        if (tr.classList.contains('tree-file')) {
+          var p = (tr.dataset.path || '').toLowerCase();
+          var okSearch = !q || p.indexOf(q) >= 0;
+          var okFilter = f === 'all' ||
+            (f === 'changed' && tr.dataset.changed === 'true') ||
+            (f === 'source' && tr.dataset.source === 'true') ||
+            (f === 'coverage' && tr.dataset.coverage === 'true');
+          if (okSearch && okFilter) {
+            visiblePaths[tr.dataset.path] = true;
+            var parts = (tr.dataset.path || '').split('/');
+            var acc = '';
+            for (var i = 0; i < parts.length - 1; i++) {
+              acc = acc ? acc + '/' + parts[i] : parts[i];
+              visiblePaths[acc] = true;
+            }
+          }
+        }
+      });
+
+      var collapsedPrefixes = [];
+      treeRows.forEach(function (tr) {
+        var path = tr.dataset.path || '';
+        var isDir = tr.classList.contains('tree-dir');
+        var shouldShow = visiblePaths[path] === true;
+
+        // A search reaches into collapsed directories; the fold only
+        // applies while browsing.
+        var isCollapsed = false;
+        for (var i = 0; !q && i < collapsedPrefixes.length; i++) {
+          if (path.indexOf(collapsedPrefixes[i] + '/') === 0) {
+            isCollapsed = true;
+            break;
+          }
+        }
+
+        if (isDir) {
+          var toggle = tr.querySelector('.tree-toggle');
+          if (toggle && toggle.getAttribute('aria-expanded') === 'false') {
+            collapsedPrefixes.push(path);
+          }
+        }
+
+        tr.style.display = (shouldShow && !isCollapsed) ? '' : 'none';
+      });
+    }
+
+    if (matchCount) {
+      matchCount.textContent = matchedFiles + (matchedFiles === 1 ? ' file' : ' files');
+    }
+    if (emptyMsg) {
+      emptyMsg.hidden = matchedFiles > 0;
+    }
+  }
+
+  // View mode: Tree vs List. The choice is remembered per browser so a
+  // reader who prefers the flat list is not switched back on every page.
+  var viewKey = 'gocov.filesView';
+  function setView(view, remember) {
+    var card = document.getElementById('files-card');
+    var seg = document.getElementById('view-mode');
+    if (!card || !seg) return;
+    card.dataset.view = view;
+    seg.querySelectorAll('button').forEach(function (b) {
+      b.setAttribute('aria-pressed', String(b.dataset.view === view));
+    });
+    if (remember) {
+      try { localStorage.setItem(viewKey, view); } catch (err) { /* storage unavailable */ }
+    }
+  }
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('#view-mode button');
+    if (!btn) return;
+    setView(btn.dataset.view, true);
+  });
+
+  // Filter switcher: All / Changed / Source / Coverage
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('#file-filters button');
+    if (!btn) return;
+    var seg = btn.closest('#file-filters');
+    var card = document.getElementById('files-card');
+    if (!card) return;
+    var f = btn.dataset.filter;
+    card.dataset.filter = f;
+    seg.querySelectorAll('button').forEach(function (b) {
+      b.setAttribute('aria-pressed', String(b.dataset.filter === f));
+    });
+    applyFileFilters();
+  });
+
+  // Search input
+  document.addEventListener('input', function (e) {
+    if (e.target && e.target.id === 'file-search') {
+      applyFileFilters();
+    }
+  });
+
+  // Tree directory expand/collapse
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('.tree-toggle');
+    if (!btn) return;
+    var expanded = btn.getAttribute('aria-expanded') === 'true';
+    btn.setAttribute('aria-expanded', String(!expanded));
+    btn.innerHTML = expanded ? '&#9656;' : '&#9662;';
+    applyFileFilters();
+  });
+
+  // Run on initial page load and after every htmx swap
+  function init() {
+    var card = document.getElementById('files-card');
+    if (!card) return;
+    var stored = null;
+    try { stored = localStorage.getItem(viewKey); } catch (err) { /* storage unavailable */ }
+    if ((stored === 'tree' || stored === 'list') && stored !== card.dataset.view) {
+      setView(stored, false);
+    }
+    if (card.dataset.filter && card.dataset.filter !== 'all') {
+      applyFileFilters();
+    }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+  document.addEventListener('htmx:afterSwap', function () {
+    init();
+  });
+})();

@@ -126,3 +126,30 @@ func TestRepoTrendChart(t *testing.T) {
 		t.Errorf("trend rendered for a branch with one upload")
 	}
 }
+
+func TestRepoPageShowsFilesView(t *testing.T) {
+	f := newFixture(t, nil)
+	doUpload(t, f, "secret-token", map[string]string{"commit": "base1", "branch": "main"}, testProfileFull)
+	doUpload(t, f, "secret-token", map[string]string{"commit": "main2", "branch": "main"}, testProfile)
+
+	body := doGet(t, f, "/repos/acme/widgets").Body.String()
+	for _, want := range []string{
+		"Files on main",
+		`id="view-mode"`,
+		`data-view="tree"`,
+		`data-view="list"`,
+		`id="file-filters"`,
+		`data-filter="all"`,
+		`data-filter="changed"`,
+		`data-filter="source"`,
+		`data-filter="coverage"`,
+		`id="file-search"`,
+		`id="filetable-tree"`,
+		`class="tree-row tree-dir`,
+		`class="tree-row tree-file`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("repo page missing %q in response", want)
+		}
+	}
+}

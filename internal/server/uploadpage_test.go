@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/gocov/gocov/internal/profile"
+	"github.com/gocov/gocov/internal/store"
 )
 
 func TestUncoveredRanges(t *testing.T) {
@@ -74,15 +75,15 @@ func TestUploadPageBeforeAfter(t *testing.T) {
 
 	body := doGet(t, f, "/uploads/2").Body.String()
 	for _, want := range []string{
-		`class="ba"`,                // before -> after column rendered
-		"100.0%",                    // a.go coverage at the baseline
-		"75.0%",                     // a.go coverage now
-		`class="delta`,              // per-file delta
-		"7-9",                       // lines newly uncovered by this upload
-		`class="verdict`,            //
-		"Files this commit touched", // only-touched heading
-		`class="xtra"`,              // b.go, unchanged, tucked away
-		"Show all 2 files",          // reveal toggle
+		`class="ba"`,                            // before -> after column rendered
+		"100.0%",                                // a.go coverage at the baseline
+		"75.0%",                                 // a.go coverage now
+		`class="delta`,                          // per-file delta
+		"7-9",                                   // lines newly uncovered by this upload
+		`class="verdict`,                        //
+		`aria-pressed="true" data-filter="all"`, // every file listed by default
+		`Changed<span class="n">1</span>`,       // a.go is the one file that moved
+		`data-changed="false"`,                  // b.go, unchanged, still listed
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("upload page missing %q\n%s", want, body)
@@ -127,10 +128,10 @@ func TestUploadPagePRBaselinesAgainstDefaultBranch(t *testing.T) {
 
 	body := doGet(t, f, "/uploads/2").Body.String()
 	for _, want := range []string{
-		"Files this commit touched", // baseline resolved -> touched view
-		`class="ba"`,                // before -> after rendered
-		"100.0%",                    // a.go at the main baseline
-		"75.0%",                     // a.go on the PR
+		`id="file-filters"`, // baseline resolved -> filter tabs rendered
+		`class="ba"`,        // before -> after rendered
+		"100.0%",            // a.go at the main baseline
+		"75.0%",             // a.go on the PR
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("PR upload page missing %q\n%s", want, body)
@@ -154,6 +155,187 @@ func TestUploadProfileDownload(t *testing.T) {
 	}
 	if rec := doGet(t, f, "/uploads/999/profile"); rec.Code != http.StatusNotFound {
 		t.Errorf("missing upload profile: code = %d, want 404", rec.Code)
+	}
+}
+
+func TestUploadPageTreeAndFilters(t *testing.T) {
+	f := newFixture(t, nil)
+	// Base upload on main
+	doUpload(t, f, "secret-token", map[string]string{"commit": "base1", "branch": "main"}, testProfileFull)
+	// Head upload on main: a.go coverage drops (Coverage changed)
+	doUpload(t, f, "secret-token", map[string]string{"commit": "head1", "branch": "main"}, testProfile)
+
+	body := doGet(t, f, "/uploads/2").Body.String()
+	for _, want := range []string{
+		`id="view-mode"`,
+		`data-view="tree"`,
+		`data-view="list"`,
+		`id="file-filters"`,
+		`data-filter="all"`,
+		`data-filter="changed"`,
+		`data-filter="source"`,
+		`data-filter="coverage"`,
+		`id="file-search"`,
+		`id="filetable-tree"`,
+		`class="tree-row tree-dir`,
+		`class="tree-row tree-file`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("upload page missing %q in response", want)
+		}
+	}
+}
+
+func TestBuildFileTree(t *testing.T) {
+	rows := []uploadFileRow{
+		{
+			UploadFile: &store.UploadFile{Path: "cmd/gocov/client.go", CoveredStmts: 8, TotalStmts: 10, Pct: 80.0},
+			Dir:        "cmd/gocov/",
+			Base:       "client.go",
+		},
+		{
+			UploadFile: &store.UploadFile{Path: "cmd/gocov/main.go", CoveredStmts: 12, TotalStmts: 20, Pct: 60.0},
+			Dir:        "cmd/gocov/",
+			Base:       "main.go",
+		},
+		{
+			UploadFile: &store.UploadFile{Path: "internal/server/upload.go", CoveredStmts: 30, TotalStmts: 40, Pct: 75.0},
+			Dir:        "internal/server/",
+			Base:       "upload.go",
+		},
+	}
+	tree := buildFileTree(rows, false)
+	if len(tree) == 0 {
+		t.Fatal("expected non-empty tree")
+	}
+
+	var foundCmdGocov, foundInternalServer bool
+	for _, tr := range tree {
+		if tr.IsDir && tr.Path == "cmd/gocov" {
+			foundCmdGocov = true
+			if tr.TotalStmts != 30 || tr.CoveredStmts != 20 {
+				t.Errorf("cmd/gocov stmts = %d/%d, want 20/30", tr.CoveredStmts, tr.TotalStmts)
+			}
+			expectedPct := float64(20) / float64(30) * 100
+			if tr.Pct != expectedPct {
+				t.Errorf("cmd/gocov pct = %f, want %f", tr.Pct, expectedPct)
+			}
+		}
+		if tr.IsDir && tr.Path == "internal/server" {
+			foundInternalServer = true
+			if tr.TotalStmts != 40 || tr.CoveredStmts != 30 {
+				t.Errorf("internal/server stmts = %d/%d, want 30/40", tr.CoveredStmts, tr.TotalStmts)
+			}
+		}
+	}
+	if !foundCmdGocov {
+		t.Error("cmd/gocov directory row not found in tree")
+	}
+	if !foundInternalServer {
+		t.Error("internal/server directory row not found in tree")
+	}
+}
+
+func TestIsSourceChanged(t *testing.T) {
+	diff := map[string]bool{"internal/server/upload.go": true, "main.go": true}
+	for _, tc := range []struct {
+		path, prefix string
+		want         bool
+	}{
+		{"internal/server/upload.go", "", true},
+		{"github.com/acme/widgets/internal/server/upload.go", "", true}, // module-qualified profile path
+		{"github.com/acme/widgets/internal/server/upload.go", "github.com/acme/widgets", true},
+		{"github.com/acme/widgets/internal/server/other.go", "github.com/acme/widgets", false},
+		{"main.go", "", true},
+		{"cmd/gocov/main.go", "", false}, // a bare diff name never matches by suffix
+		{"cmd/gocov/main.go", "github.com/acme/widgets", false},
+		{"internal/server/upload.go", "", true},
+	} {
+		if got := isSourceChanged(tc.path, tc.prefix, diff); got != tc.want {
+			t.Errorf("isSourceChanged(%q, %q) = %v, want %v", tc.path, tc.prefix, got, tc.want)
+		}
+	}
+	if isSourceChanged("main.go", "", nil) {
+		t.Error("nil diff set matched")
+	}
+}
+
+func TestBuildFileTreeFoldsUnchangedDirectories(t *testing.T) {
+	file := func(path string, changed bool) uploadFileRow {
+		dir, base := splitPath(path)
+		return uploadFileRow{
+			UploadFile: &store.UploadFile{Path: path, CoveredStmts: 1, TotalStmts: 2, Pct: 50},
+			Dir:        dir, Base: base, Changed: changed,
+		}
+	}
+	state := func(rows []treeRow) map[string]string {
+		got := map[string]string{}
+		for _, r := range rows {
+			s := "closed"
+			if r.Open {
+				s = "open"
+			}
+			if r.Hidden {
+				s += ",hidden"
+			}
+			got[r.Path] = s
+		}
+		return got
+	}
+
+	// With a baseline and a change, only the path to the change is open.
+	got := state(buildFileTree([]uploadFileRow{
+		file("internal/api/handler.go", false),
+		file("internal/billing/charge.go", true),
+		file("cmd/gocov/main.go", false),
+	}, true))
+	for path, want := range map[string]string{
+		"internal":                   "open",
+		"internal/billing":           "open",
+		"internal/billing/charge.go": "closed",
+		"internal/api":               "closed",
+		"internal/api/handler.go":    "closed,hidden",
+		"cmd/gocov":                  "closed",
+		"cmd/gocov/main.go":          "closed,hidden",
+	} {
+		if got[path] != want {
+			t.Errorf("%s: got %q, want %q", path, got[path], want)
+		}
+	}
+
+	// Without any change the top level is open and everything below folded.
+	got = state(buildFileTree([]uploadFileRow{
+		file("internal/api/handler.go", false),
+		file("internal/billing/charge.go", false),
+	}, false))
+	for path, want := range map[string]string{
+		"internal":                   "open",
+		"internal/api":               "closed",
+		"internal/api/handler.go":    "closed,hidden",
+		"internal/billing":           "closed",
+		"internal/billing/charge.go": "closed,hidden",
+	} {
+		if got[path] != want {
+			t.Errorf("no-base %s: got %q, want %q", path, got[path], want)
+		}
+	}
+}
+
+func TestUploadPageDiffCoverageSourceChanged(t *testing.T) {
+	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+	f.forge.DiffText = testPRDiff
+
+	doUpload(t, f, "secret-token", map[string]string{"commit": "base1", "branch": "main"}, testProfileFull)
+	doUpload(t, f, "secret-token", map[string]string{
+		"commit": "prcommit1", "branch": "feature/x", "pr_id": "42",
+	}, testProfile)
+
+	body := doGet(t, f, "/uploads/2").Body.String()
+	if !strings.Contains(body, `Source Changed<span class="n">1</span>`) {
+		t.Errorf("expected Source Changed to have count 1, got body:\n%s", body)
+	}
+	if !strings.Contains(body, `data-source="true"`) {
+		t.Errorf("expected row with data-source=true, got body:\n%s", body)
 	}
 }
 

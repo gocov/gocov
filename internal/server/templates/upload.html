@@ -36,51 +36,8 @@
 </div>
 {{end}}{{end}}
 
-<div class="sec">
-  <h2>{{if .Touched}}Files this commit touched{{else}}Files{{end}}</h2>
-  <span class="spacer"></span>
-  {{if .HasBase}}<span class="note">{{if .Touched}}Coverage before &rarr; after this upload{{else}}No file changed coverage in this upload{{end}}</span>{{end}}
-</div>
-<div class="card">
-{{if .Files}}
-{{if .HasBase}}
-<table id="filetable"{{if .Collapse}} class="files-collapsed"{{end}}>
-<thead><tr><th>File</th><th>Coverage</th><th>Before &rarr; after</th><th class="num">&Delta;</th><th>Newly uncovered</th></tr></thead>
-<tbody>
-{{range .Files}}
-<tr{{if not .Changed}} class="xtra"{{end}}>
-<td class="path"><a class="mono path" href="/uploads/{{$u.ID}}/files/{{.Path}}">{{with .Dir}}<span class="dir">{{.}}</span>{{end}}{{.Base}}</a></td>
-<td>{{template "covbar" .Pct}}</td>
-<td>{{if .NewFile}}<span class="ba"><span class="from">&mdash;</span><span class="arw">&rarr;</span><span class="to {{covclass .Pct}}">{{pct .Pct}}</span></span>
-    {{else if .HasBefore}}<span class="ba"><span class="from">{{.BeforeStr}}</span><span class="arw">&rarr;</span><span class="to {{covclass .Pct}}">{{pct .Pct}}</span></span>
-    {{else}}<span class="muted small">&mdash;</span>{{end}}</td>
-<td class="num">{{if .NewFile}}<span class="delta flat">new file</span>{{else}}{{template "delta" .Delta}}{{end}}</td>
-<td>{{if .NewlyMiss}}<span class="uncov">{{.NewlyMiss}}</span>{{else}}<span class="muted small">&mdash;</span>{{end}}</td>
-</tr>
-{{end}}
-</tbody>
-</table>
-{{else}}
-<table>
-<thead><tr><th>File</th><th>Coverage</th><th class="num">Statements</th><th>Uncovered lines</th></tr></thead>
-<tbody>
-{{range .Files}}
-<tr>
-<td class="path"><a class="mono path" href="/uploads/{{$u.ID}}/files/{{.Path}}">{{with .Dir}}<span class="dir">{{.}}</span>{{end}}{{.Base}}</a></td>
-<td>{{template "covbar" .Pct}}</td>
-<td class="num muted small">{{.CoveredStmts}}/{{.TotalStmts}}</td>
-<td>{{if .Uncovered}}<span class="uncov">{{.Uncovered}}</span>{{else}}<span class="muted small">&mdash;</span>{{end}}</td>
-</tr>
-{{end}}
-</tbody>
-</table>
-{{end}}
-{{else}}
-<div class="empty">No per-file data.</div>
-{{end}}
-</div>
-{{if .Collapse}}
-<p class="hint filesmore" style="margin:8px 0 0">Only the {{.ChangedCount}} file{{if ne .ChangedCount 1}}s{{end}} this upload changed {{if eq .ChangedCount 1}}is{{else}}are{{end}} listed. <a href="#" data-showall>Show all {{.Verdict.FileCount}} files</a></p>
+{{with .FilesView}}
+{{template "filesview" .}}
 {{end}}
 
 <div class="sec">
@@ -101,17 +58,4 @@
   </div>
 </div>
 {{if .Verdict.BaseSHA}}<p class="hint" style="margin:8px 0 0">Compared against baseline <a class="mono" href="/uploads/{{.Verdict.BaseID}}">{{short .Verdict.BaseSHA}}</a> ({{.Verdict.BasePctStr}}), the last gate-passing upload on this branch.</p>{{end}}
-
-{{if .Collapse}}
-<script>
-document.addEventListener('click', function (e) {
-  var a = e.target.closest('[data-showall]');
-  if (!a) return;
-  e.preventDefault();
-  document.getElementById('filetable').classList.remove('files-collapsed');
-  var more = document.querySelector('.filesmore');
-  if (more) more.remove();
-});
-</script>
-{{end}}
 {{end}}

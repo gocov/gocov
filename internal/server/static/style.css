@@ -495,8 +495,19 @@ body[data-only="miss"] .fold { display: none; }
 .verdict .meta .k { color: var(--text-3); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
 .verdict .meta .v { font-size: 13px; font-variant-numeric: tabular-nums; }
 
-/* files table: hide unchanged rows until "show all" */
-table.files-collapsed tbody tr.xtra { display: none; }
+/* files table: toolbar, tree view, and visibility switching */
+.file-toolbar { display: flex; align-items: center; gap: 12px; margin: 12px 0 10px; }
+.file-toolbar .input { width: 240px; }
+.files-card[data-view="list"] #filetable-tree { display: none; }
+.files-card[data-view="tree"] #filetable { display: none; }
+.tree-indent { display: inline-block; }
+.tree-toggle { background: none; border: none; padding: 2px 5px; font-size: 11px; line-height: 1;
+  color: var(--text-2); cursor: pointer; border-radius: 3px; }
+.tree-toggle:hover { background: var(--border-soft); color: var(--text); }
+.tree-icon { display: inline-block; font-size: 13px; margin: 0 4px; vertical-align: baseline; }
+.tree-spacer { display: inline-block; width: 18px; }
+.tree-dir { font-weight: 500; background: var(--surface); }
+.tree-dir .tree-name { font-weight: 600; color: var(--text); }
 
 /* before -> after cell */
 td .path .dir, td a.path .dir { color: var(--text-3); }
