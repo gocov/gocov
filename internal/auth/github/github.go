@@ -5,16 +5,14 @@ package github
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gocov/gocov/internal/auth"
+	"github.com/gocov/gocov/internal/rest"
 )
 
 // Default endpoints. The OAuth pages live on the website host, the
@@ -96,7 +94,7 @@ func (p *Provider) Identity(ctx context.Context, code, redirectURI string) (*aut
 		Name  string `json:"name"`
 		Email string `json:"email"`
 	}
-	if err := p.get(ctx, token, "/user", &user); err != nil {
+	if err := p.api(token).Get(ctx, "/user", &user); err != nil {
 		return nil, err
 	}
 	if user.ID == 0 {
@@ -137,30 +135,14 @@ func (p *Provider) exchange(ctx context.Context, code, redirectURI string) (stri
 		"code":          {code},
 		"redirect_uri":  {redirectURI},
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		p.authBase()+"/access_token", strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	// Without this GitHub answers in the legacy query-string format.
-	req.Header.Set("Accept", "application/json")
-	resp, err := p.client().Do(req)
-	if err != nil {
-		return "", fmt.Errorf("github: token exchange: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("github: token exchange: status %d: %s", resp.StatusCode, body)
-	}
 	// A bad code still comes back 200, with the error in the body.
 	var tok struct {
 		AccessToken string `json:"access_token"`
 		Error       string `json:"error"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&tok); err != nil {
-		return "", fmt.Errorf("github: token exchange: %w", err)
+	c := &rest.Client{Name: "github", HTTPClient: p.client()}
+	if err := c.PostForm(ctx, p.authBase()+"/access_token", form, &tok); err != nil {
+		return "", fmt.Errorf("token exchange: %w", err)
 	}
 	if tok.Error != "" {
 		return "", fmt.Errorf("github: token exchange: %s", tok.Error)
@@ -178,7 +160,7 @@ func (p *Provider) primaryEmail(ctx context.Context, token string) (string, erro
 		Email   string `json:"email"`
 		Primary bool   `json:"primary"`
 	}
-	if err := p.get(ctx, token, "/user/emails?per_page=100", &emails); err != nil {
+	if err := p.api(token).Get(ctx, "/user/emails?per_page=100", &emails); err != nil {
 		return "", err
 	}
 	for _, e := range emails {
@@ -198,7 +180,8 @@ func (p *Provider) primaryEmail(ctx context.Context, token string) (string, erro
 // the account's role in each org), following Link-header pagination.
 // Only active memberships count: a pending invitation is not membership.
 func (p *Provider) orgs(ctx context.Context, token string) (all, admin []string, err error) {
-	next := p.apiBase() + "/user/memberships/orgs?state=active&per_page=100"
+	api := p.api(token)
+	next := "/user/memberships/orgs?state=active&per_page=100"
 	for range maxOrgPages {
 		var page []struct {
 			Role         string `json:"role"`
@@ -206,7 +189,7 @@ func (p *Provider) orgs(ctx context.Context, token string) (all, admin []string,
 				Login string `json:"login"`
 			} `json:"organization"`
 		}
-		link, err := p.getURL(ctx, token, next, &page)
+		link, err := api.GetPage(ctx, next, &page)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -219,57 +202,20 @@ func (p *Provider) orgs(ctx context.Context, token string) (all, admin []string,
 				admin = append(admin, m.Organization.Login)
 			}
 		}
-		next = nextLink(link)
-		if next == "" {
+		if next = link; next == "" {
 			return all, admin, nil
 		}
 	}
 	return all, admin, nil
 }
 
-// nextLink extracts the rel="next" URL from a Link response header, or ""
-// when there is no next page.
-func nextLink(header string) string {
-	for part := range strings.SplitSeq(header, ",") {
-		u, rel, ok := strings.Cut(part, ";")
-		if !ok || !strings.Contains(rel, `rel="next"`) {
-			continue
-		}
-		u = strings.TrimSpace(u)
-		if strings.HasPrefix(u, "<") && strings.HasSuffix(u, ">") {
-			return u[1 : len(u)-1]
-		}
-	}
-	return ""
-}
-
-func (p *Provider) get(ctx context.Context, token, path string, dst any) error {
-	_, err := p.getURL(ctx, token, p.apiBase()+path, dst)
-	return err
-}
-
-// getURL fetches u into dst and returns the response's Link header for
-// pagination.
-func (p *Provider) getURL(ctx context.Context, token, u string, dst any) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	resp, err := p.client().Do(req)
-	if err != nil {
-		return "", fmt.Errorf("github: GET %s: %w", u, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("github: GET %s: status %d: %s", u, resp.StatusCode, body)
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(dst); err != nil {
-		return "", fmt.Errorf("github: GET %s: %w", u, err)
-	}
-	return resp.Header.Get("Link"), nil
+// api is the request plumbing for the identity endpoints, bound to the
+// exchanged token. GitHub asks every caller to pin the API version.
+func (p *Provider) api(token string) *rest.Client {
+	return &rest.Client{Name: "github", BaseURL: p.apiBase(), HTTPClient: p.client(), Authorize: func(req *http.Request) {
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	}}
 }
 
 // ensure interface compliance

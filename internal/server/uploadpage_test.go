@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -51,7 +52,7 @@ func TestUploadPageShowsUncoveredRanges(t *testing.T) {
 	f := newFixture(t, nil)
 	// a.go block 7.1,9.2 is uncovered in testProfile -> "7-9".
 	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile)
-	body := doGet(t, f, "/uploads/1").Body.String()
+	body := get(f, "/uploads/1").Body.String()
 	if !strings.Contains(body, `class="uncov"`) || !strings.Contains(body, "7-9") {
 		t.Errorf("uncovered ranges missing: %s", body)
 	}
@@ -73,7 +74,7 @@ func TestUploadPageBeforeAfter(t *testing.T) {
 	doUpload(t, f, "secret-token", map[string]string{"commit": "base1", "branch": "main"}, testProfileFull)
 	doUpload(t, f, "secret-token", map[string]string{"commit": "head1", "branch": "main"}, testProfile)
 
-	body := doGet(t, f, "/uploads/2").Body.String()
+	body := get(f, "/uploads/2").Body.String()
 	for _, want := range []string{
 		`class="ba"`,                            // before -> after column rendered
 		"100.0%",                                // a.go coverage at the baseline
@@ -103,7 +104,7 @@ func TestUploadPageShowsProvenance(t *testing.T) {
 		"ci_run_url":     "https://github.com/acme/widgets/actions/runs/7",
 	}, testProfile)
 
-	body := doGet(t, f, "/uploads/1").Body.String()
+	body := get(f, "/uploads/1").Body.String()
 	for _, want := range []string{
 		"Fix the ledger reconcile", // commit subject as the heading
 		"Ada Lovelace",             // author
@@ -126,7 +127,7 @@ func TestUploadPagePRBaselinesAgainstDefaultBranch(t *testing.T) {
 	doUpload(t, f, "secret-token", map[string]string{"commit": "main1", "branch": "main"}, testProfileFull)
 	doUpload(t, f, "secret-token", map[string]string{"commit": "pr1", "branch": "feature/x", "pr_id": "7"}, testProfile)
 
-	body := doGet(t, f, "/uploads/2").Body.String()
+	body := get(f, "/uploads/2").Body.String()
 	for _, want := range []string{
 		`id="file-filters"`, // baseline resolved -> filter tabs rendered
 		`class="ba"`,        // before -> after rendered
@@ -143,7 +144,7 @@ func TestUploadProfileDownload(t *testing.T) {
 	f := newFixture(t, nil)
 	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile)
 
-	rec := doGet(t, f, "/uploads/1/profile")
+	rec := get(f, "/uploads/1/profile")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("download status = %d", rec.Code)
 	}
@@ -153,7 +154,7 @@ func TestUploadProfileDownload(t *testing.T) {
 	if rec.Body.String() != testProfile {
 		t.Errorf("download body does not match the uploaded profile:\n%s", rec.Body.String())
 	}
-	if rec := doGet(t, f, "/uploads/999/profile"); rec.Code != http.StatusNotFound {
+	if rec := get(f, "/uploads/999/profile"); rec.Code != http.StatusNotFound {
 		t.Errorf("missing upload profile: code = %d, want 404", rec.Code)
 	}
 }
@@ -165,7 +166,7 @@ func TestUploadPageTreeAndFilters(t *testing.T) {
 	// Head upload on main: a.go coverage drops (Coverage changed)
 	doUpload(t, f, "secret-token", map[string]string{"commit": "head1", "branch": "main"}, testProfile)
 
-	body := doGet(t, f, "/uploads/2").Body.String()
+	body := get(f, "/uploads/2").Body.String()
 	for _, want := range []string{
 		`id="view-mode"`,
 		`data-view="tree"`,
@@ -330,7 +331,7 @@ func TestUploadPageDiffCoverageSourceChanged(t *testing.T) {
 		"commit": "prcommit1", "branch": "feature/x", "pr_id": "42",
 	}, testProfile)
 
-	body := doGet(t, f, "/uploads/2").Body.String()
+	body := get(f, "/uploads/2").Body.String()
 	if !strings.Contains(body, `Source Changed<span class="n">1</span>`) {
 		t.Errorf("expected Source Changed to have count 1, got body:\n%s", body)
 	}
@@ -340,3 +341,63 @@ func TestUploadPageDiffCoverageSourceChanged(t *testing.T) {
 }
 
 // fakeProvider is an auth.Provider whose Identity is canned.
+
+func TestBuildFileTreeRollsUpBaseline(t *testing.T) {
+	file := func(path string, covered, total int64, c fileCompare) uploadFileRow {
+		dir, base := splitPath(path)
+		return uploadFileRow{
+			UploadFile:  &store.UploadFile{Path: path, CoveredStmts: covered, TotalStmts: total, Pct: float64(covered) / float64(total) * 100},
+			fileCompare: c,
+			Dir:         dir, Base: base,
+		}
+	}
+	before := func(covered, total int64, pct float64) fileCompare {
+		return fileCompare{HasBefore: true, BeforeCovered: covered, BeforeTotal: total, BeforeStr: fmt.Sprintf("%.1f%%", pct)}
+	}
+	regressed := before(6, 10, 60)
+	regressed.DeltaVal, regressed.Delta = 20, newDeltaView(20)
+	regressed.NewlyMiss = "12-14"
+	regressed.Changed, regressed.IsCoverageChanged = true, true
+	rows := []uploadFileRow{
+		file("cmd/gocov/client.go", 8, 10, regressed),
+		file("cmd/gocov/main.go", 12, 20, before(12, 20, 60)),
+		file("internal/server/upload.go", 30, 40, fileCompare{NewFile: true, Changed: true, IsCoverageChanged: true}),
+	}
+	byPath := map[string]treeRow{}
+	for _, tr := range buildFileTree(rows, true) {
+		byPath[tr.Path] = tr
+	}
+
+	// A directory's baseline is the sum of its files' — 18 of 30 before,
+	// 20 of 30 now — and its delta is the rollup's own, not any file's.
+	dir := byPath["cmd/gocov"]
+	if !dir.IsDir || !dir.HasBefore || dir.BeforeCovered != 18 || dir.BeforeTotal != 30 || dir.BeforeStr != "60.0%" {
+		t.Errorf("cmd/gocov baseline = %+v, want 18/30 (60.0%%)", dir.fileCompare)
+	}
+	if dir.Delta == nil || dir.Delta.Text != "+6.7%" || dir.Delta.Class != "up" {
+		t.Errorf("cmd/gocov delta = %+v, want +6.7%% up", dir.Delta)
+	}
+	if !dir.Changed || !dir.IsCoverageChanged || dir.IsSourceChanged {
+		t.Errorf("cmd/gocov flags = %+v, want changed by coverage only", dir.fileCompare)
+	}
+	if dir.NewFile || dir.NewlyMiss != "" || dir.Uncovered != "" {
+		t.Errorf("cmd/gocov carries file-only fields: %+v", dir.fileCompare)
+	}
+
+	// A directory whose only file is new has nothing to compare against.
+	dir = byPath["internal/server"]
+	if dir.HasBefore || dir.Delta != nil || dir.BeforeStr != "" {
+		t.Errorf("internal/server baseline = %+v, want none", dir.fileCompare)
+	}
+	if !dir.Changed || dir.NewFile {
+		t.Errorf("internal/server flags = %+v, want changed, not itself new", dir.fileCompare)
+	}
+
+	// File rows carry their comparison through unchanged.
+	if got := byPath["cmd/gocov/client.go"].fileCompare; got != regressed {
+		t.Errorf("client.go comparison = %+v, want %+v", got, regressed)
+	}
+	if got := byPath["internal/server/upload.go"]; !got.NewFile || got.Pct != 75 {
+		t.Errorf("upload.go row = %+v", got)
+	}
+}

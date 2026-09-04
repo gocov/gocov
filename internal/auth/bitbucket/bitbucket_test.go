@@ -134,7 +134,7 @@ func TestIdentityErrors(t *testing.T) {
 		})
 		p := testProvider(t, mux)
 		if _, err := p.Identity(t.Context(), "c", "uri"); err == nil ||
-			!strings.Contains(err.Error(), "status 401") {
+			!strings.Contains(err.Error(), "401") {
 			t.Errorf("err = %v", err)
 		}
 	})

@@ -69,11 +69,7 @@ type Result struct {
 func (p *Pipeline) Accept(ctx context.Context, sub Submission) (*Result, error) {
 	// The client every forge surface below publishes through; nil when the
 	// repo's workspace has no connection.
-	var fg forge.Forge
-	var fgErr error
-	if p.Forges != nil {
-		fg, fgErr = p.Forges.For(ctx, sub.Repo)
-	}
+	fg, fgErr := p.forgeFor(ctx, sub.Repo)
 	// Re-ask the repo's visibility while a forge client is at hand — but
 	// only when the cached answer has aged out, and never concurrently
 	// with another request's ask, so a commit uploading many parts costs
@@ -94,7 +90,7 @@ func (p *Pipeline) Accept(ctx context.Context, sub Submission) (*Result, error) 
 	covered, total := sub.Profile.Coverage()
 	totalPct := profile.Percent(covered, total)
 
-	dropDelta, err := p.baselineDelta(ctx, sub.Repo, sub.Commit, totalPct)
+	dropDelta, err := gateDropDelta(ctx, p.Store, sub.Repo, sub.Commit, totalPct)
 	if err != nil {
 		return nil, err
 	}
@@ -229,23 +225,14 @@ func (p *Pipeline) storeRaw(ctx context.Context, repoID int64, raw []byte) (stri
 	return key, nil
 }
 
-// baselineDelta returns this upload's coverage difference to the gate's
-// baseline, or nil when the drop rule is off or has nothing to compare
-// against. The rule always compares against the default branch, so a PR
-// cannot lower coverage step by step within tolerance.
-func (p *Pipeline) baselineDelta(ctx context.Context, repo *store.Repo, commit string, totalPct float64) (*float64, error) {
-	if repo.Gate.MaxCoverageDrop == nil {
+// forgeFor resolves the client the repo's workspace is connected through:
+// (nil, nil) when it has no connection, or when the deployment offers no
+// one-click connect at all.
+func (p *Pipeline) forgeFor(ctx context.Context, repo *store.Repo) (forge.Forge, error) {
+	if p.Forges == nil {
 		return nil, nil
 	}
-	base, err := p.Store.LatestPassedCommitReport(ctx, repo.ID, repo.DefaultBranch, commit)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return nil, fmt.Errorf("loading gate baseline: %w", err)
-	}
-	if base == nil {
-		return nil, nil
-	}
-	d := totalPct - base.TotalPct
-	return &d, nil
+	return p.Forges.For(ctx, repo)
 }
 
 // rows turns the submission into the upload row and its per-file rows.

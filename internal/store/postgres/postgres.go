@@ -265,20 +265,27 @@ func (s *Store) ListRepos(ctx context.Context) ([]*store.Repo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*store.Repo
-	for rows.Next() {
-		r, err := s.scanRepo(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
+	return collect(rows, s.scanRepo)
 }
 
 type rowScanner interface {
 	Scan(dest ...any) error
+}
+
+// collect drains rows through scan — one of the scanX helpers, which
+// read a row into a struct — and closes them either way. It is the body
+// of every List* query.
+func collect[T any](rows pgx.Rows, scan func(rowScanner) (*T, error)) ([]*T, error) {
+	defer rows.Close()
+	var out []*T
+	for rows.Next() {
+		v, err := scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }
 
 // querier is the subset of pgx shared by *pgxpool.Pool and pgx.Tx, so the
@@ -393,42 +400,32 @@ func (s *Store) UpdateWorkspace(ctx context.Context, w *store.Workspace) error {
 }
 
 func (s *Store) SetWorkspaceBitbucketGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
-	return s.setWorkspaceBitbucketGrant(ctx, s.pool, workspaceID, account, refreshToken, broken)
-}
-
-func (s *Store) setWorkspaceBitbucketGrant(ctx context.Context, q querier, workspaceID int64, account, refreshToken string, broken bool) error {
-	sealed, err := s.sealToken(refreshToken)
-	if err != nil {
-		return err
-	}
-	tag, err := q.Exec(ctx, `
-		UPDATE workspaces SET bitbucket_grant_account = $2,
-			bitbucket_refresh_token = $3, bitbucket_grant_broken = $4
-		WHERE id = $1`,
-		workspaceID, account, sealed, broken)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return store.ErrNotFound
-	}
-	return nil
+	return s.setWorkspaceGrant(ctx, s.pool, setBitbucketGrantSQL, workspaceID, account, refreshToken, broken)
 }
 
 func (s *Store) SetWorkspaceGitLabGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
-	return s.setWorkspaceGitLabGrant(ctx, s.pool, workspaceID, account, refreshToken, broken)
+	return s.setWorkspaceGrant(ctx, s.pool, setGitLabGrantSQL, workspaceID, account, refreshToken, broken)
 }
 
-func (s *Store) setWorkspaceGitLabGrant(ctx context.Context, q querier, workspaceID int64, account, refreshToken string, broken bool) error {
+// The two grant columns sets differ only by forge; setWorkspaceGrant is
+// the write behind both, with the statement chosen by the caller.
+const (
+	setBitbucketGrantSQL = `
+		UPDATE workspaces SET bitbucket_grant_account = $2,
+			bitbucket_refresh_token = $3, bitbucket_grant_broken = $4
+		WHERE id = $1`
+	setGitLabGrantSQL = `
+		UPDATE workspaces SET gitlab_grant_account = $2,
+			gitlab_refresh_token = $3, gitlab_grant_broken = $4
+		WHERE id = $1`
+)
+
+func (s *Store) setWorkspaceGrant(ctx context.Context, q querier, sql string, workspaceID int64, account, refreshToken string, broken bool) error {
 	sealed, err := s.sealToken(refreshToken)
 	if err != nil {
 		return err
 	}
-	tag, err := q.Exec(ctx, `
-		UPDATE workspaces SET gitlab_grant_account = $2,
-			gitlab_refresh_token = $3, gitlab_grant_broken = $4
-		WHERE id = $1`,
-		workspaceID, account, sealed, broken)
+	tag, err := q.Exec(ctx, sql, workspaceID, account, sealed, broken)
 	if err != nil {
 		return err
 	}
@@ -519,11 +516,11 @@ func (g *grantTx) WorkspaceByPrefix(ctx context.Context, prefix string) (*store.
 }
 
 func (g *grantTx) SetWorkspaceBitbucketGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
-	return g.s.setWorkspaceBitbucketGrant(ctx, g.tx, workspaceID, account, refreshToken, broken)
+	return g.s.setWorkspaceGrant(ctx, g.tx, setBitbucketGrantSQL, workspaceID, account, refreshToken, broken)
 }
 
 func (g *grantTx) SetWorkspaceGitLabGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
-	return g.s.setWorkspaceGitLabGrant(ctx, g.tx, workspaceID, account, refreshToken, broken)
+	return g.s.setWorkspaceGrant(ctx, g.tx, setGitLabGrantSQL, workspaceID, account, refreshToken, broken)
 }
 
 func (s *Store) WorkspaceByToken(ctx context.Context, token string) (*store.Workspace, error) {
@@ -536,16 +533,7 @@ func (s *Store) ListWorkspaces(ctx context.Context) ([]*store.Workspace, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*store.Workspace
-	for rows.Next() {
-		w, err := s.scanWorkspace(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, w)
-	}
-	return out, rows.Err()
+	return collect(rows, s.scanWorkspace)
 }
 
 func (s *Store) scanWorkspace(row rowScanner) (*store.Workspace, error) {
@@ -641,16 +629,7 @@ func (s *Store) ListWorkspacesForUser(ctx context.Context, userID int64) ([]*sto
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*store.Workspace
-	for rows.Next() {
-		w, err := s.scanWorkspace(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, w)
-	}
-	return out, rows.Err()
+	return collect(rows, s.scanWorkspace)
 }
 
 const userCols = `id, forge, forge_uuid, email, display_name,
@@ -700,16 +679,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]*store.User, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*store.User
-	for rows.Next() {
-		u, err := s.scanUser(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, u)
-	}
-	return out, rows.Err()
+	return collect(rows, s.scanUser)
 }
 
 func (s *Store) DeleteUser(ctx context.Context, id int64) error {
@@ -865,16 +835,7 @@ func (s *Store) ListUploads(ctx context.Context, repoID int64, limit int) ([]*st
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*store.Upload
-	for rows.Next() {
-		u, err := s.scanUpload(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, u)
-	}
-	return out, rows.Err()
+	return collect(rows, s.scanUpload)
 }
 
 func (s *Store) ListBranchUploads(ctx context.Context, repoID int64, branch string, limit int) ([]*store.Upload, error) {
@@ -889,16 +850,7 @@ func (s *Store) ListBranchUploads(ctx context.Context, repoID int64, branch stri
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*store.Upload
-	for rows.Next() {
-		u, err := s.scanUpload(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, u)
-	}
-	return out, rows.Err()
+	return collect(rows, s.scanUpload)
 }
 
 func (s *Store) scanUpload(row rowScanner) (*store.Upload, error) {
@@ -998,16 +950,7 @@ func (s *Store) latestUploadsPerPart(ctx context.Context, q querier, repoID int6
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*store.Upload
-	for rows.Next() {
-		u, err := s.scanUpload(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, u)
-	}
-	return out, rows.Err()
+	return collect(rows, s.scanUpload)
 }
 
 // WithCommitReportTx runs fn inside a transaction that holds a
@@ -1217,16 +1160,7 @@ func (s *Store) ListBranchCommitReports(ctx context.Context, repoID int64, branc
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*store.CommitReport
-	for rows.Next() {
-		cr, err := s.scanCommitReport(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, cr)
-	}
-	return out, rows.Err()
+	return collect(rows, s.scanCommitReport)
 }
 
 func (s *Store) scanCommitReport(row rowScanner) (*store.CommitReport, error) {

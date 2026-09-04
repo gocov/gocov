@@ -5,15 +5,13 @@ package bitbucket
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/gocov/gocov/internal/auth"
+	"github.com/gocov/gocov/internal/rest"
 )
 
 // Default endpoints. The OAuth pages live on the website host, the
@@ -90,7 +88,7 @@ func (p *Provider) Identity(ctx context.Context, code, redirectURI string) (*aut
 		UUID        string `json:"uuid"`
 		DisplayName string `json:"display_name"`
 	}
-	if err := p.get(ctx, token, "/user", &user); err != nil {
+	if err := p.api(token).Get(ctx, "/user", &user); err != nil {
 		return nil, err
 	}
 	if user.UUID == "" {
@@ -115,27 +113,12 @@ func (p *Provider) exchange(ctx context.Context, code, redirectURI string) (stri
 		"code":         {code},
 		"redirect_uri": {redirectURI},
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		p.authBase()+"/access_token", strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.SetBasicAuth(p.Key, p.Secret)
-	resp, err := p.client().Do(req)
-	if err != nil {
-		return "", fmt.Errorf("bitbucket: token exchange: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("bitbucket: token exchange: status %d: %s", resp.StatusCode, body)
-	}
 	var tok struct {
 		AccessToken string `json:"access_token"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&tok); err != nil {
-		return "", fmt.Errorf("bitbucket: token exchange: %w", err)
+	c := &rest.Client{Name: "bitbucket", HTTPClient: p.client(), Authorize: rest.Basic(p.Key, p.Secret)}
+	if err := c.PostForm(ctx, p.authBase()+"/access_token", form, &tok); err != nil {
+		return "", fmt.Errorf("token exchange: %w", err)
 	}
 	if tok.AccessToken == "" {
 		return "", fmt.Errorf("bitbucket: token exchange returned no access token")
@@ -152,7 +135,7 @@ func (p *Provider) primaryEmail(ctx context.Context, token string) (string, erro
 			IsPrimary bool   `json:"is_primary"`
 		} `json:"values"`
 	}
-	if err := p.get(ctx, token, "/user/emails", &page); err != nil {
+	if err := p.api(token).Get(ctx, "/user/emails", &page); err != nil {
 		return "", err
 	}
 	for _, v := range page.Values {
@@ -176,7 +159,8 @@ func (p *Provider) primaryEmail(ctx context.Context, token string) (string, erro
 // workspace_membership-shaped record says the same with
 // permission "owner" — both are honoured.
 func (p *Provider) workspaces(ctx context.Context, token string) (all, admin []string, err error) {
-	next := p.apiBase() + "/user/workspaces?" + url.Values{"pagelen": {"100"}}.Encode()
+	api := p.api(token)
+	next := "/user/workspaces?" + url.Values{"pagelen": {"100"}}.Encode()
 	for range maxWorkspacePages {
 		var page struct {
 			Values []struct {
@@ -188,7 +172,7 @@ func (p *Provider) workspaces(ctx context.Context, token string) (all, admin []s
 			} `json:"values"`
 			Next string `json:"next"`
 		}
-		if err := p.getURL(ctx, token, next, &page); err != nil {
+		if err := api.Get(ctx, next, &page); err != nil {
 			return nil, nil, err
 		}
 		for _, v := range page.Values {
@@ -208,29 +192,11 @@ func (p *Provider) workspaces(ctx context.Context, token string) (all, admin []s
 	return all, admin, nil
 }
 
-func (p *Provider) get(ctx context.Context, token, path string, dst any) error {
-	return p.getURL(ctx, token, p.apiBase()+path, dst)
-}
-
-func (p *Provider) getURL(ctx context.Context, token, u string, dst any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := p.client().Do(req)
-	if err != nil {
-		return fmt.Errorf("bitbucket: GET %s: %w", u, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("bitbucket: GET %s: status %d: %s", u, resp.StatusCode, body)
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(dst); err != nil {
-		return fmt.Errorf("bitbucket: GET %s: %w", u, err)
-	}
-	return nil
+// api is the request plumbing for the identity endpoints, bound to the
+// exchanged token. Bitbucket pages by an absolute "next" URL in the body,
+// which the client sends as is.
+func (p *Provider) api(token string) *rest.Client {
+	return &rest.Client{Name: "bitbucket", BaseURL: p.apiBase(), HTTPClient: p.client(), Authorize: rest.Bearer(token)}
 }
 
 // ensure interface compliance

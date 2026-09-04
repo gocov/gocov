@@ -42,7 +42,7 @@ func sourceFixture(t *testing.T) (*fixture, int64) {
 
 func TestSourceView(t *testing.T) {
 	f, id := sourceFixture(t)
-	body := doGet(t, f, "/uploads/1/files/example.com/m/a.go").Body.String()
+	body := get(f, "/uploads/1/files/example.com/m/a.go").Body.String()
 
 	// Covered lines render as hits with counts, uncovered as misses,
 	// non-executable line 6 as neither.
@@ -67,8 +67,8 @@ func TestSourceView(t *testing.T) {
 
 func TestSourceViewCachesContent(t *testing.T) {
 	f, _ := sourceFixture(t)
-	doGet(t, f, "/uploads/1/files/example.com/m/a.go")
-	doGet(t, f, "/uploads/1/files/example.com/m/a.go")
+	get(f, "/uploads/1/files/example.com/m/a.go")
+	get(f, "/uploads/1/files/example.com/m/a.go")
 	if got := len(f.forge.FileCalls); got != 1 {
 		t.Errorf("forge fetched %d times, want 1 (cache)", got)
 	}
@@ -82,7 +82,7 @@ func TestSourceViewFallbacks(t *testing.T) {
 	t.Run("no credentials", func(t *testing.T) {
 		f := newFixture(t, nil)
 		doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile)
-		body := doGet(t, f, "/uploads/1/files/example.com/m/a.go").Body.String()
+		body := get(f, "/uploads/1/files/example.com/m/a.go").Body.String()
 		if !strings.Contains(body, "Source is unavailable") {
 			t.Errorf("fallback missing: %s", body)
 		}
@@ -94,7 +94,7 @@ func TestSourceViewFallbacks(t *testing.T) {
 
 	t.Run("file not on forge", func(t *testing.T) {
 		f, _ := sourceFixture(t)
-		body := doGet(t, f, "/uploads/1/files/example.com/m/b.go").Body.String()
+		body := get(f, "/uploads/1/files/example.com/m/b.go").Body.String()
 		if !strings.Contains(body, "Source is unavailable") || !strings.Contains(body, "not found") {
 			t.Errorf("not-found fallback missing: %s", body)
 		}
@@ -103,7 +103,7 @@ func TestSourceViewFallbacks(t *testing.T) {
 	t.Run("non-utf8 content", func(t *testing.T) {
 		f, _ := sourceFixture(t)
 		f.forge.Files["m/a.go"] = string([]byte{0xff, 0xfe, 0x00, 0x01})
-		body := doGet(t, f, "/uploads/1/files/example.com/m/a.go").Body.String()
+		body := get(f, "/uploads/1/files/example.com/m/a.go").Body.String()
 		if !strings.Contains(body, "not valid UTF-8") {
 			t.Errorf("utf8 fallback missing: %s", body)
 		}
@@ -114,17 +114,17 @@ func TestSourceViewFallbacks(t *testing.T) {
 		// Dot segments are redirected away by the mux's path cleaning and
 		// the cleaned URL matches no route; the handler itself only serves
 		// paths recorded in the upload, so nothing is ever exposed.
-		rec := doGet(t, f, "/uploads/1/files/../../etc/passwd")
+		rec := get(f, "/uploads/1/files/../../etc/passwd")
 		if rec.Code == http.StatusOK {
 			t.Errorf("traversal path must not be served: %d", rec.Code)
 		}
 		if loc := rec.Header().Get("Location"); strings.Contains(loc, "files") {
 			t.Errorf("traversal redirect still points at the source view: %q", loc)
 		}
-		if rec := doGet(t, f, "/uploads/1/files/unknown.go"); rec.Code != http.StatusNotFound {
+		if rec := get(f, "/uploads/1/files/unknown.go"); rec.Code != http.StatusNotFound {
 			t.Errorf("unknown file = %d, want 404", rec.Code)
 		}
-		if rec := doGet(t, f, "/uploads/99/files/example.com/m/a.go"); rec.Code != http.StatusNotFound {
+		if rec := get(f, "/uploads/99/files/example.com/m/a.go"); rec.Code != http.StatusNotFound {
 			t.Errorf("unknown upload = %d, want 404", rec.Code)
 		}
 	})
@@ -142,7 +142,7 @@ func TestSourceViewSecurity(t *testing.T) {
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("upload: %d %s", rec.Code, rec.Body)
 		}
-		body := doGet(t, f, "/uploads/1/files/example.com/../../../user.go")
+		body := get(f, "/uploads/1/files/example.com/../../../user.go")
 		// Either the mux redirects the cleaned URL away, or the handler
 		// refuses to ask the forge for it — the forge must never see it.
 		if len(f.forge.FileCalls) != 0 {
@@ -154,7 +154,7 @@ func TestSourceViewSecurity(t *testing.T) {
 	t.Run("forge failure detail stays out of the page", func(t *testing.T) {
 		f, _ := sourceFixture(t)
 		f.forge.FileErr = errFake // "fake forge failure"
-		body := doGet(t, f, "/uploads/1/files/example.com/m/a.go").Body.String()
+		body := get(f, "/uploads/1/files/example.com/m/a.go").Body.String()
 		if strings.Contains(body, "fake forge failure") {
 			t.Errorf("forge error text leaked into the page: %s", body)
 		}
@@ -185,7 +185,7 @@ func TestSourceViewTrimsUnmappedPrefixes(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("upload failed: %d %s", rec.Code, rec.Body)
 	}
-	body := doGet(t, f, "/uploads/1/files/example.com/m/a.go").Body.String()
+	body := get(f, "/uploads/1/files/example.com/m/a.go").Body.String()
 	if !strings.Contains(body, "codeline hit") {
 		t.Errorf("trimmed lookup did not render source: %s", body)
 	}
@@ -196,7 +196,7 @@ func TestSourceViewTrimsUnmappedPrefixes(t *testing.T) {
 		t.Errorf("forge calls = %v, want %v", f.forge.FileCalls, want)
 	}
 	// The canonical cache key serves the next view without re-probing.
-	doGet(t, f, "/uploads/1/files/example.com/m/a.go")
+	get(f, "/uploads/1/files/example.com/m/a.go")
 	if got := len(f.forge.FileCalls); got != 2 {
 		t.Errorf("forge calls after cached view = %d, want 2", got)
 	}
@@ -205,7 +205,7 @@ func TestSourceViewTrimsUnmappedPrefixes(t *testing.T) {
 		f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
 		f.forge.FileErr = errFake
 		doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile)
-		doGet(t, f, "/uploads/1/files/example.com/m/a.go")
+		get(f, "/uploads/1/files/example.com/m/a.go")
 		if got := len(f.forge.FileCalls); got != 1 {
 			t.Errorf("forge calls = %d, want 1 (no probing after a real error)", got)
 		}
@@ -220,7 +220,7 @@ func TestSourceViewTrimsUnmappedPrefixes(t *testing.T) {
 		doUpload(t, f, "secret-token", map[string]string{
 			"commit": "c1", "branch": "main", "path_prefix": "example.com",
 		}, profileData)
-		body := doGet(t, f, "/uploads/1/files/example.com/x/y/z.go").Body.String()
+		body := get(f, "/uploads/1/files/example.com/x/y/z.go").Body.String()
 		if !strings.Contains(body, "Source is unavailable") {
 			t.Errorf("prefixed upload must fail closed, got: %s", body)
 		}
@@ -232,12 +232,12 @@ func TestSourceViewTrimsUnmappedPrefixes(t *testing.T) {
 	t.Run("misses are cached: no re-probing on later views", func(t *testing.T) {
 		f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
 		doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile)
-		doGet(t, f, "/uploads/1/files/example.com/m/a.go")
+		get(f, "/uploads/1/files/example.com/m/a.go")
 		probes := len(f.forge.FileCalls)
 		if probes == 0 {
 			t.Fatal("expected at least one probe")
 		}
-		body := doGet(t, f, "/uploads/1/files/example.com/m/a.go").Body.String()
+		body := get(f, "/uploads/1/files/example.com/m/a.go").Body.String()
 		if got := len(f.forge.FileCalls); got != probes {
 			t.Errorf("forge calls after miss-cached view = %d, want %d", got, probes)
 		}
@@ -252,7 +252,7 @@ func TestSourceViewTrimsUnmappedPrefixes(t *testing.T) {
 		f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
 		f.forge.Files = map[string]string{"m/a.go": "package other\n"}
 		doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile)
-		body := doGet(t, f, "/uploads/1/files/example.com/m/a.go").Body.String()
+		body := get(f, "/uploads/1/files/example.com/m/a.go").Body.String()
 		if !strings.Contains(body, "Source is unavailable") {
 			t.Errorf("short collision must not render: %s", body)
 		}
@@ -312,6 +312,16 @@ func TestRenderSourceLines(t *testing.T) {
 	}
 	if lines[3].Class != "miss" {
 		t.Errorf("line 4 = %+v", lines[3])
+	}
+	// Overlapping blocks: a line ran if any block over it did, and shows the
+	// highest count.
+	overlap := renderSourceLines([]byte("a\nb\n"), []profile.Block{
+		{StartLine: 1, EndLine: 2, NumStmts: 1, Count: 0},
+		{StartLine: 2, EndLine: 2, NumStmts: 1, Count: 5},
+		{StartLine: 2, EndLine: 2, NumStmts: 1, Count: 2},
+	})
+	if overlap[0].Class != "miss" || overlap[1].Class != "hit" || overlap[1].Hits != "5×" {
+		t.Errorf("overlapping blocks = %+v", overlap)
 	}
 	// Blocks beyond EOF must not panic.
 	_ = renderSourceLines([]byte("only\n"), []profile.Block{{StartLine: 5, EndLine: 9, NumStmts: 1, Count: 1}})

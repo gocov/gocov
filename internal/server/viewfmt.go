@@ -48,7 +48,7 @@ func humanInt(n int64) string {
 		s = s[1:]
 	}
 	var b strings.Builder
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		if i > 0 && (len(s)-i)%3 == 0 {
 			b.WriteByte(',')
 		}

@@ -1,17 +1,15 @@
 package gitlab
 
 import (
+	"cmp"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/gocov/gocov/internal/forge"
-	"github.com/gocov/gocov/internal/forge/internal/rest"
+	"github.com/gocov/gocov/internal/rest"
 )
 
 // Workspace-connect OAuth grant (GitLab Connect, the P2 one-click item).
@@ -52,25 +50,15 @@ type Application struct {
 // caveat applies) — and TTL is two hours on gitlab.com.
 type Grant = forge.Grant
 
-func (a *Application) authBase() string {
-	if a.AuthBaseURL != "" {
-		return a.AuthBaseURL
-	}
-	return DefaultAuthBaseURL
-}
+func (a *Application) authBase() string { return cmp.Or(a.AuthBaseURL, DefaultAuthBaseURL) }
 
-func (a *Application) apiBase() string {
-	if a.APIBaseURL != "" {
-		return a.APIBaseURL
-	}
-	return DefaultBaseURL
-}
+func (a *Application) apiBase() string { return cmp.Or(a.APIBaseURL, DefaultBaseURL) }
 
 func (a *Application) client() *http.Client {
 	if a.HTTPClient != nil {
 		return a.HTTPClient
 	}
-	return &http.Client{Timeout: 15 * time.Second}
+	return rest.NewHTTPClient()
 }
 
 // AuthorizeURL is the consent page for the connect grant. Unlike
@@ -135,50 +123,22 @@ func (a *Application) ForgeClient(accessToken string) forge.Forge {
 func (a *Application) token(ctx context.Context, form url.Values) (*Grant, error) {
 	form.Set("client_id", a.Key)
 	form.Set("client_secret", a.Secret)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		a.authBase()+"/token", strings.NewReader(form.Encode()))
+	var tok rest.Token
+	api := &rest.Client{Name: "gitlab", BaseURL: a.authBase(), HTTPClient: a.client()}
+	err := api.PostForm(ctx, "/token", form, &tok)
+	if rest.OAuthErrorCode(err) == "invalid_grant" {
+		return nil, fmt.Errorf("%w: %w", forge.ErrCredentialsRevoked, err)
+	}
 	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := a.client().Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("gitlab: token grant: %w", err)
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, fmt.Errorf("gitlab: token grant: %w", err)
-	}
-	if resp.StatusCode >= 300 {
-		var oauthErr struct {
-			Error string `json:"error"`
-		}
-		_ = json.Unmarshal(data, &oauthErr)
-		if oauthErr.Error == "invalid_grant" {
-			return nil, fmt.Errorf("%w: gitlab grant: %s", forge.ErrCredentialsRevoked, data)
-		}
-		return nil, fmt.Errorf("gitlab: token grant: status %d: %s", resp.StatusCode, data)
-	}
-	var tok struct {
-		AccessToken  string  `json:"access_token"`
-		RefreshToken string  `json:"refresh_token"`
-		ExpiresIn    float64 `json:"expires_in"`
-	}
-	if err := json.Unmarshal(data, &tok); err != nil {
-		return nil, fmt.Errorf("gitlab: token grant: %w", err)
+		return nil, fmt.Errorf("token grant: %w", err)
 	}
 	if tok.AccessToken == "" {
 		return nil, fmt.Errorf("gitlab: token grant returned no access token")
 	}
-	ttl := time.Duration(tok.ExpiresIn) * time.Second
-	if ttl == 0 {
-		ttl = grantTTLDefault
-	}
 	return &Grant{
 		AccessToken:  tok.AccessToken,
 		RefreshToken: tok.RefreshToken,
-		TTL:          ttl,
+		TTL:          cmp.Or(tok.TTL(), grantTTLDefault),
 	}, nil
 }
 

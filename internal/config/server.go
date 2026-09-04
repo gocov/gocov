@@ -92,26 +92,26 @@ func (c *Server) normalize() {
 	c.SecretKey = strings.TrimSpace(c.SecretKey)
 	c.Mode = strings.TrimSpace(c.Mode)
 	c.PublicReports = strings.ToLower(strings.TrimSpace(c.PublicReports))
-	workspaces := c.AllowedWorkspaces[:0]
-	for _, ws := range c.AllowedWorkspaces {
-		if ws = strings.TrimSpace(ws); ws != "" {
-			workspaces = append(workspaces, ws)
+	c.AllowedWorkspaces = cleanList(c.AllowedWorkspaces, strings.TrimSpace)
+	c.OIDCIssuers = cleanList(c.OIDCIssuers, func(iss string) string {
+		return strings.TrimRight(strings.TrimSpace(iss), "/")
+	})
+}
+
+// cleanList applies clean to each entry of a comma-split list and drops
+// the entries it leaves empty (a trailing comma, a blank between two).
+// An empty result is nil, so "unset" and "set to nothing" compare equal.
+func cleanList(entries []string, clean func(string) string) []string {
+	out := entries[:0]
+	for _, e := range entries {
+		if e = clean(e); e != "" {
+			out = append(out, e)
 		}
 	}
-	c.AllowedWorkspaces = workspaces
-	if len(c.AllowedWorkspaces) == 0 {
-		c.AllowedWorkspaces = nil
+	if len(out) == 0 {
+		return nil
 	}
-	issuers := c.OIDCIssuers[:0]
-	for _, iss := range c.OIDCIssuers {
-		if iss = strings.TrimRight(strings.TrimSpace(iss), "/"); iss != "" {
-			issuers = append(issuers, iss)
-		}
-	}
-	c.OIDCIssuers = issuers
-	if len(c.OIDCIssuers) == 0 {
-		c.OIDCIssuers = nil
-	}
+	return out
 }
 
 // secretKeyPattern is the required shape of GOCOV_SECRET_KEY: exactly 64

@@ -3,7 +3,6 @@ package bitbucket
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -11,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/gocov/gocov/internal/forge"
-	"github.com/gocov/gocov/internal/forge/internal/rest"
+	"github.com/gocov/gocov/internal/rest"
 )
 
 // DefaultBaseURL is the Bitbucket Cloud REST API root.
@@ -31,19 +30,15 @@ type Client struct {
 	HTTPClient  *http.Client
 }
 
-// authorize sets the request's auth: the grant's Bearer token when
-// connected, HTTP Basic with the stored credential otherwise.
-func (c *Client) authorize(req *http.Request) {
-	if c.AccessToken != "" {
-		req.Header.Set("Authorization", "Bearer "+c.AccessToken)
-		return
-	}
-	req.SetBasicAuth(c.Username, c.AppPassword)
-}
-
-// api is the request plumbing, bound to this client's credentials.
+// api is the request plumbing, bound to this client's credentials: the
+// grant's Bearer token when connected, HTTP Basic with the stored
+// credential otherwise.
 func (c *Client) api() *rest.Client {
-	return &rest.Client{Name: "bitbucket", BaseURL: c.BaseURL, HTTPClient: c.HTTPClient, Authorize: c.authorize}
+	authorize := rest.Basic(c.Username, c.AppPassword)
+	if c.AccessToken != "" {
+		authorize = rest.Bearer(c.AccessToken)
+	}
+	return &rest.Client{Name: "bitbucket", BaseURL: c.BaseURL, HTTPClient: c.HTTPClient, Authorize: authorize}
 }
 
 var stateNames = map[string]string{
@@ -190,7 +185,7 @@ const maxDiffBytes = 32 << 20
 func (c *Client) fetchRepository(ctx context.Context, repoSlug string, out any) error {
 	err := c.api().Get(ctx, "/repositories/"+repoSlug, out)
 	if rest.Status(err) == http.StatusNotFound {
-		return fmt.Errorf("%w: %s", forge.ErrRepoNotFound, repoSlug)
+		return forge.RepoNotFound(repoSlug)
 	}
 	return err
 }
@@ -249,15 +244,11 @@ const maxFileBytes = 2 << 20
 // GetFileContent reads a file at a commit via
 // GET /repositories/{slug}/src/{commit}/{path}.
 func (c *Client) GetFileContent(ctx context.Context, repoSlug, commitSHA, path string) ([]byte, error) {
-	segments := strings.Split(path, "/")
-	for i, s := range segments {
-		segments[i] = url.PathEscape(s)
-	}
 	reqPath := fmt.Sprintf("/repositories/%s/src/%s/%s",
-		repoSlug, url.PathEscape(commitSHA), strings.Join(segments, "/"))
+		repoSlug, url.PathEscape(commitSHA), rest.EscapePath(path))
 	data, err := c.api().GetBytes(ctx, reqPath, "", maxFileBytes)
 	if rest.Status(err) == http.StatusNotFound {
-		return nil, fmt.Errorf("%w: %s at %s", forge.ErrRepoNotFound, path, commitSHA)
+		return nil, forge.FileNotFound(path, commitSHA)
 	}
 	return data, err
 }
@@ -369,9 +360,7 @@ func (c *Client) deleteReport(ctx context.Context, path string) error {
 // isInvalidLinkError recognizes Bitbucket's rejection of a report link,
 // e.g. `{"error": {"message": "link is not a valid URL"}}` with a 400.
 func isInvalidLinkError(err error) bool {
-	e, ok := errors.AsType[*rest.Error](err)
-	return ok && e.Status == http.StatusBadRequest &&
-		strings.Contains(e.Body, "link is not a valid URL")
+	return rest.Status(err) == http.StatusBadRequest && strings.Contains(rest.Body(err), "link is not a valid URL")
 }
 
 var _ forge.Forge = (*Client)(nil)

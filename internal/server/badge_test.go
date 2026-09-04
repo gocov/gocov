@@ -88,7 +88,7 @@ func TestBadgeAndDashboardShowMergedTotal(t *testing.T) {
 
 	// The dashboard coverage bar shows the merged 80.0%. (The badge check
 	// above already proves the last part's 0% is not what surfaces.)
-	if body := doGet(t, f, "/").Body.String(); !strings.Contains(body, "80.0%") {
+	if body := get(f, "/").Body.String(); !strings.Contains(body, "80.0%") {
 		t.Errorf("dashboard should show merged 80.0%%: %s", body)
 	}
 }

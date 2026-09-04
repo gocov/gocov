@@ -97,9 +97,6 @@ func GateReason(totalPct float64, diff *diffcov.Result, g store.Gate, baseTotal 
 	if len(parts) == 0 {
 		return fmt.Sprintf("%s records %.1f%% total coverage.", subject, totalPct)
 	}
-	sentence := strings.ToUpper(parts[0][:1]) + parts[0][1:]
-	if len(parts) > 1 {
-		sentence += ", and " + strings.Join(parts[1:], ", and ")
-	}
-	return sentence + "."
+	sentence := strings.Join(parts, ", and ")
+	return strings.ToUpper(sentence[:1]) + sentence[1:] + "."
 }

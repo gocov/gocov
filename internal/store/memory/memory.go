@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -55,15 +56,47 @@ func New() *Store {
 	}
 }
 
+// find returns a value of m that keep admits, or nil. Every lookup here is
+// by a column Postgres keeps unique, so at most one value can match and
+// the map's iteration order does not matter. Callers hold s.mu.
+func find[K comparable, V any](m map[K]*V, keep func(*V) bool) *V {
+	for _, v := range m {
+		if keep(v) {
+			return v
+		}
+	}
+	return nil
+}
+
+// atMost applies the limit convention of every list query: a positive limit
+// caps the result and anything else means all of it.
+func atMost[S ~[]E, E any](s S, limit int) S {
+	if limit > 0 {
+		return s[:min(len(s), limit)]
+	}
+	return s
+}
+
+// mutexFor hands out the mutex under key, creating it on first use so a
+// commit or workspace that has never been locked needs no registration.
+func (s *Store) mutexFor[K comparable](locks map[K]*sync.Mutex, key K) *sync.Mutex {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := locks[key]
+	if m == nil {
+		m = new(sync.Mutex)
+		locks[key] = m
+	}
+	return m
+}
+
 func (s *Store) CreateRepo(_ context.Context, r *store.Repo) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Mirror the Postgres UNIQUE constraints; autoCreateRepo's concurrent
 	// registration fallback relies on duplicate slugs failing.
-	for _, existing := range s.repos {
-		if existing.Slug == r.Slug || existing.Token == r.Token {
-			return fmt.Errorf("memory: repo slug or token already exists")
-		}
+	if find(s.repos, func(x *store.Repo) bool { return x.Slug == r.Slug || x.Token == r.Token }) != nil {
+		return fmt.Errorf("memory: repo slug or token already exists")
 	}
 	s.repoSeq++
 	r.ID = s.repoSeq
@@ -82,9 +115,9 @@ func (s *Store) CreateRepo(_ context.Context, r *store.Repo) error {
 // slice field would otherwise be shared, and Postgres hands back a fresh
 // one on every read.
 func copyRepo(r *store.Repo) *store.Repo {
-	cp := *r
+	cp := new(*r)
 	cp.IgnorePaths = slices.Clone(r.IgnorePaths)
-	return &cp
+	return cp
 }
 
 func (s *Store) UpdateRepo(_ context.Context, r *store.Repo) error {
@@ -117,10 +150,7 @@ func (s *Store) PublicRepoSlugs(_ context.Context, limit int) ([]string, error) 
 		}
 	}
 	slices.Sort(out)
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
-	return out, nil
+	return atMost(out, limit), nil
 }
 
 func (s *Store) SetRepoVisibility(_ context.Context, repoID int64, visibility string, checkedAt time.Time) error {
@@ -146,13 +176,19 @@ func (s *Store) DeleteRepo(_ context.Context, id int64) error {
 		return store.ErrNotFound
 	}
 	delete(s.repos, id)
+	s.deleteUploadsLocked(id)
+	return nil
+}
+
+// deleteUploadsLocked drops a repo's uploads with their files, the
+// uploads(repo_id) ON DELETE CASCADE chain. Callers hold s.mu.
+func (s *Store) deleteUploadsLocked(repoID int64) {
 	for uid, u := range s.uploads {
-		if u.RepoID == id {
+		if u.RepoID == repoID {
 			delete(s.uploads, uid)
 			delete(s.files, uid)
 		}
 	}
-	return nil
 }
 
 func (s *Store) RepoByID(_ context.Context, id int64) (*store.Repo, error) {
@@ -168,23 +204,21 @@ func (s *Store) RepoByID(_ context.Context, id int64) (*store.Repo, error) {
 func (s *Store) RepoBySlug(_ context.Context, slug string) (*store.Repo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, r := range s.repos {
-		if r.Slug == slug {
-			return copyRepo(r), nil
-		}
+	r := find(s.repos, func(r *store.Repo) bool { return r.Slug == slug })
+	if r == nil {
+		return nil, store.ErrNotFound
 	}
-	return nil, store.ErrNotFound
+	return copyRepo(r), nil
 }
 
 func (s *Store) RepoByToken(_ context.Context, token string) (*store.Repo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, r := range s.repos {
-		if r.Token == token {
-			return copyRepo(r), nil
-		}
+	r := find(s.repos, func(r *store.Repo) bool { return r.Token == token })
+	if r == nil {
+		return nil, store.ErrNotFound
 	}
-	return nil, store.ErrNotFound
+	return copyRepo(r), nil
 }
 
 func (s *Store) ListRepos(_ context.Context) ([]*store.Repo, error) {
@@ -205,18 +239,15 @@ func (s *Store) CreateWorkspace(_ context.Context, w *store.Workspace) error {
 }
 
 func (s *Store) createWorkspaceLocked(w *store.Workspace) error {
-	for _, existing := range s.workspaces {
-		if existing.Prefix == w.Prefix || existing.Token == w.Token {
-			return fmt.Errorf("memory: workspace prefix or token already exists")
-		}
+	if find(s.workspaces, func(x *store.Workspace) bool { return x.Prefix == w.Prefix || x.Token == w.Token }) != nil {
+		return fmt.Errorf("memory: workspace prefix or token already exists")
 	}
 	s.wsSeq++
 	w.ID = s.wsSeq
 	if w.CreatedAt.IsZero() {
 		w.CreatedAt = time.Now()
 	}
-	cp := *w
-	s.workspaces[w.ID] = &cp
+	s.workspaces[w.ID] = new(*w)
 	return nil
 }
 
@@ -243,7 +274,7 @@ func (s *Store) UpdateWorkspace(_ context.Context, w *store.Workspace) error {
 	if !ok {
 		return store.ErrNotFound
 	}
-	cp := *w
+	cp := new(*w)
 	if cp.CreatedAt.IsZero() {
 		cp.CreatedAt = existing.CreatedAt
 	}
@@ -256,33 +287,31 @@ func (s *Store) UpdateWorkspace(_ context.Context, w *store.Workspace) error {
 	cp.GitLabGrantAccount = existing.GitLabGrantAccount
 	cp.GitLabRefreshToken = existing.GitLabRefreshToken
 	cp.GitLabGrantBroken = existing.GitLabGrantBroken
-	s.workspaces[w.ID] = &cp
+	s.workspaces[w.ID] = cp
 	return nil
 }
 
 func (s *Store) SetWorkspaceBitbucketGrant(_ context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	w, ok := s.workspaces[workspaceID]
-	if !ok {
-		return store.ErrNotFound
-	}
-	w.BitbucketGrantAccount = account
-	w.BitbucketRefreshToken = refreshToken
-	w.BitbucketGrantBroken = broken
-	return nil
+	return s.setWorkspaceGrant(workspaceID, func(w *store.Workspace) {
+		w.BitbucketGrantAccount, w.BitbucketRefreshToken, w.BitbucketGrantBroken = account, refreshToken, broken
+	})
 }
 
 func (s *Store) SetWorkspaceGitLabGrant(_ context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
+	return s.setWorkspaceGrant(workspaceID, func(w *store.Workspace) {
+		w.GitLabGrantAccount, w.GitLabRefreshToken, w.GitLabGrantBroken = account, refreshToken, broken
+	})
+}
+
+// setWorkspaceGrant applies set to the stored workspace under the lock.
+func (s *Store) setWorkspaceGrant(workspaceID int64, set func(*store.Workspace)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	w, ok := s.workspaces[workspaceID]
 	if !ok {
 		return store.ErrNotFound
 	}
-	w.GitLabGrantAccount = account
-	w.GitLabRefreshToken = refreshToken
-	w.GitLabGrantBroken = broken
+	set(w)
 	return nil
 }
 
@@ -300,17 +329,8 @@ func (s *Store) DeleteWorkspace(_ context.Context, id int64) error {
 		if !strings.HasPrefix(r.Slug, pfx) {
 			continue
 		}
-		for uid, u := range s.uploads {
-			if u.RepoID == rid {
-				delete(s.uploads, uid)
-				delete(s.files, uid)
-			}
-		}
-		for crid, cr := range s.reports {
-			if cr.RepoID == rid {
-				delete(s.reports, crid)
-			}
-		}
+		s.deleteUploadsLocked(rid)
+		maps.DeleteFunc(s.reports, func(_ int64, cr *store.CommitReport) bool { return cr.RepoID == rid })
 		delete(s.repos, rid)
 	}
 	delete(s.workspaces, id)
@@ -323,25 +343,21 @@ func (s *Store) DeleteWorkspace(_ context.Context, id int64) error {
 func (s *Store) WorkspaceByPrefix(_ context.Context, prefix string) (*store.Workspace, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, w := range s.workspaces {
-		if w.Prefix == prefix {
-			cp := *w
-			return &cp, nil
-		}
+	w := find(s.workspaces, func(w *store.Workspace) bool { return w.Prefix == prefix })
+	if w == nil {
+		return nil, store.ErrNotFound
 	}
-	return nil, store.ErrNotFound
+	return new(*w), nil
 }
 
 func (s *Store) WorkspaceByToken(_ context.Context, token string) (*store.Workspace, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, w := range s.workspaces {
-		if w.Token == token {
-			cp := *w
-			return &cp, nil
-		}
+	w := find(s.workspaces, func(w *store.Workspace) bool { return w.Token == token })
+	if w == nil {
+		return nil, store.ErrNotFound
 	}
-	return nil, store.ErrNotFound
+	return new(*w), nil
 }
 
 func (s *Store) ListWorkspaces(_ context.Context) ([]*store.Workspace, error) {
@@ -349,8 +365,7 @@ func (s *Store) ListWorkspaces(_ context.Context) ([]*store.Workspace, error) {
 	defer s.mu.Unlock()
 	out := make([]*store.Workspace, 0, len(s.workspaces))
 	for _, w := range s.workspaces {
-		cp := *w
-		out = append(out, &cp)
+		out = append(out, new(*w))
 	}
 	slices.SortFunc(out, func(a, b *store.Workspace) int { return cmp.Compare(a.Prefix, b.Prefix) })
 	return out, nil
@@ -390,8 +405,7 @@ func (s *Store) ListWorkspacesForUser(_ context.Context, userID int64) ([]*store
 	out := make([]*store.Workspace, 0, len(s.members[userID]))
 	for wsID := range s.members[userID] {
 		if w, ok := s.workspaces[wsID]; ok {
-			cp := *w
-			out = append(out, &cp)
+			out = append(out, new(*w))
 		}
 	}
 	slices.SortFunc(out, func(a, b *store.Workspace) int { return cmp.Compare(a.Prefix, b.Prefix) })
@@ -402,23 +416,20 @@ func (s *Store) UpsertUser(_ context.Context, u *store.User) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
-	for _, existing := range s.users {
-		if existing.Forge == u.Forge && existing.ForgeUUID == u.ForgeUUID {
-			existing.Email = u.Email
-			existing.DisplayName = u.DisplayName
-			existing.ForgeWorkspaces = u.ForgeWorkspaces
-			existing.ForgeOwnedWorkspaces = u.ForgeOwnedWorkspaces
-			existing.LastLoginAt = now
-			*u = *existing
-			return nil
-		}
+	if existing := find(s.users, func(x *store.User) bool { return x.Forge == u.Forge && x.ForgeUUID == u.ForgeUUID }); existing != nil {
+		existing.Email = u.Email
+		existing.DisplayName = u.DisplayName
+		existing.ForgeWorkspaces = u.ForgeWorkspaces
+		existing.ForgeOwnedWorkspaces = u.ForgeOwnedWorkspaces
+		existing.LastLoginAt = now
+		*u = *existing
+		return nil
 	}
 	s.userSeq++
 	u.ID = s.userSeq
 	u.CreatedAt = now
 	u.LastLoginAt = now
-	cp := *u
-	s.users[u.ID] = &cp
+	s.users[u.ID] = new(*u)
 	return nil
 }
 
@@ -429,8 +440,7 @@ func (s *Store) UserByID(_ context.Context, id int64) (*store.User, error) {
 	if !ok {
 		return nil, store.ErrNotFound
 	}
-	cp := *u
-	return &cp, nil
+	return new(*u), nil
 }
 
 func (s *Store) ListUsers(_ context.Context) ([]*store.User, error) {
@@ -438,8 +448,7 @@ func (s *Store) ListUsers(_ context.Context) ([]*store.User, error) {
 	defer s.mu.Unlock()
 	out := make([]*store.User, 0, len(s.users))
 	for _, u := range s.users {
-		cp := *u
-		out = append(out, &cp)
+		out = append(out, new(*u))
 	}
 	slices.SortFunc(out, func(a, b *store.User) int { return cmp.Compare(a.ID, b.ID) })
 	return out, nil
@@ -453,11 +462,7 @@ func (s *Store) DeleteUser(_ context.Context, id int64) error {
 	}
 	delete(s.users, id)
 	delete(s.members, id)
-	for hash, sess := range s.sessions {
-		if sess.UserID == id {
-			delete(s.sessions, hash)
-		}
-	}
+	maps.DeleteFunc(s.sessions, func(_ string, sess *store.Session) bool { return sess.UserID == id })
 	return nil
 }
 
@@ -470,8 +475,7 @@ func (s *Store) CreateSession(_ context.Context, sess *store.Session) error {
 	if sess.CreatedAt.IsZero() {
 		sess.CreatedAt = time.Now()
 	}
-	cp := *sess
-	s.sessions[sess.TokenHash] = &cp
+	s.sessions[sess.TokenHash] = new(*sess)
 	return nil
 }
 
@@ -490,8 +494,7 @@ func (s *Store) UserBySession(_ context.Context, tokenHash string) (*store.User,
 	if !ok {
 		return nil, store.ErrNotFound
 	}
-	cp := *u
-	return &cp, nil
+	return new(*u), nil
 }
 
 func (s *Store) DeleteSession(_ context.Context, tokenHash string) error {
@@ -512,13 +515,12 @@ func (s *Store) CreateUpload(_ context.Context, u *store.Upload, files []*store.
 	if u.CreatedAt.IsZero() {
 		u.CreatedAt = time.Now()
 	}
-	cp := copyUpload(u)
-	s.uploads[u.ID] = cp
+	s.uploads[u.ID] = copyUpload(u)
 	fs := make([]*store.UploadFile, 0, len(files))
 	for _, f := range files {
-		fcp := *f
+		fcp := new(*f)
 		fcp.UploadID = u.ID
-		fs = append(fs, &fcp)
+		fs = append(fs, fcp)
 	}
 	slices.SortFunc(fs, func(a, b *store.UploadFile) int { return cmp.Compare(a.Path, b.Path) })
 	s.files[u.ID] = fs
@@ -538,25 +540,35 @@ func (s *Store) Upload(_ context.Context, id int64) (*store.Upload, error) {
 // copyUpload deep-copies an upload so callers and the store never alias the
 // same DiffCoverage, matching the postgres JSON round-trip semantics.
 func copyUpload(u *store.Upload) *store.Upload {
-	cp := *u
+	cp := new(*u)
 	cp.DiffCoverage = u.DiffCoverage.Clone()
-	return &cp
+	return cp
 }
 
 func (s *Store) ListUploads(_ context.Context, repoID int64, limit int) ([]*store.Upload, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.newestUploads(limit, func(u *store.Upload) bool { return u.RepoID == repoID }), nil
+}
+
+func (s *Store) ListBranchUploads(_ context.Context, repoID int64, branch string, limit int) ([]*store.Upload, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.newestUploads(limit, func(u *store.Upload) bool { return u.RepoID == repoID && u.Branch == branch }), nil
+}
+
+// newestUploads returns copies of the uploads keep admits, newest first and
+// capped at limit — the shape of every upload listing, since Postgres pages
+// them by descending ID. Callers hold s.mu.
+func (s *Store) newestUploads(limit int, keep func(*store.Upload) bool) []*store.Upload {
 	var out []*store.Upload
 	for _, u := range s.uploads {
-		if u.RepoID == repoID {
+		if keep(u) {
 			out = append(out, copyUpload(u))
 		}
 	}
 	slices.SortFunc(out, func(a, b *store.Upload) int { return cmp.Compare(b.ID, a.ID) })
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
-	return out, nil
+	return atMost(out, limit)
 }
 
 func (s *Store) UploadFiles(_ context.Context, uploadID int64) ([]*store.UploadFile, error) {
@@ -568,24 +580,7 @@ func (s *Store) UploadFiles(_ context.Context, uploadID int64) ([]*store.UploadF
 	}
 	out := make([]*store.UploadFile, 0, len(fs))
 	for _, f := range fs {
-		cp := *f
-		out = append(out, &cp)
-	}
-	return out, nil
-}
-
-func (s *Store) ListBranchUploads(_ context.Context, repoID int64, branch string, limit int) ([]*store.Upload, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var out []*store.Upload
-	for _, u := range s.uploads {
-		if u.RepoID == repoID && u.Branch == branch {
-			out = append(out, copyUpload(u))
-		}
-	}
-	slices.SortFunc(out, func(a, b *store.Upload) int { return cmp.Compare(b.ID, a.ID) })
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
+		out = append(out, new(*f))
 	}
 	return out, nil
 }
@@ -611,14 +606,7 @@ func (s *Store) LatestUploadsPerPart(_ context.Context, repoID int64, commitSHA 
 }
 
 func (s *Store) WithCommitReportTx(ctx context.Context, repoID int64, commitSHA string, fn func(context.Context, store.CommitTx) error) error {
-	key := fmt.Sprintf("%d:%s", repoID, commitSHA)
-	s.mu.Lock()
-	m := s.crLocks[key]
-	if m == nil {
-		m = &sync.Mutex{}
-		s.crLocks[key] = m
-	}
-	s.mu.Unlock()
+	m := s.mutexFor(s.crLocks, fmt.Sprintf("%d:%s", repoID, commitSHA))
 	m.Lock()
 	defer m.Unlock()
 	// The store's own methods satisfy store.CommitTx; the per-commit mutex
@@ -630,13 +618,7 @@ func (s *Store) WithCommitReportTx(ctx context.Context, repoID int64, commitSHA 
 // process that is exactly the guarantee the Postgres advisory lock gives
 // across many. The store's own methods satisfy store.GrantTx.
 func (s *Store) WithGrantLock(ctx context.Context, workspaceID int64, fn func(context.Context, store.GrantTx) error) error {
-	s.mu.Lock()
-	m := s.grantLocks[workspaceID]
-	if m == nil {
-		m = new(sync.Mutex)
-		s.grantLocks[workspaceID] = m
-	}
-	s.mu.Unlock()
+	m := s.mutexFor(s.grantLocks, workspaceID)
 	m.Lock()
 	defer m.Unlock()
 	return fn(ctx, s)
@@ -646,15 +628,13 @@ func (s *Store) UpsertCommitReport(_ context.Context, cr *store.CommitReport) er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
-	for _, existing := range s.reports {
-		if existing.RepoID == cr.RepoID && existing.CommitSHA == cr.CommitSHA {
-			// Preserve id and first-seen created_at across recomputes.
-			cr.ID = existing.ID
-			cr.CreatedAt = existing.CreatedAt
-			cr.UpdatedAt = now
-			s.reports[cr.ID] = copyCommitReport(cr)
-			return nil
-		}
+	if existing := s.commitReportLocked(cr.RepoID, cr.CommitSHA); existing != nil {
+		// Preserve id and first-seen created_at across recomputes.
+		cr.ID = existing.ID
+		cr.CreatedAt = existing.CreatedAt
+		cr.UpdatedAt = now
+		s.reports[cr.ID] = copyCommitReport(cr)
+		return nil
 	}
 	s.crSeq++
 	cr.ID = s.crSeq
@@ -669,12 +649,17 @@ func (s *Store) UpsertCommitReport(_ context.Context, cr *store.CommitReport) er
 func (s *Store) CommitReport(_ context.Context, repoID int64, commitSHA string) (*store.CommitReport, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, cr := range s.reports {
-		if cr.RepoID == repoID && cr.CommitSHA == commitSHA {
-			return copyCommitReport(cr), nil
-		}
+	cr := s.commitReportLocked(repoID, commitSHA)
+	if cr == nil {
+		return nil, store.ErrNotFound
 	}
-	return nil, store.ErrNotFound
+	return copyCommitReport(cr), nil
+}
+
+// commitReportLocked returns the stored report for a commit, or nil; there
+// is at most one, as (repo_id, commit_sha) is unique. Callers hold s.mu.
+func (s *Store) commitReportLocked(repoID int64, commitSHA string) *store.CommitReport {
+	return find(s.reports, func(cr *store.CommitReport) bool { return cr.RepoID == repoID && cr.CommitSHA == commitSHA })
 }
 
 func (s *Store) LatestCommitReport(_ context.Context, repoID int64, branch string) (*store.CommitReport, error) {
@@ -720,24 +705,12 @@ func (s *Store) TryPushStatus(ctx context.Context, repoID int64, commitSHA strin
 	key := fmt.Sprintf("%d:%s", repoID, commitSHA)
 	// Serialize the whole check-push-advance per commit, mirroring the
 	// Postgres advisory lock.
-	s.mu.Lock()
-	m := s.crPush[key]
-	if m == nil {
-		m = &sync.Mutex{}
-		s.crPush[key] = m
-	}
-	s.mu.Unlock()
+	m := s.mutexFor(s.crPush, key)
 	m.Lock()
 	defer m.Unlock()
 
 	s.mu.Lock()
-	exists := false
-	for _, cr := range s.reports {
-		if cr.RepoID == repoID && cr.CommitSHA == commitSHA {
-			exists = true
-			break
-		}
-	}
+	exists := s.commitReportLocked(repoID, commitSHA) != nil
 	cur := s.crStatus[key]
 	s.mu.Unlock()
 	if !exists {
@@ -779,10 +752,7 @@ func (s *Store) ListBranchCommitReports(_ context.Context, repoID int64, branch 
 		}
 	}
 	slices.SortFunc(out, func(a, b *store.CommitReport) int { return cmp.Compare(b.ID, a.ID) })
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
-	return out, nil
+	return atMost(out, limit), nil
 }
 
 func (s *Store) ClaimTokenlessUpload(_ context.Context, repoID, runID, runAttempt int64, part string) (bool, error) {
@@ -810,7 +780,7 @@ func tokenlessKey(repoID, runID, runAttempt int64, part string) string {
 // copyCommitReport deep-copies a report so callers never alias the stored
 // DiffCoverage, matching the Postgres JSON round-trip.
 func copyCommitReport(cr *store.CommitReport) *store.CommitReport {
-	cp := *cr
+	cp := new(*cr)
 	cp.DiffCoverage = cr.DiffCoverage.Clone()
-	return &cp
+	return cp
 }

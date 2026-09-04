@@ -115,17 +115,19 @@ func authProviders(cfg config.Server, log *slog.Logger) []auth.Provider {
 		return strings.TrimSuffix(cfg.BaseURL, "/") + "/oauth/" + forge + "/callback"
 	}
 	var providers []auth.Provider
-	if cfg.Bitbucket.Configured() {
-		providers = append(providers, authbb.New(cfg.Bitbucket.Key, cfg.Bitbucket.Secret))
-		log.Info("bitbucket sign-in enabled", "callback", callback("bitbucket"))
-	}
-	if cfg.GitHub.Configured() {
-		providers = append(providers, authgh.New(cfg.GitHub.Key, cfg.GitHub.Secret))
-		log.Info("github sign-in enabled", "callback", callback("github"))
-	}
-	if cfg.GitLab.Configured() {
-		providers = append(providers, authgl.New(cfg.GitLab.Key, cfg.GitLab.Secret))
-		log.Info("gitlab sign-in enabled", "callback", callback("gitlab"))
+	for _, p := range []struct {
+		forge string
+		app   config.OAuthApp
+		new   func(key, secret string) auth.Provider
+	}{
+		{"bitbucket", cfg.Bitbucket, func(k, s string) auth.Provider { return authbb.New(k, s) }},
+		{"github", cfg.GitHub, func(k, s string) auth.Provider { return authgh.New(k, s) }},
+		{"gitlab", cfg.GitLab, func(k, s string) auth.Provider { return authgl.New(k, s) }},
+	} {
+		if p.app.Configured() {
+			providers = append(providers, p.new(p.app.Key, p.app.Secret))
+			log.Info(p.forge+" sign-in enabled", "callback", callback(p.forge))
+		}
 	}
 	if len(providers) == 0 {
 		log.Info("no sign-in provider configured; web UI stays open")

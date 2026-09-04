@@ -1,15 +1,9 @@
 package server
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"math/big"
 	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -22,36 +16,6 @@ import (
 	storemem "github.com/gocov/gocov/internal/store/memory"
 )
 
-// genTestKey makes an RSA key for a test issuer.
-func genTestKey(t *testing.T) *rsa.PrivateKey {
-	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return key
-}
-
-// jwksFor renders a test issuer's single public key as a JWKS document.
-func jwksFor(is *oidcIssuer) map[string]any {
-	return map[string]any{"keys": []map[string]string{{
-		"kty": "RSA",
-		"kid": is.kid,
-		"n":   base64.RawURLEncoding.EncodeToString(is.key.N.Bytes()),
-		"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(is.key.E)).Bytes()),
-	}}}
-}
-
-// mustPath returns the path component of a URL, for registering a handler at
-// an issuer's discovery path.
-func mustPath(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
-		panic(err)
-	}
-	return u.Path
-}
-
 // bbIssuer is the acme workspace's Bitbucket Pipelines OIDC issuer.
 const bbIssuer = "https://api.bitbucket.org/2.0/workspaces/acme/pipelines-config/identity/oidc"
 
@@ -63,24 +27,6 @@ const bbIssuer = "https://api.bitbucket.org/2.0/workspaces/acme/pipelines-config
 // "Bitbucket Pipelines OIDC now supports multiple audiences" and the
 // resource-server integration docs.
 const bbWorkspaceARI = "ari:cloud:bitbucket::workspace/{11111111-1111-1111-1111-111111111111}"
-
-// newBBIssuer serves the acme workspace's discovery + JWKS. The rewriting
-// client sends the verifier's fetch (addressed to api.bitbucket.org) here,
-// so the token's iss can stay the real per-workspace issuer.
-func newBBIssuer(t *testing.T) (*oidcIssuer, *http.Client) {
-	t.Helper()
-	is := &oidcIssuer{key: genTestKey(t), kid: "bb1"}
-	mux := http.NewServeMux()
-	mux.HandleFunc(mustPath(bbIssuer)+"/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]string{"issuer": bbIssuer, "jwks_uri": "https://api.bitbucket.org/jwks"})
-	})
-	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(jwksFor(is))
-	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	return is, &http.Client{Transport: rewriteHost{target: srv.Listener.Addr().String()}}
-}
 
 // bbClaims is a valid Bitbucket identity token naming repo acme/widgets by
 // the given UUID, with gocov's audience appended to the workspace ARI.
@@ -120,7 +66,7 @@ func newBitbucketOIDCFixture(t *testing.T, forgeUUID string) (*fixture, *oidcIss
 	ff := forgefake.New()
 	ff.RepoID = forgeUUID
 
-	is, client := newBBIssuer(t)
+	is, client := newIssuer(t, bbIssuer, "https://api.bitbucket.org/jwks")
 	verifier := oidc.New(oidc.Config{
 		Audience:      "https://gocov.example",
 		ResolveIssuer: bitbucketIssuerResolver(st),

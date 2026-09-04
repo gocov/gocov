@@ -794,7 +794,7 @@ func TestUploadIgnorePatterns(t *testing.T) {
 	if resp.IgnoredFiles != 1 || resp.TotalPct != 75 {
 		t.Errorf("request pattern: %+v, want 1 ignored and 75%%", resp)
 	}
-	page := doGet(t, f, fmt.Sprintf("/uploads/%d", resp.ID))
+	page := get(f, fmt.Sprintf("/uploads/%d", resp.ID))
 	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "1 file ignored") {
 		t.Errorf("upload page (%d) does not mention the ignored file", page.Code)
 	}

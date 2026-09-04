@@ -11,6 +11,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"maps"
 	"regexp"
 	"strings"
 	"time"
@@ -122,10 +123,7 @@ const (
 )
 
 func (p *Pipeline) uploadVisibilityTTL() time.Duration {
-	if p.VisibilityUploadTTL != 0 {
-		return p.VisibilityUploadTTL
-	}
-	return defaultVisibilityUploadTTL
+	return cmp.Or(p.VisibilityUploadTTL, defaultVisibilityUploadTTL)
 }
 
 // visibilityFresh reports whether the repo's cached visibility answer is
@@ -233,10 +231,7 @@ func (p *Pipeline) endVisibilityRefresh(repoID int64) {
 // verified before they can open pages. Without a connection nothing
 // changes: the cached answer keeps its age.
 func (p *Pipeline) ReverifyVisibility(ctx context.Context, repo *store.Repo) {
-	if p.Forges == nil {
-		return
-	}
-	fg, err := p.Forges.For(ctx, repo)
+	fg, err := p.forgeFor(ctx, repo)
 	if err != nil || fg == nil {
 		return
 	}
@@ -300,11 +295,9 @@ func (p *Pipeline) claimVisibilityRecheck(repoID int64) bool {
 	// An entry past the gap can no longer refuse anything — sweep them so
 	// the map stays bounded by the repos re-checked in the last gap, not
 	// by every repo (deleted ones included) ever served on a stale answer.
-	for id, at := range p.visChecks {
-		if now.Sub(at) >= visibilityRecheckGap {
-			delete(p.visChecks, id)
-		}
-	}
+	maps.DeleteFunc(p.visChecks, func(_ int64, at time.Time) bool {
+		return now.Sub(at) >= visibilityRecheckGap
+	})
 	if _, ok := p.visChecks[repoID]; ok {
 		return false
 	}

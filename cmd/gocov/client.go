@@ -66,6 +66,32 @@ func (e *serverError) Error() string {
 	return fmt.Sprintf("server returned %d: %s", e.code, e.msg)
 }
 
+// httpDoer is the slice of *http.Client the CLI's requests need, kept as
+// an interface so tests can stub the OIDC mint.
+type httpDoer interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
+// maxResponseBytes bounds how much of an answer the CLI reads: an upload
+// receipt or an id-token is a few kilobytes, so anything past a megabyte
+// is not a response worth holding in memory.
+const maxResponseBytes = 1 << 20
+
+// send performs req and returns the status and the bounded body, so
+// callers keep only what the answer means to them.
+func send(doer httpDoer, req *http.Request) (int, []byte, error) {
+	resp, err := doer.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	if err != nil {
+		return 0, nil, err
+	}
+	return resp.StatusCode, body, nil
+}
+
 func upload(req uploadRequest) (*uploadResponse, error) {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
@@ -107,8 +133,7 @@ func upload(req uploadRequest) (*uploadResponse, error) {
 			return nil, err
 		}
 	}
-	filename := cmp.Or(req.ProfileName, "coverage.out")
-	fw, err := mw.CreateFormFile("profile", filename)
+	fw, err := mw.CreateFormFile("profile", cmp.Or(req.ProfileName, "coverage.out"))
 	if err != nil {
 		return nil, err
 	}
@@ -119,8 +144,8 @@ func upload(req uploadRequest) (*uploadResponse, error) {
 		return nil, err
 	}
 
-	url := strings.TrimSuffix(req.Server, "/") + "/api/v1/upload"
-	httpReq, err := http.NewRequest(http.MethodPost, url, &buf)
+	endpoint := strings.TrimSuffix(req.Server, "/") + "/api/v1/upload"
+	httpReq, err := http.NewRequest(http.MethodPost, endpoint, &buf)
 	if err != nil {
 		return nil, err
 	}
@@ -129,25 +154,18 @@ func upload(req uploadRequest) (*uploadResponse, error) {
 	}
 	httpReq.Header.Set("Content-Type", mw.FormDataContentType())
 
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(httpReq)
+	status, body, err := send(&http.Client{Timeout: 60 * time.Second}, httpReq)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusCreated {
+	if status != http.StatusCreated {
 		var apiErr struct {
 			Error string `json:"error"`
 		}
 		if json.Unmarshal(body, &apiErr) == nil && apiErr.Error != "" {
-			return nil, &serverError{code: resp.StatusCode, msg: apiErr.Error}
+			return nil, &serverError{code: status, msg: apiErr.Error}
 		}
-		return nil, &serverError{code: resp.StatusCode, msg: string(body)}
+		return nil, &serverError{code: status, msg: string(body)}
 	}
 	var out uploadResponse
 	if err := json.Unmarshal(body, &out); err != nil {

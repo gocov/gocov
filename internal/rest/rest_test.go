@@ -4,8 +4,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	neturl "net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNextLink(t *testing.T) {
@@ -90,5 +92,68 @@ func TestSendShapesBody(t *testing.T) {
 	next, err := c.GetPage(t.Context(), "/x", &out)
 	if err != nil || next != "http://next" {
 		t.Errorf("GetPage next = %q, err %v", next, err)
+	}
+}
+
+func TestPostFormIsATokenEndpointCall(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, pass, _ := r.BasicAuth()
+		if r.Method != http.MethodPost || user != "id" || pass != "secret" ||
+			r.Header.Get("Content-Type") != "application/x-www-form-urlencoded" ||
+			r.Header.Get("Accept") != "application/json" {
+			t.Errorf("request = %s %v auth %s:%s", r.Method, r.Header, user, pass)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		switch r.PostForm.Get("code") {
+		case "good":
+			_, _ = w.Write([]byte(`{"access_token":"tok"}`))
+		default:
+			http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+	c := &Client{Name: "test", BaseURL: srv.URL, HTTPClient: srv.Client(), Authorize: Basic("id", "secret")}
+
+	var tok struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := c.PostForm(t.Context(), "/token", neturl.Values{"code": {"good"}}, &tok); err != nil || tok.AccessToken != "tok" {
+		t.Fatalf("PostForm = %+v, %v", tok, err)
+	}
+	// A refusal keeps the endpoint's own error code readable.
+	err := c.PostForm(t.Context(), srv.URL+"/token", neturl.Values{"code": {"bad"}}, &tok)
+	if e, ok := errors.AsType[*Error](err); !ok || e.Status != http.StatusBadRequest || !strings.Contains(e.Body, "invalid_grant") {
+		t.Errorf("refusal = %#v", err)
+	}
+}
+
+func TestBodyAndTokenShapes(t *testing.T) {
+	err := &Error{Status: http.StatusBadRequest, Body: `{"message":"Cannot transition status"}`, msg: "x"}
+	if Body(err) != err.Body {
+		t.Errorf("Body(refusal) = %q, want the answer's explanation", Body(err))
+	}
+	if Body(errors.New("other")) != "" || Body(nil) != "" {
+		t.Error("Body must be empty for non-refusals")
+	}
+	if got := (Token{ExpiresIn: 7200}).TTL(); got != 2*time.Hour {
+		t.Errorf("TTL = %v, want 2h", got)
+	}
+	if got := (Token{}).TTL(); got != 0 {
+		t.Errorf("TTL without expires_in = %v, want 0 so callers can fall back", got)
+	}
+}
+
+func TestEscapePathKeepsSlashes(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"a/b/c.go", "a/b/c.go"},
+		{"dir name/file#1?.go", "dir%20name/file%231%3F.go"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := EscapePath(tt.in); got != tt.want {
+			t.Errorf("EscapePath(%q) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }

@@ -5,8 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"net/http"
-	"strconv"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -58,47 +59,24 @@ type missBlock struct {
 // source at the upload's commit with per-line coverage overlay. Only paths
 // recorded in the upload can be viewed.
 func (s *Server) handleSource(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		s.reportNotFound(w, r)
+	upload, repo, ok := s.reportUpload(w, r)
+	if !ok {
 		return
 	}
 	path := r.PathValue("path")
-	upload, err := s.store.Upload(r.Context(), id)
-	if errors.Is(err, store.ErrNotFound) {
-		s.reportNotFound(w, r)
-		return
-	}
-	if err != nil {
-		s.internalError(w, "loading upload", err)
-		return
-	}
-	repo, err := s.store.RepoByID(r.Context(), upload.RepoID)
-	if err != nil {
-		s.internalError(w, "loading repo for upload", err)
-		return
-	}
-	// Access before the per-file lookup, so a signed-out probe cannot tell
-	// a missing file from a missing upload.
-	if _, ok := s.authorizeReport(w, r, repo); !ok {
-		return
-	}
-	files, err := s.store.UploadFiles(r.Context(), id)
+	// Access was settled before this per-file lookup, so a signed-out
+	// probe cannot tell a missing file from a missing upload.
+	files, err := s.store.UploadFiles(r.Context(), upload.ID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.internalError(w, "loading upload files", err)
 		return
 	}
-	var file *store.UploadFile
-	for _, f := range files {
-		if f.Path == path {
-			file = f
-			break
-		}
-	}
-	if file == nil {
+	i := slices.IndexFunc(files, func(f *store.UploadFile) bool { return f.Path == path })
+	if i < 0 {
 		s.renderNotFound(w, r)
 		return
 	}
+	file := files[i]
 
 	source, unavailable := s.fetchSource(r, repo, upload, file)
 	dir, base := splitPath(file.Path)
@@ -288,13 +266,11 @@ func countLines(b []byte) int {
 
 // maxBlockLine is the highest line the profile claims for the file.
 func maxBlockLine(blocks []profile.Block) int {
-	max := 0
+	last := 0
 	for _, b := range blocks {
-		if b.EndLine > max {
-			max = b.EndLine
-		}
+		last = max(last, b.EndLine)
 	}
-	return max
+	return last
 }
 
 // safeRepoPath accepts only plain relative paths: no empty, "." or ".."
@@ -327,28 +303,16 @@ func (s *Server) validateSource(content []byte) ([]byte, string) {
 func renderSourceLines(source []byte, blocks []profile.Block) []sourceLine {
 	text := strings.TrimSuffix(string(source), "\n")
 	rawLines := strings.Split(text, "\n")
-
-	covered := map[int]bool{}
-	counts := map[int]int{}
-	for _, b := range blocks {
-		// Parsers validate line ranges, but old rows predate that; never
-		// let a bogus range drive a long loop.
-		for l := max(b.StartLine, 1); l <= b.EndLine && l <= len(rawLines); l++ {
-			covered[l] = covered[l] || b.Count > 0
-			if b.Count > counts[l] {
-				counts[l] = b.Count
-			}
-		}
-	}
+	counts := lineCounts(blocks, len(rawLines))
 
 	lines := make([]sourceLine, 0, len(rawLines))
 	for i, raw := range rawLines {
 		no := i + 1
 		line := sourceLine{No: no, Text: strings.TrimSuffix(raw, "\r")}
-		if hit, executable := covered[no]; executable {
-			if hit {
+		if n, executable := counts[no]; executable {
+			if n > 0 {
 				line.Class = "hit"
-				line.Hits = fmt.Sprintf("%d×", counts[no])
+				line.Hits = fmt.Sprintf("%d×", n)
 			} else {
 				line.Class = "miss"
 				line.Hits = "✗"
@@ -357,6 +321,25 @@ func renderSourceLines(source []byte, blocks []profile.Block) []sourceLine {
 		lines = append(lines, line)
 	}
 	return lines
+}
+
+// lineRuns splits rendered lines into maximal runs of misses and of
+// non-misses, yielding each run's [start, end) index range — the unit the
+// miss-map rail and the folds both work in.
+func lineRuns(lines []sourceLine) iter.Seq2[int, int] {
+	return func(yield func(int, int) bool) {
+		miss := func(i int) bool { return lines[i].Class == "miss" }
+		for i := 0; i < len(lines); {
+			j := i + 1
+			for j < len(lines) && miss(j) == miss(i) {
+				j++
+			}
+			if !yield(i, j) {
+				return
+			}
+			i = j
+		}
+	}
 }
 
 // minMissHeight keeps a one- or two-line miss run tall enough to stay a
@@ -368,35 +351,23 @@ const minMissHeight = 0.8
 // for the miss-map rail, plus the total uncovered-line count. It mutates
 // lines to set the anchors.
 func annotateMisses(lines []sourceLine) ([]missBlock, int) {
-	total := len(lines)
+	total := float64(len(lines))
 	var blocks []missBlock
 	missLines := 0
-	for i := 0; i < len(lines); {
+	for i, j := range lineRuns(lines) {
 		if lines[i].Class != "miss" {
-			i++
 			continue
-		}
-		j := i
-		for j < len(lines) && lines[j].Class == "miss" {
-			j++
 		}
 		run := j - i
 		missLines += run
 		anchor := fmt.Sprintf("L%d", lines[i].No)
 		lines[i].Anchor = anchor
-		var top, height float64
-		if total > 0 {
-			top = float64(lines[i].No-1) / float64(total) * 100
-			height = float64(run) / float64(total) * 100
-		}
-		if height < minMissHeight {
-			height = minMissHeight
-		}
 		blocks = append(blocks, missBlock{
 			Anchor: anchor, StartLine: lines[i].No, EndLine: lines[j-1].No,
-			Lines: run, Top: top, Height: height,
+			Lines:  run,
+			Top:    float64(lines[i].No-1) / total * 100,
+			Height: max(float64(run)/total*100, minMissHeight),
 		})
-		i = j
 	}
 	return blocks, missLines
 }
@@ -446,10 +417,8 @@ func (s *Server) pickBaseline(ctx context.Context, repoID int64, branch string, 
 	if err != nil {
 		return nil
 	}
-	for _, prev := range ups {
-		if ok(prev) {
-			return prev
-		}
+	if i := slices.IndexFunc(ups, ok); i >= 0 {
+		return ups[i]
 	}
 	return nil
 }
@@ -466,18 +435,10 @@ func (s *Server) baseFileFor(ctx context.Context, repo *store.Repo, u *store.Upl
 // at the baseline, and returns how many. Matching is by line number, so it
 // surfaces regressions on a best-effort basis without a full diff.
 func markNewlyUncovered(lines []sourceLine, baseBlocks []profile.Block) int {
-	baseHit := map[int]bool{}
-	for _, b := range baseBlocks {
-		if b.Count <= 0 {
-			continue
-		}
-		for l := max(b.StartLine, 1); l <= b.EndLine; l++ {
-			baseHit[l] = true
-		}
-	}
+	baseCounts := lineCounts(baseBlocks, len(lines))
 	n := 0
 	for i := range lines {
-		if lines[i].Class == "miss" && baseHit[lines[i].No] {
+		if lines[i].Class == "miss" && baseCounts[lines[i].No] > 0 {
 			lines[i].NewMiss = true
 			n++
 		}
@@ -495,40 +456,22 @@ const foldThreshold = 10
 func foldItems(lines []sourceLine) []sourceItem {
 	items := make([]sourceItem, 0, len(lines))
 	folds := 0
-	for i := 0; i < len(lines); {
-		if lines[i].Class == "miss" {
-			ln := lines[i]
-			items = append(items, sourceItem{Line: &ln})
-			i++
-			continue
-		}
-		j := i
-		hasHit := false
-		for j < len(lines) && lines[j].Class != "miss" {
-			hasHit = hasHit || lines[j].Class == "hit"
-			j++
-		}
+	for i, j := range lineRuns(lines) {
 		run := j - i
-		if run >= foldThreshold {
+		foldID := ""
+		if lines[i].Class != "miss" && run >= foldThreshold {
 			folds++
-			id := fmt.Sprintf("f%d", folds)
+			foldID = fmt.Sprintf("f%d", folds)
 			label := fmt.Sprintf("%d lines", run)
-			if hasHit {
+			if slices.ContainsFunc(lines[i:j], func(l sourceLine) bool { return l.Class == "hit" }) {
 				label += ", fully covered"
 			}
-			items = append(items, sourceItem{Fold: &foldInfo{ID: id, Lines: run, Label: label}})
-			for k := i; k < j; k++ {
-				ln := lines[k]
-				ln.FoldID = id
-				items = append(items, sourceItem{Line: &ln})
-			}
-		} else {
-			for k := i; k < j; k++ {
-				ln := lines[k]
-				items = append(items, sourceItem{Line: &ln})
-			}
+			items = append(items, sourceItem{Fold: &foldInfo{ID: foldID, Lines: run, Label: label}})
 		}
-		i = j
+		for _, ln := range lines[i:j] {
+			ln.FoldID = foldID
+			items = append(items, sourceItem{Line: &ln})
+		}
 	}
 	return items
 }

@@ -196,7 +196,7 @@ func (f *Forge) GetFileContent(_ context.Context, repoSlug, commitSHA, path stri
 	}
 	content, ok := f.Files[path]
 	if !ok {
-		return nil, fmt.Errorf("%w: %s at %s", forge.ErrRepoNotFound, path, commitSHA)
+		return nil, forge.FileNotFound(path, commitSHA)
 	}
 	return []byte(content), nil
 }

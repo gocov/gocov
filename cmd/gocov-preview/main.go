@@ -139,7 +139,7 @@ func main() {
 	pct := 74.0
 	for i := range 45 {
 		pct += rnd.Float64()*4 - 2 + 0.1*math.Sin(float64(i)/4)
-		pct = math.Max(66, math.Min(88, pct))
+		pct = max(66, min(88, pct))
 		u := &store.Upload{
 			RepoID:    repo.ID,
 			CommitSHA: fmt.Sprintf("%040x", i),

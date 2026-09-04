@@ -96,23 +96,12 @@ func (p *Pipeline) Recompute(ctx context.Context, repo *store.Repo, u *store.Upl
 			return fmt.Errorf("loading baseline report: %w", err)
 		}
 		if prev != nil {
-			d := totalPct - prev.TotalPct
-			deltaPct = &d
+			deltaPct = new(totalPct - prev.TotalPct)
 		}
 
-		// The gate drop rule always compares against the default branch's
-		// latest passing merged report, so a PR cannot ratchet coverage down
-		// part by part within tolerance.
-		var dropDelta *float64
-		if repo.Gate.MaxCoverageDrop != nil {
-			base, err := tx.LatestPassedCommitReport(ctx, repo.ID, repo.DefaultBranch, u.CommitSHA)
-			if err != nil && !errors.Is(err, store.ErrNotFound) {
-				return fmt.Errorf("loading gate baseline report: %w", err)
-			}
-			if base != nil {
-				d := totalPct - base.TotalPct
-				dropDelta = &d
-			}
+		dropDelta, err := gateDropDelta(ctx, tx, repo, u.CommitSHA, totalPct)
+		if err != nil {
+			return err
 		}
 
 		gate := EvaluateGate(repo.Gate, totalPct, dropDelta, mergedDiff)
@@ -157,4 +146,32 @@ func (p *Pipeline) Recompute(ctx context.Context, repo *store.Repo, u *store.Upl
 		return nil, err
 	}
 	return result, nil
+}
+
+// passedReports is the one read the gate's drop baseline needs; the store
+// answers it before an upload is stored, a commit-report transaction
+// while the merge runs.
+type passedReports interface {
+	LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*store.CommitReport, error)
+}
+
+// gateDropDelta returns the commit's coverage difference to the gate's
+// drop baseline, or nil when the drop rule is off or has nothing to
+// compare against. The rule always compares against the default branch's
+// latest passing merged report — never the branch's own history — so a PR
+// cannot ratchet coverage down within tolerance, push by push or part by
+// part. The commit's own report is skipped so an earlier part is never
+// its own baseline.
+func gateDropDelta(ctx context.Context, reports passedReports, repo *store.Repo, commit string, totalPct float64) (*float64, error) {
+	if repo.Gate.MaxCoverageDrop == nil {
+		return nil, nil
+	}
+	base, err := reports.LatestPassedCommitReport(ctx, repo.ID, repo.DefaultBranch, commit)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return nil, fmt.Errorf("loading gate baseline: %w", err)
+	}
+	if base == nil {
+		return nil, nil
+	}
+	return new(totalPct - base.TotalPct), nil
 }

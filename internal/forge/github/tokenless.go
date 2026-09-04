@@ -15,7 +15,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gocov/gocov/internal/forge/internal/rest"
+	"github.com/gocov/gocov/internal/rest"
 )
 
 // RunClaim is what a tokenless upload asserts about itself. RepoSlug is

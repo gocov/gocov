@@ -119,13 +119,6 @@ func doUpload(t *testing.T, f *fixture, token string, fields map[string]string, 
 	return rec
 }
 
-func doGet(t *testing.T, f *fixture, path string) *httptest.ResponseRecorder {
-	t.Helper()
-	rec := httptest.NewRecorder()
-	f.srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
-	return rec
-}
-
 func getAccept(f *fixture, path, accept string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	req.Header.Set("Accept", accept)
@@ -217,7 +210,7 @@ func TestPages(t *testing.T) {
 func TestStaticAssetsServed(t *testing.T) {
 	f := newFixture(t, nil)
 	for _, path := range []string{"/static/style.css", "/static/htmx.min.js", "/static/app.js", "/static/favicon.svg"} {
-		rec := doGet(t, f, path)
+		rec := get(f, path)
 		if rec.Code != http.StatusOK || rec.Body.Len() == 0 {
 			t.Errorf("%s: code=%d len=%d", path, rec.Code, rec.Body.Len())
 		}
@@ -258,7 +251,7 @@ func TestNotFoundPage(t *testing.T) {
 	})
 
 	t.Run("missing repo renders styled page", func(t *testing.T) {
-		rec := doGet(t, f, "/repos/acme/ghost")
+		rec := get(f, "/repos/acme/ghost")
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("status = %d, want 404", rec.Code)
 		}
@@ -268,7 +261,7 @@ func TestNotFoundPage(t *testing.T) {
 	})
 
 	t.Run("missing upload renders styled page", func(t *testing.T) {
-		rec := doGet(t, f, "/uploads/9999")
+		rec := get(f, "/uploads/9999")
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("status = %d, want 404", rec.Code)
 		}

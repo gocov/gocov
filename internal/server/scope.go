@@ -6,8 +6,11 @@
 package server
 
 import (
+	"errors"
+	"maps"
 	"net/http"
 	"slices"
+	"strconv"
 
 	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/store"
@@ -114,6 +117,37 @@ func (s *Server) authorizeReport(w http.ResponseWriter, r *http.Request, repo *s
 	return false, false
 }
 
+// reportUpload resolves the upload named by the {id} path value and its
+// repo, then runs authorizeReport — the prelude of every upload-scoped
+// report page (the upload page, the source view, the profile download).
+// ok is false when the answer has been written: the not-found path for a
+// malformed or unknown id, the refusal for a repo the viewer may not see.
+func (s *Server) reportUpload(w http.ResponseWriter, r *http.Request) (*store.Upload, *store.Repo, bool) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		s.reportNotFound(w, r)
+		return nil, nil, false
+	}
+	upload, err := s.store.Upload(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		s.reportNotFound(w, r)
+		return nil, nil, false
+	}
+	if err != nil {
+		s.internalError(w, "loading upload", err)
+		return nil, nil, false
+	}
+	repo, err := s.store.RepoByID(r.Context(), upload.RepoID)
+	if err != nil {
+		s.internalError(w, "loading repo for upload", err)
+		return nil, nil, false
+	}
+	if _, ok := s.authorizeReport(w, r, repo); !ok {
+		return nil, nil, false
+	}
+	return upload, repo, true
+}
+
 // reportNotFound answers a report-page lookup that found nothing. For an
 // anonymous visitor the answer is the login redirect, exactly what a
 // missing session got before public report pages existed — a 404 here
@@ -177,10 +211,5 @@ func (s *Server) trackedWorkspaces(r *http.Request) []string {
 }
 
 func sortedKeys(set map[string]bool) []string {
-	out := make([]string, 0, len(set))
-	for k := range set {
-		out = append(out, k)
-	}
-	slices.Sort(out)
-	return out
+	return slices.Sorted(maps.Keys(set))
 }

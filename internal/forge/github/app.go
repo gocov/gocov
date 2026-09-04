@@ -1,6 +1,7 @@
 package github
 
 import (
+	"cmp"
 	"context"
 	"crypto"
 	"crypto/rand"
@@ -10,14 +11,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/gocov/gocov/internal/forge"
-	"github.com/gocov/gocov/internal/forge/internal/rest"
+	"github.com/gocov/gocov/internal/rest"
 )
 
 // App is a GitHub App identity (One-Click Connect D1/D2): the hosted
@@ -76,23 +76,18 @@ func NewApp(appID string, pemKey []byte) (*App, error) {
 	return &App{
 		AppID:      appID,
 		Key:        key,
-		HTTPClient: &http.Client{Timeout: 15 * time.Second},
+		HTTPClient: rest.NewHTTPClient(),
 		tokens:     map[int64]instToken{},
 	}, nil
 }
 
-func (a *App) baseURL() string {
-	if a.BaseURL != "" {
-		return a.BaseURL
-	}
-	return DefaultBaseURL
-}
+func (a *App) baseURL() string { return cmp.Or(a.BaseURL, DefaultBaseURL) }
 
 func (a *App) client() *http.Client {
 	if a.HTTPClient != nil {
 		return a.HTTPClient
 	}
-	return &http.Client{Timeout: 15 * time.Second}
+	return rest.NewHTTPClient()
 }
 
 // appJWT builds the app-authentication JWT: RS256 over the standard iss /
@@ -145,9 +140,9 @@ func (a *App) installationToken(ctx context.Context, installationID int64) (toke
 		ExpiresAt time.Time `json:"expires_at"`
 	}
 	if err := a.api(jwt).JSON(ctx, http.MethodPost, path, nil, &body); err != nil {
-		if e, ok := errors.AsType[*rest.Error](err); ok && (e.Status == http.StatusUnauthorized || e.Status == http.StatusNotFound) {
+		if revoked(err) {
 			return "", false, fmt.Errorf("%w: github app installation %d: %d: %s",
-				forge.ErrCredentialsRevoked, installationID, e.Status, e.Body)
+				forge.ErrCredentialsRevoked, installationID, rest.Status(err), rest.Body(err))
 		}
 		return "", false, err
 	}
@@ -257,20 +252,23 @@ func (a *App) getJWT(ctx context.Context, path string, out any) error {
 		return err
 	}
 	err = a.api(jwt).Get(ctx, path, out)
-	if s := rest.Status(err); s == http.StatusUnauthorized || s == http.StatusNotFound {
+	if revoked(err) {
 		return fmt.Errorf("%w: %v", forge.ErrCredentialsRevoked, err)
 	}
 	return err
 }
 
+// revoked reports whether an app-authenticated call was refused because
+// the credential behind it is gone rather than wrong for this call:
+// GitHub answers 401 once the app's key has been rotated away and 404
+// for an installation that no longer exists.
+func revoked(err error) bool {
+	s := rest.Status(err)
+	return s == http.StatusUnauthorized || s == http.StatusNotFound
+}
+
 // api is the request plumbing, authenticated with the given bearer —
 // the app's own JWT or an installation token.
 func (a *App) api(bearer string) *rest.Client {
-	return &rest.Client{
-		Name: "github app", BaseURL: a.baseURL(), HTTPClient: a.client(),
-		Authorize: func(req *http.Request) {
-			req.Header.Set("Authorization", "Bearer "+bearer)
-			req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-		},
-	}
+	return &rest.Client{Name: "github app", BaseURL: a.baseURL(), HTTPClient: a.client(), Authorize: authorize(bearer)}
 }

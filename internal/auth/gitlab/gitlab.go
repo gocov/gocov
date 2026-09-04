@@ -5,16 +5,14 @@ package gitlab
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gocov/gocov/internal/auth"
+	"github.com/gocov/gocov/internal/rest"
 )
 
 // Default endpoints. The OAuth pages live on the website host, the
@@ -97,7 +95,7 @@ func (p *Provider) Identity(ctx context.Context, code, redirectURI string) (*aut
 		Name     string `json:"name"`
 		Email    string `json:"email"`
 	}
-	if err := p.get(ctx, token, "/user", &user); err != nil {
+	if err := p.api(token).Get(ctx, "/user", &user); err != nil {
 		return nil, err
 	}
 	if user.ID == 0 {
@@ -138,27 +136,13 @@ func (p *Provider) exchange(ctx context.Context, code, redirectURI string) (stri
 		"grant_type":    {"authorization_code"},
 		"redirect_uri":  {redirectURI},
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		p.authBase()+"/token", strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := p.client().Do(req)
-	if err != nil {
-		return "", fmt.Errorf("gitlab: token exchange: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("gitlab: token exchange: status %d: %s", resp.StatusCode, body)
-	}
 	var tok struct {
 		AccessToken string `json:"access_token"`
 		Error       string `json:"error"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&tok); err != nil {
-		return "", fmt.Errorf("gitlab: token exchange: %w", err)
+	c := &rest.Client{Name: "gitlab", HTTPClient: p.client()}
+	if err := c.PostForm(ctx, p.authBase()+"/token", form, &tok); err != nil {
+		return "", fmt.Errorf("token exchange: %w", err)
 	}
 	if tok.Error != "" {
 		return "", fmt.Errorf("gitlab: token exchange: %s", tok.Error)
@@ -185,12 +169,13 @@ const (
 // Link-header pagination.
 func (p *Provider) groups(ctx context.Context, token string, minAccess int) ([]string, error) {
 	var out []string
-	next := p.apiBase() + "/groups?min_access_level=" + strconv.Itoa(minAccess) + "&per_page=100"
+	api := p.api(token)
+	next := "/groups?min_access_level=" + strconv.Itoa(minAccess) + "&per_page=100"
 	for range maxGroupPages {
 		var page []struct {
 			FullPath string `json:"full_path"`
 		}
-		link, err := p.getURL(ctx, token, next, &page)
+		link, err := api.GetPage(ctx, next, &page)
 		if err != nil {
 			return nil, err
 		}
@@ -199,56 +184,17 @@ func (p *Provider) groups(ctx context.Context, token string, minAccess int) ([]s
 				out = append(out, g.FullPath)
 			}
 		}
-		next = nextLink(link)
-		if next == "" {
+		if next = link; next == "" {
 			return out, nil
 		}
 	}
 	return out, nil
 }
 
-// nextLink extracts the rel="next" URL from a Link response header, or ""
-// when there is no next page.
-func nextLink(header string) string {
-	for part := range strings.SplitSeq(header, ",") {
-		u, rel, ok := strings.Cut(part, ";")
-		if !ok || !strings.Contains(rel, `rel="next"`) {
-			continue
-		}
-		u = strings.TrimSpace(u)
-		if strings.HasPrefix(u, "<") && strings.HasSuffix(u, ">") {
-			return u[1 : len(u)-1]
-		}
-	}
-	return ""
-}
-
-func (p *Provider) get(ctx context.Context, token, path string, dst any) error {
-	_, err := p.getURL(ctx, token, p.apiBase()+path, dst)
-	return err
-}
-
-// getURL fetches u into dst and returns the response's Link header for
-// pagination.
-func (p *Provider) getURL(ctx context.Context, token, u string, dst any) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := p.client().Do(req)
-	if err != nil {
-		return "", fmt.Errorf("gitlab: GET %s: %w", u, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("gitlab: GET %s: status %d: %s", u, resp.StatusCode, body)
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(dst); err != nil {
-		return "", fmt.Errorf("gitlab: GET %s: %w", u, err)
-	}
-	return resp.Header.Get("Link"), nil
+// api is the request plumbing for the identity endpoints, bound to the
+// exchanged token.
+func (p *Provider) api(token string) *rest.Client {
+	return &rest.Client{Name: "gitlab", BaseURL: p.apiBase(), HTTPClient: p.client(), Authorize: rest.Bearer(token)}
 }
 
 // ensure interface compliance

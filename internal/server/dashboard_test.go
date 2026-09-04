@@ -15,7 +15,7 @@ func TestIndexListsWorkspaceRepos(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	body := doGet(t, f, "/").Body.String()
+	body := get(f, "/").Body.String()
 	for _, want := range []string{
 		`href="/repos/acme/widgets"`, `href="/repos/acme/gadgets"`,
 		`data-name="widgets"`, `data-name="gadgets"`,
@@ -55,7 +55,7 @@ func TestDashboardNeedsAttention(t *testing.T) {
 	report("acme/mobile", &min60, 80, false, 20*24*time.Hour) // passing but stale
 	report("acme/android", nil, 70, false, time.Hour)         // no gate
 
-	body := doGet(t, f, "/").Body.String()
+	body := get(f, "/").Body.String()
 	for _, want := range []string{
 		"Needs attention",
 		`<span class="mono">importer</span> is failing its coverage gate`,
@@ -90,7 +90,7 @@ func TestIndexShowsGateAndDelta(t *testing.T) {
 	better := "mode: set\nexample.com/m/a.go:1.1,5.2 10 3\n" // 100%, passes the gate
 	doUpload(t, f, "secret-token", map[string]string{"commit": "c2", "branch": "main"}, better)
 
-	body := doGet(t, f, "/").Body.String()
+	body := get(f, "/").Body.String()
 	if !strings.Contains(body, "chip pass") {
 		t.Errorf("gate chip missing: %s", body)
 	}
@@ -114,8 +114,65 @@ func TestIndexDeltaSkipsGateFailedBaselines(t *testing.T) {
 	best := "mode: set\nexample.com/m/a.go:1.1,5.2 10 3\n"
 	doUpload(t, f, "secret-token", map[string]string{"commit": "c3", "branch": "main"}, best)
 
-	body := doGet(t, f, "/").Body.String()
+	body := get(f, "/").Body.String()
 	if !strings.Contains(body, "20.0%") || strings.Contains(body, "50.0%") {
 		t.Errorf("delta must use the last gate-passing baseline: %s", body)
+	}
+}
+
+func TestSparkView(t *testing.T) {
+	// Reports come newest first; the glyph reads chronologically, left to
+	// right across the 76px box, with the series' own min and max on the
+	// 3..19 band.
+	reports := func(pcts ...float64) []*store.CommitReport {
+		var rs []*store.CommitReport
+		for i, pct := range pcts {
+			rs = append(rs, trendReport(int64(len(pcts)-i), pct, "", false))
+		}
+		return rs
+	}
+	for _, tc := range []struct {
+		name     string
+		reports  []*store.CommitReport
+		stale    bool
+		wantPath string
+		wantTail string
+		wantCls  string
+	}{
+		{"rising", reports(80, 70), false, "M0 19 L76 3", "", "up"},
+		{"falling", reports(70, 80), false, "M0 3 L76 19", "", "down"},
+		{"flat", reports(75, 75), false, "M0 11 L76 11", "", ""},
+		// A stale series stops short and a tail carries its last value to the
+		// right edge; direction means nothing once the feed has stopped.
+		{"stale", reports(80, 70), true, "M0 19 L46 3", "M46 3 L76 3", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sv := newSparkView(tc.reports, tc.stale)
+			if sv == nil {
+				t.Fatal("nil sparkline")
+			}
+			if sv.Path != tc.wantPath || sv.Tail != tc.wantTail || sv.Class != tc.wantCls {
+				t.Errorf("sparkline = %+v, want path %q tail %q class %q", *sv, tc.wantPath, tc.wantTail, tc.wantCls)
+			}
+		})
+	}
+
+	// Fewer than two branch commits draw nothing — a PR report does not count.
+	if sv := newSparkView(reports(80), false); sv != nil {
+		t.Errorf("one report: got %+v, want nil", sv)
+	}
+	pr := []*store.CommitReport{trendReport(2, 90, "7", false), trendReport(1, 80, "", false)}
+	if sv := newSparkView(pr, false); sv != nil {
+		t.Errorf("one non-PR report: got %+v, want nil", sv)
+	}
+
+	// Only the last dozen points are drawn: the first of thirteen drops off.
+	var pcts []float64
+	for i := range 13 {
+		pcts = append(pcts, float64(50+i))
+	}
+	sv := newSparkView(reports(pcts...), false)
+	if got := strings.Count(sv.Path, " L"); got != 11 {
+		t.Errorf("segments = %d, want 11 (twelve points)", got)
 	}
 }
