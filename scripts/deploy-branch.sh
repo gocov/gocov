@@ -26,8 +26,8 @@
 # Usage:
 #   scripts/deploy-branch.sh                 build the tree and roll to it
 #   scripts/deploy-branch.sh --image REF     roll to an existing image
-#                                            (ghcr.io/gocov/gocov-server:v0.19.0
-#                                            is the rollback to the release)
+#                                            (ghcr.io/gocov/gocov-server:v<release>
+#                                            is the rollback to that release)
 #
 # Needs: aws (signed in to the gocov account), docker with buildx, jq.
 set -euo pipefail
