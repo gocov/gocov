@@ -11,11 +11,11 @@ package github
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
+
+	"github.com/gocov/gocov/internal/forge/internal/rest"
 )
 
 // RunClaim is what a tokenless upload asserts about itself. RepoSlug is
@@ -143,26 +143,9 @@ func (a *App) getAsInstallation(ctx context.Context, installationID int64, path 
 	if err != nil {
 		return false, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.baseURL()+path, nil)
-	if err != nil {
-		return false, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	resp, err := a.client().Do(req)
-	if err != nil {
-		return false, fmt.Errorf("github app: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
+	err = a.api(token).Get(ctx, path, out)
+	if rest.Status(err) == http.StatusNotFound {
 		return true, nil
 	}
-	if resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return false, fmt.Errorf("github app: %s returned %d: %s", path, resp.StatusCode, msg)
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out); err != nil {
-		return false, fmt.Errorf("github app: decoding %s response: %w", path, err)
-	}
-	return false, nil
+	return false, err
 }

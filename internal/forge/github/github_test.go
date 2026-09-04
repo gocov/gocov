@@ -189,23 +189,6 @@ func TestFindPRCommentHTTPError(t *testing.T) {
 	}
 }
 
-func TestNextLink(t *testing.T) {
-	tests := []struct {
-		header string
-		want   string
-	}{
-		{`<https://api.github.com/x?page=2>; rel="next", <https://api.github.com/x?page=5>; rel="last"`,
-			"https://api.github.com/x?page=2"},
-		{`<https://api.github.com/x?page=1>; rel="prev"`, ""},
-		{"", ""},
-	}
-	for _, tt := range tests {
-		if got := nextLink(tt.header); got != tt.want {
-			t.Errorf("nextLink(%q) = %q, want %q", tt.header, got, tt.want)
-		}
-	}
-}
-
 func TestUpdatePRComment(t *testing.T) {
 	var gotMethod, gotPath string
 	var gotBody map[string]string

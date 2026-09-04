@@ -2,18 +2,16 @@
 package bitbucket
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 
 	"github.com/gocov/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/forge/internal/rest"
 )
 
 // DefaultBaseURL is the Bitbucket Cloud REST API root.
@@ -43,6 +41,11 @@ func (c *Client) authorize(req *http.Request) {
 	req.SetBasicAuth(c.Username, c.AppPassword)
 }
 
+// api is the request plumbing, bound to this client's credentials.
+func (c *Client) api() *rest.Client {
+	return &rest.Client{Name: "bitbucket", BaseURL: c.BaseURL, HTTPClient: c.HTTPClient, Authorize: c.authorize}
+}
+
 var stateNames = map[string]string{
 	forge.StateSuccessful: "SUCCESSFUL",
 	forge.StateFailed:     "FAILED",
@@ -65,7 +68,7 @@ func (c *Client) PostBuildStatus(ctx context.Context, repoSlug, commitSHA string
 	}
 	path := fmt.Sprintf("/repositories/%s/commit/%s/statuses/build",
 		repoSlug, url.PathEscape(commitSHA))
-	return c.send(ctx, http.MethodPost, path, body)
+	return c.api().Send(ctx, http.MethodPost, path, body)
 }
 
 // PostPRComment adds a comment via
@@ -76,7 +79,7 @@ func (c *Client) PostPRComment(ctx context.Context, repoSlug, prID, body string)
 	}
 	path := fmt.Sprintf("/repositories/%s/pullrequests/%s/comments",
 		repoSlug, url.PathEscape(prID))
-	return c.send(ctx, http.MethodPost, path, payload)
+	return c.api().Send(ctx, http.MethodPost, path, payload)
 }
 
 // maxCommentPages bounds pagination when searching for an earlier comment.
@@ -98,23 +101,9 @@ func (u bitbucketUser) is(other bitbucketUser) bool {
 
 // currentUser resolves the authenticated account via GET /user.
 func (c *Client) currentUser(ctx context.Context) (bitbucketUser, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/user", nil)
-	if err != nil {
-		return bitbucketUser{}, err
-	}
-	c.authorize(req)
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return bitbucketUser{}, fmt.Errorf("bitbucket: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return bitbucketUser{}, fmt.Errorf("bitbucket: /user returned %d: %s", resp.StatusCode, msg)
-	}
 	var u bitbucketUser
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&u); err != nil {
-		return bitbucketUser{}, fmt.Errorf("bitbucket: decoding /user: %w", err)
+	if err := c.api().Get(ctx, "/user", &u); err != nil {
+		return bitbucketUser{}, err
 	}
 	if u.AccountID == "" && u.UUID == "" {
 		return bitbucketUser{}, fmt.Errorf("bitbucket: /user returned no account identity")
@@ -135,15 +124,6 @@ func (c *Client) FindPRComment(ctx context.Context, repoSlug, prID, prefix strin
 	next := fmt.Sprintf("%s/repositories/%s/pullrequests/%s/comments?pagelen=100&sort=-created_on",
 		c.BaseURL, repoSlug, url.PathEscape(prID))
 	for page := 0; next != "" && page < maxCommentPages; page++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, next, nil)
-		if err != nil {
-			return "", err
-		}
-		c.authorize(req)
-		resp, err := c.HTTPClient.Do(req)
-		if err != nil {
-			return "", fmt.Errorf("bitbucket: %w", err)
-		}
 		var body struct {
 			Values []struct {
 				ID      int64 `json:"id"`
@@ -161,15 +141,8 @@ func (c *Client) FindPRComment(ctx context.Context, repoSlug, prID, prefix strin
 			} `json:"values"`
 			Next string `json:"next"`
 		}
-		if resp.StatusCode >= 300 {
-			msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-			resp.Body.Close()
-			return "", fmt.Errorf("bitbucket: listing PR comments returned %d: %s", resp.StatusCode, msg)
-		}
-		err = json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&body)
-		resp.Body.Close()
-		if err != nil {
-			return "", fmt.Errorf("bitbucket: decoding PR comments: %w", err)
+		if err := c.api().Get(ctx, next, &body); err != nil {
+			return "", err
 		}
 		for _, v := range body.Values {
 			if v.Deleted || v.Inline != nil || v.Parent != nil || !self.is(v.User) {
@@ -192,7 +165,7 @@ func (c *Client) UpdatePRComment(ctx context.Context, repoSlug, prID, commentID,
 	}
 	path := fmt.Sprintf("/repositories/%s/pullrequests/%s/comments/%s",
 		repoSlug, url.PathEscape(prID), url.PathEscape(commentID))
-	return c.send(ctx, http.MethodPut, path, payload)
+	return c.api().Send(ctx, http.MethodPut, path, payload)
 }
 
 // GetPRDiff fetches the unified diff of a pull request via
@@ -201,28 +174,9 @@ func (c *Client) UpdatePRComment(ctx context.Context, repoSlug, prID, commentID,
 func (c *Client) GetPRDiff(ctx context.Context, repoSlug, prID string) (string, error) {
 	path := fmt.Sprintf("/repositories/%s/pullrequests/%s/diff",
 		repoSlug, url.PathEscape(prID))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	body, err := c.api().GetBytes(ctx, path, "", maxDiffBytes)
 	if err != nil {
 		return "", err
-	}
-	c.authorize(req)
-
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("bitbucket: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("bitbucket: %s returned %d: %s", path, resp.StatusCode, msg)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDiffBytes+1))
-	if err != nil {
-		return "", fmt.Errorf("bitbucket: reading diff: %w", err)
-	}
-	if len(body) > maxDiffBytes {
-		// A truncated diff would silently produce wrong coverage numbers.
-		return "", fmt.Errorf("bitbucket: PR diff larger than %d MiB", maxDiffBytes>>20)
 	}
 	return string(body), nil
 }
@@ -234,28 +188,11 @@ const maxDiffBytes = 32 << 20
 // and decodes it into out — the request/status/decode plumbing
 // GetDefaultBranch and GetRepoVisibility share.
 func (c *Client) fetchRepository(ctx context.Context, repoSlug string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/repositories/"+repoSlug, nil)
-	if err != nil {
-		return err
-	}
-	c.authorize(req)
-
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("bitbucket: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
+	err := c.api().Get(ctx, "/repositories/"+repoSlug, out)
+	if rest.Status(err) == http.StatusNotFound {
 		return fmt.Errorf("%w: %s", forge.ErrRepoNotFound, repoSlug)
 	}
-	if resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("bitbucket: /repositories/%s returned %d: %s", repoSlug, resp.StatusCode, msg)
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out); err != nil {
-		return fmt.Errorf("bitbucket: decoding repository: %w", err)
-	}
-	return nil
+	return err
 }
 
 // GetDefaultBranch reads the repo's main branch via GET /repositories/{slug}.
@@ -316,34 +253,13 @@ func (c *Client) GetFileContent(ctx context.Context, repoSlug, commitSHA, path s
 	for i, s := range segments {
 		segments[i] = url.PathEscape(s)
 	}
-	reqURL := fmt.Sprintf("%s/repositories/%s/src/%s/%s",
-		c.BaseURL, repoSlug, url.PathEscape(commitSHA), strings.Join(segments, "/"))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	c.authorize(req)
-
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("bitbucket: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
+	reqPath := fmt.Sprintf("/repositories/%s/src/%s/%s",
+		repoSlug, url.PathEscape(commitSHA), strings.Join(segments, "/"))
+	data, err := c.api().GetBytes(ctx, reqPath, "", maxFileBytes)
+	if rest.Status(err) == http.StatusNotFound {
 		return nil, fmt.Errorf("%w: %s at %s", forge.ErrRepoNotFound, path, commitSHA)
 	}
-	if resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("bitbucket: reading %s returned %d: %s", path, resp.StatusCode, msg)
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxFileBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("bitbucket: reading %s: %w", path, err)
-	}
-	if len(data) > maxFileBytes {
-		return nil, fmt.Errorf("bitbucket: %s is larger than %d MiB", path, maxFileBytes>>20)
-	}
-	return data, nil
+	return data, err
 }
 
 // reportID is the stable Code Insights report id: one report per commit,
@@ -402,7 +318,7 @@ func (c *Client) PublishReport(ctx context.Context, repoSlug, commitSHA string, 
 		})
 	}
 	payload["data"] = data
-	if err := c.send(ctx, http.MethodPut, base, payload); err != nil {
+	if err := c.api().Send(ctx, http.MethodPut, base, payload); err != nil {
 		// Bitbucket rejects link values it cannot resolve publicly
 		// (e.g. the default http://localhost:8080 base URL) with a 400
 		// and drops the whole report. A report without its link beats
@@ -411,7 +327,7 @@ func (c *Client) PublishReport(ctx context.Context, repoSlug, commitSHA string, 
 			return err
 		}
 		delete(payload, "link")
-		if err := c.send(ctx, http.MethodPut, base, payload); err != nil {
+		if err := c.api().Send(ctx, http.MethodPut, base, payload); err != nil {
 			return err
 		}
 	}
@@ -437,71 +353,25 @@ func (c *Client) PublishReport(ctx context.Context, repoSlug, commitSHA string, 
 		}
 		items = append(items, item)
 	}
-	return c.send(ctx, http.MethodPost, base+"/annotations", items)
+	return c.api().Send(ctx, http.MethodPost, base+"/annotations", items)
 }
 
 // deleteReport removes the commit's existing gocov report and, with it,
 // its annotations. A 404 just means there is nothing to delete yet.
 func (c *Client) deleteReport(ctx context.Context, path string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.BaseURL+path, nil)
-	if err != nil {
-		return err
+	err := c.api().Send(ctx, http.MethodDelete, path, nil)
+	if rest.Status(err) == http.StatusNotFound {
+		return nil
 	}
-	c.authorize(req)
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("bitbucket: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 && resp.StatusCode != http.StatusNotFound {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("bitbucket: deleting %s returned %d: %s", path, resp.StatusCode, msg)
-	}
-	return nil
+	return err
 }
 
 // isInvalidLinkError recognizes Bitbucket's rejection of a report link,
 // e.g. `{"error": {"message": "link is not a valid URL"}}` with a 400.
 func isInvalidLinkError(err error) bool {
-	var ae *apiError
-	return errors.As(err, &ae) && ae.status == http.StatusBadRequest &&
-		strings.Contains(ae.msg, "link is not a valid URL")
+	e, ok := errors.AsType[*rest.Error](err)
+	return ok && e.Status == http.StatusBadRequest &&
+		strings.Contains(e.Body, "link is not a valid URL")
 }
-
-func (c *Client) send(ctx context.Context, method, path string, payload any) error {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	c.authorize(req)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("bitbucket: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return &apiError{
-			status: resp.StatusCode,
-			msg:    fmt.Sprintf("bitbucket: %s returned %d: %s", path, resp.StatusCode, msg),
-		}
-	}
-	return nil
-}
-
-// apiError carries the HTTP status of a failed Bitbucket call so callers
-// can react to specific rejections.
-type apiError struct {
-	status int
-	msg    string
-}
-
-func (e *apiError) Error() string { return e.msg }
 
 var _ forge.Forge = (*Client)(nil)

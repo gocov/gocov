@@ -274,10 +274,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /workspaces/{prefix}/settings", s.handleWorkspaceSettings)
 	s.mux.HandleFunc("POST /workspaces/{prefix}/delete", s.handleWorkspaceDelete)
 	s.mux.HandleFunc("POST /workspaces/{prefix}/github/disconnect", s.handleGitHubDisconnect)
-	s.mux.HandleFunc("GET /workspaces/{prefix}/bitbucket/connect", s.handleBitbucketConnect)
-	s.mux.HandleFunc("POST /workspaces/{prefix}/bitbucket/disconnect", s.handleBitbucketDisconnect)
-	s.mux.HandleFunc("GET /workspaces/{prefix}/gitlab/connect", s.handleGitLabConnect)
-	s.mux.HandleFunc("POST /workspaces/{prefix}/gitlab/disconnect", s.handleGitLabDisconnect)
+	for _, g := range connectGrants {
+		s.mux.HandleFunc("GET /workspaces/{prefix}/"+g.forge+"/connect", s.handleConnect(g))
+		s.mux.HandleFunc("POST /workspaces/{prefix}/"+g.forge+"/disconnect", s.handleDisconnect(g))
+	}
 	s.mux.HandleFunc("GET /workspaces/{prefix}/setup", s.handleWorkspaceSetup)
 	s.mux.HandleFunc("GET /workspaces/{prefix}/setup/status", s.handleWorkspaceSetupStatus)
 	s.mux.HandleFunc("GET /github/setup", s.handleGitHubSetup)

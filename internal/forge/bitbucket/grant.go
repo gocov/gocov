@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gocov/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/forge/internal/rest"
 )
 
 // Workspace-connect OAuth grant (One-Click Connect P2/D6). Consumer is
@@ -38,16 +39,10 @@ type Consumer struct {
 	HTTPClient  *http.Client
 }
 
-// Grant is one issued (or refreshed) token set.
-type Grant struct {
-	// Account is the username of the granting Bitbucket account —
-	// comments will visibly post as it (D8). Empty on refreshes.
-	Account      string
-	AccessToken  string
-	RefreshToken string
-	// TTL is how long the access token lives (Bitbucket: two hours).
-	TTL time.Duration
-}
+// Grant is one issued (or refreshed) token set. Account is the granting
+// Bitbucket account — comments will visibly post as it (D8) — and TTL
+// is two hours on live Bitbucket.
+type Grant = forge.Grant
 
 func (c *Consumer) authBase() string {
 	if c.AuthBaseURL != "" {
@@ -189,25 +184,12 @@ func (c *Consumer) token(ctx context.Context, form url.Values) (*Grant, error) {
 
 // username resolves the token's account via GET /user.
 func (c *Consumer) username(ctx context.Context, accessToken string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.apiBase()+"/user", nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	resp, err := c.client().Do(req)
-	if err != nil {
-		return "", fmt.Errorf("bitbucket: GET /user: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("bitbucket: GET /user: status %d: %s", resp.StatusCode, body)
-	}
+	api := &rest.Client{Name: "bitbucket", BaseURL: c.apiBase(), HTTPClient: c.client(), Authorize: rest.Bearer(accessToken)}
 	var user struct {
 		Username string `json:"username"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&user); err != nil {
-		return "", fmt.Errorf("bitbucket: GET /user: %w", err)
+	if err := api.Get(ctx, "/user", &user); err != nil {
+		return "", err
 	}
 	if user.Username == "" {
 		return "", fmt.Errorf("bitbucket: GET /user returned no username")

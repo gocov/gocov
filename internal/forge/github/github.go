@@ -2,18 +2,15 @@
 package github
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 
 	"github.com/gocov/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/forge/internal/rest"
 )
 
 // DefaultBaseURL is the GitHub REST API root. Kept a field on Client so
@@ -33,6 +30,11 @@ type Client struct {
 func (c *Client) authorize(req *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+}
+
+// api is the request plumbing, bound to this client's credentials.
+func (c *Client) api() *rest.Client {
+	return &rest.Client{Name: "github", BaseURL: c.BaseURL, HTTPClient: c.HTTPClient, Authorize: c.authorize}
 }
 
 var stateNames = map[string]string{
@@ -69,14 +71,14 @@ func (c *Client) PostBuildStatus(ctx context.Context, repoSlug, commitSHA string
 		body["target_url"] = status.URL
 	}
 	path := fmt.Sprintf("/repos/%s/statuses/%s", repoSlug, url.PathEscape(commitSHA))
-	return c.send(ctx, http.MethodPost, path, body)
+	return c.api().Send(ctx, http.MethodPost, path, body)
 }
 
 // PostPRComment adds a comment via POST /repos/{slug}/issues/{n}/comments
 // (PR conversation comments are issue comments in the GitHub API).
 func (c *Client) PostPRComment(ctx context.Context, repoSlug, prID, body string) error {
 	path := fmt.Sprintf("/repos/%s/issues/%s/comments", repoSlug, url.PathEscape(prID))
-	return c.send(ctx, http.MethodPost, path, map[string]string{"body": body})
+	return c.api().Send(ctx, http.MethodPost, path, map[string]string{"body": body})
 }
 
 // maxCommentPages bounds pagination when searching for an earlier comment.
@@ -95,54 +97,21 @@ func (c *Client) FindPRComment(ctx context.Context, repoSlug, prID, prefix strin
 		c.BaseURL, repoSlug, url.PathEscape(prID))
 	found := ""
 	for page := 0; next != "" && page < maxCommentPages; page++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, next, nil)
-		if err != nil {
-			return "", err
-		}
-		c.authorize(req)
-		resp, err := c.HTTPClient.Do(req)
-		if err != nil {
-			return "", fmt.Errorf("github: %w", err)
-		}
-		if resp.StatusCode >= 300 {
-			msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-			resp.Body.Close()
-			return "", fmt.Errorf("github: listing PR comments returned %d: %s", resp.StatusCode, msg)
-		}
 		var comments []struct {
 			ID   int64  `json:"id"`
 			Body string `json:"body"`
 		}
-		err = json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&comments)
-		link := resp.Header.Get("Link")
-		resp.Body.Close()
-		if err != nil {
-			return "", fmt.Errorf("github: decoding PR comments: %w", err)
+		var err error
+		if next, err = c.api().GetPage(ctx, next, &comments); err != nil {
+			return "", err
 		}
 		for _, cm := range comments {
 			if strings.HasPrefix(cm.Body, prefix) {
 				found = strconv.FormatInt(cm.ID, 10)
 			}
 		}
-		next = nextLink(link)
 	}
 	return found, nil
-}
-
-// nextLink extracts the rel="next" URL from a Link response header, or ""
-// when there is no next page.
-func nextLink(header string) string {
-	for part := range strings.SplitSeq(header, ",") {
-		u, rel, ok := strings.Cut(part, ";")
-		if !ok || !strings.Contains(rel, `rel="next"`) {
-			continue
-		}
-		u = strings.TrimSpace(u)
-		if strings.HasPrefix(u, "<") && strings.HasSuffix(u, ">") {
-			return u[1 : len(u)-1]
-		}
-	}
-	return ""
 }
 
 // UpdatePRComment replaces a comment's body via
@@ -150,7 +119,7 @@ func nextLink(header string) string {
 // repo-scoped, so the PR id plays no part in the URL.
 func (c *Client) UpdatePRComment(ctx context.Context, repoSlug, prID, commentID, body string) error {
 	path := fmt.Sprintf("/repos/%s/issues/comments/%s", repoSlug, url.PathEscape(commentID))
-	return c.send(ctx, http.MethodPatch, path, map[string]string{"body": body})
+	return c.api().Send(ctx, http.MethodPatch, path, map[string]string{"body": body})
 }
 
 // maxDiffBytes bounds PR diffs; larger diffs error instead of truncating.
@@ -160,29 +129,9 @@ const maxDiffBytes = 32 << 20
 // GET /repos/{slug}/pulls/{n} with the diff media type.
 func (c *Client) GetPRDiff(ctx context.Context, repoSlug, prID string) (string, error) {
 	path := fmt.Sprintf("/repos/%s/pulls/%s", repoSlug, url.PathEscape(prID))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	body, err := c.api().GetBytes(ctx, path, "application/vnd.github.v3.diff", maxDiffBytes)
 	if err != nil {
 		return "", err
-	}
-	c.authorize(req)
-	req.Header.Set("Accept", "application/vnd.github.v3.diff")
-
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("github: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("github: %s returned %d: %s", path, resp.StatusCode, msg)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDiffBytes+1))
-	if err != nil {
-		return "", fmt.Errorf("github: reading diff: %w", err)
-	}
-	if len(body) > maxDiffBytes {
-		// A truncated diff would silently produce wrong coverage numbers.
-		return "", fmt.Errorf("github: PR diff larger than %d MiB", maxDiffBytes>>20)
 	}
 	return string(body), nil
 }
@@ -191,28 +140,11 @@ func (c *Client) GetPRDiff(ctx context.Context, repoSlug, prID string) (string, 
 // it into out — the request/status/decode plumbing GetDefaultBranch and
 // GetRepoVisibility share.
 func (c *Client) fetchRepo(ctx context.Context, repoSlug string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/repos/"+repoSlug, nil)
-	if err != nil {
-		return err
-	}
-	c.authorize(req)
-
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("github: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
+	err := c.api().Get(ctx, "/repos/"+repoSlug, out)
+	if rest.Status(err) == http.StatusNotFound {
 		return fmt.Errorf("%w: %s", forge.ErrRepoNotFound, repoSlug)
 	}
-	if resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("github: /repos/%s returned %d: %s", repoSlug, resp.StatusCode, msg)
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out); err != nil {
-		return fmt.Errorf("github: decoding repository: %w", err)
-	}
-	return nil
+	return err
 }
 
 // GetDefaultBranch reads the repo's default branch via GET /repos/{slug}.
@@ -259,35 +191,13 @@ func (c *Client) GetFileContent(ctx context.Context, repoSlug, commitSHA, path s
 	for i, s := range segments {
 		segments[i] = url.PathEscape(s)
 	}
-	reqURL := fmt.Sprintf("%s/repos/%s/contents/%s?ref=%s",
-		c.BaseURL, repoSlug, strings.Join(segments, "/"), url.QueryEscape(commitSHA))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	c.authorize(req)
-	req.Header.Set("Accept", "application/vnd.github.raw+json")
-
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("github: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
+	reqPath := fmt.Sprintf("/repos/%s/contents/%s?ref=%s",
+		repoSlug, strings.Join(segments, "/"), url.QueryEscape(commitSHA))
+	data, err := c.api().GetBytes(ctx, reqPath, "application/vnd.github.raw+json", maxFileBytes)
+	if rest.Status(err) == http.StatusNotFound {
 		return nil, fmt.Errorf("%w: %s at %s", forge.ErrRepoNotFound, path, commitSHA)
 	}
-	if resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("github: reading %s returned %d: %s", path, resp.StatusCode, msg)
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxFileBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("github: reading %s: %w", path, err)
-	}
-	if len(data) > maxFileBytes {
-		return nil, fmt.Errorf("github: %s is larger than %d MiB", path, maxFileBytes>>20)
-	}
-	return data, nil
+	return data, err
 }
 
 var reportConclusions = map[string]string{
@@ -337,7 +247,7 @@ func (c *Client) PublishReport(ctx context.Context, repoSlug, commitSHA string, 
 		ID int64 `json:"id"`
 	}
 	path := fmt.Sprintf("/repos/%s/check-runs", repoSlug)
-	if err := c.sendJSON(ctx, http.MethodPost, path, payload, &created); err != nil {
+	if err := c.api().JSON(ctx, http.MethodPost, path, payload, &created); err != nil {
 		return checkRunError(err)
 	}
 
@@ -353,7 +263,7 @@ func (c *Client) PublishReport(ctx context.Context, repoSlug, commitSHA string, 
 			},
 		}
 		updatePath := fmt.Sprintf("%s/%d", path, created.ID)
-		if err := c.sendJSON(ctx, http.MethodPatch, updatePath, batch, nil); err != nil {
+		if err := c.api().Send(ctx, http.MethodPatch, updatePath, batch); err != nil {
 			return checkRunError(err)
 		}
 	}
@@ -366,9 +276,8 @@ func (c *Client) PublishReport(ctx context.Context, repoSlug, commitSHA string, 
 // platform limit, not a configuration accident worth failing over. The
 // commit status and PR comment still carry the coverage verdict.
 func checkRunError(err error) error {
-	var ae *apiError
-	if errors.As(err, &ae) && ae.status == http.StatusForbidden {
-		return fmt.Errorf("%w: this GitHub credential cannot write check runs (needs a fine-grained token with checks:write, or a GitHub App): %s", forge.ErrNotImplemented, ae.msg)
+	if rest.Status(err) == http.StatusForbidden {
+		return fmt.Errorf("%w: this GitHub credential cannot write check runs (needs a fine-grained token with checks:write, or a GitHub App): %v", forge.ErrNotImplemented, err)
 	}
 	return err
 }
@@ -429,52 +338,5 @@ func checkRunAnnotations(anns []forge.Annotation) []map[string]any {
 	}
 	return items
 }
-
-func (c *Client) send(ctx context.Context, method, path string, payload any) error {
-	return c.sendJSON(ctx, method, path, payload, nil)
-}
-
-// sendJSON posts payload and, when out is non-nil, decodes the response
-// body into it.
-func (c *Client) sendJSON(ctx context.Context, method, path string, payload, out any) error {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	c.authorize(req)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("github: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return &apiError{
-			status: resp.StatusCode,
-			msg:    fmt.Sprintf("github: %s returned %d: %s", path, resp.StatusCode, msg),
-		}
-	}
-	if out != nil {
-		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out); err != nil {
-			return fmt.Errorf("github: decoding %s response: %w", path, err)
-		}
-	}
-	return nil
-}
-
-// apiError carries the HTTP status of a failed GitHub call so callers
-// can react to specific rejections.
-type apiError struct {
-	status int
-	msg    string
-}
-
-func (e *apiError) Error() string { return e.msg }
 
 var _ forge.Forge = (*Client)(nil)

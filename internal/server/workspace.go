@@ -77,8 +77,7 @@ func (s *Server) settingsData(r *http.Request, ws *store.Workspace, newToken, no
 		data["RepoCount"] = len(repos)
 	}
 	s.addGitHubAppData(r, ws, data)
-	s.addBitbucketGrantData(ws, data)
-	s.addGitLabGrantData(ws, data)
+	s.addGrantData(ws, data)
 	s.addReportingState(ws, data)
 	return data
 }

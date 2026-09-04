@@ -99,8 +99,7 @@ func (s *Server) handleOnboarding(w http.ResponseWriter, r *http.Request) {
 			"Rail":       onboardingRail(0, ws.Forge, ws.Prefix, false),
 		}
 		s.addGitHubAppData(r, ws, data)
-		s.addBitbucketGrantData(ws, data)
-		s.addGitLabGrantData(ws, data)
+		s.addGrantData(ws, data)
 		s.reportingState(ws, data)
 		s.render(w, r, "onboarding.html", data)
 		return
@@ -230,8 +229,7 @@ func (s *Server) setupViewData(r *http.Request, ws *store.Workspace) (map[string
 		"TokenMasked":    maskToken(ws.Token),
 	}
 	s.addGitHubAppData(r, ws, data)
-	s.addBitbucketGrantData(ws, data)
-	s.addGitLabGrantData(ws, data)
+	s.addGrantData(ws, data)
 	if len(repos) > 0 {
 		if fr := s.firstReport(r, repos); fr != nil {
 			data["FirstReport"] = fr
