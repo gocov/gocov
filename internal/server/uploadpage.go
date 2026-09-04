@@ -665,8 +665,8 @@ func newlyUncovered(cur, base []profile.Block) string {
 // splitPath separates a file path into its directory prefix (with trailing
 // slash) and file name, so the table can dim the directory.
 func splitPath(p string) (dir, base string) {
-	if i := strings.LastIndex(p, "/"); i >= 0 {
-		return p[:i+1], p[i+1:]
+	if dir, base, ok := strings.CutLast(p, "/"); ok {
+		return dir + "/", base
 	}
 	return "", p
 }

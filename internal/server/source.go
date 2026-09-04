@@ -101,12 +101,7 @@ func (s *Server) handleSource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	source, unavailable := s.fetchSource(r, repo, upload, file)
-	dir, base := file.Path, ""
-	if i := strings.LastIndex(file.Path, "/"); i >= 0 {
-		dir, base = file.Path[:i+1], file.Path[i+1:]
-	} else {
-		dir, base = "", file.Path
-	}
+	dir, base := splitPath(file.Path)
 	data := map[string]any{
 		"Repo":           repo,
 		"Upload":         upload,

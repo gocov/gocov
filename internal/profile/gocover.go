@@ -85,12 +85,10 @@ func (GoParser) Parse(r io.Reader) (*Profile, error) {
 // parseGoLine parses "path:startLine.startCol,endLine.endCol numStmts count".
 // The path may contain colons, so the position spec is found from the last colon.
 func parseGoLine(line string) (string, Block, error) {
-	colon := strings.LastIndex(line, ":")
-	if colon <= 0 {
+	path, rest, ok := strings.CutLast(line, ":")
+	if !ok || path == "" {
 		return "", Block{}, fmt.Errorf("malformed line %q", line)
 	}
-	path := line[:colon]
-	rest := line[colon+1:]
 
 	fields := strings.Fields(rest)
 	if len(fields) != 3 {

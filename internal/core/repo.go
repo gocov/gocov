@@ -337,12 +337,12 @@ func NewToken() (string, error) {
 // single-segment prefix.
 func SlugPrefixes(slug string) []string {
 	var out []string
-	for i := len(slug); ; {
-		j := strings.LastIndex(slug[:i], "/")
-		if j < 0 {
+	for {
+		prefix, _, ok := strings.CutLast(slug, "/")
+		if !ok {
 			return out
 		}
-		out = append(out, slug[:j])
-		i = j
+		out = append(out, prefix)
+		slug = prefix
 	}
 }
