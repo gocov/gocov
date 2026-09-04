@@ -8,7 +8,6 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -27,7 +26,7 @@ const frontendPart = "mode: set\nexample.com/m/front.go:1.1,5.2 2 0\n"
 
 func TestMergedReportAcrossParts(t *testing.T) {
 	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// A single upload with no part is a one-part merged report identical to
 	// the upload — backward compatibility.
@@ -84,7 +83,7 @@ func TestMergedReportAcrossParts(t *testing.T) {
 
 func TestMergedReportReplaceNoDoubleCount(t *testing.T) {
 	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
-	ctx := context.Background()
+	ctx := t.Context()
 
 	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "part": "backend"}, backendPart)
 	// Re-uploading the same (commit, part) — a CI retry — must replace, not
@@ -124,16 +123,14 @@ func TestMergedReportConcurrentParts(t *testing.T) {
 	codes := make([]int, n)
 	var wg sync.WaitGroup
 	for i := range n {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
+		wg.Go(func() {
 			r := httptest.NewRequest(http.MethodPost, "/api/v1/upload", reqs[i].body)
 			r.Header.Set("Content-Type", reqs[i].ct)
 			r.Header.Set("Authorization", "Bearer secret-token")
 			rec := httptest.NewRecorder()
 			f.srv.ServeHTTP(rec, r)
 			codes[i] = rec.Code
-		}(i)
+		})
 	}
 	wg.Wait()
 
@@ -142,7 +139,7 @@ func TestMergedReportConcurrentParts(t *testing.T) {
 			t.Fatalf("concurrent upload %d: status %d", i, c)
 		}
 	}
-	cr, err := f.store.CommitReport(context.Background(), f.repo.ID, "c1")
+	cr, err := f.store.CommitReport(t.Context(), f.repo.ID, "c1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +150,7 @@ func TestMergedReportConcurrentParts(t *testing.T) {
 
 func TestMergedGateSelfHeals(t *testing.T) {
 	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
-	ctx := context.Background()
+	ctx := t.Context()
 	f.repo.Gate = store.Gate{MinCoverage: new(float64(50))}
 	if err := f.store.UpdateRepo(ctx, f.repo); err != nil {
 		t.Fatal(err)

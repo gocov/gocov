@@ -1,7 +1,6 @@
 package github
 
 import (
-	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -151,7 +150,7 @@ func TestInstallationTokenCached(t *testing.T) {
 	app := testApp(t, mintHandler(t, time.Hour, &mints))
 
 	for range 3 {
-		tok, _, err := app.installationToken(context.Background(), 42)
+		tok, _, err := app.installationToken(t.Context(), 42)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -170,7 +169,7 @@ func TestInstallationTokenRefreshesNearExpiry(t *testing.T) {
 	app := testApp(t, mintHandler(t, time.Minute, &mints))
 
 	for range 2 {
-		if _, _, err := app.installationToken(context.Background(), 42); err != nil {
+		if _, _, err := app.installationToken(t.Context(), 42); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -184,7 +183,7 @@ func TestInstallationTokenRevoked(t *testing.T) {
 		app := testApp(t, func(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"message":"Not Found"}`, status)
 		})
-		_, _, err := app.installationToken(context.Background(), 42)
+		_, _, err := app.installationToken(t.Context(), 42)
 		if !errors.Is(err, forge.ErrCredentialsRevoked) {
 			t.Errorf("status %d: err = %v, want ErrCredentialsRevoked", status, err)
 		}
@@ -195,7 +194,7 @@ func TestInstallationTokenServerError(t *testing.T) {
 	app := testApp(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	})
-	_, _, err := app.installationToken(context.Background(), 42)
+	_, _, err := app.installationToken(t.Context(), 42)
 	if err == nil || errors.Is(err, forge.ErrCredentialsRevoked) {
 		t.Errorf("err = %v, want a plain (transient) error", err)
 	}
@@ -214,11 +213,11 @@ func TestForgeClientUsesInstallationToken(t *testing.T) {
 		_, _ = w.Write([]byte("{}"))
 	})
 
-	fg, err := app.ForgeClient(context.Background(), 42)
+	fg, err := app.ForgeClient(t.Context(), 42)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = fg.PostBuildStatus(context.Background(), "acme/widgets", "abc", forge.BuildStatus{
+	err = fg.PostBuildStatus(t.Context(), "acme/widgets", "abc", forge.BuildStatus{
 		State: forge.StateSuccessful, Name: "gocov",
 	})
 	if err != nil {
@@ -239,7 +238,7 @@ func TestInstallationAccount(t *testing.T) {
 		}
 		_, _ = w.Write([]byte(`{"account":{"login":"acme"}}`))
 	})
-	login, err := app.InstallationAccount(context.Background(), 42)
+	login, err := app.InstallationAccount(t.Context(), 42)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +251,7 @@ func TestInstallationAccountNotFound(t *testing.T) {
 	app := testApp(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
 	})
-	_, err := app.InstallationAccount(context.Background(), 42)
+	_, err := app.InstallationAccount(t.Context(), 42)
 	if !errors.Is(err, forge.ErrCredentialsRevoked) {
 		t.Errorf("err = %v, want ErrCredentialsRevoked", err)
 	}
@@ -268,7 +267,7 @@ func TestInstallURLCached(t *testing.T) {
 		_, _ = w.Write([]byte(`{"html_url":"https://github.com/apps/gocov"}`))
 	})
 	for range 2 {
-		u, err := app.InstallURL(context.Background())
+		u, err := app.InstallURL(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -307,14 +306,14 @@ func TestForgeClientProbesCachedToken(t *testing.T) {
 	})
 
 	// First client: fresh mint, no probe.
-	if _, err := app.ForgeClient(context.Background(), 42); err != nil {
+	if _, err := app.ForgeClient(t.Context(), 42); err != nil {
 		t.Fatal(err)
 	}
 	if probes != 0 {
 		t.Errorf("fresh mint was probed %d times, want 0", probes)
 	}
 	// Second client: cache hit -> failed probe -> re-mint -> revoked.
-	_, err := app.ForgeClient(context.Background(), 42)
+	_, err := app.ForgeClient(t.Context(), 42)
 	if !errors.Is(err, forge.ErrCredentialsRevoked) {
 		t.Fatalf("err = %v, want ErrCredentialsRevoked", err)
 	}
@@ -335,7 +334,7 @@ func TestForgeClientValidCachedToken(t *testing.T) {
 		}
 	})
 	for range 2 {
-		if _, err := app.ForgeClient(context.Background(), 42); err != nil {
+		if _, err := app.ForgeClient(t.Context(), 42); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -81,10 +82,7 @@ type metaInfo struct {
 // Every field is best-effort — a shallow clone or an unknown CI just yields
 // empty strings.
 func detectMeta(env envFunc, git gitFunc, commit string) metaInfo {
-	ref := commit
-	if ref == "" {
-		ref = "HEAD"
-	}
+	ref := cmp.Or(commit, "HEAD")
 	m := metaInfo{}
 	if out, err := git("show", "-s", "--format=%s", ref); err == nil {
 		m.CommitMessage = firstLine(out)
@@ -143,9 +141,7 @@ func detectGitHubRun(env envFunc, readFile readFileFunc) runInfo {
 		RunID:      env("GITHUB_RUN_ID"),
 		RunAttempt: env("GITHUB_RUN_ATTEMPT"),
 	}
-	if ri.RunAttempt == "" {
-		ri.RunAttempt = "1"
-	}
+	ri.RunAttempt = cmp.Or(ri.RunAttempt, "1")
 	if path := env("GITHUB_EVENT_PATH"); path != "" && readFile != nil {
 		if data, err := readFile(path); err == nil {
 			var ev struct {
@@ -242,27 +238,17 @@ func gitlabBuild(env envFunc) buildInfo {
 	if sha := env("CI_MERGE_REQUEST_SOURCE_BRANCH_SHA"); sha != "" {
 		b.Commit = sha
 	}
-	if b.Branch == "" {
-		b.Branch = env("CI_MERGE_REQUEST_SOURCE_BRANCH_NAME")
-	}
+	b.Branch = cmp.Or(b.Branch, env("CI_MERGE_REQUEST_SOURCE_BRANCH_NAME"))
 	return b
 }
 
 // fill copies non-empty fields from other into b's empty ones — the
 // opposite precedence of merge, for stacking detection sources.
 func (b *buildInfo) fill(other buildInfo) {
-	if b.Repo == "" {
-		b.Repo = other.Repo
-	}
-	if b.Commit == "" {
-		b.Commit = other.Commit
-	}
-	if b.Branch == "" {
-		b.Branch = other.Branch
-	}
-	if b.PRID == "" {
-		b.PRID = other.PRID
-	}
+	b.Repo = cmp.Or(b.Repo, other.Repo)
+	b.Commit = cmp.Or(b.Commit, other.Commit)
+	b.Branch = cmp.Or(b.Branch, other.Branch)
+	b.PRID = cmp.Or(b.PRID, other.PRID)
 }
 
 // remoteSlugRe extracts "workspace/repo" from SSH and HTTPS remote URLs:

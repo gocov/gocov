@@ -10,6 +10,7 @@
 package main
 
 import (
+	"cmp"
 	"errors"
 	"flag"
 	"fmt"
@@ -52,9 +53,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	if cfg.Server == "" {
-		cfg.Server = defaultServer
-	}
+	cfg.Server = cmp.Or(cfg.Server, defaultServer)
 
 	fs := flag.NewFlagSet("upload", flag.ExitOnError)
 	server := fs.String("server", cfg.Server, "gocov server URL (or $GOCOV_SERVER)")

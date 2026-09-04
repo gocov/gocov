@@ -1,7 +1,6 @@
 package rest
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -56,10 +55,10 @@ func TestGetBytesBounds(t *testing.T) {
 	defer srv.Close()
 	c := &Client{Name: "test", BaseURL: srv.URL, HTTPClient: srv.Client()}
 
-	if got, err := c.GetBytes(context.Background(), "/d", "text/x-diff", 10); err != nil || len(got) != 10 {
+	if got, err := c.GetBytes(t.Context(), "/d", "text/x-diff", 10); err != nil || len(got) != 10 {
 		t.Errorf("got %d bytes, err %v; want 10, nil", len(got), err)
 	}
-	if _, err := c.GetBytes(context.Background(), "/d", "text/x-diff", 9); err == nil || !strings.Contains(err.Error(), "larger than") {
+	if _, err := c.GetBytes(t.Context(), "/d", "text/x-diff", 9); err == nil || !strings.Contains(err.Error(), "larger than") {
 		t.Errorf("err = %v, want the size error", err)
 	}
 }
@@ -79,16 +78,16 @@ func TestSendShapesBody(t *testing.T) {
 	var out struct {
 		OK bool `json:"ok"`
 	}
-	if err := c.JSON(context.Background(), http.MethodPost, "/x", map[string]int{"a": 1}, &out); err != nil || !out.OK {
+	if err := c.JSON(t.Context(), http.MethodPost, "/x", map[string]int{"a": 1}, &out); err != nil || !out.OK {
 		t.Fatalf("JSON: %v, out %+v", err, out)
 	}
 	if gotBody != `{"a":1}` || gotType != "application/json" {
 		t.Errorf("body %q type %q", gotBody, gotType)
 	}
-	if err := c.Send(context.Background(), http.MethodDelete, "/x", nil); err != nil || gotBody != "" || gotType != "" {
+	if err := c.Send(t.Context(), http.MethodDelete, "/x", nil); err != nil || gotBody != "" || gotType != "" {
 		t.Errorf("nil payload must send no body: %v body %q type %q", err, gotBody, gotType)
 	}
-	next, err := c.GetPage(context.Background(), "/x", &out)
+	next, err := c.GetPage(t.Context(), "/x", &out)
 	if err != nil || next != "http://next" {
 		t.Errorf("GetPage next = %q, err %v", next, err)
 	}

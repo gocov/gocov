@@ -1,6 +1,9 @@
 package profile
 
-import "sort"
+import (
+	"cmp"
+	"slices"
+)
 
 // Merge combines coverage profiles into one, summing the hit counts of
 // blocks that share a position so a statement covered by any input is
@@ -52,18 +55,18 @@ func Merge(profiles ...*Profile) *Profile {
 	for path := range byFile {
 		paths = append(paths, path)
 	}
-	sort.Strings(paths)
+	slices.Sort(paths)
 	for _, path := range paths {
 		blocks := byFile[path]
 		merged := make([]Block, 0, len(blocks))
 		for _, b := range blocks {
 			merged = append(merged, b)
 		}
-		sort.Slice(merged, func(i, j int) bool {
-			if merged[i].StartLine != merged[j].StartLine {
-				return merged[i].StartLine < merged[j].StartLine
+		slices.SortFunc(merged, func(a, b Block) int {
+			if c := cmp.Compare(a.StartLine, b.StartLine); c != 0 {
+				return c
 			}
-			return merged[i].StartCol < merged[j].StartCol
+			return cmp.Compare(a.StartCol, b.StartCol)
 		})
 		out.Files = append(out.Files, File{Path: path, Blocks: merged})
 	}

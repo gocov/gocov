@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -25,7 +24,7 @@ const webhookSecret = "shhh"
 func webhookServer(t *testing.T) (*Server, *storemem.Store, *forgefake.Forge) {
 	t.Helper()
 	st := storemem.New()
-	if err := st.CreateWorkspace(context.Background(), &store.Workspace{
+	if err := st.CreateWorkspace(t.Context(), &store.Workspace{
 		Forge: "github", Prefix: "acme", Token: "tok", DefaultBranch: "main",
 		GitHubInstallationID: 4242,
 	}); err != nil {
@@ -98,7 +97,7 @@ func TestWebhookInstallationFlipsBrokenFlag(t *testing.T) {
 	srv, st, _ := webhookServer(t)
 
 	broken := func() bool {
-		ws, err := st.WorkspaceByPrefix(context.Background(), "acme")
+		ws, err := st.WorkspaceByPrefix(t.Context(), "acme")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -133,7 +132,7 @@ func TestWebhookInstallationFlipsBrokenFlag(t *testing.T) {
 
 func TestWebhookRepositoryVisibilityChange(t *testing.T) {
 	srv, st, ff := webhookServer(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	repo := &store.Repo{
 		Forge: "github", Slug: "acme/widgets", Token: "tok-r",
 		DefaultBranch: "main", Visibility: store.VisibilityPublic,

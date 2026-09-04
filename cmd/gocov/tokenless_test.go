@@ -97,7 +97,7 @@ func (fakeApp) VerifyRunClaim(context.Context, int64, github.RunClaim) error {
 // to a claim-accepting App installation.
 func newTokenlessServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	st := storemem.New()
 	repo := &store.Repo{Slug: "acme/widgets", Token: "tok", DefaultBranch: "main", Forge: "github"}
 	if err := st.CreateRepo(ctx, repo); err != nil {

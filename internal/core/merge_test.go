@@ -1,7 +1,6 @@
 package core
 
 import (
-	"context"
 	"io"
 	"log/slog"
 	"testing"
@@ -17,7 +16,7 @@ func newPipeline(t *testing.T, gate store.Gate) (*Pipeline, *storemem.Store, *st
 	t.Helper()
 	st := storemem.New()
 	repo := &store.Repo{Forge: "github", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main", Gate: gate}
-	if err := st.CreateRepo(context.Background(), repo); err != nil {
+	if err := st.CreateRepo(t.Context(), repo); err != nil {
 		t.Fatal(err)
 	}
 	return &Pipeline{Store: st, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), BaseURL: "https://cov.example.com"}, st, repo
@@ -41,7 +40,7 @@ func addPart(t *testing.T, st *storemem.Store, repo *store.Repo, commit, part st
 			{StartLine: 3, EndLine: 4, NumStmts: int(total - covered), Count: 0},
 		},
 	}
-	if err := st.CreateUpload(context.Background(), u, []*store.UploadFile{f}); err != nil {
+	if err := st.CreateUpload(t.Context(), u, []*store.UploadFile{f}); err != nil {
 		t.Fatal(err)
 	}
 	return u
@@ -49,7 +48,7 @@ func addPart(t *testing.T, st *storemem.Store, repo *store.Repo, commit, part st
 
 func TestRecomputeMergesEveryPart(t *testing.T) {
 	p, st, repo := newPipeline(t, store.Gate{})
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// One part alone: the merged report is just that part.
 	back := addPart(t, st, repo, "c1", "backend", 6, 10)
@@ -94,7 +93,7 @@ func TestRecomputeEvaluatesTheGateOnTheMergedTotal(t *testing.T) {
 	// The point of merging: a part that fails on its own passes once the
 	// rest of the commit is in, so a gate must never fire on one part.
 	p, st, repo := newPipeline(t, store.Gate{MinCoverage: pct(70)})
-	ctx := context.Background()
+	ctx := t.Context()
 
 	back := addPart(t, st, repo, "c1", "backend", 5, 10) // 50% alone
 	merged, err := p.Recompute(ctx, repo, back)

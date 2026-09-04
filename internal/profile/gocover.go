@@ -2,9 +2,10 @@ package profile
 
 import (
 	"bufio"
+	"cmp"
 	"fmt"
 	"io"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -69,16 +70,15 @@ func (GoParser) Parse(r io.Reader) (*Profile, error) {
 		for _, b := range blocks {
 			f.Blocks = append(f.Blocks, *b)
 		}
-		sort.Slice(f.Blocks, func(i, j int) bool {
-			a, b := f.Blocks[i], f.Blocks[j]
-			if a.StartLine != b.StartLine {
-				return a.StartLine < b.StartLine
+		slices.SortFunc(f.Blocks, func(a, b Block) int {
+			if c := cmp.Compare(a.StartLine, b.StartLine); c != 0 {
+				return c
 			}
-			return a.StartCol < b.StartCol
+			return cmp.Compare(a.StartCol, b.StartCol)
 		})
 		p.Files = append(p.Files, f)
 	}
-	sort.Slice(p.Files, func(i, j int) bool { return p.Files[i].Path < p.Files[j].Path })
+	slices.SortFunc(p.Files, func(a, b File) int { return cmp.Compare(a.Path, b.Path) })
 	return p, nil
 }
 

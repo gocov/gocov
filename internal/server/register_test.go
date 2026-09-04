@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -72,7 +71,7 @@ func TestHostedAdmitsNonMemberAndRoutesToRegistration(t *testing.T) {
 	sess := hostedSignIn(t, f, "/", "/onboarding")
 
 	// The user exists with the login-time workspace snapshot (D3).
-	users, err := f.store.ListUsers(context.Background())
+	users, err := f.store.ListUsers(t.Context())
 	if err != nil || len(users) != 1 {
 		t.Fatalf("users = %v, %v", users, err)
 	}
@@ -88,7 +87,7 @@ func TestHostedAdmitsNonMemberAndRoutesToRegistration(t *testing.T) {
 
 func TestHostedUserWithMembershipLandsOnIndex(t *testing.T) {
 	f := newHostedFixture(t, &fakeProvider{identity: memberIdentity()})
-	if err := f.store.CreateWorkspace(context.Background(),
+	if err := f.store.CreateWorkspace(t.Context(),
 		&store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "ws-tok", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +116,7 @@ func TestRegistrationWorksInPrivateMode(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("POST /register: status = %d, body = %s", rec.Code, rec.Body)
 	}
-	if _, err := f.store.WorkspaceByPrefix(context.Background(), "personal"); err != nil {
+	if _, err := f.store.WorkspaceByPrefix(t.Context(), "personal"); err != nil {
 		t.Fatalf("workspace not registered: %v", err)
 	}
 	// The forge-list check still gates: a workspace the identity does not list.
@@ -150,7 +149,7 @@ func TestHostedReauthHonorsPendingInstall(t *testing.T) {
 
 func TestRegisterPageStates(t *testing.T) {
 	f := newHostedFixture(t, &fakeProvider{identity: memberIdentity()})
-	ctx := context.Background()
+	ctx := t.Context()
 	// "personal" is free; "acme" is taken by a GitHub workspace of the same
 	// name, so it must render unavailable.
 	if err := f.store.CreateWorkspace(ctx,
@@ -190,7 +189,7 @@ func TestRegisterCreatesWorkspaceAndShowsTokenOnce(t *testing.T) {
 		t.Fatalf("register: %d -> %q, want redirect to the workspace-ready state", rec.Code, rec.Header().Get("Location"))
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	ws, err := f.store.WorkspaceByPrefix(ctx, "personal")
 	if err != nil {
 		t.Fatalf("workspace not created: %v", err)
@@ -236,14 +235,14 @@ func TestRegisterRejectsForeignPrefix(t *testing.T) {
 			t.Errorf("register %q: status = %d, want 403", prefix, rec.Code)
 		}
 	}
-	if _, err := f.store.WorkspaceByPrefix(context.Background(), "evilcorp"); err == nil {
+	if _, err := f.store.WorkspaceByPrefix(t.Context(), "evilcorp"); err == nil {
 		t.Error("rejected registration created a workspace")
 	}
 }
 
 func TestRegisterCrossForgeCollisionConflicts(t *testing.T) {
 	f := newHostedFixture(t, &fakeProvider{identity: memberIdentity()})
-	if err := f.store.CreateWorkspace(context.Background(),
+	if err := f.store.CreateWorkspace(t.Context(),
 		&store.Workspace{Forge: "github", Prefix: "acme", Token: "gh-tok", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +258,7 @@ func TestRegisterAlreadyRegisteredJoins(t *testing.T) {
 	// it is a non-event (D2): membership is granted, no new workspace.
 	f := newHostedFixture(t, &fakeProvider{identity: memberIdentity()})
 	sess := hostedSignIn(t, f, "/", "/onboarding")
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := f.store.CreateWorkspace(ctx,
 		&store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "ws-tok", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
@@ -291,7 +290,7 @@ func TestReLoginRefreshesForgeWorkspaces(t *testing.T) {
 	provider.identity.Workspaces = []string{"acme", "personal", "newco"}
 	hostedSignIn(t, f, "/", "/onboarding")
 
-	users, _ := f.store.ListUsers(context.Background())
+	users, _ := f.store.ListUsers(t.Context())
 	if len(users) != 1 || !reflect.DeepEqual(users[0].ForgeWorkspaces, []string{"acme", "personal", "newco"}) {
 		t.Errorf("stored list not refreshed: %+v", users)
 	}
@@ -299,7 +298,7 @@ func TestReLoginRefreshesForgeWorkspaces(t *testing.T) {
 
 func TestHostedLoginPageHasNoDenialOrWorkspaceHints(t *testing.T) {
 	f := newHostedFixture(t, &fakeProvider{identity: memberIdentity()})
-	if err := f.store.CreateWorkspace(context.Background(),
+	if err := f.store.CreateWorkspace(t.Context(),
 		&store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "ws-tok", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}

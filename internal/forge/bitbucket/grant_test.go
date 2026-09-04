@@ -1,7 +1,6 @@
 package bitbucket
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -68,7 +67,7 @@ func TestExchange(t *testing.T) {
 		}
 	})
 
-	grant, err := c.Exchange(context.Background(), "thecode", "https://cb")
+	grant, err := c.Exchange(t.Context(), "thecode", "https://cb")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +94,7 @@ func TestRefreshRotates(t *testing.T) {
 			"access_token": "at-2", "refresh_token": "rt-2", "expires_in": 7200,
 		})
 	})
-	grant, err := c.Refresh(context.Background(), "rt-1")
+	grant, err := c.Refresh(t.Context(), "rt-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +119,7 @@ func TestRefreshRevoked(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(body))
 		})
-		_, err := c.Refresh(context.Background(), "rt-dead")
+		_, err := c.Refresh(t.Context(), "rt-dead")
 		if !errors.Is(err, forge.ErrCredentialsRevoked) {
 			t.Errorf("%s: err = %v, want ErrCredentialsRevoked", body, err)
 		}
@@ -134,7 +133,7 @@ func TestExchangeUnauthorizedClientIsNotRevocation(t *testing.T) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"error":"unauthorized_client"}`))
 	})
-	_, err := c.Exchange(context.Background(), "code", "https://cb")
+	_, err := c.Exchange(t.Context(), "code", "https://cb")
 	if err == nil || errors.Is(err, forge.ErrCredentialsRevoked) {
 		t.Errorf("err = %v, want a plain error", err)
 	}
@@ -144,7 +143,7 @@ func TestRefreshTransientError(t *testing.T) {
 	c := testConsumer(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	})
-	_, err := c.Refresh(context.Background(), "rt-1")
+	_, err := c.Refresh(t.Context(), "rt-1")
 	if err == nil || errors.Is(err, forge.ErrCredentialsRevoked) {
 		t.Errorf("err = %v, want a plain (transient) error", err)
 	}
@@ -161,7 +160,7 @@ func TestForgeClientUsesBearer(t *testing.T) {
 	c := &Consumer{Key: "k", Secret: "s", APIBaseURL: srv.URL, HTTPClient: srv.Client()}
 
 	fg := c.ForgeClient("at-1")
-	err := fg.PostBuildStatus(context.Background(), "acme/widgets", "abc", forge.BuildStatus{
+	err := fg.PostBuildStatus(t.Context(), "acme/widgets", "abc", forge.BuildStatus{
 		State: forge.StateSuccessful, Name: "gocov", Key: "gocov/coverage",
 	})
 	if err != nil {

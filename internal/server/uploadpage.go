@@ -7,13 +7,13 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"maps"
 	"net/http"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -150,14 +150,19 @@ func (s *Server) buildFilesViewData(ctx context.Context, upload *store.Upload, b
 	}
 
 	if base != nil {
-		sort.SliceStable(rows, func(i, j int) bool {
-			if rows[i].Changed != rows[j].Changed {
-				return rows[i].Changed
+		slices.SortStableFunc(rows, func(a, b uploadFileRow) int {
+			if a.Changed != b.Changed {
+				if a.Changed {
+					return -1
+				}
+				return 1
 			}
-			if rows[i].Changed && rows[i].DeltaVal != rows[j].DeltaVal {
-				return rows[i].DeltaVal < rows[j].DeltaVal
+			if a.Changed {
+				if c := cmp.Compare(a.DeltaVal, b.DeltaVal); c != 0 {
+					return c
+				}
 			}
-			return rows[i].Path < rows[j].Path
+			return cmp.Compare(a.Path, b.Path)
 		})
 	}
 
@@ -594,7 +599,7 @@ func uncoveredRanges(blocks []profile.Block) string {
 	if len(spans) == 0 {
 		return ""
 	}
-	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
+	slices.SortFunc(spans, func(a, b span) int { return cmp.Compare(a.start, b.start) })
 	merged := spans[:1]
 	for _, sp := range spans[1:] {
 		last := &merged[len(merged)-1]
@@ -658,7 +663,7 @@ func newlyUncovered(cur, base []profile.Block) string {
 	if len(lines) == 0 {
 		return ""
 	}
-	sort.Ints(lines)
+	slices.Sort(lines)
 	return diffcov.Ranges(lines)
 }
 

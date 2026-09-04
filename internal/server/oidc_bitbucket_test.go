@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
@@ -103,7 +102,7 @@ func bbClaims(repoUUID string, auds []any) map[string]any {
 // issuers and fetches keys from the local test issuer.
 func newBitbucketOIDCFixture(t *testing.T, forgeUUID string) (*fixture, *oidcIssuer) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	st := storemem.New()
 	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "secret-token", DefaultBranch: "main"}
 	if err := st.CreateRepo(ctx, repo); err != nil {
@@ -155,7 +154,7 @@ func TestBitbucketOIDCHappyPath(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	u, err := f.store.Upload(context.Background(), resp.ID)
+	u, err := f.store.Upload(t.Context(), resp.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

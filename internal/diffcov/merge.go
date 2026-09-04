@@ -1,6 +1,9 @@
 package diffcov
 
-import "sort"
+import (
+	"cmp"
+	"slices"
+)
 
 // Merge combines the diff-coverage results of the separate parts of one
 // commit into a single result, so a changed line counted as covered by any
@@ -45,7 +48,7 @@ func Merge(results ...*Result) (*Result, []string) {
 			conflicts = append(conflicts, path)
 		}
 	}
-	sort.Slice(out.Files, func(i, j int) bool { return out.Files[i].Path < out.Files[j].Path })
+	slices.SortFunc(out.Files, func(a, b FileCoverage) int { return cmp.Compare(a.Path, b.Path) })
 	for i := range out.Files {
 		out.CoveredLines += out.Files[i].CoveredLines
 		out.TotalLines += out.Files[i].TotalLines
@@ -63,8 +66,8 @@ func Merge(results ...*Result) (*Result, []string) {
 			}
 		}
 	}
-	sort.Strings(out.UnmatchedFiles)
-	sort.Strings(conflicts)
+	slices.Sort(out.UnmatchedFiles)
+	slices.Sort(conflicts)
 	return out, conflicts
 }
 
@@ -112,7 +115,7 @@ func mergeFile(path string, parts []FileCoverage) (FileCoverage, bool) {
 			uncovered = append(uncovered, ln)
 		}
 	}
-	sort.Ints(uncovered)
+	slices.Sort(uncovered)
 	// When parts disagree, the union of their uncovered lines can exceed the
 	// largest part's total (each part only saw its own changed lines), which
 	// would make CoveredLines negative. The distinct uncovered lines are all

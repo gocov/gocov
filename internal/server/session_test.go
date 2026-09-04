@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -92,10 +91,10 @@ func TestLogoutKillsSessionServerSide(t *testing.T) {
 func TestExpiredSessionDoesNotAuthenticate(t *testing.T) {
 	f := newAuthFixture(t, &fakeProvider{identity: memberIdentity()}, nil)
 	u := &store.User{Forge: "bitbucket", ForgeUUID: "{u}", Email: "e@x", DisplayName: "E"}
-	if err := f.store.UpsertUser(context.Background(), u); err != nil {
+	if err := f.store.UpsertUser(t.Context(), u); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.store.CreateSession(context.Background(), &store.Session{
+	if err := f.store.CreateSession(t.Context(), &store.Session{
 		TokenHash: hashToken("expired-token"),
 		UserID:    u.ID,
 		ExpiresAt: time.Now().Add(-time.Minute),

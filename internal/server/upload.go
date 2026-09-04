@@ -44,7 +44,7 @@ type uploadResponse struct {
 	CodeInsights string   `json:"code_insights"` // "posted", "skipped" or "error: ..."
 	// RepoCreated reports that this upload auto-registered the repo
 	// through a workspace token.
-	RepoCreated bool `json:"repo_created,omitempty"`
+	RepoCreated bool `json:"repo_created,omitzero"`
 
 	// Gate reports the coverage-gate outcome: "passed" or
 	// "failed: <reasons>". Omitted when the repo has no gate configured.
@@ -52,7 +52,7 @@ type uploadResponse struct {
 
 	// IgnoredFiles is how many report files the repo's and the request's
 	// ignore patterns dropped before measuring. Omitted when none.
-	IgnoredFiles int `json:"ignored_files,omitempty"`
+	IgnoredFiles int `json:"ignored_files,omitzero"`
 
 	// Warnings carries non-fatal notices about how the merged report was
 	// built — e.g. a diff-coverage file merged conservatively because its
@@ -246,8 +246,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		resp.Gate = res.Merged.Verdict.String()
 	}
 	if md := res.Merged.Upload.DiffCoverage; md != nil {
-		pct := md.Percent()
-		resp.DiffPct = &pct
+		resp.DiffPct = new(md.Percent())
 		resp.DiffCoveredLines = &md.CoveredLines
 		resp.DiffTotalLines = &md.TotalLines
 	}

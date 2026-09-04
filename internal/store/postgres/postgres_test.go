@@ -24,7 +24,7 @@ import (
 func newTestStore(t *testing.T) *postgres.Store {
 	t.Helper()
 	st := postgres.New(testpg.Pool(t))
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -37,7 +37,7 @@ func newTestStore(t *testing.T) *postgres.Store {
 
 func TestRepoLifecycle(t *testing.T) {
 	st := newTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	repo := &store.Repo{
 		Forge:         "bitbucket",
@@ -202,7 +202,7 @@ func TestRepoLifecycle(t *testing.T) {
 
 func TestWorkspaceLifecycle(t *testing.T) {
 	st := newTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	minDiff := 70.0
 	w := &store.Workspace{
@@ -285,7 +285,7 @@ func TestWorkspaceLifecycle(t *testing.T) {
 
 func TestUploadLifecycle(t *testing.T) {
 	st := newTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
 	if err := st.CreateRepo(ctx, repo); err != nil {
@@ -398,7 +398,7 @@ func TestUploadLifecycle(t *testing.T) {
 // a name-prefix substring untouched.
 func TestDeleteWorkspaceCascade(t *testing.T) {
 	st := newTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	ws := &store.Workspace{Forge: "github", Prefix: "acme", Token: "acme-tok", DefaultBranch: "main"}
 	if err := st.CreateWorkspace(ctx, ws); err != nil {
@@ -438,7 +438,7 @@ func TestDeleteWorkspaceCascade(t *testing.T) {
 
 func TestCommitReportLifecycle(t *testing.T) {
 	st := newTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
 	if err := st.CreateRepo(ctx, repo); err != nil {
@@ -539,7 +539,7 @@ func TestCommitReportLifecycle(t *testing.T) {
 
 func TestWithCommitReportTx(t *testing.T) {
 	st := newTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
 	if err := st.CreateRepo(ctx, repo); err != nil {
@@ -556,9 +556,7 @@ func TestWithCommitReportTx(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make([]error, n)
 	for i := range n {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
+		wg.Go(func() {
 			cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			defer cancel()
 			errs[i] = st.WithCommitReportTx(cctx, repo.ID, "c1", func(ctx context.Context, tx store.CommitTx) error {
@@ -569,7 +567,7 @@ func TestWithCommitReportTx(t *testing.T) {
 					RepoID: repo.ID, CommitSHA: "c1", Branch: "main", TotalPct: float64(i), PartCount: 1,
 				})
 			})
-		}(i)
+		})
 	}
 	wg.Wait()
 	for i, err := range errs {
@@ -631,7 +629,7 @@ func TestWithCommitReportTx(t *testing.T) {
 func TestCommitReportBackfill(t *testing.T) {
 	pool := testpg.Pool(t)
 	st := postgres.New(pool)
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -689,7 +687,7 @@ func TestCommitReportBackfill(t *testing.T) {
 
 func TestTryPushStatus(t *testing.T) {
 	st := newTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
 	if err := st.CreateRepo(ctx, repo); err != nil {
 		t.Fatal(err)
@@ -739,16 +737,14 @@ func TestTryPushStatus(t *testing.T) {
 	var order []int64
 	var wg sync.WaitGroup
 	for _, v := range []int64{100, 101, 102, 103, 104} {
-		wg.Add(1)
-		go func(v int64) {
-			defer wg.Done()
+		wg.Go(func() {
 			_, _ = st.TryPushStatus(ctx, repo.ID, "c2", v, func(context.Context) error {
 				mu.Lock()
 				order = append(order, v)
 				mu.Unlock()
 				return nil
 			})
-		}(v)
+		})
 	}
 	wg.Wait()
 	if len(order) == 0 {
@@ -767,7 +763,7 @@ func TestTryPushStatus(t *testing.T) {
 
 func TestUserLifecycle(t *testing.T) {
 	st := newTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	u := &store.User{Forge: "bitbucket", ForgeUUID: "{u1}", Email: "jane@example.com", DisplayName: "Jane Dev",
 		ForgeWorkspaces: []string{"acme", "personal"}}
@@ -829,7 +825,7 @@ func TestUserLifecycle(t *testing.T) {
 
 func TestSessionLifecycle(t *testing.T) {
 	st := newTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	u := &store.User{Forge: "bitbucket", ForgeUUID: "{s1}", Email: "s@example.com", DisplayName: "S"}
 	if err := st.UpsertUser(ctx, u); err != nil {
@@ -958,7 +954,7 @@ func TestWithGrantLock(t *testing.T) {
 
 func TestWorkspaceMembership(t *testing.T) {
 	st := newTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	u := &store.User{Forge: "bitbucket", ForgeUUID: "{m1}", DisplayName: "Member"}
 	if err := st.UpsertUser(ctx, u); err != nil {
@@ -1049,7 +1045,7 @@ func TestWorkspaceMembership(t *testing.T) {
 
 func TestRegisterWorkspace(t *testing.T) {
 	st := newTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	u := &store.User{Forge: "bitbucket", ForgeUUID: "{r1}", DisplayName: "Founder"}
 	if err := st.UpsertUser(ctx, u); err != nil {
@@ -1101,7 +1097,7 @@ func TestBitbucketGrantEncryptedAtRest(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.SetCipher(box)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	w := &store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "ws-tok", DefaultBranch: "main"}
 	if err := st.CreateWorkspace(ctx, w); err != nil {
@@ -1182,7 +1178,7 @@ func TestGitLabGrantEncryptedAtRest(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.SetCipher(box)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	w := &store.Workspace{Forge: "gitlab", Prefix: "grp/sub", Token: "ws-tok", DefaultBranch: "main"}
 	if err := st.CreateWorkspace(ctx, w); err != nil {
@@ -1229,7 +1225,7 @@ func TestGitLabGrantEncryptedAtRest(t *testing.T) {
 
 func TestTokenlessClaims(t *testing.T) {
 	st := newTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	repo := &store.Repo{Forge: "github", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
 	if err := st.CreateRepo(ctx, repo); err != nil {
@@ -1270,7 +1266,7 @@ func TestTokenlessClaims(t *testing.T) {
 // feed either.
 func TestCommitReportsExcludePRBuilds(t *testing.T) {
 	st := newTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	repo := &store.Repo{Forge: "github", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
 	if err := st.CreateRepo(ctx, repo); err != nil {

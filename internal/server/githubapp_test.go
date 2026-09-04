@@ -81,7 +81,7 @@ func newGitHubAppFixture(t *testing.T, hosted, withWorkspace bool) (*githubAppFi
 	var ws *store.Workspace
 	if withWorkspace {
 		ws = &store.Workspace{Forge: "github", Prefix: "acme", Token: "ws-secret", DefaultBranch: "main"}
-		if err := st.CreateWorkspace(context.Background(), ws); err != nil {
+		if err := st.CreateWorkspace(t.Context(), ws); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -137,7 +137,7 @@ func signInVia(t *testing.T, f *fixture, forgeName string) *http.Cookie {
 
 func (f *githubAppFixture) reloadWorkspace(t *testing.T, prefix string) *store.Workspace {
 	t.Helper()
-	ws, err := f.store.WorkspaceByPrefix(context.Background(), prefix)
+	ws, err := f.store.WorkspaceByPrefix(t.Context(), prefix)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func (f *githubAppFixture) connectWorkspace(t *testing.T, installationID int64) 
 	t.Helper()
 	ws := f.reloadWorkspace(t, "acme")
 	ws.GitHubInstallationID = installationID
-	if err := f.store.UpdateWorkspace(context.Background(), ws); err != nil {
+	if err := f.store.UpdateWorkspace(t.Context(), ws); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -184,7 +184,7 @@ func TestGitHubSetupReconnectClearsBroken(t *testing.T) {
 	ws := f.reloadWorkspace(t, "acme")
 	ws.GitHubInstallationID = 41
 	ws.GitHubAppBroken = true
-	if err := f.store.UpdateWorkspace(context.Background(), ws); err != nil {
+	if err := f.store.UpdateWorkspace(t.Context(), ws); err != nil {
 		t.Fatal(err)
 	}
 
@@ -205,7 +205,7 @@ func TestGitHubSetupRejectsForeignInstallation(t *testing.T) {
 	// proves nothing.
 	f, sess := newGitHubAppFixture(t, true, true)
 	foreign := &store.Workspace{Forge: "github", Prefix: "evilcorp", Token: "evil-tok", DefaultBranch: "main"}
-	if err := f.store.CreateWorkspace(context.Background(), foreign); err != nil {
+	if err := f.store.CreateWorkspace(t.Context(), foreign); err != nil {
 		t.Fatal(err)
 	}
 	f.app.accounts[7] = "evilcorp"
@@ -235,7 +235,7 @@ func TestGitHubSetupRejectsForeignInstallation(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "github.com/organizations/strangers/settings/oauth_application_policy") {
 		t.Errorf("claim-denied page missing the org OAuth-policy link:\n%s", rec.Body)
 	}
-	if _, err := f.store.WorkspaceByPrefix(context.Background(), "strangers"); err == nil {
+	if _, err := f.store.WorkspaceByPrefix(t.Context(), "strangers"); err == nil {
 		t.Error("foreign claim must not register a workspace")
 	}
 }
@@ -307,7 +307,7 @@ func TestGitHubSetupClaimPrivateMode(t *testing.T) {
 	if loc := rec.Header().Get("Location"); loc != "/onboarding?ws=janedev" {
 		t.Errorf("redirect = %q, want the workspace-ready state", loc)
 	}
-	ws, err := f.store.WorkspaceByPrefix(context.Background(), "janedev")
+	ws, err := f.store.WorkspaceByPrefix(t.Context(), "janedev")
 	if err != nil {
 		t.Fatalf("private-mode install must register the workspace: %v", err)
 	}
@@ -326,7 +326,7 @@ func TestGitHubSetupClaimDeniedNonMember(t *testing.T) {
 	if rec := get(f.fixture, "/github/setup?installation_id=7", sess); rec.Code != http.StatusForbidden {
 		t.Errorf("status = %d, want 403", rec.Code)
 	}
-	if _, err := f.store.WorkspaceByPrefix(context.Background(), "stranger"); err == nil {
+	if _, err := f.store.WorkspaceByPrefix(t.Context(), "stranger"); err == nil {
 		t.Error("an unvouched account must not be registered")
 	}
 }
@@ -349,7 +349,7 @@ func (f *githubAppFixture) uploadRepo(t *testing.T) {
 	t.Helper()
 	repo := &store.Repo{Forge: "github", Slug: "acme/widgets", Token: "repo-token",
 		DefaultBranch: "main"}
-	if err := f.store.CreateRepo(context.Background(), repo); err != nil {
+	if err := f.store.CreateRepo(t.Context(), repo); err != nil {
 		t.Fatal(err)
 	}
 	f.repo = repo
@@ -418,7 +418,7 @@ func TestUploadHealsBrokenFlag(t *testing.T) {
 	f.connectWorkspace(t, 42)
 	ws := f.reloadWorkspace(t, "acme")
 	ws.GitHubAppBroken = true
-	if err := f.store.UpdateWorkspace(context.Background(), ws); err != nil {
+	if err := f.store.UpdateWorkspace(t.Context(), ws); err != nil {
 		t.Fatal(err)
 	}
 	f.uploadRepo(t)
@@ -453,7 +453,7 @@ func TestUploadWorkspaceTokenUsesInstallation(t *testing.T) {
 	if resp.BuildStatus != "posted" {
 		t.Errorf("build status = %q, want posted through the installation", resp.BuildStatus)
 	}
-	repo, err := f.store.RepoBySlug(context.Background(), "acme/newrepo")
+	repo, err := f.store.RepoBySlug(t.Context(), "acme/newrepo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -467,7 +467,7 @@ func TestSettingsPageBrokenState(t *testing.T) {
 	f.connectWorkspace(t, 42)
 	ws := f.reloadWorkspace(t, "acme")
 	ws.GitHubAppBroken = true
-	if err := f.store.UpdateWorkspace(context.Background(), ws); err != nil {
+	if err := f.store.UpdateWorkspace(t.Context(), ws); err != nil {
 		t.Fatal(err)
 	}
 

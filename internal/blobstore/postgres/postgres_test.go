@@ -2,7 +2,6 @@ package postgres_test
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"testing"
 
@@ -14,7 +13,7 @@ import (
 
 func TestBlobstore(t *testing.T) {
 	pool := testpg.Pool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	// The blobs table is owned by the store migrations.
 	if err := storepg.New(pool).Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)

@@ -2,10 +2,10 @@
 package memory
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -116,7 +116,7 @@ func (s *Store) PublicRepoSlugs(_ context.Context, limit int) ([]string, error) 
 			out = append(out, r.Slug)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
@@ -194,7 +194,7 @@ func (s *Store) ListRepos(_ context.Context) ([]*store.Repo, error) {
 	for _, r := range s.repos {
 		out = append(out, copyRepo(r))
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Slug < out[j].Slug })
+	slices.SortFunc(out, func(a, b *store.Repo) int { return cmp.Compare(a.Slug, b.Slug) })
 	return out, nil
 }
 
@@ -352,7 +352,7 @@ func (s *Store) ListWorkspaces(_ context.Context) ([]*store.Workspace, error) {
 		cp := *w
 		out = append(out, &cp)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Prefix < out[j].Prefix })
+	slices.SortFunc(out, func(a, b *store.Workspace) int { return cmp.Compare(a.Prefix, b.Prefix) })
 	return out, nil
 }
 
@@ -381,7 +381,7 @@ func (s *Store) ListWorkspacesForUser(_ context.Context, userID int64) ([]*store
 			out = append(out, &cp)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Prefix < out[j].Prefix })
+	slices.SortFunc(out, func(a, b *store.Workspace) int { return cmp.Compare(a.Prefix, b.Prefix) })
 	return out, nil
 }
 
@@ -427,7 +427,7 @@ func (s *Store) ListUsers(_ context.Context) ([]*store.User, error) {
 		cp := *u
 		out = append(out, &cp)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	slices.SortFunc(out, func(a, b *store.User) int { return cmp.Compare(a.ID, b.ID) })
 	return out, nil
 }
 
@@ -506,7 +506,7 @@ func (s *Store) CreateUpload(_ context.Context, u *store.Upload, files []*store.
 		fcp.UploadID = u.ID
 		fs = append(fs, &fcp)
 	}
-	sort.Slice(fs, func(i, j int) bool { return fs[i].Path < fs[j].Path })
+	slices.SortFunc(fs, func(a, b *store.UploadFile) int { return cmp.Compare(a.Path, b.Path) })
 	s.files[u.ID] = fs
 	return nil
 }
@@ -538,7 +538,7 @@ func (s *Store) ListUploads(_ context.Context, repoID int64, limit int) ([]*stor
 			out = append(out, copyUpload(u))
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
+	slices.SortFunc(out, func(a, b *store.Upload) int { return cmp.Compare(b.ID, a.ID) })
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
@@ -569,7 +569,7 @@ func (s *Store) ListBranchUploads(_ context.Context, repoID int64, branch string
 			out = append(out, copyUpload(u))
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
+	slices.SortFunc(out, func(a, b *store.Upload) int { return cmp.Compare(b.ID, a.ID) })
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
@@ -592,7 +592,7 @@ func (s *Store) LatestUploadsPerPart(_ context.Context, repoID int64, commitSHA 
 	for _, u := range latest {
 		out = append(out, copyUpload(u))
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	slices.SortFunc(out, func(a, b *store.Upload) int { return cmp.Compare(a.ID, b.ID) })
 	return out, nil
 }
 
@@ -764,7 +764,7 @@ func (s *Store) ListBranchCommitReports(_ context.Context, repoID int64, branch 
 			out = append(out, copyCommitReport(cr))
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
+	slices.SortFunc(out, func(a, b *store.CommitReport) int { return cmp.Compare(b.ID, a.ID) })
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}

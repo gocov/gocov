@@ -1,13 +1,13 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"math"
 	"net/http"
 	"net/url"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -186,7 +186,7 @@ func (s *Server) buildDashboard(r *http.Request, selected string) (*dashboardVie
 	if len(order) == 0 {
 		return nil, nil
 	}
-	sort.Strings(order)
+	slices.Sort(order)
 
 	// Resolve the selected group; fall back to the first when ?ws is missing or
 	// names a group the viewer cannot see.
@@ -325,20 +325,22 @@ func (s *Server) fillCurrent(r *http.Request, dv *dashboardView) {
 
 	// Default order: lowest coverage first (repos without a report sort last),
 	// so the rows needing work lead. The client re-sorts on the sort control.
-	sort.SliceStable(dv.Repos, func(i, j int) bool {
-		a, b := dv.Repos[i], dv.Repos[j]
+	slices.SortStableFunc(dv.Repos, func(a, b *dashRepo) int {
 		if (a.Latest == nil) != (b.Latest == nil) {
-			return a.Latest != nil
+			if a.Latest != nil {
+				return -1
+			}
+			return 1
 		}
 		if a.Latest == nil {
-			return a.Name < b.Name
+			return cmp.Compare(a.Name, b.Name)
 		}
-		return a.Latest.TotalPct < b.Latest.TotalPct
+		return cmp.Compare(a.Latest.TotalPct, b.Latest.TotalPct)
 	})
 
 	// Attention reads most-severe first: failing, then stale, then no-gate.
-	sort.SliceStable(dv.Attention, func(i, j int) bool {
-		return attnRank(dv.Attention[i].Kind) < attnRank(dv.Attention[j].Kind)
+	slices.SortStableFunc(dv.Attention, func(a, b attnItem) int {
+		return cmp.Compare(attnRank(a.Kind), attnRank(b.Kind))
 	})
 
 	dv.Stats = dashStats{StaleCount: dv.Counts.Stale}

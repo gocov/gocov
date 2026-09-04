@@ -45,7 +45,7 @@ func TestUploadWithoutForgeCredentialsSkipsStatus(t *testing.T) {
 
 func TestUploadStatusPushSuperseded(t *testing.T) {
 	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// First upload creates the report and pushes its status.
 	doUpload(t, f, "secret-token", map[string]string{"commit": "c1"}, testProfile)
@@ -173,7 +173,7 @@ func insightsUpload(t *testing.T, f *fixture, fields map[string]string) uploadRe
 func TestCodeInsightsPRUpload(t *testing.T) {
 	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
 	f.repo.Gate = store.Gate{MinCoverage: new(float64(50))}
-	if err := f.store.UpdateRepo(context.Background(), f.repo); err != nil {
+	if err := f.store.UpdateRepo(t.Context(), f.repo); err != nil {
 		t.Fatal(err)
 	}
 	f.forge.DiffText = testPRDiff
@@ -266,7 +266,7 @@ func TestCodeInsightsPRUpload(t *testing.T) {
 func TestCodeInsightsFullyCoveredDiff(t *testing.T) {
 	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
 	f.repo.Gate = store.Gate{MinDiffCoverage: new(float64(100))}
-	if err := f.store.UpdateRepo(context.Background(), f.repo); err != nil {
+	if err := f.store.UpdateRepo(t.Context(), f.repo); err != nil {
 		t.Fatal(err)
 	}
 	f.forge.DiffText = coveredPRDiff

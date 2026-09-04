@@ -6,11 +6,11 @@
 package server
 
 import (
+	"net/http"
+	"slices"
+
 	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/store"
-
-	"net/http"
-	"sort"
 )
 
 // userScope resolves the request user's workspace membership into a scope.
@@ -181,6 +181,6 @@ func sortedKeys(set map[string]bool) []string {
 	for k := range set {
 		out = append(out, k)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }

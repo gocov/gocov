@@ -70,7 +70,7 @@ func newMultiAuthFixture(t *testing.T, providers []auth.Provider, allowed []stri
 	t.Helper()
 	st := storemem.New()
 	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "secret-token", DefaultBranch: "main"}
-	if err := st.CreateRepo(context.Background(), repo); err != nil {
+	if err := st.CreateRepo(t.Context(), repo); err != nil {
 		t.Fatal(err)
 	}
 	srv := New(Config{
@@ -153,7 +153,7 @@ func TestLoginFlow(t *testing.T) {
 	}
 
 	// JIT provisioning: exactly one user row, refreshed on re-login.
-	users, err := f.store.ListUsers(context.Background())
+	users, err := f.store.ListUsers(t.Context())
 	if err != nil || len(users) != 1 {
 		t.Fatalf("users = %v, %v", users, err)
 	}
@@ -162,7 +162,7 @@ func TestLoginFlow(t *testing.T) {
 	}
 	provider.identity.DisplayName = "Jane Renamed"
 	signIn(t, f, "/")
-	users, _ = f.store.ListUsers(context.Background())
+	users, _ = f.store.ListUsers(t.Context())
 	if len(users) != 1 || users[0].DisplayName != "Jane Renamed" {
 		t.Errorf("second login: users = %+v, want 1 row with refreshed name", users)
 	}
@@ -195,7 +195,7 @@ func TestCallbackRejectsBadState(t *testing.T) {
 	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/login?error=1" {
 		t.Errorf("no cookie: %d -> %q", rec.Code, rec.Header().Get("Location"))
 	}
-	if users, _ := f.store.ListUsers(context.Background()); len(users) != 0 {
+	if users, _ := f.store.ListUsers(t.Context()); len(users) != 0 {
 		t.Errorf("rejected callbacks must not create users, got %v", users)
 	}
 }
@@ -225,7 +225,7 @@ func TestNonMemberIsDenied(t *testing.T) {
 	}
 
 	// R3: no user row, no session.
-	if users, _ := f.store.ListUsers(context.Background()); len(users) != 0 {
+	if users, _ := f.store.ListUsers(t.Context()); len(users) != 0 {
 		t.Errorf("denied login created users: %v", users)
 	}
 	for _, c := range rec.Result().Cookies() {
@@ -428,7 +428,7 @@ func TestTwoProviders(t *testing.T) {
 	}
 
 	// The provisioned user belongs to the github forge.
-	users, err := f.store.ListUsers(context.Background())
+	users, err := f.store.ListUsers(t.Context())
 	if err != nil || len(users) != 1 {
 		t.Fatalf("users = %v, %v", users, err)
 	}

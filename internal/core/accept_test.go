@@ -1,7 +1,6 @@
 package core
 
 import (
-	"context"
 	"errors"
 	"testing"
 
@@ -25,7 +24,7 @@ func TestAcceptStoresMergesAndReports(t *testing.T) {
 	p, st, repo := newPipeline(t, store.Gate{MinCoverage: pct(70)})
 	blobs := blobmem.New()
 	p.Blobs = blobs
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// No forge client at all: the upload must still land, with the forge
 	// surfaces reporting that they were skipped rather than failing it.
@@ -93,7 +92,7 @@ func TestAcceptStoresMergesAndReports(t *testing.T) {
 func TestAcceptAppliesIgnorePatterns(t *testing.T) {
 	p, st, repo := newPipeline(t, store.Gate{})
 	p.Blobs = blobmem.New()
-	ctx := context.Background()
+	ctx := t.Context()
 	repo.IgnorePaths = []string{"**/*.pb.go"}
 	if err := st.UpdateRepo(ctx, repo); err != nil {
 		t.Fatal(err)
@@ -150,14 +149,14 @@ func TestAcceptRefusesAllIgnored(t *testing.T) {
 	p, _, repo := newPipeline(t, store.Gate{})
 	p.Blobs = blobmem.New()
 	repo.IgnorePaths = []string{"**"}
-	_, err := p.Accept(context.Background(), Submission{
+	_, err := p.Accept(t.Context(), Submission{
 		Repo: repo, Commit: "c1", Branch: "main", Part: "default", Format: "go",
 		Raw: []byte("mode: set\n"), Profile: prof("example.com/m/a.go", 1, 2),
 	})
 	if !errors.Is(err, ErrAllIgnored) {
 		t.Fatalf("err = %v, want ErrAllIgnored", err)
 	}
-	if uploads, _ := p.Store.ListUploads(context.Background(), repo.ID, 10); len(uploads) != 0 {
+	if uploads, _ := p.Store.ListUploads(t.Context(), repo.ID, 10); len(uploads) != 0 {
 		t.Errorf("refused upload was stored: %d rows", len(uploads))
 	}
 }

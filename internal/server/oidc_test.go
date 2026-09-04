@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -107,7 +106,7 @@ func githubClaims(aud string) map[string]any {
 // BaseURL as audience and pointed at the local test issuer.
 func newOIDCFixture(t *testing.T) (*fixture, *oidcIssuer) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	st := storemem.New()
 	repo := &store.Repo{Forge: "github", Slug: "acme/widgets", Token: "secret-token", DefaultBranch: "main"}
 	if err := st.CreateRepo(ctx, repo); err != nil {
@@ -173,7 +172,7 @@ func TestOIDCUploadHappyPath(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	u, err := f.store.Upload(context.Background(), resp.ID)
+	u, err := f.store.Upload(t.Context(), resp.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

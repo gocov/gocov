@@ -70,7 +70,7 @@ func newGLConnectFixture(t *testing.T) (*glConnectFixture, *http.Cookie) {
 	t.Helper()
 	st := storemem.New()
 	ws := &store.Workspace{Forge: "gitlab", Prefix: "grp/sub", Token: "ws-secret", DefaultBranch: "main"}
-	if err := st.CreateWorkspace(context.Background(), ws); err != nil {
+	if err := st.CreateWorkspace(t.Context(), ws); err != nil {
 		t.Fatal(err)
 	}
 	grantForge := forgefake.New()
@@ -100,7 +100,7 @@ func newGLConnectFixture(t *testing.T) (*glConnectFixture, *http.Cookie) {
 
 func (f *glConnectFixture) workspace(t *testing.T) *store.Workspace {
 	t.Helper()
-	ws, err := f.store.WorkspaceByPrefix(context.Background(), "grp/sub")
+	ws, err := f.store.WorkspaceByPrefix(t.Context(), "grp/sub")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func (f *glConnectFixture) workspace(t *testing.T) *store.Workspace {
 func (f *glConnectFixture) grant(t *testing.T, account, refresh string, broken bool) {
 	t.Helper()
 	ws := f.workspace(t)
-	if err := f.store.SetWorkspaceGitLabGrant(context.Background(), ws.ID, account, refresh, broken); err != nil {
+	if err := f.store.SetWorkspaceGitLabGrant(t.Context(), ws.ID, account, refresh, broken); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -119,7 +119,7 @@ func (f *glConnectFixture) addRepo(t *testing.T) {
 	t.Helper()
 	repo := &store.Repo{Forge: "gitlab", Slug: "grp/sub/proj", Token: "repo-token",
 		DefaultBranch: "main"}
-	if err := f.store.CreateRepo(context.Background(), repo); err != nil {
+	if err := f.store.CreateRepo(t.Context(), repo); err != nil {
 		t.Fatal(err)
 	}
 	f.repo = repo
@@ -198,7 +198,7 @@ func TestGitLabConnectCallbackRejects(t *testing.T) {
 		t.Errorf("no session: status = %d, want 403", rec.Code)
 	}
 	// A workspace the user is no member of.
-	if err := f.store.CreateWorkspace(context.Background(),
+	if err := f.store.CreateWorkspace(t.Context(),
 		&store.Workspace{Forge: "gitlab", Prefix: "beta", Token: "beta-tok", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}

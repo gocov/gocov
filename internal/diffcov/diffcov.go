@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -122,7 +122,7 @@ func ParseUnifiedDiff(r io.Reader) (map[string][]int, error) {
 		return nil, err
 	}
 	for _, lines := range added {
-		sort.Ints(lines)
+		slices.Sort(lines)
 	}
 	return added, nil
 }
@@ -177,7 +177,7 @@ func Compute(files []FileBlocks, added map[string][]int, pathPrefix string) *Res
 	for p := range added {
 		diffPaths = append(diffPaths, p)
 	}
-	sort.Strings(diffPaths)
+	slices.Sort(diffPaths)
 
 	for _, dp := range diffPaths {
 		lines := added[dp]
@@ -217,7 +217,7 @@ func Compute(files []FileBlocks, added map[string][]int, pathPrefix string) *Res
 				fc.UncoveredLines = append(fc.UncoveredLines, l)
 			}
 		}
-		sort.Ints(fc.UncoveredLines)
+		slices.Sort(fc.UncoveredLines)
 		res.Files = append(res.Files, fc)
 		res.CoveredLines += fc.CoveredLines
 		res.TotalLines += fc.TotalLines

@@ -2,10 +2,11 @@ package profile
 
 import (
 	"bufio"
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -75,7 +76,7 @@ func (LCOVParser) Parse(r io.Reader) (*Profile, error) {
 	for path, lines := range files {
 		p.Files = append(p.Files, File{Path: path, Blocks: blocksFromLineHits(lines)})
 	}
-	sort.Slice(p.Files, func(i, j int) bool { return p.Files[i].Path < p.Files[j].Path })
+	slices.SortFunc(p.Files, func(a, b File) int { return cmp.Compare(a.Path, b.Path) })
 	return p, nil
 }
 
@@ -88,7 +89,7 @@ func blocksFromLineHits(lines map[int]int) []Block {
 	for ln := range lines {
 		nums = append(nums, ln)
 	}
-	sort.Ints(nums)
+	slices.Sort(nums)
 
 	var blocks []Block
 	for _, ln := range nums {

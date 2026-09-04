@@ -6,6 +6,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -75,12 +76,7 @@ func (p *Pipeline) RegisterRepo(ctx context.Context, ws *store.Workspace, slug s
 			p.Log.Warn("get default branch", "repo", slug, "err", err)
 		}
 	}
-	if branch == "" {
-		branch = ws.DefaultBranch
-	}
-	if branch == "" {
-		branch = "main"
-	}
+	branch = cmp.Or(branch, ws.DefaultBranch, "main")
 
 	token, err := NewToken()
 	if err != nil {

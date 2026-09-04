@@ -1,7 +1,6 @@
 package bitbucket
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -91,7 +90,7 @@ func TestIdentity(t *testing.T) {
 	p := testProvider(t, mux)
 	apiBase = p.APIBaseURL
 
-	id, err := p.Identity(context.Background(), "code99", "https://gocov.example/oauth/bitbucket/callback")
+	id, err := p.Identity(t.Context(), "code99", "https://gocov.example/oauth/bitbucket/callback")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +109,7 @@ func TestIdentityErrors(t *testing.T) {
 			http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
 		})
 		p := testProvider(t, mux)
-		if _, err := p.Identity(context.Background(), "bad", "uri"); err == nil ||
+		if _, err := p.Identity(t.Context(), "bad", "uri"); err == nil ||
 			!strings.Contains(err.Error(), "token exchange") {
 			t.Errorf("err = %v", err)
 		}
@@ -125,7 +124,7 @@ func TestIdentityErrors(t *testing.T) {
 			http.Error(w, "nope", http.StatusUnauthorized)
 		})
 		p := testProvider(t, mux)
-		if _, err := p.Identity(context.Background(), "c", "uri"); err == nil ||
+		if _, err := p.Identity(t.Context(), "c", "uri"); err == nil ||
 			!strings.Contains(err.Error(), "status 401") {
 			t.Errorf("err = %v", err)
 		}

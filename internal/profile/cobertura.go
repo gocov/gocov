@@ -1,11 +1,12 @@
 package profile
 
 import (
+	"cmp"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -78,6 +79,6 @@ func (CoberturaParser) Parse(r io.Reader) (*Profile, error) {
 	if len(p.Files) == 0 {
 		return nil, errors.New("cobertura: no line coverage data found")
 	}
-	sort.Slice(p.Files, func(i, j int) bool { return p.Files[i].Path < p.Files[j].Path })
+	slices.SortFunc(p.Files, func(a, b File) int { return cmp.Compare(a.Path, b.Path) })
 	return p, nil
 }
