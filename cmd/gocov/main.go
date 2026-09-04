@@ -45,7 +45,7 @@ func run(args []string) error {
 		return nil
 	}
 	if len(args) == 0 || args[0] != "upload" {
-		return fmt.Errorf("usage: gocov upload [flags] <profile file> | gocov version")
+		return errors.New("usage: gocov upload [flags] <profile file> | gocov version")
 	}
 
 	// The environment only supplies flag defaults here; see internal/config.
@@ -72,7 +72,7 @@ func run(args []string) error {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: gocov upload [flags] <profile file>")
+		return errors.New("usage: gocov upload [flags] <profile file>")
 	}
 	profilePath := fs.Arg(0)
 	if err := ignore.Validate(ignorePats.patterns); err != nil {
@@ -80,7 +80,7 @@ func run(args []string) error {
 	}
 
 	if *server == "" {
-		return fmt.Errorf("server URL required: set -server or $GOCOV_SERVER")
+		return errors.New("server URL required: set -server or $GOCOV_SERVER")
 	}
 	// Auth precedence when no -token/$GOCOV_TOKEN is given (so existing
 	// token users are never affected): mint a forge OIDC identity token if
@@ -89,53 +89,51 @@ func run(args []string) error {
 	// verifies through the App), else error. OIDC removes the pasted secret
 	// for a repo's own push and same-repo PR builds; tokenless covers the
 	// fork PR that has no secret and no id-token at all.
-	var run runInfo
-	var oidcToken string
-	oidcMode, tokenless := false, false
+	// mode names the secret-less auth mode in use — "OIDC" or "tokenless"
+	// — and stays empty when a token is sent, which is what decides below
+	// whether a refused upload fails the build.
+	var mode, oidcToken string
+	var ghRun runInfo
 	if *token == "" {
-		var err error
-		if oidcToken, err = mintGitHubOIDC(osEnv, defaultHTTPDoer, *server); err != nil {
+		minted, err := mintGitHubOIDC(osEnv, defaultHTTPDoer, *server)
+		if err != nil {
 			// The id-token permission was present but the request failed.
 			// Report it and fall through to the next auth mode; if none
 			// applies the upload still errors below, exactly as a missing
 			// token would — this line just says why OIDC was not used.
 			fmt.Fprintf(os.Stderr, "gocov: OIDC token request failed: %v\n", err)
 		}
+		// Bitbucket and GitLab hand their OIDC token to the job through
+		// the environment directly (no request to make), so it is a read,
+		// not a mint.
+		oidcToken = cmp.Or(minted, envOIDCToken(osEnv))
+		mode = "OIDC"
 		if oidcToken == "" {
-			// Bitbucket and GitLab hand their OIDC token to the job through
-			// the environment directly (no request to make), so it is a
-			// read, not a mint.
-			oidcToken = envOIDCToken(osEnv)
-		}
-		if oidcToken != "" {
-			oidcMode = true
-		} else {
-			run = detectGitHubRun(osEnv, os.ReadFile)
-			if !run.tokenlessEligible() {
-				return fmt.Errorf("no upload credential: set -token or $GOCOV_TOKEN, or enable OIDC " +
+			ghRun = detectGitHubRun(osEnv, os.ReadFile)
+			if !ghRun.tokenlessEligible() {
+				return errors.New("no upload credential: set -token or $GOCOV_TOKEN, or enable OIDC " +
 					"(GitHub Actions: grant permissions id-token: write; GitLab CI: an id_tokens entry named GOCOV_ID_TOKEN; " +
 					"Bitbucket Pipelines: oidc.audiences with the server URL)")
 			}
-			tokenless = true
+			mode = "tokenless"
 		}
 	}
 
-	build := detectBuild(osEnv, runGit, os.ReadFile)
-	build.merge(buildInfo{Repo: *repo, Commit: *commit, Branch: *branch, PRID: *pr})
+	// Flags win over detection: they are the base, and detection only
+	// answers what they left open.
+	build := buildInfo{Repo: *repo, Commit: *commit, Branch: *branch, PRID: *pr}
+	build.fill(detectBuild(osEnv, runGit, os.ReadFile))
 	if build.Commit == "" {
-		return fmt.Errorf("could not detect commit SHA: pass -commit")
+		return errors.New("could not detect commit SHA: pass -commit")
 	}
 
 	profileData, err := os.ReadFile(profilePath)
 	if err != nil {
 		return err
 	}
-	resolvedFormat := *format
+	resolvedFormat := cmp.Or(*format, profile.Detect(profileData))
 	if resolvedFormat == "" {
-		resolvedFormat = profile.Detect(profileData)
-		if resolvedFormat == "" {
-			return fmt.Errorf("could not detect the coverage format of %s: pass -format go|lcov|jacoco|cobertura|clover|simplecov", profilePath)
-		}
+		return fmt.Errorf("could not detect the coverage format of %s: pass -format go|lcov|jacoco|cobertura|clover|simplecov", profilePath)
 	}
 	prefix := *pathPrefix
 	if prefix == "" && resolvedFormat == "go" {
@@ -156,19 +154,15 @@ func run(args []string) error {
 		UploaderKind: cfg.Kind(),
 		Build:        build,
 		Meta:         detectMeta(osEnv, runGit, build.Commit),
-		Run:          run,
+		Run:          ghRun,
 	})
 	if err != nil {
-		if tokenless || oidcMode {
+		if mode != "" {
 			// A secret-less build must never break over coverage plumbing:
 			// one readable line with the server's reason, exit 0.
 			verb := "failed"
 			if _, ok := errors.AsType[*serverError](err); ok {
 				verb = "rejected"
-			}
-			mode := "tokenless"
-			if oidcMode {
-				mode = "OIDC"
 			}
 			fmt.Fprintf(os.Stderr, "gocov: %s upload %s — %v\n", mode, verb, err)
 			return nil

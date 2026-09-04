@@ -161,22 +161,15 @@ func TestTokenlessUploadEndToEnd(t *testing.T) {
 func TestRunTokenlessRejectionExitsZero(t *testing.T) {
 	srv := newTokenlessServer(t)
 
-	dir := t.TempDir()
-	profPath := filepath.Join(dir, "coverage.out")
-	if err := os.WriteFile(profPath, []byte("mode: set\nexample.com/m/a.go:1.1,2.2 4 1\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	eventPath := filepath.Join(dir, "event.json")
+	profPath := writeProfile(t)
+	eventPath := filepath.Join(t.TempDir(), "event.json")
 	event := `{"pull_request": {"number": 42, "head": {"sha": "abc123", "ref": "feature", "repo": {"full_name": "forker/widgets"}}}}`
 	if err := os.WriteFile(eventPath, []byte(event), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("GOCOV_TOKEN", "")
 	t.Setenv("GOCOV_SERVER", srv.URL)
-	// Without this, a CI job running with `id-token: write` would let the
-	// CLI's OIDC-mint path win over the fork-PR tokenless path under test.
-	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "")
-	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
+	noGitHubIDToken(t)
 	t.Setenv("GITHUB_ACTIONS", "true")
 	t.Setenv("GITHUB_EVENT_NAME", "pull_request")
 	t.Setenv("GITHUB_RUN_ID", "9001")

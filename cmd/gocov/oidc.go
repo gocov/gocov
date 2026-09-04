@@ -1,9 +1,10 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -43,17 +44,12 @@ func mintGitHubOIDC(env envFunc, doer httpDoer, audience string) (string, error)
 	req.Header.Set("Authorization", "Bearer "+reqToken)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := doer.Do(req)
+	status, body, err := send(doer, req)
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return "", err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("id-token endpoint returned %d", resp.StatusCode)
+	if status != http.StatusOK {
+		return "", fmt.Errorf("id-token endpoint returned %d", status)
 	}
 	var out struct {
 		Value string `json:"value"`
@@ -62,43 +58,22 @@ func mintGitHubOIDC(env envFunc, doer httpDoer, audience string) (string, error)
 		return "", fmt.Errorf("decoding id-token response: %w", err)
 	}
 	if out.Value == "" {
-		return "", fmt.Errorf("id-token endpoint returned an empty token")
+		return "", errors.New("id-token endpoint returned an empty token")
 	}
 	return out.Value, nil
 }
 
-// bitbucketOIDCToken returns the OIDC identity token Bitbucket Pipelines
-// injects into a step that opted in with `oidc: true` (and named gocov in
-// its `oidc.audiences`). Unlike GitHub there is no request to make — the
-// token is handed to the step in an environment variable — so this is a
-// read, not a mint. Empty outside such a step, so the caller falls through.
-func bitbucketOIDCToken(env envFunc) string {
-	return env("BITBUCKET_STEP_OIDC_TOKEN")
-}
-
-// gitlabOIDCToken returns the OIDC ID token a GitLab CI job mints through
-// its id_tokens: block — which the gocov snippet names GOCOV_ID_TOKEN.
-// GitLab, like Bitbucket, hands the token to the job in an environment
-// variable, so this is a read, not a mint. Empty when not set.
-func gitlabOIDCToken(env envFunc) string {
-	return env("GOCOV_ID_TOKEN")
-}
-
 // envOIDCToken returns the OIDC identity token a forge hands the job through
-// the environment (Bitbucket, GitLab), or "" when neither is present.
+// the environment, or "" when none is present so the caller falls through.
+// Unlike GitHub there is no request to make — this is a read, not a mint.
+// Bitbucket Pipelines injects BITBUCKET_STEP_OIDC_TOKEN into a step that
+// opted in with `oidc: true` (and named gocov in its `oidc.audiences`);
+// GitLab CI mints one through the job's id_tokens: block, which the gocov
+// snippet names GOCOV_ID_TOKEN.
 func envOIDCToken(env envFunc) string {
-	if t := bitbucketOIDCToken(env); t != "" {
-		return t
-	}
-	return gitlabOIDCToken(env)
+	return cmp.Or(env("BITBUCKET_STEP_OIDC_TOKEN"), env("GOCOV_ID_TOKEN"))
 }
 
-// httpDoer is the slice of *http.Client the OIDC mint needs, kept as an
-// interface so tests can stub the request.
-type httpDoer interface {
-	Do(*http.Request) (*http.Response, error)
-}
-
-// defaultHTTPDoer is the production httpDoer: a client with a short timeout,
-// since the id-token endpoint is local to the runner.
+// defaultHTTPDoer is the production httpDoer for the OIDC mint: a client
+// with a short timeout, since the id-token endpoint is local to the runner.
 var defaultHTTPDoer httpDoer = &http.Client{Timeout: 30 * time.Second}

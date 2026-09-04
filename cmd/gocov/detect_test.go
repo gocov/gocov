@@ -294,11 +294,13 @@ func TestModuleFromGoMod(t *testing.T) {
 	}
 }
 
-func TestMerge(t *testing.T) {
-	b := buildInfo{Repo: "a/b", Commit: "c1", Branch: "main"}
-	b.merge(buildInfo{Commit: "c2", PRID: "5"})
+// fill is how flags win over detection: what b already knows stays, and
+// other only answers what is still open.
+func TestFill(t *testing.T) {
+	b := buildInfo{Commit: "c2", PRID: "5"}
+	b.fill(buildInfo{Repo: "a/b", Commit: "c1", Branch: "main"})
 	want := buildInfo{Repo: "a/b", Commit: "c2", Branch: "main", PRID: "5"}
 	if b != want {
-		t.Errorf("merge() = %+v, want %+v", b, want)
+		t.Errorf("fill() = %+v, want %+v", b, want)
 	}
 }
