@@ -2,7 +2,7 @@
 # buildx and cross-compiles via GOOS/GOARCH, so a multi-arch build does
 # not run Go under emulation. TARGETOS/TARGETARCH are empty on a plain
 # single-arch build, and empty GOOS/GOARCH means the toolchain default.
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
 RUN apk add --no-cache git
 WORKDIR /src
 COPY go.mod go.sum ./
