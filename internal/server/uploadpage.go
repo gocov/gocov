@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"maps"
 	"net/http"
 	"slices"
@@ -110,9 +111,7 @@ func (s *Server) buildFilesViewData(ctx context.Context, upload *store.Upload, b
 				row.IsCoverageChanged = true
 			}
 		}
-		if isSourceChanged(f.Path, upload.PathPrefix, diffFiles) {
-			row.IsSourceChanged = true
-		}
+		row.IsSourceChanged = isSourceChanged(f.Path, upload.PathPrefix, diffFiles)
 		row.Changed = row.IsCoverageChanged || row.IsSourceChanged
 		rows = append(rows, row)
 	}
@@ -148,31 +147,26 @@ func (s *Server) buildFilesViewData(ctx context.Context, upload *store.Upload, b
 		})
 	}
 
-	treeRows := buildFileTree(rows, base != nil)
-	if heading == "" {
-		heading = "Files"
-	}
-
 	return filesViewData{
 		UploadID:   upload.ID,
 		Files:      rows,
-		TreeRows:   treeRows,
+		TreeRows:   buildFileTree(rows, base != nil),
 		Counts:     counts,
 		HasBase:    base != nil,
 		TotalFiles: len(files),
-		Heading:    heading,
+		Heading:    cmp.Or(heading, "Files"),
 	}, nil
 }
 
-// uploadFileRow decorates a stored file with its coverage history for the
-// upload detail table: the same file's coverage at the branch baseline, the
-// resulting delta, and the lines this upload newly left uncovered. The
+// fileCompare is what a files-card row says about its coverage history: the
+// same path's coverage at the branch baseline, the resulting delta, the
+// lines this upload newly left uncovered, and the flags the filter tabs and
+// the tree's auto-expand key on. Files and the directories rolled up from
+// them share it, so the tree carries a row's comparison as one value. The
 // baseline fields are empty when there is no baseline to compare against.
-type uploadFileRow struct {
-	*store.UploadFile
-	Dir, Base         string     // path split for display (directory prefix, file name)
+type fileCompare struct {
 	Uncovered         string     // all-time uncovered ranges, shown when there is no baseline
-	HasBefore         bool       // the file existed at the baseline
+	HasBefore         bool       // the path existed at the baseline
 	BeforeCovered     int64      // baseline covered statements
 	BeforeTotal       int64      // baseline total statements
 	BeforeStr         string     // baseline coverage, preformatted
@@ -185,6 +179,14 @@ type uploadFileRow struct {
 	IsCoverageChanged bool       // coverage percentage changed or newly uncovered lines
 }
 
+// uploadFileRow decorates a stored file with its coverage history for the
+// upload detail table.
+type uploadFileRow struct {
+	*store.UploadFile
+	fileCompare
+	Dir, Base string // path split for display (directory prefix, file name)
+}
+
 // fileCounts records the totals for the view filter tabs.
 type fileCounts struct {
 	Total    int
@@ -195,45 +197,48 @@ type fileCounts struct {
 
 // treeRow represents a row in the hierarchical directory tree view.
 type treeRow struct {
-	IsDir             bool
-	Path              string
-	Name              string
-	Depth             int
-	Open              bool // directory rendered expanded
-	Hidden            bool // tucked under a collapsed ancestor
-	ParentPath        string
-	CoveredStmts      int64
-	TotalStmts        int64
-	Pct               float64
-	HasBefore         bool
-	BeforeCovered     int64
-	BeforeTotal       int64
-	BeforeStr         string
-	Delta             *deltaView
-	DeltaVal          float64
-	NewFile           bool
-	NewlyMiss         string
-	Changed           bool
-	IsSourceChanged   bool
-	IsCoverageChanged bool
-	Uncovered         string
+	fileCompare
+	IsDir        bool
+	Path         string
+	Name         string
+	Depth        int
+	Open         bool // directory rendered expanded
+	Hidden       bool // tucked under a collapsed ancestor
+	ParentPath   string
+	CoveredStmts int64
+	TotalStmts   int64
+	Pct          float64
 }
 
+// dirBuilderNode is a directory while the tree is assembled: its files and
+// subdirectories, and the coverage rolled up from them.
 type dirBuilderNode struct {
+	fileCompare
 	name       string
 	fullPath   string
 	parentPath string
 	subdirs    map[string]*dirBuilderNode
 	files      []*uploadFileRow
 
-	coveredStmts    int64
-	totalStmts      int64
-	beforeCovered   int64
-	beforeTotal     int64
-	hasBefore       bool
-	changed         bool
-	isSourceChanged bool
-	isCovChanged    bool
+	coveredStmts int64
+	totalStmts   int64
+}
+
+// add rolls a file's or a subdirectory's coverage into the directory: the
+// statement counts sum, the baseline sums over the paths that had one, and a
+// change anywhere below flags the directory so the tree opens on the way to
+// it.
+func (n *dirBuilderNode) add(covered, total int64, c fileCompare) {
+	n.coveredStmts += covered
+	n.totalStmts += total
+	if c.HasBefore {
+		n.HasBefore = true
+		n.BeforeCovered += c.BeforeCovered
+		n.BeforeTotal += c.BeforeTotal
+	}
+	n.Changed = n.Changed || c.Changed
+	n.IsSourceChanged = n.IsSourceChanged || c.IsSourceChanged
+	n.IsCoverageChanged = n.IsCoverageChanged || c.IsCoverageChanged
 }
 
 // isSourceChanged reports whether a profile path is one of the diff's files,
@@ -325,41 +330,11 @@ func compactDir(n *dirBuilderNode) {
 
 func calcDirStats(n *dirBuilderNode) {
 	for _, f := range n.files {
-		n.totalStmts += f.TotalStmts
-		n.coveredStmts += f.CoveredStmts
-		if f.HasBefore {
-			n.hasBefore = true
-			n.beforeCovered += f.BeforeCovered
-			n.beforeTotal += f.BeforeTotal
-		}
-		if f.Changed {
-			n.changed = true
-		}
-		if f.IsSourceChanged {
-			n.isSourceChanged = true
-		}
-		if f.IsCoverageChanged {
-			n.isCovChanged = true
-		}
+		n.add(f.CoveredStmts, f.TotalStmts, f.fileCompare)
 	}
 	for _, sub := range n.subdirs {
 		calcDirStats(sub)
-		n.totalStmts += sub.totalStmts
-		n.coveredStmts += sub.coveredStmts
-		if sub.hasBefore {
-			n.hasBefore = true
-			n.beforeCovered += sub.beforeCovered
-			n.beforeTotal += sub.beforeTotal
-		}
-		if sub.changed {
-			n.changed = true
-		}
-		if sub.isSourceChanged {
-			n.isSourceChanged = true
-		}
-		if sub.isCovChanged {
-			n.isCovChanged = true
-		}
+		n.add(sub.coveredStmts, sub.totalStmts, sub.fileCompare)
 	}
 }
 
@@ -370,42 +345,34 @@ func calcDirStats(n *dirBuilderNode) {
 // top level is open instead. hidden is inherited from a collapsed ancestor.
 func flattenTree(n *dirBuilderNode, depth int, out *[]treeRow, hasBase, anyChanged, hidden bool) {
 	if n.fullPath != "" {
-		open := n.changed || (!anyChanged && depth == 0)
+		open := n.Changed || (!anyChanged && depth == 0)
 		var pct float64
 		if n.totalStmts > 0 {
 			pct = float64(n.coveredStmts) / float64(n.totalStmts) * 100
 		}
-		var beforeStr string
-		var delta *deltaView
-		var deltaVal float64
-		if hasBase && n.hasBefore && n.beforeTotal > 0 {
-			beforePct := float64(n.beforeCovered) / float64(n.beforeTotal) * 100
-			deltaVal = pct - beforePct
-			delta = newDeltaView(deltaVal)
-			beforeStr = fmt.Sprintf("%.1f%%", beforePct)
+		// A directory has a baseline only where its files had statements
+		// there; the delta is the rollup's, not any one file's.
+		c := n.fileCompare
+		c.HasBefore = c.HasBefore && c.BeforeTotal > 0
+		if hasBase && c.HasBefore {
+			beforePct := float64(c.BeforeCovered) / float64(c.BeforeTotal) * 100
+			c.DeltaVal = pct - beforePct
+			c.Delta = newDeltaView(c.DeltaVal)
+			c.BeforeStr = fmt.Sprintf("%.1f%%", beforePct)
 		}
-		row := treeRow{
-			IsDir:             true,
-			Path:              n.fullPath,
-			Name:              n.name,
-			Depth:             depth,
-			Open:              open,
-			Hidden:            hidden,
-			ParentPath:        n.parentPath,
-			CoveredStmts:      n.coveredStmts,
-			TotalStmts:        n.totalStmts,
-			Pct:               pct,
-			HasBefore:         n.hasBefore && n.beforeTotal > 0,
-			BeforeCovered:     n.beforeCovered,
-			BeforeTotal:       n.beforeTotal,
-			BeforeStr:         beforeStr,
-			Delta:             delta,
-			DeltaVal:          deltaVal,
-			Changed:           n.changed,
-			IsSourceChanged:   n.isSourceChanged,
-			IsCoverageChanged: n.isCovChanged,
-		}
-		*out = append(*out, row)
+		*out = append(*out, treeRow{
+			fileCompare:  c,
+			IsDir:        true,
+			Path:         n.fullPath,
+			Name:         n.name,
+			Depth:        depth,
+			Open:         open,
+			Hidden:       hidden,
+			ParentPath:   n.parentPath,
+			CoveredStmts: n.coveredStmts,
+			TotalStmts:   n.totalStmts,
+			Pct:          pct,
+		})
 		depth++
 		hidden = hidden || !open
 	}
@@ -416,30 +383,17 @@ func flattenTree(n *dirBuilderNode, depth int, out *[]treeRow, hasBase, anyChang
 
 	slices.SortFunc(n.files, func(a, b *uploadFileRow) int { return strings.Compare(a.Base, b.Base) })
 	for _, f := range n.files {
-		row := treeRow{
-			IsDir:             false,
-			Path:              f.Path,
-			Name:              f.Base,
-			Depth:             depth,
-			Hidden:            hidden,
-			ParentPath:        n.fullPath,
-			CoveredStmts:      f.CoveredStmts,
-			TotalStmts:        f.TotalStmts,
-			Pct:               f.Pct,
-			HasBefore:         f.HasBefore,
-			BeforeCovered:     f.BeforeCovered,
-			BeforeTotal:       f.BeforeTotal,
-			BeforeStr:         f.BeforeStr,
-			Delta:             f.Delta,
-			DeltaVal:          f.DeltaVal,
-			NewFile:           f.NewFile,
-			NewlyMiss:         f.NewlyMiss,
-			Changed:           f.Changed,
-			IsSourceChanged:   f.IsSourceChanged,
-			IsCoverageChanged: f.IsCoverageChanged,
-			Uncovered:         f.Uncovered,
-		}
-		*out = append(*out, row)
+		*out = append(*out, treeRow{
+			fileCompare:  f.fileCompare,
+			Path:         f.Path,
+			Name:         f.Base,
+			Depth:        depth,
+			Hidden:       hidden,
+			ParentPath:   n.fullPath,
+			CoveredStmts: f.CoveredStmts,
+			TotalStmts:   f.TotalStmts,
+			Pct:          f.Pct,
+		})
 	}
 }
 
@@ -526,16 +480,13 @@ func (s *Server) uploadProvenance(ctx context.Context, u *store.Upload) provView
 	p := provView{
 		Received:     u.CreatedAt.UTC().Format("2 Jan 2006, 15:04 UTC"),
 		Ago:          timeAgo(u.CreatedAt),
-		ProfileName:  m.ProfileName,
+		ProfileName:  cmp.Or(m.ProfileName, profileFilename(u.Format)),
 		Format:       u.Format,
 		CILabel:      ciLabels[m.CIProvider],
 		CIRunURL:     m.CIRunURL,
 		Uploader:     m.Uploader,
 		UploaderKind: uploaderKindLabels[m.UploaderKind],
 		Tokenless:    m.Tokenless,
-	}
-	if p.ProfileName == "" {
-		p.ProfileName = profileFilename(u.Format)
 	}
 	if m.ProfileBytes > 0 {
 		p.ProfileSize = humanBytes(m.ProfileBytes)
@@ -609,21 +560,51 @@ func uncoveredRanges(blocks []profile.Block) string {
 	return strings.Join(parts, ", ")
 }
 
+// blockLines yields every line the blocks span, paired with the block
+// spanning it, from line 1 up to at most limit (unbounded when limit is 0).
+// Parsers validate line ranges, but old rows predate that; the bound keeps
+// a bogus range from driving a long loop wherever a file length is known.
+func blockLines(blocks []profile.Block, limit int) iter.Seq2[int, profile.Block] {
+	return func(yield func(int, profile.Block) bool) {
+		for _, b := range blocks {
+			end := b.EndLine
+			if limit > 0 {
+				end = min(end, limit)
+			}
+			for l := max(b.StartLine, 1); l <= end; l++ {
+				if !yield(l, b) {
+					return
+				}
+			}
+		}
+	}
+}
+
+// lineCounts maps each line the blocks span, within the first limit lines,
+// to the highest count of a block over it: a key means the line is
+// executable, a positive value that it ran. The source view overlays this.
+func lineCounts(blocks []profile.Block, limit int) map[int]int {
+	counts := map[int]int{}
+	for l, b := range blockLines(blocks, limit) {
+		counts[l] = max(counts[l], b.Count)
+	}
+	return counts
+}
+
 // lineCoverage returns the executable and hit line sets for a file's blocks:
 // a line is executable when a statement block spans it, and hit when any such
-// block ran. The same rule the source view overlays.
+// block ran. The same rule the source view overlays, minus the blocks with
+// no statements, which the table's ranges leave out.
 func lineCoverage(blocks []profile.Block) (exec, hit map[int]bool) {
 	exec = map[int]bool{}
 	hit = map[int]bool{}
-	for _, b := range blocks {
+	for l, b := range blockLines(blocks, 0) {
 		if b.NumStmts == 0 {
 			continue
 		}
-		for l := max(b.StartLine, 1); l <= b.EndLine; l++ {
-			exec[l] = true
-			if b.Count > 0 {
-				hit[l] = true
-			}
+		exec[l] = true
+		if b.Count > 0 {
+			hit[l] = true
 		}
 	}
 	return exec, hit

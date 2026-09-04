@@ -5,9 +5,11 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -48,15 +50,11 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "listing uploads", err)
 		return
 	}
-	var branches []string
 	seen := map[string]bool{}
 	for _, u := range recent {
-		if !seen[u.Branch] {
-			seen[u.Branch] = true
-			branches = append(branches, u.Branch)
-		}
+		seen[u.Branch] = true
 	}
-	slices.Sort(branches)
+	branches := slices.Sorted(maps.Keys(seen))
 
 	limit := (page+1)*uploadsPageSize + 1
 	var fetched []*store.Upload
@@ -81,10 +79,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 
 	// The trend follows the page's branch filter, defaulting to the
 	// repo's default branch when "All branches" is selected.
-	trendBranch := branch
-	if trendBranch == "" {
-		trendBranch = repo.DefaultBranch
-	}
+	trendBranch := cmp.Or(branch, repo.DefaultBranch)
 	trendReports, err := s.store.ListBranchCommitReports(r.Context(), repo.ID, trendBranch, trendReportLimit)
 	if err != nil {
 		s.internalError(w, "listing reports for trend", err)
@@ -125,13 +120,6 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var trend *trendView
-	if repo.Gate.MinCoverage != nil {
-		trend = newTrendView(trendBranch, trendReports, *repo.Gate.MinCoverage)
-	} else {
-		trend = newTrendView(trendBranch, trendReports)
-	}
-
 	// The settings link is for members; anyone admitted through the
 	// public branch — anonymous or a signed-in non-member — gets neither
 	// the button nor the workspace lookup behind it.
@@ -154,7 +142,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		"Branches":      branches,
 		"Branch":        branch,
 		"TrendBranch":   trendBranch,
-		"Trend":         trend,
+		"Trend":         newTrendView(trendBranch, trendReports, repo.Gate.MinCoverage),
 		"Uploads":       uploads,
 		"Page":          page,
 		"PrevPage":      page - 1,
@@ -171,35 +159,31 @@ const (
 	recentUploads = 100
 )
 
-// branchDelta compares the newest merged report on a branch against the
-// most recent gate-passing report before it — the same baseline rule the
-// upload API uses, so the UI never shows a delta measured against a report
-// that failed the gate. Lookback is bounded; a branch whose last 50 reports
-// all failed shows no delta.
-func (s *Server) branchDelta(r *http.Request, repoID int64, branch string) *deltaView {
-	current, base := s.branchBaseReport(r.Context(), repoID, branch)
-	if current == nil || base == nil {
-		return nil
-	}
-	return newDeltaView(current.TotalPct - base.TotalPct)
-}
-
-// branchBaseReport returns a branch's newest merged report and the report it
-// should be compared against — the most recent gate-passing report before it,
-// within a bounded lookback. base is nil when the branch has no earlier
-// passing report (a single report, or a run of failures fills the window).
-func (s *Server) branchBaseReport(ctx context.Context, repoID int64, branch string) (current, base *store.CommitReport) {
-	reports, err := s.store.ListBranchCommitReports(ctx, repoID, branch, 50)
-	if err != nil || len(reports) == 0 {
+// reportBaseline pairs a branch's newest merged report (reports come newest
+// first) with the report it should be compared against — the most recent
+// gate-passing report before it, the same baseline rule the upload API uses,
+// so the UI never shows a delta measured against a report that failed the
+// gate. base is nil when the branch has no earlier passing report (a single
+// report, or a run of failures fills the window).
+func reportBaseline(reports []*store.CommitReport) (current, base *store.CommitReport) {
+	if len(reports) == 0 {
 		return nil, nil
 	}
-	current = reports[0]
-	for _, cr := range reports[1:] {
-		if !cr.GateFailed {
-			return current, cr
-		}
+	if i := slices.IndexFunc(reports[1:], func(cr *store.CommitReport) bool { return !cr.GateFailed }); i >= 0 {
+		base = reports[1+i]
 	}
-	return current, nil
+	return reports[0], base
+}
+
+// branchBaseReport reads a branch's recent reports and pairs the newest with
+// its baseline. Lookback is bounded; a branch whose last 50 reports all
+// failed shows no delta.
+func (s *Server) branchBaseReport(ctx context.Context, repoID int64, branch string) (current, base *store.CommitReport) {
+	reports, err := s.store.ListBranchCommitReports(ctx, repoID, branch, 50)
+	if err != nil {
+		return nil, nil
+	}
+	return reportBaseline(reports)
 }
 
 // gateSummary renders the repo's gate rules for the stats card.

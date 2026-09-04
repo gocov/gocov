@@ -313,6 +313,16 @@ func TestRenderSourceLines(t *testing.T) {
 	if lines[3].Class != "miss" {
 		t.Errorf("line 4 = %+v", lines[3])
 	}
+	// Overlapping blocks: a line ran if any block over it did, and shows the
+	// highest count.
+	overlap := renderSourceLines([]byte("a\nb\n"), []profile.Block{
+		{StartLine: 1, EndLine: 2, NumStmts: 1, Count: 0},
+		{StartLine: 2, EndLine: 2, NumStmts: 1, Count: 5},
+		{StartLine: 2, EndLine: 2, NumStmts: 1, Count: 2},
+	})
+	if overlap[0].Class != "miss" || overlap[1].Class != "hit" || overlap[1].Hits != "5×" {
+		t.Errorf("overlapping blocks = %+v", overlap)
+	}
 	// Blocks beyond EOF must not panic.
 	_ = renderSourceLines([]byte("only\n"), []profile.Block{{StartLine: 5, EndLine: 9, NumStmts: 1, Count: 1}})
 

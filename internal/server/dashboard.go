@@ -291,10 +291,10 @@ func (s *Server) fillCurrent(r *http.Request, dv *dashboardView) {
 				row.Gate = "fail"
 			}
 		}
-		if dval, ok := deltaValFromReports(reports); ok {
+		if _, base := reportBaseline(reports); base != nil {
 			row.HasDelta = true
-			row.DropVal = dval
-			row.Delta = newDeltaView(dval)
+			row.DropVal = latest.TotalPct - base.TotalPct
+			row.Delta = newDeltaView(row.DropVal)
 		}
 		row.Spark = newSparkView(reports, stale)
 
@@ -444,23 +444,6 @@ func attnRank(kind string) int {
 	}
 }
 
-// deltaValFromReports computes a row's coverage delta the same way branchDelta
-// does — newest report against the most recent gate-passing report before it —
-// but reuses an already-fetched report slice (newest first). ok is false when
-// there is no earlier passing report to compare against.
-func deltaValFromReports(reports []*store.CommitReport) (float64, bool) {
-	if len(reports) == 0 {
-		return 0, false
-	}
-	current := reports[0]
-	for _, cr := range reports[1:] {
-		if !cr.GateFailed {
-			return current.TotalPct - cr.TotalPct, true
-		}
-	}
-	return 0, false
-}
-
 // newSparkView plots a repo's recent coverage as a compact sparkline. It needs
 // at least two branch commits (PR reports excluded); fewer returns nil and the
 // cell shows a dash. A stale repo's line is compressed to the left with a
@@ -490,24 +473,20 @@ func newSparkView(reports []*store.CommitReport, stale bool) *sparkView {
 		}
 		return round1(bot - (v-lo)/(hi-lo)*(bot-top))
 	}
-	var b strings.Builder
+	var path linePath
 	for i, v := range series {
-		x := round1(right * float64(i) / float64(len(series)-1))
-		if i == 0 {
-			fmt.Fprintf(&b, "M%g %g", x, y(v))
-		} else {
-			fmt.Fprintf(&b, " L%g %g", x, y(v))
-		}
+		path.lineTo(round1(right*float64(i)/float64(len(series)-1)), y(v))
 	}
-	sv := &sparkView{Path: b.String()}
+	sv := &sparkView{Path: path.String()}
+	last := series[len(series)-1]
 	switch {
-	case series[len(series)-1] > series[0]+0.05:
+	case last > series[0]+0.05:
 		sv.Class = "up"
-	case series[len(series)-1] < series[0]-0.05:
+	case last < series[0]-0.05:
 		sv.Class = "down"
 	}
 	if stale {
-		ly := y(series[len(series)-1])
+		ly := y(last)
 		sv.Tail = fmt.Sprintf("M%g %g L76 %g", right, ly, ly)
 		sv.Class = "" // a stopped series has no meaningful direction
 	}

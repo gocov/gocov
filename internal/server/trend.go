@@ -60,14 +60,27 @@ type trendView struct {
 // deterministic.
 func round1(v float64) float64 { return math.Round(v*10) / 10 }
 
+// linePath accumulates an SVG polyline — "M x y L x y …" — one point at a
+// time, so the chart and the dashboard's sparklines draw a series the same
+// way.
+type linePath struct{ strings.Builder }
+
+func (p *linePath) lineTo(x, y float64) {
+	cmd := " L"
+	if p.Len() == 0 {
+		cmd = "M"
+	}
+	fmt.Fprintf(p, "%s%g %g", cmd, x, y)
+}
+
 // newTrendView builds the chart for a branch from its merged commit
 // reports, given newest-first as ListBranchCommitReports returns them. PR
 // reports are excluded: the branch trend reflects the branch's own commits.
 // Each report carries the upload id it links to (UploadID). Returns nil when
-// fewer than two points remain — the page then omits the section. An optional
-// gate minimum, when passed, is drawn as a dashed threshold line and folded
-// into the plotted range so it is always visible.
-func newTrendView(branch string, reports []*store.CommitReport, gateMin ...float64) *trendView {
+// fewer than two points remain — the page then omits the section. The gate
+// minimum, when the repo has one, is drawn as a dashed threshold line and
+// folded into the plotted range so it is always visible.
+func newTrendView(branch string, reports []*store.CommitReport, gateMin *float64) *trendView {
 	var series []*store.CommitReport // chronological
 	for _, report := range slices.Backward(reports) {
 		if report.PRID == "" {
@@ -92,16 +105,9 @@ func newTrendView(branch string, reports []*store.CommitReport, gateMin ...float
 	// A configured gate minimum widens the plotted range so its line always
 	// lands on the canvas — the grid labels still read the series min/max, so
 	// the gate line reads as a separate reference, not a data point.
-	var minCov *float64
-	if len(gateMin) > 0 {
-		m := gateMin[0]
-		minCov = &m
-		if m < yLo {
-			yLo = max(0, m)
-		}
-		if m > yHi {
-			yHi = min(100, m)
-		}
+	if gateMin != nil {
+		yLo = min(yLo, max(0, *gateMin))
+		yHi = max(yHi, min(100, *gateMin))
 	}
 
 	plotW := float64(trendW - trendPadL - trendPadR)
@@ -122,14 +128,10 @@ func newTrendView(branch string, reports []*store.CommitReport, gateMin ...float
 		FirstDate: series[0].CreatedAt.Format("2006-01-02"),
 		LastDate:  series[len(series)-1].CreatedAt.Format("2006-01-02"),
 	}
-	var path strings.Builder
+	var path linePath
 	for i, u := range series {
 		px, py := x(i), y(u.TotalPct)
-		if i == 0 {
-			fmt.Fprintf(&path, "M%g %g", px, py)
-		} else {
-			fmt.Fprintf(&path, " L%g %g", px, py)
-		}
+		path.lineTo(px, py)
 		v.Points = append(v.Points, trendPoint{
 			X: px, Y: py, ID: u.UploadID, GateFailed: u.GateFailed,
 			Title: fmt.Sprintf("%s · %.1f%% · %s", u.CreatedAt.Format("2006-01-02"), u.TotalPct, shortSHA(u.CommitSHA)),
@@ -142,8 +144,8 @@ func newTrendView(branch string, reports []*store.CommitReport, gateMin ...float
 		v.Grid = append(v.Grid, trendGridLine{Y: y(lo), Label: fmt.Sprintf("%.1f%%", lo)})
 	}
 
-	if minCov != nil {
-		v.Thresh = &trendThreshold{Y: y(*minCov), Label: fmt.Sprintf("gate %.4g%%", *minCov)}
+	if gateMin != nil {
+		v.Thresh = &trendThreshold{Y: y(*gateMin), Label: fmt.Sprintf("gate %.4g%%", *gateMin)}
 	}
 
 	last := v.Points[len(v.Points)-1]

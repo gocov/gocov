@@ -153,3 +153,36 @@ func TestRepoPageShowsFilesView(t *testing.T) {
 		}
 	}
 }
+
+func TestReportBaseline(t *testing.T) {
+	ok := func(id int64) *store.CommitReport { return trendReport(id, 80, "", false) }
+	failed := func(id int64) *store.CommitReport { return trendReport(id, 50, "", true) }
+	for _, tc := range []struct {
+		name          string
+		reports       []*store.CommitReport // newest first
+		wantCur, want int64                 // report ids, 0 for nil
+	}{
+		{"no reports", nil, 0, 0},
+		{"single report", []*store.CommitReport{ok(1)}, 1, 0},
+		{"previous passed", []*store.CommitReport{ok(2), ok(1)}, 2, 1},
+		// A failed report never becomes the baseline; the delta reads
+		// against the last one that passed.
+		{"skips failed", []*store.CommitReport{ok(3), failed(2), ok(1)}, 3, 1},
+		{"all earlier failed", []*store.CommitReport{ok(3), failed(2), failed(1)}, 3, 0},
+		// The newest report is the current one whether or not it passed.
+		{"current failed", []*store.CommitReport{failed(2), ok(1)}, 2, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := func(r *store.CommitReport) int64 {
+				if r == nil {
+					return 0
+				}
+				return r.ID
+			}
+			cur, base := reportBaseline(tc.reports)
+			if id(cur) != tc.wantCur || id(base) != tc.want {
+				t.Errorf("reportBaseline = %d, %d, want %d, %d", id(cur), id(base), tc.wantCur, tc.want)
+			}
+		})
+	}
+}

@@ -20,16 +20,16 @@ func trendReport(id int64, pct float64, prID string, gateFailed bool) *store.Com
 }
 
 func TestTrendViewTooFewUploads(t *testing.T) {
-	if v := newTrendView("main", nil); v != nil {
+	if v := newTrendView("main", nil, nil); v != nil {
 		t.Errorf("no reports: got %+v, want nil", v)
 	}
 	one := []*store.CommitReport{trendReport(1, 80, "", false)}
-	if v := newTrendView("main", one); v != nil {
+	if v := newTrendView("main", one, nil); v != nil {
 		t.Errorf("one report: got %+v, want nil", v)
 	}
 	// Two reports but one is a PR build: one point left, still no chart.
 	reports := []*store.CommitReport{trendReport(2, 90, "7", false), trendReport(1, 80, "", false)}
-	if v := newTrendView("main", reports); v != nil {
+	if v := newTrendView("main", reports, nil); v != nil {
 		t.Errorf("one non-PR report: got %+v, want nil", v)
 	}
 }
@@ -40,7 +40,7 @@ func TestTrendViewExcludesPRUploads(t *testing.T) {
 		trendReport(2, 50, "7", false), // PR build, must not appear
 		trendReport(1, 80, "", false),
 	}
-	v := newTrendView("main", reports)
+	v := newTrendView("main", reports, nil)
 	if v == nil {
 		t.Fatal("nil view")
 	}
@@ -60,7 +60,7 @@ func TestTrendViewPointPlacement(t *testing.T) {
 		trendReport(2, 75, "", false),
 		trendReport(1, 70, "", false),
 	}
-	v := newTrendView("main", reports)
+	v := newTrendView("main", reports, nil)
 	if v == nil {
 		t.Fatal("nil view")
 	}
@@ -102,7 +102,7 @@ func TestTrendViewPointPlacement(t *testing.T) {
 
 func TestTrendViewFlatSeries(t *testing.T) {
 	reports := []*store.CommitReport{trendReport(2, 75, "", false), trendReport(1, 75, "", false)}
-	v := newTrendView("main", reports)
+	v := newTrendView("main", reports, nil)
 	if v == nil {
 		t.Fatal("nil view")
 	}
@@ -120,7 +120,7 @@ func TestTrendViewGateMarkers(t *testing.T) {
 		trendReport(2, 60, "", true),
 		trendReport(1, 80, "", false),
 	}
-	v := newTrendView("main", reports)
+	v := newTrendView("main", reports, nil)
 	if v == nil {
 		t.Fatal("nil view")
 	}
@@ -131,7 +131,7 @@ func TestTrendViewGateMarkers(t *testing.T) {
 
 func TestTrendViewScaleClampsAt100(t *testing.T) {
 	reports := []*store.CommitReport{trendReport(2, 100, "", false), trendReport(1, 99, "", false)}
-	v := newTrendView("main", reports)
+	v := newTrendView("main", reports, nil)
 	if v == nil {
 		t.Fatal("nil view")
 	}
@@ -142,5 +142,43 @@ func TestTrendViewScaleClampsAt100(t *testing.T) {
 	}
 	if v.Grid[0].Label != "100.0%" {
 		t.Errorf("top gridline label = %q", v.Grid[0].Label)
+	}
+}
+
+func TestTrendViewGateThreshold(t *testing.T) {
+	reports := []*store.CommitReport{ // newest first: chronological pcts are 70, 75, 80
+		trendReport(3, 80, "", false),
+		trendReport(2, 75, "", false),
+		trendReport(1, 70, "", false),
+	}
+	if v := newTrendView("main", reports, nil); v.Thresh != nil {
+		t.Errorf("no gate: threshold = %+v, want nil", v.Thresh)
+	}
+	for _, tc := range []struct {
+		gate  float64
+		wantY float64
+	}{
+		// Inside the padded 69..81 range the line sits where the data would.
+		{75, 74},
+		// Below it, the range widens down to the gate: the line lands on the
+		// plot's bottom edge (12 + 124) with the points redrawn above it.
+		{60, 136},
+		// Above it, the range widens up: the line lands on the top edge.
+		{90, 12},
+	} {
+		v := newTrendView("main", reports, &tc.gate)
+		if v.Thresh == nil {
+			t.Fatalf("gate %g: no threshold", tc.gate)
+		}
+		if v.Thresh.Y != tc.wantY {
+			t.Errorf("gate %g: threshold Y = %g, want %g", tc.gate, v.Thresh.Y, tc.wantY)
+		}
+		if want := fmt.Sprintf("gate %g%%", tc.gate); v.Thresh.Label != want {
+			t.Errorf("gate %g: label = %q, want %q", tc.gate, v.Thresh.Label, want)
+		}
+		// The grid keeps reading the series' own extremes.
+		if len(v.Grid) != 2 || v.Grid[0].Label != "80.0%" || v.Grid[1].Label != "70.0%" {
+			t.Errorf("gate %g: grid = %+v, want labeled 80.0%% and 70.0%%", tc.gate, v.Grid)
+		}
 	}
 }

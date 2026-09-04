@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -340,3 +341,63 @@ func TestUploadPageDiffCoverageSourceChanged(t *testing.T) {
 }
 
 // fakeProvider is an auth.Provider whose Identity is canned.
+
+func TestBuildFileTreeRollsUpBaseline(t *testing.T) {
+	file := func(path string, covered, total int64, c fileCompare) uploadFileRow {
+		dir, base := splitPath(path)
+		return uploadFileRow{
+			UploadFile:  &store.UploadFile{Path: path, CoveredStmts: covered, TotalStmts: total, Pct: float64(covered) / float64(total) * 100},
+			fileCompare: c,
+			Dir:         dir, Base: base,
+		}
+	}
+	before := func(covered, total int64, pct float64) fileCompare {
+		return fileCompare{HasBefore: true, BeforeCovered: covered, BeforeTotal: total, BeforeStr: fmt.Sprintf("%.1f%%", pct)}
+	}
+	regressed := before(6, 10, 60)
+	regressed.DeltaVal, regressed.Delta = 20, newDeltaView(20)
+	regressed.NewlyMiss = "12-14"
+	regressed.Changed, regressed.IsCoverageChanged = true, true
+	rows := []uploadFileRow{
+		file("cmd/gocov/client.go", 8, 10, regressed),
+		file("cmd/gocov/main.go", 12, 20, before(12, 20, 60)),
+		file("internal/server/upload.go", 30, 40, fileCompare{NewFile: true, Changed: true, IsCoverageChanged: true}),
+	}
+	byPath := map[string]treeRow{}
+	for _, tr := range buildFileTree(rows, true) {
+		byPath[tr.Path] = tr
+	}
+
+	// A directory's baseline is the sum of its files' — 18 of 30 before,
+	// 20 of 30 now — and its delta is the rollup's own, not any file's.
+	dir := byPath["cmd/gocov"]
+	if !dir.IsDir || !dir.HasBefore || dir.BeforeCovered != 18 || dir.BeforeTotal != 30 || dir.BeforeStr != "60.0%" {
+		t.Errorf("cmd/gocov baseline = %+v, want 18/30 (60.0%%)", dir.fileCompare)
+	}
+	if dir.Delta == nil || dir.Delta.Text != "+6.7%" || dir.Delta.Class != "up" {
+		t.Errorf("cmd/gocov delta = %+v, want +6.7%% up", dir.Delta)
+	}
+	if !dir.Changed || !dir.IsCoverageChanged || dir.IsSourceChanged {
+		t.Errorf("cmd/gocov flags = %+v, want changed by coverage only", dir.fileCompare)
+	}
+	if dir.NewFile || dir.NewlyMiss != "" || dir.Uncovered != "" {
+		t.Errorf("cmd/gocov carries file-only fields: %+v", dir.fileCompare)
+	}
+
+	// A directory whose only file is new has nothing to compare against.
+	dir = byPath["internal/server"]
+	if dir.HasBefore || dir.Delta != nil || dir.BeforeStr != "" {
+		t.Errorf("internal/server baseline = %+v, want none", dir.fileCompare)
+	}
+	if !dir.Changed || dir.NewFile {
+		t.Errorf("internal/server flags = %+v, want changed, not itself new", dir.fileCompare)
+	}
+
+	// File rows carry their comparison through unchanged.
+	if got := byPath["cmd/gocov/client.go"].fileCompare; got != regressed {
+		t.Errorf("client.go comparison = %+v, want %+v", got, regressed)
+	}
+	if got := byPath["internal/server/upload.go"]; !got.NewFile || got.Pct != 75 {
+		t.Errorf("upload.go row = %+v", got)
+	}
+}
