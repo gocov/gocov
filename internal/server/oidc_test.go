@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -24,40 +25,62 @@ import (
 	storemem "github.com/gocov/gocov/internal/store/memory"
 )
 
-// oidcTestKey signs test identity tokens; its public half is served as the
-// GitHub issuer's JWKS through the rewriting client below.
+// oidcIssuer is a fake OIDC issuer: its key signs test identity tokens
+// and its public half is served as the issuer's JWKS by newIssuer.
 type oidcIssuer struct {
 	key *rsa.PrivateKey
 	kid string
 }
 
-func newOIDCIssuer(t *testing.T) (*oidcIssuer, *http.Client) {
+// newIssuer serves discovery + JWKS for an OIDC issuer: the well-known
+// document at the issuer's own path, the key set at /jwks. The returned
+// client rewrites every host to this server, so a token's iss can stay the
+// real issuer (which the claim mapping keys off) while the fetch stays
+// local. jwksURI is what discovery advertises; the rewrite makes any host
+// land here.
+func newIssuer(t *testing.T, issuer, jwksURI string) (*oidcIssuer, *http.Client) {
+	t.Helper()
+	is := &oidcIssuer{key: genTestKey(t), kid: "k1"}
+	mux := http.NewServeMux()
+	mux.HandleFunc(mustPath(issuer)+"/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"issuer": issuer, "jwks_uri": jwksURI})
+	})
+	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(jwksFor(is))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return is, &http.Client{Transport: rewriteHost{target: srv.Listener.Addr().String()}}
+}
+
+// genTestKey makes an RSA key for a test issuer.
+func genTestKey(t *testing.T) *rsa.PrivateKey {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
-	is := &oidcIssuer{key: key, kid: "k1"}
+	return key
+}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
-		// Advertise the JWKS on the real issuer host; the rewriting transport
-		// sends the fetch to this test server.
-		_ = json.NewEncoder(w).Encode(map[string]string{"issuer": gitHubActionsIssuer, "jwks_uri": gitHubActionsIssuer + "/jwks"})
-	})
-	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{
-			"kty": "RSA",
-			"kid": is.kid,
-			"n":   base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
-			"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
-		}}})
-	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
+// jwksFor renders a test issuer's single public key as a JWKS document.
+func jwksFor(is *oidcIssuer) map[string]any {
+	return map[string]any{"keys": []map[string]string{{
+		"kty": "RSA",
+		"kid": is.kid,
+		"n":   base64.RawURLEncoding.EncodeToString(is.key.N.Bytes()),
+		"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(is.key.E)).Bytes()),
+	}}}
+}
 
-	client := &http.Client{Transport: rewriteHost{target: srv.Listener.Addr().String()}}
-	return is, client
+// mustPath returns the path component of a URL, for registering a handler at
+// an issuer's discovery path.
+func mustPath(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		panic(err)
+	}
+	return u.Path
 }
 
 // rewriteHost sends every request to the test JWKS server, whatever host the
@@ -122,7 +145,7 @@ func newOIDCFixture(t *testing.T) (*fixture, *oidcIssuer) {
 	ff := forgefake.New()
 	app := &fakeGitHubApp{appForge: ff, accounts: map[int64]string{77: "acme"}}
 
-	is, client := newOIDCIssuer(t)
+	is, client := newIssuer(t, gitHubActionsIssuer, gitHubActionsIssuer+"/jwks")
 	verifier := oidc.New(oidc.Config{
 		Audience:   "https://gocov.example",
 		Issuers:    []string{gitHubActionsIssuer},

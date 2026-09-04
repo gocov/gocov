@@ -15,7 +15,7 @@ func TestIndexListsWorkspaceRepos(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	body := doGet(t, f, "/").Body.String()
+	body := get(f, "/").Body.String()
 	for _, want := range []string{
 		`href="/repos/acme/widgets"`, `href="/repos/acme/gadgets"`,
 		`data-name="widgets"`, `data-name="gadgets"`,
@@ -55,7 +55,7 @@ func TestDashboardNeedsAttention(t *testing.T) {
 	report("acme/mobile", &min60, 80, false, 20*24*time.Hour) // passing but stale
 	report("acme/android", nil, 70, false, time.Hour)         // no gate
 
-	body := doGet(t, f, "/").Body.String()
+	body := get(f, "/").Body.String()
 	for _, want := range []string{
 		"Needs attention",
 		`<span class="mono">importer</span> is failing its coverage gate`,
@@ -90,7 +90,7 @@ func TestIndexShowsGateAndDelta(t *testing.T) {
 	better := "mode: set\nexample.com/m/a.go:1.1,5.2 10 3\n" // 100%, passes the gate
 	doUpload(t, f, "secret-token", map[string]string{"commit": "c2", "branch": "main"}, better)
 
-	body := doGet(t, f, "/").Body.String()
+	body := get(f, "/").Body.String()
 	if !strings.Contains(body, "chip pass") {
 		t.Errorf("gate chip missing: %s", body)
 	}
@@ -114,7 +114,7 @@ func TestIndexDeltaSkipsGateFailedBaselines(t *testing.T) {
 	best := "mode: set\nexample.com/m/a.go:1.1,5.2 10 3\n"
 	doUpload(t, f, "secret-token", map[string]string{"commit": "c3", "branch": "main"}, best)
 
-	body := doGet(t, f, "/").Body.String()
+	body := get(f, "/").Body.String()
 	if !strings.Contains(body, "20.0%") || strings.Contains(body, "50.0%") {
 		t.Errorf("delta must use the last gate-passing baseline: %s", body)
 	}

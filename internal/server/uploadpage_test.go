@@ -51,7 +51,7 @@ func TestUploadPageShowsUncoveredRanges(t *testing.T) {
 	f := newFixture(t, nil)
 	// a.go block 7.1,9.2 is uncovered in testProfile -> "7-9".
 	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile)
-	body := doGet(t, f, "/uploads/1").Body.String()
+	body := get(f, "/uploads/1").Body.String()
 	if !strings.Contains(body, `class="uncov"`) || !strings.Contains(body, "7-9") {
 		t.Errorf("uncovered ranges missing: %s", body)
 	}
@@ -73,7 +73,7 @@ func TestUploadPageBeforeAfter(t *testing.T) {
 	doUpload(t, f, "secret-token", map[string]string{"commit": "base1", "branch": "main"}, testProfileFull)
 	doUpload(t, f, "secret-token", map[string]string{"commit": "head1", "branch": "main"}, testProfile)
 
-	body := doGet(t, f, "/uploads/2").Body.String()
+	body := get(f, "/uploads/2").Body.String()
 	for _, want := range []string{
 		`class="ba"`,                            // before -> after column rendered
 		"100.0%",                                // a.go coverage at the baseline
@@ -103,7 +103,7 @@ func TestUploadPageShowsProvenance(t *testing.T) {
 		"ci_run_url":     "https://github.com/acme/widgets/actions/runs/7",
 	}, testProfile)
 
-	body := doGet(t, f, "/uploads/1").Body.String()
+	body := get(f, "/uploads/1").Body.String()
 	for _, want := range []string{
 		"Fix the ledger reconcile", // commit subject as the heading
 		"Ada Lovelace",             // author
@@ -126,7 +126,7 @@ func TestUploadPagePRBaselinesAgainstDefaultBranch(t *testing.T) {
 	doUpload(t, f, "secret-token", map[string]string{"commit": "main1", "branch": "main"}, testProfileFull)
 	doUpload(t, f, "secret-token", map[string]string{"commit": "pr1", "branch": "feature/x", "pr_id": "7"}, testProfile)
 
-	body := doGet(t, f, "/uploads/2").Body.String()
+	body := get(f, "/uploads/2").Body.String()
 	for _, want := range []string{
 		`id="file-filters"`, // baseline resolved -> filter tabs rendered
 		`class="ba"`,        // before -> after rendered
@@ -143,7 +143,7 @@ func TestUploadProfileDownload(t *testing.T) {
 	f := newFixture(t, nil)
 	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile)
 
-	rec := doGet(t, f, "/uploads/1/profile")
+	rec := get(f, "/uploads/1/profile")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("download status = %d", rec.Code)
 	}
@@ -153,7 +153,7 @@ func TestUploadProfileDownload(t *testing.T) {
 	if rec.Body.String() != testProfile {
 		t.Errorf("download body does not match the uploaded profile:\n%s", rec.Body.String())
 	}
-	if rec := doGet(t, f, "/uploads/999/profile"); rec.Code != http.StatusNotFound {
+	if rec := get(f, "/uploads/999/profile"); rec.Code != http.StatusNotFound {
 		t.Errorf("missing upload profile: code = %d, want 404", rec.Code)
 	}
 }
@@ -165,7 +165,7 @@ func TestUploadPageTreeAndFilters(t *testing.T) {
 	// Head upload on main: a.go coverage drops (Coverage changed)
 	doUpload(t, f, "secret-token", map[string]string{"commit": "head1", "branch": "main"}, testProfile)
 
-	body := doGet(t, f, "/uploads/2").Body.String()
+	body := get(f, "/uploads/2").Body.String()
 	for _, want := range []string{
 		`id="view-mode"`,
 		`data-view="tree"`,
@@ -330,7 +330,7 @@ func TestUploadPageDiffCoverageSourceChanged(t *testing.T) {
 		"commit": "prcommit1", "branch": "feature/x", "pr_id": "42",
 	}, testProfile)
 
-	body := doGet(t, f, "/uploads/2").Body.String()
+	body := get(f, "/uploads/2").Body.String()
 	if !strings.Contains(body, `Source Changed<span class="n">1</span>`) {
 		t.Errorf("expected Source Changed to have count 1, got body:\n%s", body)
 	}

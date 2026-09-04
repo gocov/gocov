@@ -3,7 +3,6 @@ package server
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -14,24 +13,6 @@ import (
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
 )
-
-// newGLIssuer serves discovery + JWKS for a GitLab issuer at its well-known
-// path, reachable through the rewriting client so the token's iss can stay
-// the real instance URL.
-func newGLIssuer(t *testing.T, issuer string) (*oidcIssuer, *http.Client) {
-	t.Helper()
-	is := &oidcIssuer{key: genTestKey(t), kid: "gl1"}
-	mux := http.NewServeMux()
-	mux.HandleFunc(mustPath(issuer)+"/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]string{"issuer": issuer, "jwks_uri": issuer + "/jwks"})
-	})
-	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(jwksFor(is))
-	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	return is, &http.Client{Transport: rewriteHost{target: srv.Listener.Addr().String()}}
-}
 
 func glClaims(issuer, projectPath, aud string) map[string]any {
 	now := time.Now()
@@ -67,7 +48,7 @@ func newGitLabOIDCFixture(t *testing.T, issuer string, extraIssuers []string) (*
 	blobs := blobmem.New()
 	ff := forgefake.New()
 
-	is, client := newGLIssuer(t, issuer)
+	is, client := newIssuer(t, issuer, issuer+"/jwks")
 	verifier := oidc.New(oidc.Config{
 		Audience:   "https://gocov.example",
 		Issuers:    []string{issuer},
