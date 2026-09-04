@@ -1,6 +1,7 @@
 package gitlab
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net/http"
@@ -49,26 +50,11 @@ type Application struct {
 // caveat applies) — and TTL is two hours on gitlab.com.
 type Grant = forge.Grant
 
-func (a *Application) authBase() string {
-	if a.AuthBaseURL != "" {
-		return a.AuthBaseURL
-	}
-	return DefaultAuthBaseURL
-}
+func (a *Application) authBase() string { return cmp.Or(a.AuthBaseURL, DefaultAuthBaseURL) }
 
-func (a *Application) apiBase() string {
-	if a.APIBaseURL != "" {
-		return a.APIBaseURL
-	}
-	return DefaultBaseURL
-}
+func (a *Application) apiBase() string { return cmp.Or(a.APIBaseURL, DefaultBaseURL) }
 
-func (a *Application) client() *http.Client {
-	if a.HTTPClient != nil {
-		return a.HTTPClient
-	}
-	return &http.Client{Timeout: 15 * time.Second}
-}
+func (a *Application) client() *http.Client { return cmp.Or(a.HTTPClient, rest.NewHTTPClient()) }
 
 // AuthorizeURL is the consent page for the connect grant. Unlike
 // sign-in's read-only scopes, connect asks for "api" — statuses, notes
@@ -132,11 +118,7 @@ func (a *Application) ForgeClient(accessToken string) forge.Forge {
 func (a *Application) token(ctx context.Context, form url.Values) (*Grant, error) {
 	form.Set("client_id", a.Key)
 	form.Set("client_secret", a.Secret)
-	var tok struct {
-		AccessToken  string  `json:"access_token"`
-		RefreshToken string  `json:"refresh_token"`
-		ExpiresIn    float64 `json:"expires_in"`
-	}
+	var tok rest.Token
 	api := &rest.Client{Name: "gitlab", BaseURL: a.authBase(), HTTPClient: a.client()}
 	err := api.PostForm(ctx, "/token", form, &tok)
 	if rest.OAuthErrorCode(err) == "invalid_grant" {
@@ -148,14 +130,10 @@ func (a *Application) token(ctx context.Context, form url.Values) (*Grant, error
 	if tok.AccessToken == "" {
 		return nil, fmt.Errorf("gitlab: token grant returned no access token")
 	}
-	ttl := time.Duration(tok.ExpiresIn) * time.Second
-	if ttl == 0 {
-		ttl = grantTTLDefault
-	}
 	return &Grant{
 		AccessToken:  tok.AccessToken,
 		RefreshToken: tok.RefreshToken,
-		TTL:          ttl,
+		TTL:          cmp.Or(tok.TTL(), grantTTLDefault),
 	}, nil
 }
 

@@ -2,6 +2,7 @@
 package github
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net/http"
@@ -25,16 +26,20 @@ type Client struct {
 	HTTPClient *http.Client
 }
 
-// authorize sets the request's auth header. The single seam a future
-// GitHub App integration (installation tokens with expiry) replaces.
-func (c *Client) authorize(req *http.Request) {
-	req.Header.Set("Authorization", "Bearer "+c.Token)
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+// authorize sets a request's bearer — a personal token, an installation
+// token or the app's own JWT, GitHub takes them all the same way — and
+// pins the API version, so a future default cannot change the shape of
+// an answer under a running deployment.
+func authorize(bearer string) func(*http.Request) {
+	return func(req *http.Request) {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	}
 }
 
 // api is the request plumbing, bound to this client's credentials.
 func (c *Client) api() *rest.Client {
-	return &rest.Client{Name: "github", BaseURL: c.BaseURL, HTTPClient: c.HTTPClient, Authorize: c.authorize}
+	return &rest.Client{Name: "github", BaseURL: c.BaseURL, HTTPClient: c.HTTPClient, Authorize: authorize(c.Token)}
 }
 
 var stateNames = map[string]string{
@@ -54,10 +59,7 @@ func (c *Client) PostBuildStatus(ctx context.Context, repoSlug, commitSHA string
 	if !ok {
 		return fmt.Errorf("github: unknown build status state %q", status.State)
 	}
-	statusContext := status.Name
-	if statusContext == "" {
-		statusContext = status.Key
-	}
+	statusContext := cmp.Or(status.Name, status.Key)
 	desc := status.Description
 	if r := []rune(desc); len(r) > statusMaxDescription {
 		desc = string(r[:statusMaxDescription-1]) + "…"
@@ -142,7 +144,7 @@ func (c *Client) GetPRDiff(ctx context.Context, repoSlug, prID string) (string, 
 func (c *Client) fetchRepo(ctx context.Context, repoSlug string, out any) error {
 	err := c.api().Get(ctx, "/repos/"+repoSlug, out)
 	if rest.Status(err) == http.StatusNotFound {
-		return fmt.Errorf("%w: %s", forge.ErrRepoNotFound, repoSlug)
+		return forge.RepoNotFound(repoSlug)
 	}
 	return err
 }
@@ -187,15 +189,11 @@ const maxFileBytes = 2 << 20
 // GetFileContent reads a file at a commit via
 // GET /repos/{slug}/contents/{path}?ref={sha} with the raw media type.
 func (c *Client) GetFileContent(ctx context.Context, repoSlug, commitSHA, path string) ([]byte, error) {
-	segments := strings.Split(path, "/")
-	for i, s := range segments {
-		segments[i] = url.PathEscape(s)
-	}
 	reqPath := fmt.Sprintf("/repos/%s/contents/%s?ref=%s",
-		repoSlug, strings.Join(segments, "/"), url.QueryEscape(commitSHA))
+		repoSlug, rest.EscapePath(path), url.QueryEscape(commitSHA))
 	data, err := c.api().GetBytes(ctx, reqPath, "application/vnd.github.raw+json", maxFileBytes)
 	if rest.Status(err) == http.StatusNotFound {
-		return nil, fmt.Errorf("%w: %s at %s", forge.ErrRepoNotFound, path, commitSHA)
+		return nil, forge.FileNotFound(path, commitSHA)
 	}
 	return data, err
 }
@@ -225,11 +223,7 @@ func (c *Client) PublishReport(ctx context.Context, repoSlug, commitSHA string, 
 		"title":   report.Details,
 		"summary": checkRunSummary(report),
 	}
-	first := annotations
-	if len(first) > annotationsPerRequest {
-		first = first[:annotationsPerRequest]
-	}
-	if len(first) > 0 {
+	if first := annotations[:min(len(annotations), annotationsPerRequest)]; len(first) > 0 {
 		output["annotations"] = checkRunAnnotations(first)
 	}
 	payload := map[string]any{

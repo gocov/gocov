@@ -16,6 +16,7 @@ import (
 	"net/http"
 	neturl "net/url"
 	"strings"
+	"time"
 )
 
 // Client sends calls to one REST API.
@@ -29,6 +30,13 @@ type Client struct {
 	HTTPClient *http.Client
 	// Authorize sets a request's credentials; nil sends it bare.
 	Authorize func(*http.Request)
+}
+
+// NewHTTPClient is the sender a caller gets when it brings none of its
+// own: bounded by a timeout, because a forge that stops answering must
+// not hold an upload — or a sign-in — open indefinitely.
+func NewHTTPClient() *http.Client {
+	return &http.Client{Timeout: 15 * time.Second}
 }
 
 // Bearer authorizes requests with an OAuth-style bearer token.
@@ -69,6 +77,16 @@ func Status(err error) int {
 	return 0
 }
 
+// Body returns the explanation the API sent with the refusal behind
+// err, or "" when err is anything else. With Status it lets a caller
+// recognize a specific rejection without unpacking the error itself.
+func Body(err error) string {
+	if e, ok := errors.AsType[*Error](err); ok {
+		return e.Body
+	}
+	return ""
+}
+
 // OAuthErrorCode returns the "error" code a token endpoint put in the
 // refusal behind err — "invalid_grant" and the like — or "" when err is
 // anything else or the body is not such an answer.
@@ -82,6 +100,24 @@ func OAuthErrorCode(err error) string {
 	}
 	_ = json.Unmarshal([]byte(e.Body), &body)
 	return body.Error
+}
+
+// Token is what a token endpoint answers a successful grant with, in
+// the shape RFC 6749 gives it — the fields every forge's OAuth server
+// sends the same way. Decode a PostForm answer into it.
+type Token struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	// ExpiresIn is the access token's lifetime in seconds; 0 when the
+	// endpoint did not say.
+	ExpiresIn float64 `json:"expires_in"`
+}
+
+// TTL is the access token's lifetime as a duration — 0 when the
+// endpoint did not send one, so callers can fall back to what they know
+// about the forge.
+func (t Token) TTL() time.Duration {
+	return time.Duration(t.ExpiresIn) * time.Second
 }
 
 const (
@@ -238,6 +274,21 @@ func (c *Client) decode(resp *http.Response, url string, out any) error {
 		return fmt.Errorf("%s: decoding %s: %w", c.Name, url, err)
 	}
 	return nil
+}
+
+// EscapePath escapes a slash-separated path one segment at a time, so
+// the slashes keep structuring the URL while everything between them
+// travels safely — a file path inside a repository URL, where a bare
+// "?" or "#" in a filename would otherwise cut the request short.
+func EscapePath(path string) string {
+	var b strings.Builder
+	for i, segment := range strings.Split(path, "/") {
+		if i > 0 {
+			b.WriteByte('/')
+		}
+		b.WriteString(neturl.PathEscape(segment))
+	}
+	return b.String()
 }
 
 // NextLink extracts the rel="next" URL from a Link response header, or

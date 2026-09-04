@@ -7,6 +7,7 @@ import (
 	neturl "net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNextLink(t *testing.T) {
@@ -125,5 +126,34 @@ func TestPostFormIsATokenEndpointCall(t *testing.T) {
 	err := c.PostForm(t.Context(), srv.URL+"/token", neturl.Values{"code": {"bad"}}, &tok)
 	if e, ok := errors.AsType[*Error](err); !ok || e.Status != http.StatusBadRequest || !strings.Contains(e.Body, "invalid_grant") {
 		t.Errorf("refusal = %#v", err)
+	}
+}
+
+func TestBodyAndTokenShapes(t *testing.T) {
+	err := &Error{Status: http.StatusBadRequest, Body: `{"message":"Cannot transition status"}`, msg: "x"}
+	if Body(err) != err.Body {
+		t.Errorf("Body(refusal) = %q, want the answer's explanation", Body(err))
+	}
+	if Body(errors.New("other")) != "" || Body(nil) != "" {
+		t.Error("Body must be empty for non-refusals")
+	}
+	if got := (Token{ExpiresIn: 7200}).TTL(); got != 2*time.Hour {
+		t.Errorf("TTL = %v, want 2h", got)
+	}
+	if got := (Token{}).TTL(); got != 0 {
+		t.Errorf("TTL without expires_in = %v, want 0 so callers can fall back", got)
+	}
+}
+
+func TestEscapePathKeepsSlashes(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"a/b/c.go", "a/b/c.go"},
+		{"dir name/file#1?.go", "dir%20name/file%231%3F.go"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := EscapePath(tt.in); got != tt.want {
+			t.Errorf("EscapePath(%q) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }

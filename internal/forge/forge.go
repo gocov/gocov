@@ -6,6 +6,7 @@ package forge
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -16,6 +17,21 @@ var ErrNotImplemented = errors.New("forge: not implemented")
 // ErrRepoNotFound is returned when the forge reports that a repository
 // does not exist (e.g. a 404 while asking for its default branch).
 var ErrRepoNotFound = errors.New("forge: repository not found")
+
+// RepoNotFound wraps ErrRepoNotFound around the slug the forge answered
+// 404 for, so the missing repository reads the same whichever forge
+// reported it.
+func RepoNotFound(repoSlug string) error {
+	return fmt.Errorf("%w: %s", ErrRepoNotFound, repoSlug)
+}
+
+// FileNotFound wraps ErrRepoNotFound around a path absent at a commit.
+// The repository sentinel covers files too: to the source view a file
+// the forge cannot produce is the same "nothing to show" as a
+// repository it cannot find.
+func FileNotFound(path, commitSHA string) error {
+	return fmt.Errorf("%w: %s at %s", ErrRepoNotFound, path, commitSHA)
+}
 
 // ErrCredentialsRevoked is returned when the forge rejects the stored
 // connection itself — an uninstalled GitHub App, a revoked OAuth grant —

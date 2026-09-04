@@ -4,9 +4,9 @@
 package gitlab
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -32,16 +32,11 @@ type Client struct {
 	HTTPClient *http.Client
 }
 
-// authorize sets the request's auth header. Bearer works for personal,
-// project and group access tokens alike (and for OAuth tokens, unlike
-// the PRIVATE-TOKEN header).
-func (c *Client) authorize(req *http.Request) {
-	req.Header.Set("Authorization", "Bearer "+c.Token)
-}
-
 // api is the request plumbing, bound to this client's credentials.
+// Bearer works for personal, project and group access tokens alike (and
+// for OAuth tokens, unlike the PRIVATE-TOKEN header).
 func (c *Client) api() *rest.Client {
-	return &rest.Client{Name: "gitlab", BaseURL: c.BaseURL, HTTPClient: c.HTTPClient, Authorize: c.authorize}
+	return &rest.Client{Name: "gitlab", BaseURL: c.BaseURL, HTTPClient: c.HTTPClient, Authorize: rest.Bearer(c.Token)}
 }
 
 // projectID is the URL path form of a project: the full namespace path,
@@ -66,13 +61,9 @@ func (c *Client) PostBuildStatus(ctx context.Context, repoSlug, commitSHA string
 	if !ok {
 		return fmt.Errorf("gitlab: unknown build status state %q", status.State)
 	}
-	name := status.Name
-	if name == "" {
-		name = status.Key
-	}
 	body := map[string]string{
 		"state":       state,
-		"name":        name,
+		"name":        cmp.Or(status.Name, status.Key),
 		"description": status.Description,
 	}
 	if status.URL != "" {
@@ -83,8 +74,7 @@ func (c *Client) PostBuildStatus(ctx context.Context, repoSlug, commitSHA string
 	// Re-posting the state a commit already has (a re-upload merging
 	// another report into the same commit) is a 400 "Cannot transition
 	// status" — the status is already what we want it to be, not a failure.
-	if e, ok := errors.AsType[*rest.Error](err); ok && e.Status == http.StatusBadRequest &&
-		strings.Contains(e.Body, "Cannot transition status") {
+	if rest.Status(err) == http.StatusBadRequest && strings.Contains(rest.Body(err), "Cannot transition status") {
 		return nil
 	}
 	return err
@@ -203,7 +193,7 @@ func (c *Client) GetPRDiff(ctx context.Context, repoSlug, prID string) (string, 
 func (c *Client) fetchProject(ctx context.Context, repoSlug string, out any) error {
 	err := c.api().Get(ctx, "/projects/"+projectID(repoSlug), out)
 	if rest.Status(err) == http.StatusNotFound {
-		return fmt.Errorf("%w: %s", forge.ErrRepoNotFound, repoSlug)
+		return forge.RepoNotFound(repoSlug)
 	}
 	return err
 }
@@ -256,7 +246,7 @@ func (c *Client) GetFileContent(ctx context.Context, repoSlug, commitSHA, path s
 		projectID(repoSlug), url.PathEscape(path), url.QueryEscape(commitSHA))
 	data, err := c.api().GetBytes(ctx, reqPath, "", maxFileBytes)
 	if rest.Status(err) == http.StatusNotFound {
-		return nil, fmt.Errorf("%w: %s at %s", forge.ErrRepoNotFound, path, commitSHA)
+		return nil, forge.FileNotFound(path, commitSHA)
 	}
 	return data, err
 }

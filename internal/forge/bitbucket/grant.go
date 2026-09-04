@@ -1,11 +1,11 @@
 package bitbucket
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net/http"
 	"net/url"
-	"time"
 
 	"github.com/gocov/gocov/internal/forge"
 	"github.com/gocov/gocov/internal/rest"
@@ -41,26 +41,11 @@ type Consumer struct {
 // is two hours on live Bitbucket.
 type Grant = forge.Grant
 
-func (c *Consumer) authBase() string {
-	if c.AuthBaseURL != "" {
-		return c.AuthBaseURL
-	}
-	return DefaultAuthBaseURL
-}
+func (c *Consumer) authBase() string { return cmp.Or(c.AuthBaseURL, DefaultAuthBaseURL) }
 
-func (c *Consumer) apiBase() string {
-	if c.APIBaseURL != "" {
-		return c.APIBaseURL
-	}
-	return DefaultBaseURL
-}
+func (c *Consumer) apiBase() string { return cmp.Or(c.APIBaseURL, DefaultBaseURL) }
 
-func (c *Consumer) client() *http.Client {
-	if c.HTTPClient != nil {
-		return c.HTTPClient
-	}
-	return &http.Client{Timeout: 15 * time.Second}
-}
+func (c *Consumer) client() *http.Client { return cmp.Or(c.HTTPClient, rest.NewHTTPClient()) }
 
 // AuthorizeURL is the consent page for the connect grant. No scope
 // parameter: Bitbucket scopes are configured on the consumer, and the
@@ -120,11 +105,7 @@ func (c *Consumer) ForgeClient(accessToken string) forge.Forge {
 // token runs one grant against the token endpoint with HTTP Basic
 // consumer auth.
 func (c *Consumer) token(ctx context.Context, form url.Values) (*Grant, error) {
-	var tok struct {
-		AccessToken  string  `json:"access_token"`
-		RefreshToken string  `json:"refresh_token"`
-		ExpiresIn    float64 `json:"expires_in"`
-	}
+	var tok rest.Token
 	api := &rest.Client{Name: "bitbucket", BaseURL: c.authBase(), HTTPClient: c.client(), Authorize: rest.Basic(c.Key, c.Secret)}
 	err := api.PostForm(ctx, "/access_token", form, &tok)
 	if code := rest.OAuthErrorCode(err); code != "" {
@@ -153,11 +134,7 @@ func (c *Consumer) token(ctx context.Context, form url.Values) (*Grant, error) {
 	if tok.AccessToken == "" {
 		return nil, fmt.Errorf("bitbucket: token grant returned no access token")
 	}
-	return &Grant{
-		AccessToken:  tok.AccessToken,
-		RefreshToken: tok.RefreshToken,
-		TTL:          time.Duration(tok.ExpiresIn) * time.Second,
-	}, nil
+	return &Grant{AccessToken: tok.AccessToken, RefreshToken: tok.RefreshToken, TTL: tok.TTL()}, nil
 }
 
 // username resolves the token's account via GET /user.
