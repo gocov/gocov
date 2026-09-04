@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/gocov/gocov/compare/v0.18.0...v0.19.0) (2026-09-04)
+
+
+### Features
+
+* record workspace roles from the forge ([#111](https://github.com/gocov/gocov/issues/111)) ([49a53e8](https://github.com/gocov/gocov/commit/49a53e850bd63d71919ec3d520b4767894fecae0))
+
 ## [0.18.0](https://github.com/gocov/gocov/compare/v0.17.0...v0.18.0) (2026-09-04)
 
 
