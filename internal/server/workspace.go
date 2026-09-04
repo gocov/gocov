@@ -36,13 +36,8 @@ func workspaceURL(prefix, suffix string) string {
 // the user's role in it. With auth off there are no members, so the
 // pages do not exist.
 func (s *Server) memberWorkspace(w http.ResponseWriter, r *http.Request) (*store.Workspace, store.Role) {
-	if !s.authEnabled() {
-		http.NotFound(w, r)
-		return nil, ""
-	}
-	u := currentUser(r)
+	u := s.signedIn(w, r)
 	if u == nil {
-		http.NotFound(w, r)
 		return nil, ""
 	}
 	ws, err := s.store.WorkspaceByPrefix(r.Context(), r.PathValue("prefix"))
@@ -64,6 +59,22 @@ func (s *Server) memberWorkspace(w http.ResponseWriter, r *http.Request) (*store
 		return nil, ""
 	}
 	return ws, role
+}
+
+// signedIn is the gate on the member-only pages: the signed-in user, or
+// nil after writing a 404 — with sign-in off there are no members, so
+// the pages do not exist, and a signed-out request must not learn that
+// they would.
+func (s *Server) signedIn(w http.ResponseWriter, r *http.Request) *store.User {
+	if !s.authEnabled() {
+		http.NotFound(w, r)
+		return nil
+	}
+	u := currentUser(r)
+	if u == nil {
+		http.NotFound(w, r)
+	}
+	return u
 }
 
 // ownerWorkspace is memberWorkspace for the owner-only routes: a member

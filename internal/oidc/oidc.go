@@ -26,6 +26,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -254,7 +255,7 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (*Token, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !contains(auds, v.audience) {
+	if !slices.ContainsFunc(auds, func(aud string) bool { return strings.TrimRight(aud, "/") == v.audience }) {
 		return nil, fmt.Errorf("%w: aud %v is not %q", ErrBadAudience, auds, v.audience)
 	}
 
@@ -310,15 +311,6 @@ func audiences(raw json.RawMessage) ([]string, error) {
 		return many, nil
 	}
 	return nil, fmt.Errorf("%w: audience is neither string nor array", ErrInvalidToken)
-}
-
-func contains(ss []string, want string) bool {
-	for _, s := range ss {
-		if strings.TrimRight(s, "/") == want {
-			return true
-		}
-	}
-	return false
 }
 
 // publicKey returns the issuer's RSA key for the given kid, fetching and

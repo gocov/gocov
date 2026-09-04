@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"math"
 	"net/http"
 	"net/url"
 	"slices"
@@ -479,10 +478,7 @@ func newSparkView(reports []*store.CommitReport, stale bool) *sparkView {
 	if len(series) < 2 {
 		return nil
 	}
-	lo, hi := series[0], series[0]
-	for _, v := range series[1:] {
-		lo, hi = math.Min(lo, v), math.Max(hi, v)
-	}
+	lo, hi := slices.Min(series), slices.Max(series)
 	const top, bot = 3.0, 19.0 // vertical plot band within the 22px box
 	right := 76.0
 	if stale {

@@ -67,7 +67,7 @@ func round1(v float64) float64 { return math.Round(v*10) / 10 }
 // fewer than two points remain — the page then omits the section. An optional
 // gate minimum, when passed, is drawn as a dashed threshold line and folded
 // into the plotted range so it is always visible.
-func newTrendView(branch string, reports []*store.CommitReport, min ...float64) *trendView {
+func newTrendView(branch string, reports []*store.CommitReport, gateMin ...float64) *trendView {
 	var series []*store.CommitReport // chronological
 	for _, report := range slices.Backward(reports) {
 		if report.PRID == "" {
@@ -83,25 +83,24 @@ func newTrendView(branch string, reports []*store.CommitReport, min ...float64) 
 	// impossible percentages.
 	lo, hi := series[0].TotalPct, series[0].TotalPct
 	for _, u := range series[1:] {
-		lo = math.Min(lo, u.TotalPct)
-		hi = math.Max(hi, u.TotalPct)
+		lo, hi = min(lo, u.TotalPct), max(hi, u.TotalPct)
 	}
-	pad := math.Max((hi-lo)*0.1, 0.5)
-	yLo := math.Max(0, lo-pad)
-	yHi := math.Min(100, hi+pad)
+	pad := max((hi-lo)*0.1, 0.5)
+	yLo := max(0, lo-pad)
+	yHi := min(100, hi+pad)
 
 	// A configured gate minimum widens the plotted range so its line always
 	// lands on the canvas — the grid labels still read the series min/max, so
 	// the gate line reads as a separate reference, not a data point.
 	var minCov *float64
-	if len(min) > 0 {
-		m := min[0]
+	if len(gateMin) > 0 {
+		m := gateMin[0]
 		minCov = &m
 		if m < yLo {
-			yLo = math.Max(0, m)
+			yLo = max(0, m)
 		}
 		if m > yHi {
-			yHi = math.Min(100, m)
+			yHi = min(100, m)
 		}
 	}
 
@@ -131,13 +130,9 @@ func newTrendView(branch string, reports []*store.CommitReport, min ...float64) 
 		} else {
 			fmt.Fprintf(&path, " L%g %g", px, py)
 		}
-		sha := u.CommitSHA
-		if len(sha) > 12 {
-			sha = sha[:12]
-		}
 		v.Points = append(v.Points, trendPoint{
 			X: px, Y: py, ID: u.UploadID, GateFailed: u.GateFailed,
-			Title: fmt.Sprintf("%s · %.1f%% · %s", u.CreatedAt.Format("2006-01-02"), u.TotalPct, sha),
+			Title: fmt.Sprintf("%s · %.1f%% · %s", u.CreatedAt.Format("2006-01-02"), u.TotalPct, shortSHA(u.CommitSHA)),
 		})
 	}
 	v.Path = path.String()

@@ -26,13 +26,8 @@ import (
 // segment because repo slugs contain slashes; the router decodes it via
 // PathValue.
 func (s *Server) memberRepo(w http.ResponseWriter, r *http.Request) (*store.Repo, string, store.Role) {
-	if !s.authEnabled() {
-		http.NotFound(w, r)
-		return nil, "", ""
-	}
-	u := currentUser(r)
+	u := s.signedIn(w, r)
 	if u == nil {
-		http.NotFound(w, r)
 		return nil, "", ""
 	}
 	repo, err := s.store.RepoBySlug(r.Context(), r.PathValue("slug"))
