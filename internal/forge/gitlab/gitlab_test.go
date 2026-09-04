@@ -352,23 +352,6 @@ func TestPublishReportNotImplemented(t *testing.T) {
 	}
 }
 
-func TestNextLink(t *testing.T) {
-	tests := []struct {
-		header string
-		want   string
-	}{
-		{`<https://gitlab.com/api/v4/x?page=2>; rel="next", <https://gitlab.com/api/v4/x?page=5>; rel="last"`,
-			"https://gitlab.com/api/v4/x?page=2"},
-		{`<https://gitlab.com/api/v4/x?page=1>; rel="prev"`, ""},
-		{"", ""},
-	}
-	for _, tt := range tests {
-		if got := nextLink(tt.header); got != tt.want {
-			t.Errorf("nextLink(%q) = %q, want %q", tt.header, got, tt.want)
-		}
-	}
-}
-
 func TestGetRepoVisibility(t *testing.T) {
 	// GitLab's third value, "internal", is readable only by signed-in
 	// GitLab accounts — not world-readable, so private for our purposes.

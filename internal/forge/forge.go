@@ -6,6 +6,7 @@ package forge
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // ErrNotImplemented is returned by forge methods an implementation does not
@@ -22,6 +23,20 @@ var ErrRepoNotFound = errors.New("forge: repository not found")
 // callers degrade like missing credentials and surface a reconnect
 // prompt instead of retrying.
 var ErrCredentialsRevoked = errors.New("forge: credentials revoked")
+
+// Grant is one issued (or refreshed) token set of a workspace-connect
+// OAuth grant — the shape Bitbucket and GitLab grants share, so the code
+// that refreshes and stores them runs once for both.
+type Grant struct {
+	// Account is the username of the granting account; statuses and
+	// comments posted through the grant visibly carry it. Empty on
+	// refreshes.
+	Account      string
+	AccessToken  string
+	RefreshToken string
+	// TTL is how long the access token lives.
+	TTL time.Duration
+}
 
 // Repo visibility values, mapped by each implementation from its native
 // field. Anything the forge restricts to signed-in accounts (e.g. a

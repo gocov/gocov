@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gocov/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/forge/internal/rest"
 )
 
 // Workspace-connect OAuth grant (GitLab Connect, the P2 one-click item).
@@ -46,17 +47,10 @@ type Application struct {
 	HTTPClient  *http.Client
 }
 
-// Grant is one issued (or refreshed) token set.
-type Grant struct {
-	// Account is the username of the granting GitLab account — notes
-	// will visibly post as it (the Bitbucket D8 caveat applies). Empty
-	// on refreshes.
-	Account      string
-	AccessToken  string
-	RefreshToken string
-	// TTL is how long the access token lives (GitLab: two hours).
-	TTL time.Duration
-}
+// Grant is one issued (or refreshed) token set. Account is the granting
+// GitLab account — notes will visibly post as it (the Bitbucket D8
+// caveat applies) — and TTL is two hours on gitlab.com.
+type Grant = forge.Grant
 
 func (a *Application) authBase() string {
 	if a.AuthBaseURL != "" {
@@ -190,25 +184,12 @@ func (a *Application) token(ctx context.Context, form url.Values) (*Grant, error
 
 // username resolves the token's account via GET /user.
 func (a *Application) username(ctx context.Context, accessToken string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.apiBase()+"/user", nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	resp, err := a.client().Do(req)
-	if err != nil {
-		return "", fmt.Errorf("gitlab: GET /user: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("gitlab: GET /user: status %d: %s", resp.StatusCode, body)
-	}
+	api := &rest.Client{Name: "gitlab", BaseURL: a.apiBase(), HTTPClient: a.client(), Authorize: rest.Bearer(accessToken)}
 	var user struct {
 		Username string `json:"username"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&user); err != nil {
-		return "", fmt.Errorf("gitlab: GET /user: %w", err)
+	if err := api.Get(ctx, "/user", &user); err != nil {
+		return "", err
 	}
 	if user.Username == "" {
 		return "", fmt.Errorf("gitlab: GET /user returned no username")

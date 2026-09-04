@@ -180,10 +180,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	// A returning workspace-connect consent shares this callback URL —
 	// the forges enforce an exact redirect-URI match on the configured
 	// callback — and is told apart by its own state cookie.
-	if provider.Name() == "bitbucket" && s.bitbucketConnectCallback(w, r) {
-		return
-	}
-	if provider.Name() == "gitlab" && s.gitlabConnectCallback(w, r) {
+	if g := connectGrantFor(provider.Name()); g != nil && s.connectCallback(g, w, r) {
 		return
 	}
 

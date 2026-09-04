@@ -4,7 +4,6 @@
 package gitlab
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/gocov/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/forge/internal/rest"
 )
 
 // DefaultBaseURL is the GitLab REST API root. Kept a field on Client so
@@ -37,6 +37,11 @@ type Client struct {
 // the PRIVATE-TOKEN header).
 func (c *Client) authorize(req *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+c.Token)
+}
+
+// api is the request plumbing, bound to this client's credentials.
+func (c *Client) api() *rest.Client {
+	return &rest.Client{Name: "gitlab", BaseURL: c.BaseURL, HTTPClient: c.HTTPClient, Authorize: c.authorize}
 }
 
 // projectID is the URL path form of a project: the full namespace path,
@@ -74,13 +79,12 @@ func (c *Client) PostBuildStatus(ctx context.Context, repoSlug, commitSHA string
 		body["target_url"] = status.URL
 	}
 	path := fmt.Sprintf("/projects/%s/statuses/%s", projectID(repoSlug), url.PathEscape(commitSHA))
-	err := c.send(ctx, http.MethodPost, path, body)
+	err := c.api().Send(ctx, http.MethodPost, path, body)
 	// Re-posting the state a commit already has (a re-upload merging
 	// another report into the same commit) is a 400 "Cannot transition
 	// status" — the status is already what we want it to be, not a failure.
-	var ae *apiError
-	if errors.As(err, &ae) && ae.status == http.StatusBadRequest &&
-		strings.Contains(ae.msg, "Cannot transition status") {
+	if e, ok := errors.AsType[*rest.Error](err); ok && e.Status == http.StatusBadRequest &&
+		strings.Contains(e.Body, "Cannot transition status") {
 		return nil
 	}
 	return err
@@ -90,7 +94,7 @@ func (c *Client) PostBuildStatus(ctx context.Context, repoSlug, commitSHA string
 // POST /projects/{id}/merge_requests/{iid}/notes.
 func (c *Client) PostPRComment(ctx context.Context, repoSlug, prID, body string) error {
 	path := fmt.Sprintf("/projects/%s/merge_requests/%s/notes", projectID(repoSlug), url.PathEscape(prID))
-	return c.send(ctx, http.MethodPost, path, map[string]string{"body": body})
+	return c.api().Send(ctx, http.MethodPost, path, map[string]string{"body": body})
 }
 
 // maxNotePages bounds pagination when searching for an earlier note.
@@ -107,37 +111,20 @@ func (c *Client) FindPRComment(ctx context.Context, repoSlug, prID, prefix strin
 		c.BaseURL, projectID(repoSlug), url.PathEscape(prID))
 	found := ""
 	for page := 0; next != "" && page < maxNotePages; page++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, next, nil)
-		if err != nil {
-			return "", err
-		}
-		c.authorize(req)
-		resp, err := c.HTTPClient.Do(req)
-		if err != nil {
-			return "", fmt.Errorf("gitlab: %w", err)
-		}
-		if resp.StatusCode >= 300 {
-			msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-			resp.Body.Close()
-			return "", fmt.Errorf("gitlab: listing MR notes returned %d: %s", resp.StatusCode, msg)
-		}
 		var notes []struct {
 			ID     int64  `json:"id"`
 			Body   string `json:"body"`
 			System bool   `json:"system"`
 		}
-		err = json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&notes)
-		link := resp.Header.Get("Link")
-		resp.Body.Close()
-		if err != nil {
-			return "", fmt.Errorf("gitlab: decoding MR notes: %w", err)
+		var err error
+		if next, err = c.api().GetPage(ctx, next, &notes); err != nil {
+			return "", err
 		}
 		for _, n := range notes {
 			if !n.System && strings.HasPrefix(n.Body, prefix) {
 				found = strconv.FormatInt(n.ID, 10)
 			}
 		}
-		next = nextLink(link)
 	}
 	if next != "" {
 		// Beyond the cap an existing marker note can go unseen, making
@@ -149,28 +136,12 @@ func (c *Client) FindPRComment(ctx context.Context, repoSlug, prID, prefix strin
 	return found, nil
 }
 
-// nextLink extracts the rel="next" URL from a Link response header, or ""
-// when there is no next page.
-func nextLink(header string) string {
-	for part := range strings.SplitSeq(header, ",") {
-		u, rel, ok := strings.Cut(part, ";")
-		if !ok || !strings.Contains(rel, `rel="next"`) {
-			continue
-		}
-		u = strings.TrimSpace(u)
-		if strings.HasPrefix(u, "<") && strings.HasSuffix(u, ">") {
-			return u[1 : len(u)-1]
-		}
-	}
-	return ""
-}
-
 // UpdatePRComment replaces a note's body via
 // PUT /projects/{id}/merge_requests/{iid}/notes/{note_id}.
 func (c *Client) UpdatePRComment(ctx context.Context, repoSlug, prID, commentID, body string) error {
 	path := fmt.Sprintf("/projects/%s/merge_requests/%s/notes/%s",
 		projectID(repoSlug), url.PathEscape(prID), url.PathEscape(commentID))
-	return c.send(ctx, http.MethodPut, path, map[string]string{"body": body})
+	return c.api().Send(ctx, http.MethodPut, path, map[string]string{"body": body})
 }
 
 // maxDiffBytes bounds MR diffs; larger diffs error instead of truncating.
@@ -186,21 +157,13 @@ const maxDiffBytes = 32 << 20
 // lifts the overflow ceiling) is planned as a P1 follow-up.
 func (c *Client) GetPRDiff(ctx context.Context, repoSlug, prID string) (string, error) {
 	path := fmt.Sprintf("/projects/%s/merge_requests/%s/changes", projectID(repoSlug), url.PathEscape(prID))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	// Read through Do rather than Get: the changes document is a diff
+	// wrapped in JSON, so it gets the diff's size allowance.
+	resp, err := c.api().Do(ctx, http.MethodGet, path, nil, "")
 	if err != nil {
 		return "", err
 	}
-	c.authorize(req)
-
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("gitlab: %w", err)
-	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("gitlab: %s returned %d: %s", path, resp.StatusCode, msg)
-	}
 	var body struct {
 		Overflow bool `json:"overflow"`
 		Changes  []struct {
@@ -238,29 +201,11 @@ func (c *Client) GetPRDiff(ctx context.Context, repoSlug, prID string) (string, 
 // it into out — the request/status/decode plumbing GetDefaultBranch and
 // GetRepoVisibility share.
 func (c *Client) fetchProject(ctx context.Context, repoSlug string, out any) error {
-	path := "/projects/" + projectID(repoSlug)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
-	if err != nil {
-		return err
-	}
-	c.authorize(req)
-
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("gitlab: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
+	err := c.api().Get(ctx, "/projects/"+projectID(repoSlug), out)
+	if rest.Status(err) == http.StatusNotFound {
 		return fmt.Errorf("%w: %s", forge.ErrRepoNotFound, repoSlug)
 	}
-	if resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("gitlab: %s returned %d: %s", path, resp.StatusCode, msg)
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out); err != nil {
-		return fmt.Errorf("gitlab: decoding project: %w", err)
-	}
-	return nil
+	return err
 }
 
 // GetDefaultBranch reads the project's default branch via
@@ -307,34 +252,13 @@ const maxFileBytes = 2 << 20
 // GET /projects/{id}/repository/files/{path}/raw?ref={sha}. The file path
 // is URL-encoded into a single segment, same as the project path.
 func (c *Client) GetFileContent(ctx context.Context, repoSlug, commitSHA, path string) ([]byte, error) {
-	reqURL := fmt.Sprintf("%s/projects/%s/repository/files/%s/raw?ref=%s",
-		c.BaseURL, projectID(repoSlug), url.PathEscape(path), url.QueryEscape(commitSHA))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	c.authorize(req)
-
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("gitlab: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
+	reqPath := fmt.Sprintf("/projects/%s/repository/files/%s/raw?ref=%s",
+		projectID(repoSlug), url.PathEscape(path), url.QueryEscape(commitSHA))
+	data, err := c.api().GetBytes(ctx, reqPath, "", maxFileBytes)
+	if rest.Status(err) == http.StatusNotFound {
 		return nil, fmt.Errorf("%w: %s at %s", forge.ErrRepoNotFound, path, commitSHA)
 	}
-	if resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("gitlab: reading %s returned %d: %s", path, resp.StatusCode, msg)
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxFileBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("gitlab: reading %s: %w", path, err)
-	}
-	if len(data) > maxFileBytes {
-		return nil, fmt.Errorf("gitlab: %s is larger than %d MiB", path, maxFileBytes>>20)
-	}
-	return data, nil
+	return data, err
 }
 
 // PublishReport is not supported: GitLab's only external line-annotation
@@ -345,41 +269,5 @@ func (c *Client) GetFileContent(ctx context.Context, repoSlug, commitSHA, path s
 func (c *Client) PublishReport(ctx context.Context, repoSlug, commitSHA string, report forge.Report, annotations []forge.Annotation) error {
 	return fmt.Errorf("%w: GitLab has no commit report surface; the MR comment carries the diff coverage table", forge.ErrNotImplemented)
 }
-
-func (c *Client) send(ctx context.Context, method, path string, payload any) error {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	c.authorize(req)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("gitlab: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return &apiError{
-			status: resp.StatusCode,
-			msg:    fmt.Sprintf("gitlab: %s returned %d: %s", path, resp.StatusCode, msg),
-		}
-	}
-	return nil
-}
-
-// apiError carries the HTTP status of a failed GitLab call so callers
-// can react to specific rejections.
-type apiError struct {
-	status int
-	msg    string
-}
-
-func (e *apiError) Error() string { return e.msg }
 
 var _ forge.Forge = (*Client)(nil)

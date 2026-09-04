@@ -10,13 +10,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/gocov/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/forge/internal/rest"
 )
 
 // App is a GitHub App identity (One-Click Connect D1/D2): the hosted
@@ -139,32 +140,16 @@ func (a *App) installationToken(ctx context.Context, installationID int64) (toke
 		return "", false, err
 	}
 	path := fmt.Sprintf("/app/installations/%d/access_tokens", installationID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL()+path, nil)
-	if err != nil {
-		return "", false, err
-	}
-	req.Header.Set("Authorization", "Bearer "+jwt)
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	resp, err := a.client().Do(req)
-	if err != nil {
-		return "", false, fmt.Errorf("github app: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusNotFound {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", false, fmt.Errorf("%w: github app installation %d: %d: %s",
-			forge.ErrCredentialsRevoked, installationID, resp.StatusCode, msg)
-	}
-	if resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", false, fmt.Errorf("github app: %s returned %d: %s", path, resp.StatusCode, msg)
-	}
 	var body struct {
 		Token     string    `json:"token"`
 		ExpiresAt time.Time `json:"expires_at"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body); err != nil {
-		return "", false, fmt.Errorf("github app: decoding installation token: %w", err)
+	if err := a.api(jwt).JSON(ctx, http.MethodPost, path, nil, &body); err != nil {
+		if e, ok := errors.AsType[*rest.Error](err); ok && (e.Status == http.StatusUnauthorized || e.Status == http.StatusNotFound) {
+			return "", false, fmt.Errorf("%w: github app installation %d: %d: %s",
+				forge.ErrCredentialsRevoked, installationID, e.Status, e.Body)
+		}
+		return "", false, err
 	}
 	if body.Token == "" {
 		return "", false, fmt.Errorf("github app: %s returned no token", path)
@@ -191,18 +176,8 @@ func (a *App) invalidate(installationID int64) {
 // transport errors: a network blip must not take the forge surface down
 // here when the actual calls would surface it anyway.
 func (a *App) tokenValid(ctx context.Context, token string) bool {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.baseURL()+"/rate_limit", nil)
-	if err != nil {
-		return true
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	resp, err := a.client().Do(req)
-	if err != nil {
-		return true
-	}
-	resp.Body.Close()
-	return resp.StatusCode != http.StatusUnauthorized
+	err := a.api(token).Get(ctx, "/rate_limit", nil)
+	return rest.Status(err) != http.StatusUnauthorized
 }
 
 // ForgeClient returns a Client authenticated as the installation — the
@@ -281,28 +256,21 @@ func (a *App) getJWT(ctx context.Context, path string, out any) error {
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.baseURL()+path, nil)
-	if err != nil {
-		return err
+	err = a.api(jwt).Get(ctx, path, out)
+	if s := rest.Status(err); s == http.StatusUnauthorized || s == http.StatusNotFound {
+		return fmt.Errorf("%w: %v", forge.ErrCredentialsRevoked, err)
 	}
-	req.Header.Set("Authorization", "Bearer "+jwt)
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	resp, err := a.client().Do(req)
-	if err != nil {
-		return fmt.Errorf("github app: %w", err)
+	return err
+}
+
+// api is the request plumbing, authenticated with the given bearer —
+// the app's own JWT or an installation token.
+func (a *App) api(bearer string) *rest.Client {
+	return &rest.Client{
+		Name: "github app", BaseURL: a.baseURL(), HTTPClient: a.client(),
+		Authorize: func(req *http.Request) {
+			req.Header.Set("Authorization", "Bearer "+bearer)
+			req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		},
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusNotFound {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("%w: github app: %s returned %d: %s",
-			forge.ErrCredentialsRevoked, path, resp.StatusCode, msg)
-	}
-	if resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("github app: %s returned %d: %s", path, resp.StatusCode, msg)
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out); err != nil {
-		return fmt.Errorf("github app: decoding %s response: %w", path, err)
-	}
-	return nil
 }
