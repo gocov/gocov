@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -58,47 +58,24 @@ type missBlock struct {
 // source at the upload's commit with per-line coverage overlay. Only paths
 // recorded in the upload can be viewed.
 func (s *Server) handleSource(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		s.reportNotFound(w, r)
+	upload, repo, ok := s.reportUpload(w, r)
+	if !ok {
 		return
 	}
 	path := r.PathValue("path")
-	upload, err := s.store.Upload(r.Context(), id)
-	if errors.Is(err, store.ErrNotFound) {
-		s.reportNotFound(w, r)
-		return
-	}
-	if err != nil {
-		s.internalError(w, "loading upload", err)
-		return
-	}
-	repo, err := s.store.RepoByID(r.Context(), upload.RepoID)
-	if err != nil {
-		s.internalError(w, "loading repo for upload", err)
-		return
-	}
-	// Access before the per-file lookup, so a signed-out probe cannot tell
-	// a missing file from a missing upload.
-	if _, ok := s.authorizeReport(w, r, repo); !ok {
-		return
-	}
-	files, err := s.store.UploadFiles(r.Context(), id)
+	// Access was settled before this per-file lookup, so a signed-out
+	// probe cannot tell a missing file from a missing upload.
+	files, err := s.store.UploadFiles(r.Context(), upload.ID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.internalError(w, "loading upload files", err)
 		return
 	}
-	var file *store.UploadFile
-	for _, f := range files {
-		if f.Path == path {
-			file = f
-			break
-		}
-	}
-	if file == nil {
+	i := slices.IndexFunc(files, func(f *store.UploadFile) bool { return f.Path == path })
+	if i < 0 {
 		s.renderNotFound(w, r)
 		return
 	}
+	file := files[i]
 
 	source, unavailable := s.fetchSource(r, repo, upload, file)
 	dir, base := splitPath(file.Path)

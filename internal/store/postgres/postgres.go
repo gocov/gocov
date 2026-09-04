@@ -393,42 +393,32 @@ func (s *Store) UpdateWorkspace(ctx context.Context, w *store.Workspace) error {
 }
 
 func (s *Store) SetWorkspaceBitbucketGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
-	return s.setWorkspaceBitbucketGrant(ctx, s.pool, workspaceID, account, refreshToken, broken)
-}
-
-func (s *Store) setWorkspaceBitbucketGrant(ctx context.Context, q querier, workspaceID int64, account, refreshToken string, broken bool) error {
-	sealed, err := s.sealToken(refreshToken)
-	if err != nil {
-		return err
-	}
-	tag, err := q.Exec(ctx, `
-		UPDATE workspaces SET bitbucket_grant_account = $2,
-			bitbucket_refresh_token = $3, bitbucket_grant_broken = $4
-		WHERE id = $1`,
-		workspaceID, account, sealed, broken)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return store.ErrNotFound
-	}
-	return nil
+	return s.setWorkspaceGrant(ctx, s.pool, setBitbucketGrantSQL, workspaceID, account, refreshToken, broken)
 }
 
 func (s *Store) SetWorkspaceGitLabGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
-	return s.setWorkspaceGitLabGrant(ctx, s.pool, workspaceID, account, refreshToken, broken)
+	return s.setWorkspaceGrant(ctx, s.pool, setGitLabGrantSQL, workspaceID, account, refreshToken, broken)
 }
 
-func (s *Store) setWorkspaceGitLabGrant(ctx context.Context, q querier, workspaceID int64, account, refreshToken string, broken bool) error {
+// The two grant columns sets differ only by forge; setWorkspaceGrant is
+// the write behind both, with the statement chosen by the caller.
+const (
+	setBitbucketGrantSQL = `
+		UPDATE workspaces SET bitbucket_grant_account = $2,
+			bitbucket_refresh_token = $3, bitbucket_grant_broken = $4
+		WHERE id = $1`
+	setGitLabGrantSQL = `
+		UPDATE workspaces SET gitlab_grant_account = $2,
+			gitlab_refresh_token = $3, gitlab_grant_broken = $4
+		WHERE id = $1`
+)
+
+func (s *Store) setWorkspaceGrant(ctx context.Context, q querier, sql string, workspaceID int64, account, refreshToken string, broken bool) error {
 	sealed, err := s.sealToken(refreshToken)
 	if err != nil {
 		return err
 	}
-	tag, err := q.Exec(ctx, `
-		UPDATE workspaces SET gitlab_grant_account = $2,
-			gitlab_refresh_token = $3, gitlab_grant_broken = $4
-		WHERE id = $1`,
-		workspaceID, account, sealed, broken)
+	tag, err := q.Exec(ctx, sql, workspaceID, account, sealed, broken)
 	if err != nil {
 		return err
 	}
@@ -519,11 +509,11 @@ func (g *grantTx) WorkspaceByPrefix(ctx context.Context, prefix string) (*store.
 }
 
 func (g *grantTx) SetWorkspaceBitbucketGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
-	return g.s.setWorkspaceBitbucketGrant(ctx, g.tx, workspaceID, account, refreshToken, broken)
+	return g.s.setWorkspaceGrant(ctx, g.tx, setBitbucketGrantSQL, workspaceID, account, refreshToken, broken)
 }
 
 func (g *grantTx) SetWorkspaceGitLabGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
-	return g.s.setWorkspaceGitLabGrant(ctx, g.tx, workspaceID, account, refreshToken, broken)
+	return g.s.setWorkspaceGrant(ctx, g.tx, setGitLabGrantSQL, workspaceID, account, refreshToken, broken)
 }
 
 func (s *Store) WorkspaceByToken(ctx context.Context, token string) (*store.Workspace, error) {

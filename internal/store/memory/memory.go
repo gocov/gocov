@@ -261,28 +261,26 @@ func (s *Store) UpdateWorkspace(_ context.Context, w *store.Workspace) error {
 }
 
 func (s *Store) SetWorkspaceBitbucketGrant(_ context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	w, ok := s.workspaces[workspaceID]
-	if !ok {
-		return store.ErrNotFound
-	}
-	w.BitbucketGrantAccount = account
-	w.BitbucketRefreshToken = refreshToken
-	w.BitbucketGrantBroken = broken
-	return nil
+	return s.setWorkspaceGrant(workspaceID, func(w *store.Workspace) {
+		w.BitbucketGrantAccount, w.BitbucketRefreshToken, w.BitbucketGrantBroken = account, refreshToken, broken
+	})
 }
 
 func (s *Store) SetWorkspaceGitLabGrant(_ context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
+	return s.setWorkspaceGrant(workspaceID, func(w *store.Workspace) {
+		w.GitLabGrantAccount, w.GitLabRefreshToken, w.GitLabGrantBroken = account, refreshToken, broken
+	})
+}
+
+// setWorkspaceGrant applies set to the stored workspace under the lock.
+func (s *Store) setWorkspaceGrant(workspaceID int64, set func(*store.Workspace)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	w, ok := s.workspaces[workspaceID]
 	if !ok {
 		return store.ErrNotFound
 	}
-	w.GitLabGrantAccount = account
-	w.GitLabRefreshToken = refreshToken
-	w.GitLabGrantBroken = broken
+	set(w)
 	return nil
 }
 

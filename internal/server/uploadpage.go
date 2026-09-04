@@ -27,26 +27,8 @@ import (
 // one upload, the files it moved (before → after against the branch
 // baseline) and the upload's provenance.
 func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		s.reportNotFound(w, r)
-		return
-	}
-	upload, err := s.store.Upload(r.Context(), id)
-	if errors.Is(err, store.ErrNotFound) {
-		s.reportNotFound(w, r)
-		return
-	}
-	if err != nil {
-		s.internalError(w, "loading upload", err)
-		return
-	}
-	repo, err := s.store.RepoByID(r.Context(), upload.RepoID)
-	if err != nil {
-		s.internalError(w, "loading repo for upload", err)
-		return
-	}
-	if _, ok := s.authorizeReport(w, r, repo); !ok {
+	upload, repo, ok := s.reportUpload(w, r)
+	if !ok {
 		return
 	}
 
@@ -680,26 +662,8 @@ func splitPath(p string) (dir, base string) {
 // profile the upload was built from, served as an attachment. Same visibility
 // rule as the upload page.
 func (s *Server) handleUploadProfile(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		s.reportNotFound(w, r)
-		return
-	}
-	upload, err := s.store.Upload(r.Context(), id)
-	if errors.Is(err, store.ErrNotFound) {
-		s.reportNotFound(w, r)
-		return
-	}
-	if err != nil {
-		s.internalError(w, "loading upload", err)
-		return
-	}
-	repo, err := s.store.RepoByID(r.Context(), upload.RepoID)
-	if err != nil {
-		s.internalError(w, "loading repo for upload", err)
-		return
-	}
-	if _, ok := s.authorizeReport(w, r, repo); !ok {
+	upload, _, ok := s.reportUpload(w, r)
+	if !ok {
 		return
 	}
 	if upload.RawBlobKey == "" {
@@ -716,7 +680,7 @@ func (s *Server) handleUploadProfile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
 	if _, err := w.Write(raw); err != nil {
-		s.log.Warn("writing raw profile", "upload", id, "err", err)
+		s.log.Warn("writing raw profile", "upload", upload.ID, "err", err)
 	}
 }
 

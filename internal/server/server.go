@@ -364,13 +364,19 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	// Layout-level auth state: the open-UI banner and the nav user chip.
-	data["AuthOpen"] = !s.authEnabled()
-	data["CurrentUser"] = currentUser(r)
+	s.layoutData(r, data)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := t.ExecuteTemplate(w, "layout", data); err != nil {
 		s.log.Error("render template", "template", name, "err", err)
 	}
+}
+
+// layoutData adds what layout.html reads on every page: the auth state
+// behind the open-UI banner and the nav user chip. Page data goes in as
+// is; these keys are the layout's.
+func (s *Server) layoutData(r *http.Request, data map[string]any) {
+	data["AuthOpen"] = !s.authEnabled()
+	data["CurrentUser"] = currentUser(r)
 }
 
 // handleNotFound is the catch-all for paths no route claims. Browser
@@ -403,11 +409,8 @@ func (s *Server) renderNotFound(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	data := map[string]any{
-		"RequestedPath": r.URL.Path,
-		"AuthOpen":      !s.authEnabled(),
-		"CurrentUser":   currentUser(r),
-	}
+	data := map[string]any{"RequestedPath": r.URL.Path}
+	s.layoutData(r, data)
 	// Content-Type must precede WriteHeader; after the status is written the
 	// header map is frozen.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

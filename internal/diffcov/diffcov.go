@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"maps"
 	"regexp"
 	"slices"
 	"strconv"
@@ -173,13 +174,7 @@ func targetPath(l string) string {
 // an unrelated one.
 func Compute(files []FileBlocks, added map[string][]int, pathPrefix string) *Result {
 	res := &Result{}
-	diffPaths := make([]string, 0, len(added))
-	for p := range added {
-		diffPaths = append(diffPaths, p)
-	}
-	slices.Sort(diffPaths)
-
-	for _, dp := range diffPaths {
+	for _, dp := range slices.Sorted(maps.Keys(added)) {
 		lines := added[dp]
 		if len(lines) == 0 {
 			continue

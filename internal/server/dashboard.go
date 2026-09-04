@@ -200,7 +200,7 @@ func (s *Server) buildDashboard(r *http.Request, selected string) (*dashboardVie
 		g := groups[p]
 		s.fillGroupMeta(ctx, g)
 		g.Current = g == cur
-		g.Href = "/?ws=" + urlQueryEscape(g.Prefix)
+		g.Href = "/?ws=" + url.QueryEscape(g.Prefix) // GitLab prefixes carry slashes
 		dv.Switcher = append(dv.Switcher, g)
 	}
 
@@ -535,7 +535,3 @@ func forgeAvatar(prefix, forge string) (initial, cls, name string) {
 		return initial, "", ""
 	}
 }
-
-// urlQueryEscape percent-encodes a workspace prefix for the ?ws= switcher link;
-// GitLab prefixes carry slashes.
-func urlQueryEscape(s string) string { return url.QueryEscape(s) }
