@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/gocov/gocov/compare/v0.19.0...v0.20.0) (2026-09-04)
+
+
+### Features
+
+* make workspace settings and tokens owner-only ([#113](https://github.com/gocov/gocov/issues/113)) ([9a68410](https://github.com/gocov/gocov/commit/9a684105ca06b2f513528f6bd04d03e42b63c6b2))
+
 ## [0.19.0](https://github.com/gocov/gocov/compare/v0.18.0...v0.19.0) (2026-09-04)
 
 
