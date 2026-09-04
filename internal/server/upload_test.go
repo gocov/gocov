@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -38,7 +37,7 @@ func TestUploadHappyPath(t *testing.T) {
 	}
 
 	// Stored upload and per-file rows.
-	u, err := f.store.Upload(context.Background(), resp.ID)
+	u, err := f.store.Upload(t.Context(), resp.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +47,7 @@ func TestUploadHappyPath(t *testing.T) {
 	if u.Part != "default" {
 		t.Errorf("part = %q, want default (no explicit part)", u.Part)
 	}
-	files, err := f.store.UploadFiles(context.Background(), resp.ID)
+	files, err := f.store.UploadFiles(t.Context(), resp.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +62,7 @@ func TestUploadHappyPath(t *testing.T) {
 	}
 
 	// Raw profile persisted in the blobstore.
-	raw, err := f.blobs.Get(context.Background(), u.RawBlobKey)
+	raw, err := f.blobs.Get(t.Context(), u.RawBlobKey)
 	if err != nil {
 		t.Fatalf("raw blob: %v", err)
 	}
@@ -136,7 +135,7 @@ func TestUploadPartStored(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	u, err := f.store.Upload(context.Background(), resp.ID)
+	u, err := f.store.Upload(t.Context(), resp.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +153,7 @@ func TestUploadPartStored(t *testing.T) {
 	if err := json.Unmarshal(norm.Body.Bytes(), &nr); err != nil {
 		t.Fatal(err)
 	}
-	if nu, err := f.store.Upload(context.Background(), nr.ID); err != nil {
+	if nu, err := f.store.Upload(t.Context(), nr.ID); err != nil {
 		t.Fatal(err)
 	} else if nu.Part != "frontend" {
 		t.Errorf("normalized part = %q, want frontend", nu.Part)
@@ -316,7 +315,7 @@ end_of_record
 			resp.DiffCoveredLines, resp.DiffTotalLines, resp.DiffStatus, rec.Body)
 	}
 	// The sniffed format is what gets stored.
-	u, err := f.store.Upload(context.Background(), resp.ID)
+	u, err := f.store.Upload(t.Context(), resp.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +369,7 @@ func TestUploadJaCoCo(t *testing.T) {
 		t.Errorf("diff = %v/%v (%s), want 1/2 computed; body = %s",
 			resp.DiffCoveredLines, resp.DiffTotalLines, resp.DiffStatus, rec.Body)
 	}
-	u, err := f.store.Upload(context.Background(), resp.ID)
+	u, err := f.store.Upload(t.Context(), resp.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +428,7 @@ func TestUploadCobertura(t *testing.T) {
 		t.Errorf("diff = %v/%v (%s), want 1/2 computed; body = %s",
 			resp.DiffCoveredLines, resp.DiffTotalLines, resp.DiffStatus, rec.Body)
 	}
-	u, err := f.store.Upload(context.Background(), resp.ID)
+	u, err := f.store.Upload(t.Context(), resp.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -486,7 +485,7 @@ func TestUploadClover(t *testing.T) {
 		t.Errorf("diff = %v/%v (%s), want 1/2 computed; body = %s",
 			resp.DiffCoveredLines, resp.DiffTotalLines, resp.DiffStatus, rec.Body)
 	}
-	u, err := f.store.Upload(context.Background(), resp.ID)
+	u, err := f.store.Upload(t.Context(), resp.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -540,7 +539,7 @@ func TestUploadSimpleCov(t *testing.T) {
 		t.Errorf("diff = %v/%v (%s), want 1/2 computed; body = %s",
 			resp.DiffCoveredLines, resp.DiffTotalLines, resp.DiffStatus, rec.Body)
 	}
-	u, err := f.store.Upload(context.Background(), resp.ID)
+	u, err := f.store.Upload(t.Context(), resp.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -611,7 +610,7 @@ func TestUploadDiffCoverage(t *testing.T) {
 	}
 
 	// Stored upload round-trips the result.
-	u, err := f.store.Upload(context.Background(), resp.ID)
+	u, err := f.store.Upload(t.Context(), resp.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -755,7 +754,7 @@ func TestBuildUploadMetaRejectsBadInput(t *testing.T) {
 // trim the report before it is measured; a bad pattern is refused up front.
 func TestUploadIgnorePatterns(t *testing.T) {
 	f := newFixture(t, nil)
-	ctx := context.Background()
+	ctx := t.Context()
 	f.repo.IgnorePaths = []string{"**/b.go"}
 	if err := f.store.UpdateRepo(ctx, f.repo); err != nil {
 		t.Fatal(err)
@@ -823,7 +822,7 @@ func TestUploadIgnorePatterns(t *testing.T) {
 // "changed but no coverage data": it neither counts for nor against the PR.
 func TestUploadIgnoredFilesLeaveDiffCoverage(t *testing.T) {
 	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
-	ctx := context.Background()
+	ctx := t.Context()
 	f.repo.IgnorePaths = []string{"**/b.go", "**/untested.go"}
 	if err := f.store.UpdateRepo(ctx, f.repo); err != nil {
 		t.Fatal(err)

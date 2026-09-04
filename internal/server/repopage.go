@@ -9,7 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -56,7 +56,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 			branches = append(branches, u.Branch)
 		}
 	}
-	sort.Strings(branches)
+	slices.Sort(branches)
 
 	limit := (page+1)*uploadsPageSize + 1
 	var fetched []*store.Upload

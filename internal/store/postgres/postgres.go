@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -93,7 +93,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 	for _, e := range entries {
 		names = append(names, e.Name())
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	for _, name := range names {
 		var applied bool

@@ -1,7 +1,6 @@
 package gitlab
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -65,7 +64,7 @@ func TestGrantExchange(t *testing.T) {
 		}
 	})
 
-	grant, err := a.Exchange(context.Background(), "thecode", "https://cb")
+	grant, err := a.Exchange(t.Context(), "thecode", "https://cb")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +95,7 @@ func TestGrantRefreshRotates(t *testing.T) {
 			"access_token": "at-2", "refresh_token": "rt-2", "expires_in": 7200,
 		})
 	})
-	grant, err := a.Refresh(context.Background(), "rt-1", "https://cb")
+	grant, err := a.Refresh(t.Context(), "rt-1", "https://cb")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +116,7 @@ func TestGrantRefreshRevoked(t *testing.T) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"revoked"}`))
 	})
-	_, err := a.Refresh(context.Background(), "rt-dead", "https://cb")
+	_, err := a.Refresh(t.Context(), "rt-dead", "https://cb")
 	if !errors.Is(err, forge.ErrCredentialsRevoked) {
 		t.Errorf("err = %v, want ErrCredentialsRevoked", err)
 	}
@@ -127,7 +126,7 @@ func TestGrantRefreshTransientError(t *testing.T) {
 	a := testApplication(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	})
-	_, err := a.Refresh(context.Background(), "rt-1", "https://cb")
+	_, err := a.Refresh(t.Context(), "rt-1", "https://cb")
 	if err == nil || errors.Is(err, forge.ErrCredentialsRevoked) {
 		t.Errorf("err = %v, want a plain (transient) error", err)
 	}
@@ -146,7 +145,7 @@ func TestGrantNoExpiryDefaultsTTL(t *testing.T) {
 			_, _ = w.Write([]byte(`{"username":"covbot"}`))
 		}
 	})
-	grant, err := a.Exchange(context.Background(), "c", "https://cb")
+	grant, err := a.Exchange(t.Context(), "c", "https://cb")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +165,7 @@ func TestGrantForgeClientUsesBearer(t *testing.T) {
 	a := &Application{Key: "k", Secret: "s", APIBaseURL: srv.URL, HTTPClient: srv.Client()}
 
 	fg := a.ForgeClient("at-1")
-	err := fg.PostBuildStatus(context.Background(), "acme/widgets", "abc", forge.BuildStatus{
+	err := fg.PostBuildStatus(t.Context(), "acme/widgets", "abc", forge.BuildStatus{
 		State: forge.StateSuccessful, Name: "gocov", Key: "gocov/coverage",
 	})
 	if err != nil {

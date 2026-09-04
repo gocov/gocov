@@ -6,6 +6,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -75,12 +76,7 @@ func (p *Pipeline) RegisterRepo(ctx context.Context, ws *store.Workspace, slug s
 			p.Log.Warn("get default branch", "repo", slug, "err", err)
 		}
 	}
-	if branch == "" {
-		branch = ws.DefaultBranch
-	}
-	if branch == "" {
-		branch = "main"
-	}
+	branch = cmp.Or(branch, ws.DefaultBranch, "main")
 
 	token, err := NewToken()
 	if err != nil {
@@ -337,12 +333,12 @@ func NewToken() (string, error) {
 // single-segment prefix.
 func SlugPrefixes(slug string) []string {
 	var out []string
-	for i := len(slug); ; {
-		j := strings.LastIndex(slug[:i], "/")
-		if j < 0 {
+	for {
+		prefix, _, ok := strings.CutLast(slug, "/")
+		if !ok {
 			return out
 		}
-		out = append(out, slug[:j])
-		i = j
+		out = append(out, prefix)
+		slug = prefix
 	}
 }

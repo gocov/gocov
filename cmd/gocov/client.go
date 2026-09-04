@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -106,10 +107,7 @@ func upload(req uploadRequest) (*uploadResponse, error) {
 			return nil, err
 		}
 	}
-	filename := req.ProfileName
-	if filename == "" {
-		filename = "coverage.out"
-	}
+	filename := cmp.Or(req.ProfileName, "coverage.out")
 	fw, err := mw.CreateFormFile("profile", filename)
 	if err != nil {
 		return nil, err

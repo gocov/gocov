@@ -7,7 +7,6 @@
 package server
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -30,7 +29,7 @@ import (
 // member signing in through the fake provider lands with a membership.
 func newPublicFixture(t *testing.T, visibility string, instanceOn bool) *fixture {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	st := storemem.New()
 	repo := &store.Repo{
 		Forge: "bitbucket", Slug: "acme/widgets", Token: "secret-token",
@@ -59,7 +58,7 @@ func newPublicFixture(t *testing.T, visibility string, instanceOn bool) *fixture
 // blob, the way the upload API would have left them.
 func seedUpload(t *testing.T, f *fixture) *store.Upload {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	u := &store.Upload{
 		RepoID: f.repo.ID, CommitSHA: "abc1234def", Branch: "main", Format: "go",
 		TotalPct: 80, CoveredStmts: 8, TotalStmts: 10,
@@ -184,7 +183,7 @@ func TestRepoSettingsSwitchClosesPublicPages(t *testing.T) {
 	seedUpload(t, f)
 
 	f.repo.PublicReportsDisabled = true
-	if err := f.store.UpdateRepo(context.Background(), f.repo); err != nil {
+	if err := f.store.UpdateRepo(t.Context(), f.repo); err != nil {
 		t.Fatal(err)
 	}
 	wantLoginRedirect(t, get(f, "/repos/acme/widgets"), "/repos/acme/widgets")
@@ -227,7 +226,7 @@ func TestMemberViewOfPublicRepoIsUnchanged(t *testing.T) {
 // either. Before public reports this state was unreachable (a non-member
 // always 404d).
 func TestSignedInNonMemberGetsReadOnlyPublicView(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	st := storemem.New()
 	repo := &store.Repo{
 		Forge: "bitbucket", Slug: "acme/widgets", Token: "secret-token",
@@ -287,7 +286,7 @@ func TestPublicReportsToggleInRepoSettings(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("save: status = %d, body = %s", rec.Code, rec.Body)
 	}
-	repo, err := f.store.RepoBySlug(context.Background(), "acme/widgets")
+	repo, err := f.store.RepoBySlug(t.Context(), "acme/widgets")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +317,7 @@ func TestPrivateRepoSettingsHideTheSwitchAndKeepTheValue(t *testing.T) {
 	if rec := postForm(f, "/repo-settings/save/acme/widgets", url.Values{"default_branch": {"main"}}, sess); rec.Code != http.StatusSeeOther {
 		t.Fatalf("save: status = %d", rec.Code)
 	}
-	repo, err := f.store.RepoBySlug(context.Background(), "acme/widgets")
+	repo, err := f.store.RepoBySlug(t.Context(), "acme/widgets")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +338,7 @@ func TestUploadRefreshesVisibility(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("upload: status = %d, body = %s", rec.Code, rec.Body)
 	}
-	repo, err := f.store.RepoBySlug(context.Background(), "acme/widgets")
+	repo, err := f.store.RepoBySlug(t.Context(), "acme/widgets")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +358,7 @@ func TestUploadRefreshesVisibility(t *testing.T) {
 	if got := len(f.forge.VisibilityCalls); got != 1 {
 		t.Errorf("visibility calls after fresh-answer upload = %d, want still 1", got)
 	}
-	if repo, _ = f.store.RepoBySlug(context.Background(), "acme/widgets"); repo.Visibility != store.VisibilityPublic {
+	if repo, _ = f.store.RepoBySlug(t.Context(), "acme/widgets"); repo.Visibility != store.VisibilityPublic {
 		t.Errorf("fresh-answer upload rewrote visibility to %q", repo.Visibility)
 	}
 
@@ -369,7 +368,7 @@ func TestUploadRefreshesVisibility(t *testing.T) {
 	if rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c3", "branch": "main"}, testProfile); rec.Code != http.StatusCreated {
 		t.Fatalf("third upload: status = %d", rec.Code)
 	}
-	repo, err = f.store.RepoBySlug(context.Background(), "acme/widgets")
+	repo, err = f.store.RepoBySlug(t.Context(), "acme/widgets")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,7 +382,7 @@ func TestUploadRefreshesVisibility(t *testing.T) {
 // background when its pages are served anonymously on a stale answer, so
 // a private flip on the forge closes the pages without any upload.
 func TestStalePublicAnswerIsReverifiedWhenServed(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	st := storemem.New()
 	// Cached public, but the stamp is zero — the forge has never answered
 	// within any TTL — and the forge now says private.
@@ -435,7 +434,7 @@ func waitForVisibility(t *testing.T, st *storemem.Store, slug, want string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		stored, err := st.RepoBySlug(context.Background(), slug)
+		stored, err := st.RepoBySlug(t.Context(), slug)
 		if err != nil {
 			t.Fatal(err)
 		}

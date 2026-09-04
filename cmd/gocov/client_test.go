@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"net/http/httptest"
 	"testing"
 
@@ -17,7 +16,7 @@ import (
 func TestUploadEndToEnd(t *testing.T) {
 	st := storemem.New()
 	repo := &store.Repo{Slug: "acme/widgets", Token: "tok", DefaultBranch: "main", Forge: "bitbucket"}
-	if err := st.CreateRepo(context.Background(), repo); err != nil {
+	if err := st.CreateRepo(t.Context(), repo); err != nil {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(server.New(server.Config{

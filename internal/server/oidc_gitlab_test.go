@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -52,7 +51,7 @@ func glClaims(issuer, projectPath, aud string) map[string]any {
 // (GOCOV_OIDC_ISSUERS) so the token router recognizes them.
 func newGitLabOIDCFixture(t *testing.T, issuer string, extraIssuers []string) (*fixture, *oidcIssuer) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	st := storemem.New()
 	repo := &store.Repo{Forge: "gitlab", Slug: "acme/widgets", Token: "secret-token", DefaultBranch: "main"}
 	if err := st.CreateRepo(ctx, repo); err != nil {
@@ -98,7 +97,7 @@ func TestGitLabOIDCHappyPath(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	u, err := f.store.Upload(context.Background(), resp.ID)
+	u, err := f.store.Upload(t.Context(), resp.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +141,7 @@ func TestGitLabOIDCSelfManagedIssuer(t *testing.T) {
 // check, before any key fetch.
 func TestGitLabOIDCConfigReplacesGitlabDotCom(t *testing.T) {
 	const selfManaged = "https://gitlab.acme.example"
-	ctx := context.Background()
+	ctx := t.Context()
 	st := storemem.New()
 	repo := &store.Repo{Forge: "gitlab", Slug: "acme/widgets", Token: "secret-token", DefaultBranch: "main"}
 	if err := st.CreateRepo(ctx, repo); err != nil {

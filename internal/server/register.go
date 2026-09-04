@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 	"slices"
-	"sort"
 
 	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/store"
@@ -66,7 +65,7 @@ func (s *Server) registerRows(r *http.Request, u *store.User) ([]registerRow, er
 	}
 
 	prefixes := append([]string(nil), u.ForgeWorkspaces...)
-	sort.Strings(prefixes)
+	slices.Sort(prefixes)
 	rows := make([]registerRow, 0, len(prefixes))
 	for _, prefix := range prefixes {
 		row := registerRow{Prefix: prefix, State: "available"}

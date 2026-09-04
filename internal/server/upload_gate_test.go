@@ -7,7 +7,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -25,7 +24,7 @@ func TestCoverageGate(t *testing.T) {
 	setGate := func(t *testing.T, f *fixture, gate store.Gate) {
 		t.Helper()
 		f.repo.Gate = gate
-		if err := f.store.UpdateRepo(context.Background(), f.repo); err != nil {
+		if err := f.store.UpdateRepo(t.Context(), f.repo); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -173,7 +172,7 @@ func TestCoverageGate(t *testing.T) {
 }
 
 func TestWorkspaceGateInheritedByAutoCreatedRepos(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	st := storemem.New()
 	ws := &store.Workspace{
 		Forge: "bitbucket", Prefix: "acme", Token: "ws-token", DefaultBranch: "main",

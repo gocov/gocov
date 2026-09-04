@@ -1,7 +1,6 @@
 package core
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -37,7 +36,7 @@ func TestValidRepoName(t *testing.T) {
 
 func TestRefreshVisibilityCachesForgeAnswer(t *testing.T) {
 	p, st, repo := newPipeline(t, store.Gate{})
-	ctx := context.Background()
+	ctx := t.Context()
 
 	fg := forgefake.New()
 	fg.Visibility = forge.VisibilityPublic
@@ -93,7 +92,7 @@ func TestRefreshVisibilityCachesForgeAnswer(t *testing.T) {
 
 func TestRefreshVisibilityFailsClosedWhenRepoIsGone(t *testing.T) {
 	p, st, repo := newPipeline(t, store.Gate{})
-	ctx := context.Background()
+	ctx := t.Context()
 
 	fg := forgefake.New()
 	fg.Visibility = forge.VisibilityPublic
@@ -117,7 +116,7 @@ func TestRefreshVisibilityFailsClosedWhenRepoIsGone(t *testing.T) {
 // repo's forge connection in the background, a fresh one is not, and
 // attempts are rate-limited per repo.
 func TestReverifyVisibilityIfStale(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	ff := forgefake.New()
 	ff.Visibility = forge.VisibilityPrivate
 	forges, st := newForges(t, &fakeBB{client: ff})
@@ -163,7 +162,7 @@ func TestReverifyVisibilityIfStale(t *testing.T) {
 // overwrite a fresher webhook-delivered flip.
 func TestSetRepoVisibilityIgnoresStaleAnswers(t *testing.T) {
 	_, st, repo := newPipeline(t, store.Gate{})
-	ctx := context.Background()
+	ctx := t.Context()
 
 	now := time.Now()
 	if err := st.SetRepoVisibility(ctx, repo.ID, store.VisibilityPrivate, now); err != nil {
@@ -209,7 +208,7 @@ func waitForVisibility(t *testing.T, st *storemem.Store, slug, want string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		stored, err := st.RepoBySlug(context.Background(), slug)
+		stored, err := st.RepoBySlug(t.Context(), slug)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -24,7 +23,7 @@ import (
 // unless a test installs its own verify.
 func newTokenlessFixture(t *testing.T) (*fixture, *fakeGitHubApp, *store.Workspace) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	st := storemem.New()
 	repo := &store.Repo{Forge: "github", Slug: "acme/widgets", Token: "secret-token", DefaultBranch: "main"}
 	if err := st.CreateRepo(ctx, repo); err != nil {
@@ -81,7 +80,7 @@ func TestTokenlessUploadHappyPath(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	u, err := f.store.Upload(context.Background(), resp.ID)
+	u, err := f.store.Upload(t.Context(), resp.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +117,7 @@ func TestTokenAuthedUploadNotMarkedTokenless(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	u, err := f.store.Upload(context.Background(), resp.ID)
+	u, err := f.store.Upload(t.Context(), resp.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +138,7 @@ func TestTokenlessUploadRejectedClaim(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "still in progress") {
 		t.Errorf("rejection reason not surfaced to the uploader: %s", rec.Body)
 	}
-	if ups, _ := f.store.ListUploads(context.Background(), f.repo.ID, 0); len(ups) != 0 {
+	if ups, _ := f.store.ListUploads(t.Context(), f.repo.ID, 0); len(ups) != 0 {
 		t.Errorf("rejected upload was stored")
 	}
 }
@@ -147,7 +146,7 @@ func TestTokenlessUploadRejectedClaim(t *testing.T) {
 func TestTokenlessUploadWithoutInstallation(t *testing.T) {
 	f, _, ws := newTokenlessFixture(t)
 	ws.GitHubInstallationID = 0
-	if err := f.store.UpdateWorkspace(context.Background(), ws); err != nil {
+	if err := f.store.UpdateWorkspace(t.Context(), ws); err != nil {
 		t.Fatal(err)
 	}
 	rec := doUpload(t, f, "", tokenlessFields(), testProfile)
@@ -174,7 +173,7 @@ func TestTokenlessUploadRevokedInstallation(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "reconnect") {
 		t.Errorf("reconnect hint missing: %s", rec.Body)
 	}
-	ws, err := f.store.WorkspaceByPrefix(context.Background(), "acme")
+	ws, err := f.store.WorkspaceByPrefix(t.Context(), "acme")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +193,7 @@ func TestTokenlessUploadDuplicate(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("duplicate: status = %d, body = %s", rec.Code, rec.Body)
 	}
-	if ups, _ := f.store.ListUploads(context.Background(), f.repo.ID, 0); len(ups) != 1 {
+	if ups, _ := f.store.ListUploads(t.Context(), f.repo.ID, 0); len(ups) != 1 {
 		t.Errorf("got %d stored uploads, want 1 (duplicate must not land)", len(ups))
 	}
 

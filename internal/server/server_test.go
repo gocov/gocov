@@ -43,7 +43,7 @@ type fixture struct {
 
 func newFixture(t *testing.T, connected map[string]string) *fixture {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	st := storemem.New()
 	repo := &store.Repo{
 		Forge:         "bitbucket",

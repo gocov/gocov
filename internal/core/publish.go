@@ -6,10 +6,11 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -170,13 +171,13 @@ func appendPerFileData(data []forge.ReportData, dc *diffcov.Result) []forge.Repo
 			files = append(files, f)
 		}
 	}
-	sort.Slice(files, func(i, j int) bool {
-		pi := float64(files[i].CoveredLines) * float64(files[j].TotalLines)
-		pj := float64(files[j].CoveredLines) * float64(files[i].TotalLines)
-		if pi != pj {
-			return pi < pj
+	slices.SortFunc(files, func(a, b diffcov.FileCoverage) int {
+		pa := float64(a.CoveredLines) * float64(b.TotalLines)
+		pb := float64(b.CoveredLines) * float64(a.TotalLines)
+		if c := cmp.Compare(pa, pb); c != 0 {
+			return c
 		}
-		return files[i].Path < files[j].Path
+		return cmp.Compare(a.Path, b.Path)
 	})
 	for _, f := range files {
 		if len(data) >= insightsMaxDataFields {

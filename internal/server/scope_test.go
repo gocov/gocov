@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -29,7 +28,7 @@ func TestAllowedWorkspacesOverride(t *testing.T) {
 
 func seedRepoUpload(t *testing.T, f *fixture, slug string) (*store.Repo, *store.Upload) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	repo := &store.Repo{Forge: "bitbucket", Slug: slug, Token: "tok-" + slug, DefaultBranch: "main"}
 	if err := f.store.CreateRepo(ctx, repo); err != nil {
 		t.Fatal(err)
@@ -51,7 +50,7 @@ func seedRepoUpload(t *testing.T, f *fixture, slug string) (*store.Repo, *store.
 func TestTwoTenantIsolation(t *testing.T) {
 	prov := &fakeProvider{identity: memberIdentity()}
 	f := newAuthFixture(t, prov, nil) // already tracks acme/widgets
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Workspace rows are the membership anchor (D6). acme covers the
 	// fixture's repo; beta is the second tenant.

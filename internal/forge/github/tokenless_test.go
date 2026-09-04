@@ -1,7 +1,6 @@
 package github
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -130,7 +129,7 @@ func TestVerifyRunClaim(t *testing.T) {
 			tc.mutate(api, &claim)
 			app := testApp(t, api.handler(t))
 
-			err := app.VerifyRunClaim(context.Background(), 77, claim)
+			err := app.VerifyRunClaim(t.Context(), 77, claim)
 			rejected, definitive := errors.AsType[*ClaimRejectedError](err)
 			switch {
 			case tc.reject == "" && err != nil:
@@ -154,7 +153,7 @@ func TestVerifyRunClaimTransientError(t *testing.T) {
 		}
 		http.Error(w, "boom", http.StatusBadGateway)
 	})
-	err := app.VerifyRunClaim(context.Background(), 77, okClaim())
+	err := app.VerifyRunClaim(t.Context(), 77, okClaim())
 	if err == nil {
 		t.Fatal("5xx verified successfully")
 	}

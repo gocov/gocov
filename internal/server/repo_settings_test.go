@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"net/http"
 	"net/url"
 	"slices"
@@ -29,11 +28,11 @@ func TestRepoSettingsAccess(t *testing.T) {
 	}
 
 	// A repo whose workspace the user is no member of 404s, even though it exists.
-	if err := f.store.CreateWorkspace(context.Background(),
+	if err := f.store.CreateWorkspace(t.Context(),
 		&store.Workspace{Forge: "bitbucket", Prefix: "beta", Token: "bt", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.store.CreateRepo(context.Background(),
+	if err := f.store.CreateRepo(t.Context(),
 		&store.Repo{Forge: "bitbucket", Slug: "beta/thing", Token: "x", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +47,7 @@ func TestRepoSettingsAccess(t *testing.T) {
 
 func TestRepoSettingsSaveRotateDelete(t *testing.T) {
 	f, sess := newWorkspaceFixture(t, true)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Save base branch + a min-coverage gate.
 	rec := postForm(f, "/repo-settings/save/acme/widgets", url.Values{
@@ -102,7 +101,7 @@ func TestRepoSettingsSaveRotateDelete(t *testing.T) {
 // refuses a pattern the matcher cannot compile.
 func TestRepoSettingsSaveIgnorePaths(t *testing.T) {
 	f, sess := newWorkspaceFixture(t, true)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	rec := postForm(f, "/repo-settings/save/acme/widgets", url.Values{
 		"default_branch": {"main"},

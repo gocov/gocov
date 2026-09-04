@@ -96,7 +96,7 @@ func TestVerifyOK(t *testing.T) {
 	v := newVerifier(is, "https://gocov.example")
 	tok := is.mint(t, is.kid, "RS256", is.goodClaims("https://gocov.example"))
 
-	got, err := v.Verify(context.Background(), tok)
+	got, err := v.Verify(t.Context(), tok)
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestVerifyAudienceArray(t *testing.T) {
 	claims["aud"] = []string{"someone-else", "https://gocov.example"}
 	tok := is.mint(t, is.kid, "RS256", claims)
 
-	if _, err := v.Verify(context.Background(), tok); err != nil {
+	if _, err := v.Verify(t.Context(), tok); err != nil {
 		t.Fatalf("array audience rejected: %v", err)
 	}
 }
@@ -190,7 +190,7 @@ func TestVerifyRejections(t *testing.T) {
 				kid = tt.kid
 			}
 			tok := is.mint(t, kid, alg, tt.claims())
-			_, err := v.Verify(context.Background(), tok)
+			_, err := v.Verify(t.Context(), tok)
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
 			}
@@ -209,7 +209,7 @@ func TestVerifyBadSignature(t *testing.T) {
 	forged := &issuerServer{key: other, kid: is.kid, Server: is.Server}
 	tok := forged.mint(t, is.kid, "RS256", is.goodClaims("https://gocov.example"))
 
-	if _, err := v.Verify(context.Background(), tok); !errors.Is(err, ErrInvalidToken) {
+	if _, err := v.Verify(t.Context(), tok); !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("err = %v, want ErrInvalidToken", err)
 	}
 }
@@ -217,7 +217,7 @@ func TestVerifyBadSignature(t *testing.T) {
 func TestVerifyMalformed(t *testing.T) {
 	v := New(Config{Audience: "https://gocov.example", Issuers: []string{"https://iss.example"}})
 	for _, raw := range []string{"", "not-a-jwt", "a.b", "a.b.c.d", "@.@.@"} {
-		if _, err := v.Verify(context.Background(), raw); !errors.Is(err, ErrInvalidToken) {
+		if _, err := v.Verify(t.Context(), raw); !errors.Is(err, ErrInvalidToken) {
 			t.Errorf("Verify(%q) err = %v, want ErrInvalidToken", raw, err)
 		}
 	}
@@ -250,7 +250,7 @@ func TestVerifyCachesAndRotates(t *testing.T) {
 		return is.mint(t, is.kid, "RS256", c)
 	}
 	for range 3 {
-		if _, err := v.Verify(context.Background(), mintNow()); err != nil {
+		if _, err := v.Verify(t.Context(), mintNow()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -262,7 +262,7 @@ func TestVerifyCachesAndRotates(t *testing.T) {
 	// kid triggers exactly one refetch, after which the new token verifies.
 	is.kid = "test-key-2"
 	clock = base.Add(2 * time.Minute)
-	if _, err := v.Verify(context.Background(), mintNow()); err != nil {
+	if _, err := v.Verify(t.Context(), mintNow()); err != nil {
 		t.Fatalf("after rotation: %v", err)
 	}
 	if fetches != 2 {
@@ -286,7 +286,7 @@ func TestVerifyDiscoveryIssuerMismatch(t *testing.T) {
 	is.Server.Config.Handler = mux
 
 	v := newVerifier(is, "https://gocov.example")
-	_, err := v.Verify(context.Background(), is.mint(t, is.kid, "RS256", is.goodClaims("https://gocov.example")))
+	_, err := v.Verify(t.Context(), is.mint(t, is.kid, "RS256", is.goodClaims("https://gocov.example")))
 	if err == nil {
 		t.Fatal("mismatched discovery issuer accepted")
 	}
@@ -307,14 +307,14 @@ func TestVerifyResolver(t *testing.T) {
 			return iss, iss == is.URL
 		},
 	})
-	if _, err := v.Verify(context.Background(), is.mint(t, is.kid, "RS256", is.goodClaims("https://gocov.example"))); err != nil {
+	if _, err := v.Verify(t.Context(), is.mint(t, is.kid, "RS256", is.goodClaims("https://gocov.example"))); err != nil {
 		t.Fatalf("resolver-admitted issuer rejected: %v", err)
 	}
 
 	// A different issuer the resolver does not admit is unknown.
 	claims := is.goodClaims("https://gocov.example")
 	claims["iss"] = "https://api.bitbucket.org/2.0/workspaces/evil/pipelines-config/identity/oidc"
-	if _, err := v.Verify(context.Background(), is.mint(t, is.kid, "RS256", claims)); !errors.Is(err, ErrUnknownIssuer) {
+	if _, err := v.Verify(t.Context(), is.mint(t, is.kid, "RS256", claims)); !errors.Is(err, ErrUnknownIssuer) {
 		t.Fatalf("err = %v, want ErrUnknownIssuer", err)
 	}
 }
@@ -337,7 +337,7 @@ func TestUnknownKidThrottled(t *testing.T) {
 	v := newVerifier(is, "https://gocov.example")
 	for range 3 {
 		tok := is.mint(t, "bogus-kid", "RS256", is.goodClaims("https://gocov.example"))
-		if _, err := v.Verify(context.Background(), tok); !errors.Is(err, ErrInvalidToken) {
+		if _, err := v.Verify(t.Context(), tok); !errors.Is(err, ErrInvalidToken) {
 			t.Fatalf("err = %v, want ErrInvalidToken", err)
 		}
 	}

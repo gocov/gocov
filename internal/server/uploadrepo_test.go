@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -17,7 +16,7 @@ import (
 )
 
 func TestWorkspaceTokenUpload(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	newWsFixture := func(t *testing.T, wsDefaultBranch, forgeDefaultBranch string, connected bool) *fixture {
 		t.Helper()
 		st := storemem.New()
@@ -192,7 +191,7 @@ func TestGitLabNestedWorkspaceUpload(t *testing.T) {
 	// GitLab namespaces nest (D2): the workspace prefix is the registered
 	// namespace path — possibly a subgroup — and project slugs may carry
 	// further subgroup segments below it.
-	ctx := context.Background()
+	ctx := t.Context()
 	newGLFixture := func(t *testing.T, prefix string) *fixture {
 		t.Helper()
 		st := storemem.New()

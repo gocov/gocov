@@ -1,7 +1,7 @@
 # gocov dogfoods itself: every build uploads its own coverage with the
 # gocov pipe (bitbucket.org/gocov/upload-pipe) to a gocov instance. Set
 # GOCOV_SERVER and GOCOV_TOKEN as repository variables.
-image: golang:1.26
+image: golang:1.27
 
 pipelines:
   default:

@@ -1,7 +1,6 @@
 package bitbucket
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,7 +35,7 @@ func TestPostBuildStatus(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 	})
 
-	err := c.PostBuildStatus(context.Background(), "acme/widgets", "abc123", forge.BuildStatus{
+	err := c.PostBuildStatus(t.Context(), "acme/widgets", "abc123", forge.BuildStatus{
 		Key:         "gocov/coverage",
 		State:       forge.StateSuccessful,
 		Name:        "gocov",
@@ -62,7 +61,7 @@ func TestPostBuildStatusHTTPError(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error": "denied"}`, http.StatusForbidden)
 	})
-	err := c.PostBuildStatus(context.Background(), "a/b", "sha", forge.BuildStatus{State: forge.StateSuccessful})
+	err := c.PostBuildStatus(t.Context(), "a/b", "sha", forge.BuildStatus{State: forge.StateSuccessful})
 	if err == nil {
 		t.Fatal("want error on 403")
 	}
@@ -76,7 +75,7 @@ func TestPostPRComment(t *testing.T) {
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		w.WriteHeader(http.StatusCreated)
 	})
-	if err := c.PostPRComment(context.Background(), "acme/widgets", "42", "hello"); err != nil {
+	if err := c.PostPRComment(t.Context(), "acme/widgets", "42", "hello"); err != nil {
 		t.Fatal(err)
 	}
 	if gotPath != "/repositories/acme/widgets/pullrequests/42/comments" {
@@ -120,7 +119,7 @@ func TestFindPRComment(t *testing.T) {
 	srvURL = srv.URL
 	c := &Client{BaseURL: srv.URL, Username: "u", AppPassword: "p", HTTPClient: srv.Client()}
 
-	id, err := c.FindPRComment(context.Background(), "acme/widgets", "42", "**gocov**")
+	id, err := c.FindPRComment(t.Context(), "acme/widgets", "42", "**gocov**")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +139,7 @@ func TestFindPRCommentNoMatch(t *testing.T) {
 		}
 		_, _ = w.Write([]byte(`{"values": [{"id": 1, "user": {"account_id": "bot-123"}, "content": {"raw": "hi"}}]}`))
 	})
-	id, err := c.FindPRComment(context.Background(), "a/b", "1", "**gocov**")
+	id, err := c.FindPRComment(t.Context(), "a/b", "1", "**gocov**")
 	if err != nil || id != "" {
 		t.Errorf("id, err = %q, %v; want empty, nil", id, err)
 	}
@@ -154,7 +153,7 @@ func TestFindPRCommentIdentityFailure(t *testing.T) {
 		}
 		t.Error("comments must not be listed when identity is unknown")
 	})
-	if _, err := c.FindPRComment(context.Background(), "a/b", "1", "**gocov**"); err == nil {
+	if _, err := c.FindPRComment(t.Context(), "a/b", "1", "**gocov**"); err == nil {
 		t.Error("want error when /user fails")
 	}
 }
@@ -166,7 +165,7 @@ func TestUpdatePRComment(t *testing.T) {
 		gotMethod, gotPath = r.Method, r.URL.Path
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 	})
-	if err := c.UpdatePRComment(context.Background(), "acme/widgets", "42", "31", "new body"); err != nil {
+	if err := c.UpdatePRComment(t.Context(), "acme/widgets", "42", "31", "new body"); err != nil {
 		t.Fatal(err)
 	}
 	if gotMethod != http.MethodPut || gotPath != "/repositories/acme/widgets/pullrequests/42/comments/31" {
@@ -186,7 +185,7 @@ func TestGetPRDiff(t *testing.T) {
 		gotUser, _, _ = r.BasicAuth()
 		_, _ = w.Write([]byte(diff))
 	})
-	got, err := c.GetPRDiff(context.Background(), "acme/widgets", "42")
+	got, err := c.GetPRDiff(t.Context(), "acme/widgets", "42")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +204,7 @@ func TestGetPRDiffHTTPError(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 	})
-	if _, err := c.GetPRDiff(context.Background(), "a/b", "1"); err == nil {
+	if _, err := c.GetPRDiff(t.Context(), "a/b", "1"); err == nil {
 		t.Error("want error on 404")
 	}
 }
@@ -216,7 +215,7 @@ func TestGetDefaultBranch(t *testing.T) {
 		gotPath = r.URL.Path
 		_, _ = w.Write([]byte(`{"mainbranch": {"name": "development"}, "slug": "widgets"}`))
 	})
-	got, err := c.GetDefaultBranch(context.Background(), "acme/widgets")
+	got, err := c.GetDefaultBranch(t.Context(), "acme/widgets")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +232,7 @@ func TestGetDefaultBranchErrors(t *testing.T) {
 		c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "not found", http.StatusNotFound)
 		})
-		_, err := c.GetDefaultBranch(context.Background(), "a/ghost")
+		_, err := c.GetDefaultBranch(t.Context(), "a/ghost")
 		if !errors.Is(err, forge.ErrRepoNotFound) {
 			t.Errorf("err = %v, want ErrRepoNotFound", err)
 		}
@@ -242,7 +241,7 @@ func TestGetDefaultBranchErrors(t *testing.T) {
 		c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "nope", http.StatusForbidden)
 		})
-		if _, err := c.GetDefaultBranch(context.Background(), "a/b"); err == nil {
+		if _, err := c.GetDefaultBranch(t.Context(), "a/b"); err == nil {
 			t.Error("want error on 403")
 		}
 	})
@@ -250,7 +249,7 @@ func TestGetDefaultBranchErrors(t *testing.T) {
 		c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte(`{"slug": "b"}`))
 		})
-		if _, err := c.GetDefaultBranch(context.Background(), "a/b"); err == nil {
+		if _, err := c.GetDefaultBranch(t.Context(), "a/b"); err == nil {
 			t.Error("want error when mainbranch is absent")
 		}
 	})
@@ -288,7 +287,7 @@ func TestPublishReport(t *testing.T) {
 		{Path: "m/a.go", Line: 9, Summary: "Line 9 of this change is not covered by tests"},
 		{Path: "m/b.go", Summary: "This changed file has no coverage data — nothing in it appears to be tested"},
 	}
-	if err := c.PublishReport(context.Background(), "acme/widgets", "abc123", report, annotations); err != nil {
+	if err := c.PublishReport(t.Context(), "acme/widgets", "abc123", report, annotations); err != nil {
 		t.Fatal(err)
 	}
 
@@ -365,7 +364,7 @@ func TestPublishReportWithoutAnnotations(t *testing.T) {
 	})
 
 	report := forge.Report{Title: "gocov coverage", Details: "d"}
-	if err := c.PublishReport(context.Background(), "acme/widgets", "abc123", report, nil); err != nil {
+	if err := c.PublishReport(t.Context(), "acme/widgets", "abc123", report, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(methods) != 2 || methods[0] != http.MethodDelete || methods[1] != http.MethodPut {
@@ -378,7 +377,7 @@ func TestPublishReportErrors(t *testing.T) {
 		c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "boom", http.StatusInternalServerError)
 		})
-		err := c.PublishReport(context.Background(), "a/b", "c", forge.Report{}, nil)
+		err := c.PublishReport(t.Context(), "a/b", "c", forge.Report{}, nil)
 		if err == nil || !strings.Contains(err.Error(), "500") {
 			t.Errorf("err = %v, want 500", err)
 		}
@@ -391,7 +390,7 @@ func TestPublishReportErrors(t *testing.T) {
 			}
 			http.Error(w, "bad", http.StatusBadRequest)
 		})
-		err := c.PublishReport(context.Background(), "a/b", "c", forge.Report{}, nil)
+		err := c.PublishReport(t.Context(), "a/b", "c", forge.Report{}, nil)
 		if err == nil || !strings.Contains(err.Error(), "400") {
 			t.Errorf("err = %v, want 400", err)
 		}
@@ -400,7 +399,7 @@ func TestPublishReportErrors(t *testing.T) {
 		c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		})
-		err := c.PublishReport(context.Background(), "a/b", "c", forge.Report{
+		err := c.PublishReport(t.Context(), "a/b", "c", forge.Report{
 			Data: []forge.ReportData{{Title: "x", Type: "bogus", Value: 1}},
 		}, nil)
 		if err == nil || !strings.Contains(err.Error(), "bogus") {
@@ -432,7 +431,7 @@ func TestPublishReportRetriesWithoutRejectedLink(t *testing.T) {
 
 	report := forge.Report{Title: "gocov coverage", Link: "http://localhost:8080/uploads/1"}
 	anns := []forge.Annotation{{Path: "a.go", Line: 1, Summary: "s"}}
-	if err := c.PublishReport(context.Background(), "acme/widgets", "abc", report, anns); err != nil {
+	if err := c.PublishReport(t.Context(), "acme/widgets", "abc", report, anns); err != nil {
 		t.Fatalf("want link-less retry to succeed, got %v", err)
 	}
 
@@ -471,7 +470,7 @@ func TestPublishReportOtherBadRequestsDoNotRetry(t *testing.T) {
 	})
 
 	report := forge.Report{Title: "t", Link: "http://localhost:8080/uploads/1"}
-	err := c.PublishReport(context.Background(), "a/b", "c", report, nil)
+	err := c.PublishReport(t.Context(), "a/b", "c", report, nil)
 	if err == nil || !strings.Contains(err.Error(), "400") {
 		t.Fatalf("err = %v, want the 400 surfaced", err)
 	}
@@ -488,7 +487,7 @@ func TestGetRepoVisibility(t *testing.T) {
 			}
 			fmt.Fprintf(w, `{"is_private": %v, "slug": "widgets"}`, isPrivate)
 		})
-		got, err := c.GetRepoVisibility(context.Background(), "acme/widgets")
+		got, err := c.GetRepoVisibility(t.Context(), "acme/widgets")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -500,7 +499,7 @@ func TestGetRepoVisibility(t *testing.T) {
 		c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "not found", http.StatusNotFound)
 		})
-		if _, err := c.GetRepoVisibility(context.Background(), "a/ghost"); !errors.Is(err, forge.ErrRepoNotFound) {
+		if _, err := c.GetRepoVisibility(t.Context(), "a/ghost"); !errors.Is(err, forge.ErrRepoNotFound) {
 			t.Errorf("err = %v, want ErrRepoNotFound", err)
 		}
 	})

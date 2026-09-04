@@ -67,7 +67,7 @@ func newBBConnectFixture(t *testing.T) (*bbConnectFixture, *http.Cookie) {
 	t.Helper()
 	st := storemem.New()
 	ws := &store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "ws-secret", DefaultBranch: "main"}
-	if err := st.CreateWorkspace(context.Background(), ws); err != nil {
+	if err := st.CreateWorkspace(t.Context(), ws); err != nil {
 		t.Fatal(err)
 	}
 	grantForge := forgefake.New()
@@ -94,7 +94,7 @@ func newBBConnectFixture(t *testing.T) (*bbConnectFixture, *http.Cookie) {
 
 func (f *bbConnectFixture) workspace(t *testing.T) *store.Workspace {
 	t.Helper()
-	ws, err := f.store.WorkspaceByPrefix(context.Background(), "acme")
+	ws, err := f.store.WorkspaceByPrefix(t.Context(), "acme")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func (f *bbConnectFixture) workspace(t *testing.T) *store.Workspace {
 func (f *bbConnectFixture) grant(t *testing.T, account, refresh string, broken bool) {
 	t.Helper()
 	ws := f.workspace(t)
-	if err := f.store.SetWorkspaceBitbucketGrant(context.Background(), ws.ID, account, refresh, broken); err != nil {
+	if err := f.store.SetWorkspaceBitbucketGrant(t.Context(), ws.ID, account, refresh, broken); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -113,7 +113,7 @@ func (f *bbConnectFixture) addRepo(t *testing.T) {
 	t.Helper()
 	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "repo-token",
 		DefaultBranch: "main"}
-	if err := f.store.CreateRepo(context.Background(), repo); err != nil {
+	if err := f.store.CreateRepo(t.Context(), repo); err != nil {
 		t.Fatal(err)
 	}
 	f.repo = repo
@@ -210,7 +210,7 @@ func TestBitbucketConnectCallbackRejects(t *testing.T) {
 		t.Errorf("no session: status = %d, want 403", rec.Code)
 	}
 	// A workspace the user is no member of.
-	if err := f.store.CreateWorkspace(context.Background(),
+	if err := f.store.CreateWorkspace(t.Context(),
 		&store.Workspace{Forge: "bitbucket", Prefix: "beta", Token: "beta-tok", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}

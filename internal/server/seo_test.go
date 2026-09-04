@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"net/http"
 	"strings"
 	"testing"
@@ -37,7 +36,7 @@ func TestRobotsKeepsPrivateSurfacesOutOfIndexes(t *testing.T) {
 
 func TestSitemapListsOnlyPublicRepoPages(t *testing.T) {
 	f := newPublicFixture(t, store.VisibilityPublic, true)
-	ctx := context.Background()
+	ctx := t.Context()
 	for _, r := range []*store.Repo{
 		{Forge: "bitbucket", Slug: "acme/private", Token: "t2", DefaultBranch: "main", Visibility: store.VisibilityPrivate},
 		{Forge: "bitbucket", Slug: "acme/optedout", Token: "t3", DefaultBranch: "main",

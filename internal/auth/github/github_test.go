@@ -1,7 +1,6 @@
 package github
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -89,7 +88,7 @@ func TestIdentity(t *testing.T) {
 	p := testProvider(t, mux)
 	apiBase = p.APIBaseURL
 
-	id, err := p.Identity(context.Background(), "code99", "https://gocov.example/oauth/github/callback")
+	id, err := p.Identity(t.Context(), "code99", "https://gocov.example/oauth/github/callback")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +122,7 @@ func TestIdentityPublicEmailSkipsEmailsCall(t *testing.T) {
 		_ = json.NewEncoder(w).Encode([]map[string]any{})
 	})
 
-	id, err := testProvider(t, mux).Identity(context.Background(), "c", "r")
+	id, err := testProvider(t, mux).Identity(t.Context(), "c", "r")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +154,7 @@ func TestIdentityErrors(t *testing.T) {
 				http.Error(w, "bad", http.StatusUnauthorized)
 			},
 		})
-		if _, err := testProvider(t, mux).Identity(context.Background(), "c", "r"); err == nil {
+		if _, err := testProvider(t, mux).Identity(t.Context(), "c", "r"); err == nil {
 			t.Error("want error")
 		}
 	})
@@ -166,7 +165,7 @@ func TestIdentityErrors(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(map[string]any{"error": "bad_verification_code"})
 			},
 		})
-		_, err := testProvider(t, mux).Identity(context.Background(), "c", "r")
+		_, err := testProvider(t, mux).Identity(t.Context(), "c", "r")
 		if err == nil || !strings.Contains(err.Error(), "bad_verification_code") {
 			t.Errorf("err = %v, want the forge error surfaced", err)
 		}
@@ -178,7 +177,7 @@ func TestIdentityErrors(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(map[string]any{"login": "x"})
 			},
 		})
-		if _, err := testProvider(t, mux).Identity(context.Background(), "c", "r"); err == nil {
+		if _, err := testProvider(t, mux).Identity(t.Context(), "c", "r"); err == nil {
 			t.Error("want error without an account id")
 		}
 	})
@@ -192,7 +191,7 @@ func TestIdentityErrors(t *testing.T) {
 				http.Error(w, "nope", http.StatusForbidden)
 			},
 		})
-		if _, err := testProvider(t, mux).Identity(context.Background(), "c", "r"); err == nil {
+		if _, err := testProvider(t, mux).Identity(t.Context(), "c", "r"); err == nil {
 			t.Error("want error when memberships cannot be listed")
 		}
 	})

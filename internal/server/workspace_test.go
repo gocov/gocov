@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -25,13 +24,13 @@ func newWorkspaceFixture(t *testing.T, withRepo bool) (*fixture, *http.Cookie) {
 	t.Helper()
 	st := storemem.New()
 	ws := &store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "ws-secret", DefaultBranch: "main"}
-	if err := st.CreateWorkspace(context.Background(), ws); err != nil {
+	if err := st.CreateWorkspace(t.Context(), ws); err != nil {
 		t.Fatal(err)
 	}
 	var repo *store.Repo
 	if withRepo {
 		repo = &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "secret-token", DefaultBranch: "main"}
-		if err := st.CreateRepo(context.Background(), repo); err != nil {
+		if err := st.CreateRepo(t.Context(), repo); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -81,7 +80,7 @@ func TestWorkspaceSettingsAccess(t *testing.T) {
 	}
 
 	// A workspace the user is no member of 404s, even though it exists.
-	if err := f.store.CreateWorkspace(context.Background(),
+	if err := f.store.CreateWorkspace(t.Context(),
 		&store.Workspace{Forge: "bitbucket", Prefix: "beta", Token: "beta-tok", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +97,7 @@ func TestWorkspaceSettingsNeedAuthEnabled(t *testing.T) {
 	// Open mode has no notion of members; the pages do not exist (M2/D5:
 	// open mode stays byte-identical, so no new surfaces appear).
 	f := newFixture(t, nil)
-	if err := f.store.CreateWorkspace(context.Background(),
+	if err := f.store.CreateWorkspace(t.Context(),
 		&store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "ws-secret", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +110,7 @@ func TestWorkspaceSettingsNeedAuthEnabled(t *testing.T) {
 
 func TestWorkspaceRotateToken(t *testing.T) {
 	f, sess := newWorkspaceFixture(t, true)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// The workspace token authorizes uploads before rotation...
 	rec := doUpload(t, f, "ws-secret", map[string]string{
@@ -159,7 +158,7 @@ func TestWorkspaceRotateToken(t *testing.T) {
 
 func TestWorkspaceSettingsUpdate(t *testing.T) {
 	f, sess := newWorkspaceFixture(t, true)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	rec := postForm(f, "/workspaces/acme/settings", url.Values{
 		"default_branch":    {"develop"},
@@ -200,7 +199,7 @@ func TestWorkspaceSettingsUpdate(t *testing.T) {
 
 func TestWorkspaceRetention(t *testing.T) {
 	f, sess := newWorkspaceFixture(t, true)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// A valid retention window is persisted alongside the branch.
 	rec := postForm(f, "/workspaces/acme/settings", url.Values{
@@ -234,7 +233,7 @@ func TestWorkspaceRetention(t *testing.T) {
 
 func TestWorkspaceDelete(t *testing.T) {
 	f, sess := newWorkspaceFixture(t, true)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// An upload under the workspace creates a repo (and its data) — all of
 	// which the delete must cascade away.
@@ -337,7 +336,7 @@ func TestSetupPageWaitsAndFlips(t *testing.T) {
 
 func TestSetupPageGitHubSnippet(t *testing.T) {
 	st := storemem.New()
-	if err := st.CreateWorkspace(context.Background(),
+	if err := st.CreateWorkspace(t.Context(),
 		&store.Workspace{Forge: "github", Prefix: "myorg", Token: "gh-secret", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +386,7 @@ func TestSetupPageGitHubSnippet(t *testing.T) {
 
 func TestSetupPageGitLabSnippet(t *testing.T) {
 	st := storemem.New()
-	if err := st.CreateWorkspace(context.Background(),
+	if err := st.CreateWorkspace(t.Context(),
 		&store.Workspace{Forge: "gitlab", Prefix: "grp/team", Token: "gl-secret", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
@@ -420,7 +419,7 @@ func TestSetupPageGitLabSnippet(t *testing.T) {
 // `go run @latest` (which needs a matching Go toolchain).
 func TestSetupPageHostedOmitsServer(t *testing.T) {
 	st := storemem.New()
-	if err := st.CreateWorkspace(context.Background(),
+	if err := st.CreateWorkspace(t.Context(),
 		&store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "ws-secret", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
@@ -463,7 +462,7 @@ func TestSetupPageHostedOmitsServer(t *testing.T) {
 // serves its pages behind a %2F-encoded prefix, and scopes visibility to
 // projects below the subgroup.
 func TestGitLabSubgroupWorkspace(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	st := storemem.New()
 	ws := &store.Workspace{Forge: "gitlab", Prefix: "grp/sub", Token: "ws-secret", DefaultBranch: "main"}
 	if err := st.CreateWorkspace(ctx, ws); err != nil {

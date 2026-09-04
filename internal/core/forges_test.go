@@ -54,7 +54,7 @@ func newForges(t *testing.T, bb BitbucketConnect) (*Forges, *storemem.Store) {
 
 func connectedWorkspace(t *testing.T, st *storemem.Store, prefix string) *store.Workspace {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	ws := &store.Workspace{Forge: "bitbucket", Prefix: prefix, Token: "ws-tok", DefaultBranch: "main"}
 	if err := st.CreateWorkspace(ctx, ws); err != nil {
 		t.Fatal(err)
@@ -73,7 +73,7 @@ func TestGrantTokenIsCachedBetweenUploads(t *testing.T) {
 	bb := &fakeBB{client: forgefake.New()}
 	f, st := newForges(t, bb)
 	ws := connectedWorkspace(t, st, "acme")
-	ctx := context.Background()
+	ctx := t.Context()
 
 	for i := range 3 {
 		if fg := f.Connected(ctx, ws, "bitbucket"); fg == nil {
@@ -130,10 +130,10 @@ func TestRotatedRefreshTokenIsPersisted(t *testing.T) {
 	f, st := newForges(t, bb)
 	ws := connectedWorkspace(t, st, "acme")
 
-	if fg := f.Connected(context.Background(), ws, "bitbucket"); fg == nil {
+	if fg := f.Connected(t.Context(), ws, "bitbucket"); fg == nil {
 		t.Fatal("no forge client")
 	}
-	fresh, err := st.WorkspaceByPrefix(context.Background(), "acme")
+	fresh, err := st.WorkspaceByPrefix(t.Context(), "acme")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestRevokedGrantIsMarkedBroken(t *testing.T) {
 	bb := &fakeBB{err: forge.ErrCredentialsRevoked}
 	f, st := newForges(t, bb)
 	ws := connectedWorkspace(t, st, "acme")
-	ctx := context.Background()
+	ctx := t.Context()
 
 	if fg := f.Connected(ctx, ws, "bitbucket"); fg != nil {
 		t.Error("a revoked grant handed out a client")
@@ -181,7 +181,7 @@ func TestWorkspaceForPrefersTheLongestPrefix(t *testing.T) {
 	// A subgroup registered on its own must win over its parent: its
 	// repos were onboarded with the subgroup's connection.
 	f, st := newForges(t, nil)
-	ctx := context.Background()
+	ctx := t.Context()
 	for _, prefix := range []string{"acme", "acme/team"} {
 		if err := st.CreateWorkspace(ctx, &store.Workspace{
 			Forge: "gitlab", Prefix: prefix, Token: "tok-" + prefix, DefaultBranch: "main",
@@ -199,7 +199,7 @@ func TestWorkspaceForRefusesAnotherForge(t *testing.T) {
 	// Prefixes are globally unique, so a workspace named "acme" on one
 	// forge must never lend its grant to a same-named account on another.
 	f, st := newForges(t, nil)
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := st.CreateWorkspace(ctx, &store.Workspace{
 		Forge: "gitlab", Prefix: "acme", Token: "tok", DefaultBranch: "main",
 	}); err != nil {
@@ -220,7 +220,7 @@ func TestForWithoutAConnection(t *testing.T) {
 	// No connection is not an error: the upload lands and the forge
 	// surfaces report that they were skipped.
 	f, _ := newForges(t, nil)
-	fg, err := f.For(context.Background(), &store.Repo{Forge: "bitbucket", Slug: "acme/widgets"})
+	fg, err := f.For(t.Context(), &store.Repo{Forge: "bitbucket", Slug: "acme/widgets"})
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}

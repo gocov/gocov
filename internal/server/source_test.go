@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"reflect"
@@ -74,7 +73,7 @@ func TestSourceViewCachesContent(t *testing.T) {
 		t.Errorf("forge fetched %d times, want 1 (cache)", got)
 	}
 	// The cache key uses the repo-relative path at the commit.
-	if _, err := f.blobs.Get(context.Background(), "source/1/c1/m/a.go"); err != nil {
+	if _, err := f.blobs.Get(t.Context(), "source/1/c1/m/a.go"); err != nil {
 		t.Errorf("source not cached: %v", err)
 	}
 }
