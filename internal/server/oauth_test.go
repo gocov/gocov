@@ -43,13 +43,25 @@ func (f *fakeProvider) Identity(_ context.Context, code, redirectURI string) (*a
 	return f.identity, f.err
 }
 
+// memberIdentity is the fixtures' signed-in account: a member of acme and
+// personal who administers both on the forge, so it lands as an owner
+// wherever those are tracked.
 func memberIdentity() *auth.Identity {
 	return &auth.Identity{
-		ForgeUUID:   "{uuid-1}",
-		DisplayName: "Jane Dev",
-		Email:       "jane@example.com",
-		Workspaces:  []string{"acme", "personal"},
+		ForgeUUID:       "{uuid-1}",
+		DisplayName:     "Jane Dev",
+		Email:           "jane@example.com",
+		Workspaces:      []string{"acme", "personal"},
+		OwnedWorkspaces: []string{"acme", "personal"},
 	}
+}
+
+// plainMemberIdentity is memberIdentity without the admin role on the
+// forge: the same memberships, seated as a member everywhere.
+func plainMemberIdentity() *auth.Identity {
+	id := memberIdentity()
+	id.OwnedWorkspaces = nil
+	return id
 }
 
 // newAuthFixture builds a server with sign-in enabled (unless provider is

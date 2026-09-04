@@ -8,9 +8,10 @@ pull request, a gate that can hold a merge, and a badge for the README. Three st
 Sign in at [app.gocov.dev](https://app.gocov.dev/?ref=docs) with your forge account (GitHub, Bitbucket or GitLab).
 
 If you belong to no workspace gocov already tracks, you land on **/register**, which lists the workspaces your forge
-account is a member of. Claiming one creates it, makes you a member, and shows its **upload token — once**. Only
-workspaces the forge itself reports for your account can be claimed, so there is nothing to dispute: if a colleague
-registered yours first, signing in simply makes you a member.
+account is a member of. Claiming one creates it, makes you its owner, and shows its **upload token — once**. Claiming
+takes an admin's role on the forge (org admin, group Owner, workspace administrator); only workspaces the forge itself
+reports for your account can be claimed, so there is nothing to dispute: if a colleague registered yours first, signing
+in simply makes you a member.
 
 A *workspace* is the namespace gocov tracks — a GitHub org or user, a GitLab group, a Bitbucket workspace. Repos under
 it register themselves on their first upload, so the workspace is the only thing you create by hand.
@@ -59,7 +60,8 @@ gate defaults new repos inherit, and connect or disconnect the forge.
 ![Coverage over time on a repo page: total coverage per upload, gate failures marked in red, and a dashed line at the gate minimum](assets/trend.png)
 
 Who sees what follows your forge: members of the workspace see its repos and nobody else does, with no invite step to
-manage.
+manage. Who changes what follows it too: the forge's admins are the workspace's owners, the only ones who set gates,
+connect the forge or see the upload token — see [owners and members](sign-in.md#owners-and-members).
 
 ## Next steps
 

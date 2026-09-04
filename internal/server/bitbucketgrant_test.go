@@ -305,6 +305,23 @@ func TestUploadGrantHealsBrokenFlag(t *testing.T) {
 	}
 }
 
+func TestBitbucketConnectIsOwnersOnly(t *testing.T) {
+	// The grant acts for the whole workspace, so starting or dropping it
+	// is an owner's move; a member gets a 403 on both routes.
+	f, sess := newBBConnectFixture(t)
+	demote(t, f.fixture, "acme")
+	if rec := get(f.fixture, "/workspaces/acme/bitbucket/connect", sess); rec.Code != http.StatusForbidden {
+		t.Errorf("member connect: status = %d, want 403", rec.Code)
+	}
+	f.grant(t, "gocov-bot", "rt", false)
+	if rec := postForm(f.fixture, "/workspaces/acme/bitbucket/disconnect", url.Values{}, sess); rec.Code != http.StatusForbidden {
+		t.Errorf("member disconnect: status = %d, want 403", rec.Code)
+	}
+	if ws := f.workspace(t); ws.BitbucketGrantAccount != "gocov-bot" {
+		t.Errorf("member disconnect dropped the grant: %+v", ws)
+	}
+}
+
 func TestBitbucketDisconnect(t *testing.T) {
 	f, sess := newBBConnectFixture(t)
 	f.grant(t, "covbot", "rt-0", false)

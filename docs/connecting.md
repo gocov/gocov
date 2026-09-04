@@ -15,7 +15,9 @@ they work goes through the forge's API:
 
 ## How to connect
 
-From the workspace's **settings** page (or the onboarding page):
+From the workspace's **settings** page (or the onboarding page), as a workspace
+[owner](sign-in.md#owners-and-members) — connecting acts for every repo in the workspace, so members see the state but
+not the button:
 
 - **GitHub** — click **Install the gocov app**. GitHub shows its install screen; picking the org or account installs
   the App and lands you back on gocov with the workspace connected. Statuses, PR comments and check runs are authored

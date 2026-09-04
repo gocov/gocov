@@ -2,6 +2,7 @@
 {{define "content"}}
 {{$prefix := pathesc .Workspace.Prefix}}
 {{$forge := .Workspace.Forge}}
+{{$ro := not .Owner}}
 <div class="ws">
 
 <div class="ws-head">
@@ -26,6 +27,9 @@
 
 {{with .Notice}}<p class="notice">{{.}}</p>{{end}}
 {{with .Error}}<p class="notice fail">{{.}}</p>{{end}}
+{{if $ro}}<p class="notice">You are a member of this workspace, so these settings are read-only. Changing them
+  — and seeing the upload token — takes a workspace owner: an admin or owner of <span class="mono">{{.Workspace.Prefix}}</span>
+  on {{.ForgeLabel}}. Roles refresh at every sign-in.</p>{{end}}
 
 {{if .NewToken}}
 <div class="card"><div class="card-bd">
@@ -87,6 +91,9 @@
     {{end}}
   </div>
   <div class="card-ft">
+    {{if $ro}}
+    <span class="hint">Connecting and disconnecting are a workspace owner's moves.</span>
+    {{else}}
     {{if eq $forge "github"}}
       {{if .GitHubInstallURL}}
         {{if eq .ReportingState "on"}}<a class="btn" href="{{.GitHubInstallURL}}">Manage on GitHub</a>{{end}}
@@ -109,6 +116,7 @@
             data-confirm="Disconnect? Statuses and comments are then skipped for this workspace.">
         <button class="btn" type="submit">Disconnect</button></form>
     {{end}}
+    {{end}}
   </div>
 </div>
 {{end}}
@@ -129,9 +137,15 @@
       </div>
     </div>
     {{end}}
+    {{if $ro}}
     <div class="secret">
       <div class="secret-hd"><span class="name">GOCOV_TOKEN</span><span class="chip plain">Secret</span>
-        <span class="spacer"></span><span class="muted small">Shown to workspace members only</span></div>
+        <span class="spacer"></span><span class="muted small">Shown to workspace owners only</span></div>
+    </div>
+    {{else}}
+    <div class="secret">
+      <div class="secret-hd"><span class="name">GOCOV_TOKEN</span><span class="chip plain">Secret</span>
+        <span class="spacer"></span><span class="muted small">Shown to workspace owners only</span></div>
       <div class="secret-bd">
         <span class="v" id="ws-token" data-full="{{.Token}}">{{.MaskedToken}}</span>
         <button class="btn" type="button" data-reveal="#ws-token">Reveal</button>
@@ -139,16 +153,21 @@
         <input type="hidden" id="ws-tokenval" value="{{.Token}}">
       </div>
     </div>
+    {{end}}
   </div>
   <div class="card-ft">
+    {{if $ro}}
+    <span class="hint">Only a workspace owner can see or rotate the token.</span>
+    {{else}}
     <form method="post" action="/workspaces/{{$prefix}}/rotate-token"
           data-confirm="Rotate the upload token? The current token stops working immediately and CI must be updated.">
       <button class="btn" type="submit">Rotate token</button></form>
     <span class="hint">The old token stops working the moment you rotate.</span>
+    {{end}}
   </div>
 </div>
 
-<form method="post" action="/workspaces/{{$prefix}}/settings">
+{{if not $ro}}<form method="post" action="/workspaces/{{$prefix}}/settings">{{end}}
 <div class="card" id="gates">
   <div class="card-hd"><h2>Coverage gates</h2><span class="spacer"></span>
     <span class="chip info" id="gatecount">{{if .GateActive}}{{.GateActive}} active{{else}}None active{{end}}</span></div>
@@ -157,16 +176,16 @@
     unless a repository sets its own. Leave a gate off to disable that rule.</p>
     {{template "gate" dict "Name" "min_coverage" "Label" "Minimum total coverage"
        "Help" "Fails when the whole project drops below this figure."
-       "Value" .Workspace.Gate.MinCoverage}}
+       "Value" .Workspace.Gate.MinCoverage "ReadOnly" $ro}}
     {{template "gate" dict "Name" "min_diff_coverage" "Label" "Minimum diff coverage"
        "Help" "Fails when the lines changed in a pull/merge request are covered below this figure."
-       "Value" .Workspace.Gate.MinDiffCoverage}}
+       "Value" .Workspace.Gate.MinDiffCoverage "ReadOnly" $ro}}
     {{template "gate" dict "Name" "max_coverage_drop" "Label" "Maximum coverage drop"
        "Help" "Fails when total coverage falls by more than this against the base branch."
-       "Value" .Workspace.Gate.MaxCoverageDrop}}
+       "Value" .Workspace.Gate.MaxCoverageDrop "ReadOnly" $ro}}
   </div>
-  <div class="card-ft"><button class="btn primary" type="submit">Save</button>
-    <span class="hint">Applies to the next upload.</span></div>
+  <div class="card-ft">{{if $ro}}<span class="hint">Owners set the gates.</span>{{else}}<button class="btn primary" type="submit">Save</button>
+    <span class="hint">Applies to the next upload.</span>{{end}}</div>
 </div>
 
 <div class="card" id="defaults">
@@ -174,10 +193,10 @@
   <div class="card-bd">
     <div class="fields">
       <span class="f"><label for="db">Default branch</label>
-        <input class="input" id="db" name="default_branch" type="text" value="{{.Workspace.DefaultBranch}}">
+        <input class="input" id="db" name="default_branch" type="text" value="{{.Workspace.DefaultBranch}}"{{if $ro}} disabled{{end}}>
         <span class="h">Trends and gate baselines are measured against this branch.</span></span>
       <span class="f"><label for="rt">Keep reports for</label>
-        <select class="input" id="rt" name="report_retention_days">
+        <select class="input" id="rt" name="report_retention_days"{{if $ro}} disabled{{end}}>
           <option value="90"{{if eq .Workspace.ReportRetentionDays 90}} selected{{end}}>90 days</option>
           <option value="365"{{if eq .Workspace.ReportRetentionDays 365}} selected{{end}}>1 year</option>
           <option value="0"{{if eq .Workspace.ReportRetentionDays 0}} selected{{end}}>Forever</option>
@@ -185,10 +204,10 @@
         <span class="h">Older uploads are pruned; totals stay. Pruning is coming soon.</span></span>
     </div>
   </div>
-  <div class="card-ft"><button class="btn primary" type="submit">Save</button>
-    <span class="hint">Branch and gate defaults apply to repositories registered from now on.</span></div>
+  <div class="card-ft">{{if $ro}}<span class="hint">Owners set the defaults.</span>{{else}}<button class="btn primary" type="submit">Save</button>
+    <span class="hint">Branch and gate defaults apply to repositories registered from now on.</span>{{end}}</div>
 </div>
-</form>
+{{if not $ro}}</form>{{end}}
 
 <div class="card danger-card" id="delete">
   <div class="card-hd"><h2>Delete workspace</h2></div>
@@ -198,10 +217,14 @@
     immediately. Nothing is changed on {{.ForgeLabel}}.</p>
   </div>
   <div class="card-ft">
+    {{if $ro}}
+    <span class="hint">Only a workspace owner can delete it.</span>
+    {{else}}
     <form method="post" action="/workspaces/{{$prefix}}/delete"
           data-confirm="Delete {{.Workspace.Prefix}} and all of its coverage data? This cannot be undone.">
       <button class="btn danger" type="submit">Delete this workspace</button></form>
     <span class="hint">This cannot be undone.</span>
+    {{end}}
   </div>
 </div>
 

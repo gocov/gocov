@@ -222,7 +222,7 @@ func (s *Server) oidcResolveBitbucket(w http.ResponseWriter, r *http.Request, to
 		return nil, false
 	}
 	if fg == nil {
-		httpError(w, http.StatusForbidden, "OIDC uploads for %s need its workspace connected to Bitbucket; an admin can connect it from the workspace settings", ownerOf(repo.Slug))
+		httpError(w, http.StatusForbidden, "OIDC uploads for %s need its workspace connected to Bitbucket; a workspace owner can connect it from the workspace settings", ownerOf(repo.Slug))
 		return nil, false
 	}
 	gotUUID, err := fg.GetRepoID(ctx, repo.Slug)

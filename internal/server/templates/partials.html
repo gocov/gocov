@@ -9,10 +9,10 @@
   <span><span class="n">{{.Label}}</span><br><span class="m">{{.Help}}</span></span>
   <span class="ctl">
     <input class="input gate-input" type="number" name="{{.Name}}" min="0" max="100" step="0.1"
-           value="{{with .Value}}{{.}}{{end}}"{{if not .Value}} disabled{{end}}>
+           value="{{with .Value}}{{.}}{{end}}"{{if or (not .Value) .ReadOnly}} disabled{{end}}>
     <span class="muted">%</span>
-    <button class="tg" type="button" aria-pressed="{{if .Value}}true{{else}}false{{end}}"
-            aria-label="Toggle {{.Label}}"></button>
+    {{if not .ReadOnly}}<button class="tg" type="button" aria-pressed="{{if .Value}}true{{else}}false{{end}}"
+            aria-label="Toggle {{.Label}}"></button>{{end}}
   </span>
 </div>
 {{end}}
