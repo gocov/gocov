@@ -259,7 +259,8 @@ func TestRegisterCrossForgeCollisionConflicts(t *testing.T) {
 func TestRegisterAlreadyRegisteredJoins(t *testing.T) {
 	// A colleague registered "acme" after this user's login sync; claiming
 	// it is a non-event (D2): membership is granted, no new workspace.
-	f := newHostedFixture(t, &fakeProvider{identity: memberIdentity()})
+	// Joining is open to plain members — only creating takes an owner.
+	f := newHostedFixture(t, &fakeProvider{identity: plainMemberIdentity()})
 	sess := hostedSignIn(t, f, "/", "/onboarding")
 	ctx := t.Context()
 	if err := f.store.CreateWorkspace(ctx,
@@ -286,6 +287,26 @@ func TestRegisterAlreadyRegisteredJoins(t *testing.T) {
 	}
 	if wss, _ := f.store.ListWorkspacesForUser(ctx, users[0].ID); len(wss) != 1 {
 		t.Errorf("second join changed memberships: %v", wss)
+	}
+}
+
+func TestRegisterNeedsAnOwnerOnTheForge(t *testing.T) {
+	// Creating a workspace makes a tenant and mints its upload token, both
+	// owner-only from then on — so a forge member who is not an admin of
+	// the workspace cannot be the one to create it. The picker says so
+	// instead of offering the button, and the POST is refused regardless.
+	f := newHostedFixture(t, &fakeProvider{identity: plainMemberIdentity()})
+	sess := hostedSignIn(t, f, "/", "/onboarding")
+
+	body := get(f, "/onboarding", sess).Body.String()
+	if !strings.Contains(body, "Owners only") || strings.Contains(body, "Create the workspace") {
+		t.Errorf("picker must mark an unowned workspace instead of offering to create it:\n%s", body)
+	}
+	if rec := postRegister(f, "personal", sess); rec.Code != http.StatusForbidden {
+		t.Errorf("member creating a workspace: status = %d, want 403", rec.Code)
+	}
+	if _, err := f.store.WorkspaceByPrefix(t.Context(), "personal"); err == nil {
+		t.Error("refused registration created a workspace")
 	}
 }
 

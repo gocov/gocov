@@ -45,6 +45,44 @@ func TestRepoSettingsAccess(t *testing.T) {
 	}
 }
 
+func TestMemberRepoSettingsAreReadOnly(t *testing.T) {
+	// Same split as the workspace page: a member reads, an owner changes.
+	f, sess := newMemberFixture(t, true)
+	ctx := t.Context()
+
+	rec := get(f, "/repo-settings/acme/widgets", sess)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("member settings page: status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "secret-token") {
+		t.Error("member page carries the upload token")
+	}
+	for _, control := range []string{"Rotate token", "Remove this repository", `action="/repo-settings/save/acme/widgets"`} {
+		if strings.Contains(body, control) {
+			t.Errorf("member page renders the owner control %q", control)
+		}
+	}
+	// What a member came for is still there: the values, and the badge.
+	if !strings.Contains(body, "read-only") || !strings.Contains(body, "/badge/acme/widgets.svg") {
+		t.Errorf("member page misses the read-only note or the badge:\n%s", body)
+	}
+
+	for _, path := range []string{
+		"/repo-settings/save/acme/widgets",
+		"/repo-settings/rotate-token/acme/widgets",
+		"/repo-settings/delete/acme/widgets",
+	} {
+		if rec := postForm(f, path, url.Values{"default_branch": {"develop"}}, sess); rec.Code != http.StatusForbidden {
+			t.Errorf("member POST %s: status = %d, want 403", path, rec.Code)
+		}
+	}
+	repo, err := f.store.RepoBySlug(ctx, "acme/widgets")
+	if err != nil || repo.Token != "secret-token" || repo.DefaultBranch != "main" {
+		t.Errorf("a member's refused POSTs changed the repo: %+v, %v", repo, err)
+	}
+}
+
 func TestRepoSettingsSaveRotateDelete(t *testing.T) {
 	f, sess := newWorkspaceFixture(t, true)
 	ctx := t.Context()

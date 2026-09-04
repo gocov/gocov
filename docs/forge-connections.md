@@ -33,7 +33,7 @@ GOCOV_GITHUB_APP_ID=...
 GOCOV_GITHUB_APP_PRIVATE_KEY=/path/to/gocov.private-key.pem  # or the PEM content itself
 ```
 
-Members then connect from the workspace settings or setup page; after GitHub's install screen they land back on gocov
+Workspace owners then connect from the workspace settings or setup page; after GitHub's install screen they land back on gocov
 with the workspace connected. The App covers every surface, check runs included — it is the first-class Checks API
 citizen, so check runs are not permission-fragile — and posts as the app's bot identity (e.g. `gocov[bot]`). In hosted
 mode an install on an account with no workspace yet registers it on the spot (same claim rules as **/register**).

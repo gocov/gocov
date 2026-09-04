@@ -24,6 +24,8 @@ type registerRow struct {
 	//                fixed by signing in again)
 	//   "taken"      the prefix is registered under another forge; slugs
 	//                are forge-agnostic, so the name is unavailable
+	//   "unowned"    free, but the forge lists the user as a member, not
+	//                an admin — creating a workspace is an owner's move
 	//   "available"  free to register
 	State string
 	// TakenBy names the other forge holding the prefix when State is
@@ -72,6 +74,9 @@ func (s *Server) registerRows(r *http.Request, u *store.User) ([]registerRow, er
 		ws, err := s.store.WorkspaceByPrefix(r.Context(), prefix)
 		switch {
 		case errors.Is(err, store.ErrNotFound):
+			if forgeRole(u, prefix) != store.RoleOwner {
+				row.State = "unowned"
+			}
 		case err != nil:
 			return nil, err
 		case ws.Forge != u.Forge:
@@ -118,6 +123,11 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	created, existing, err := s.claimWorkspace(r, u, prefix)
+	if errors.Is(err, errNotOwner) {
+		http.Error(w, "creating a workspace takes an admin or owner of it on the forge; ask one to register it, "+
+			"or sign in again if you have just become one", http.StatusForbidden)
+		return
+	}
 	if err != nil {
 		s.internalError(w, "registering workspace", err)
 		return
@@ -147,9 +157,16 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
+// errNotOwner is claimWorkspace's answer when the forge snapshot lists the
+// user as a member of the prefix but not an admin of it.
+var errNotOwner = errors.New("not an owner of the workspace on the forge")
+
 // claimWorkspace registers prefix for the user, unless a workspace with
 // that prefix already exists (also when a concurrent claim wins the
-// create race) — then it is returned as existing instead.
+// create race) — then it is returned as existing instead. Creating one
+// takes an owner's role on the forge: it makes a tenant and mints its
+// upload token, both owner-only from then on. Joining an existing one is
+// open to any member.
 func (s *Server) claimWorkspace(r *http.Request, u *store.User, prefix string) (created, existing *store.Workspace, err error) {
 	existing, err = s.store.WorkspaceByPrefix(r.Context(), prefix)
 	if err == nil {
@@ -157,6 +174,9 @@ func (s *Server) claimWorkspace(r *http.Request, u *store.User, prefix string) (
 	}
 	if !errors.Is(err, store.ErrNotFound) {
 		return nil, nil, err
+	}
+	if forgeRole(u, prefix) != store.RoleOwner {
+		return nil, nil, errNotOwner
 	}
 	token, err := core.NewToken()
 	if err != nil {

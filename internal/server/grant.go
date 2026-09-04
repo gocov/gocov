@@ -10,7 +10,7 @@ import (
 )
 
 // Workspace-connect grants for Bitbucket and GitLab (One-Click Connect
-// P2/D6/D7). A member clicks Connect on the settings page, consents once
+// P2/D6/D7). An owner clicks Connect on the settings page, consents once
 // on the forge, and the workspace from then on acts through that grant:
 // statuses, PR comments, reports, diff and source fetch — no manual
 // credentials. The grant's refresh token lives on the workspace row,
@@ -79,7 +79,7 @@ func (s *Server) handleConnect(g *connectGrant) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		ws := s.memberWorkspace(w, r)
+		ws := s.ownerWorkspace(w, r)
 		if ws == nil {
 			return
 		}
@@ -149,13 +149,19 @@ func (s *Server) connectCallback(g *connectGrant, w http.ResponseWriter, r *http
 		s.internalError(w, "looking up workspace", err)
 		return true
 	}
-	member, err := s.isMember(r.Context(), u, ws)
+	role, member, err := s.seat(r.Context(), u, ws)
 	if err != nil {
 		s.internalError(w, "listing memberships", err)
 		return true
 	}
 	if ws.Forge != g.forge || !member {
 		http.NotFound(w, r)
+		return true
+	}
+	if role != store.RoleOwner {
+		// The consent was started by an owner's session; being demoted
+		// (or handing the redirect to a member) in between ends it here.
+		ownersOnly(w)
 		return true
 	}
 
@@ -183,7 +189,7 @@ func (s *Server) connectCallback(g *connectGrant, w http.ResponseWriter, r *http
 // drops resolution back to the credential chain.
 func (s *Server) handleDisconnect(g *connectGrant) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ws := s.memberWorkspace(w, r)
+		ws := s.ownerWorkspace(w, r)
 		if ws == nil {
 			return
 		}

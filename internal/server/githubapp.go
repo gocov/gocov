@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"net/url"
@@ -76,9 +75,13 @@ func (s *Server) handleGitHubSetup(w http.ResponseWriter, r *http.Request) {
 }
 
 // connectExisting links the installation to an already-registered
-// workspace. Membership is required — with the register-flow concession
-// (M3/D2): a user whose forge workspace list contains the prefix is made
-// a member on the spot instead of waiting for the next login sync.
+// workspace. An owner's seat is required — with the register-flow
+// concession (M3/D2): a user whose forge workspace list contains the
+// prefix is seated on the spot, in the role the snapshot grants, instead
+// of waiting for the next login sync. Installing the App is an org
+// admin's move on GitHub too, so an owner arriving here is the normal
+// case; a member arriving with an installation most likely became admin
+// after their last sign-in, and signing in again refreshes the role.
 func (s *Server) connectExisting(w http.ResponseWriter, r *http.Request, u *store.User, ws *store.Workspace, login string, installationID int64) {
 	if ws.Forge != "github" {
 		// Prefixes are forge-agnostic and globally unique (M3); the name
@@ -88,7 +91,7 @@ func (s *Server) connectExisting(w http.ResponseWriter, r *http.Request, u *stor
 				"so the installation cannot be linked to it.")
 		return
 	}
-	member, err := s.isMember(r.Context(), u, ws)
+	role, member, err := s.seat(r.Context(), u, ws)
 	if err != nil {
 		s.internalError(w, "listing memberships", err)
 		return
@@ -110,6 +113,16 @@ func (s *Server) connectExisting(w http.ResponseWriter, r *http.Request, u *stor
 			s.internalError(w, "adding membership", err)
 			return
 		}
+		role = forgeRole(u, login)
+	}
+	if role != store.RoleOwner {
+		s.log.Warn("github setup denied to member", "user", u.DisplayName, "installation", installationID, "account", login)
+		s.renderConnect(w, r, http.StatusForbidden, "Owners only",
+			"Connecting "+login+" is a workspace owner's move, and your last sign-in listed you as "+
+				"a member of "+login+", not an admin. If you have since become one, sign in again "+
+				"to refresh your role and come back here.",
+			connectAction{URL: githubReauthURL(installationID), Label: "Sign in again"})
+		return
 	}
 	ws.GitHubInstallationID = installationID
 	ws.GitHubAppBroken = false
@@ -123,11 +136,22 @@ func (s *Server) connectExisting(w http.ResponseWriter, r *http.Request, u *stor
 
 // connectNew is the install-first path: the account has no workspace here
 // yet, so the M3 claim rules apply — only accounts the user's forge list
-// vouches for. The workspace is registered with the installation already
-// linked, then the user lands on the setup page: the same activation moment
-// as the register flow, minus the credentials step. Works in hosted and
-// private mode alike; the forge-list check is the only claim gate.
+// vouches for, and, since claiming creates the tenant and mints its
+// token, only ones it says the user administers. The workspace is
+// registered with the installation already linked, then the user lands
+// on the setup page: the same activation moment as the register flow,
+// minus the credentials step. Works in hosted and private mode alike;
+// the forge snapshot is the only claim gate.
 func (s *Server) connectNew(w http.ResponseWriter, r *http.Request, u *store.User, login string, installationID int64) {
+	if inForgeWorkspaces(u, login) && forgeRole(u, login) != store.RoleOwner {
+		s.log.Warn("github setup claim denied to member", "user", u.DisplayName, "installation", installationID, "account", login)
+		s.renderConnect(w, r, http.StatusForbidden, "Owners only",
+			"Creating the "+login+" workspace is an organization admin's move, and your last "+
+				"sign-in listed you as a member of "+login+", not an admin. If you have since "+
+				"become one, sign in again to refresh your role and come back here.",
+			connectAction{URL: githubReauthURL(installationID), Label: "Sign in again"})
+		return
+	}
 	if !inForgeWorkspaces(u, login) {
 		s.log.Warn("github setup claim denied", "user", u.DisplayName, "installation", installationID, "account", login)
 		s.renderConnect(w, r, http.StatusForbidden, "Not your workspace",
@@ -170,7 +194,7 @@ func (s *Server) connectNew(w http.ResponseWriter, r *http.Request, u *store.Use
 // uninstalling there is the org owner's move; this only stops gocov
 // using it and drops resolution back to the credential chain.
 func (s *Server) handleGitHubDisconnect(w http.ResponseWriter, r *http.Request) {
-	ws := s.memberWorkspace(w, r)
+	ws := s.ownerWorkspace(w, r)
 	if ws == nil {
 		return
 	}
@@ -182,20 +206,6 @@ func (s *Server) handleGitHubDisconnect(w http.ResponseWriter, r *http.Request) 
 	}
 	s.log.Info("github app disconnected", "workspace", ws.Prefix, "user", currentUser(r).DisplayName)
 	http.Redirect(w, r, "/workspaces/"+ws.Prefix+"?saved=1", http.StatusSeeOther)
-}
-
-// isMember reports whether the user is a member of the workspace.
-func (s *Server) isMember(ctx context.Context, u *store.User, ws *store.Workspace) (bool, error) {
-	memberOf, err := s.store.ListWorkspacesForUser(ctx, u.ID)
-	if err != nil {
-		return false, err
-	}
-	for _, m := range memberOf {
-		if m.ID == ws.ID {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 // inForgeWorkspaces reports whether the login is in the user's stored

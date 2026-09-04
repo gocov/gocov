@@ -84,7 +84,7 @@ func (s *Server) handleOnboarding(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if prefix := r.FormValue("ws"); prefix != "" {
-		ws := s.userWorkspace(r, u, prefix)
+		ws, role := s.userWorkspace(r, u, prefix)
 		if ws == nil {
 			http.Redirect(w, r, "/onboarding", http.StatusFound)
 			return
@@ -96,11 +96,17 @@ func (s *Server) handleOnboarding(w http.ResponseWriter, r *http.Request) {
 			"ForgeLabel": providerLabel(ws.Forge),
 			"Account":    u.DisplayName,
 			"Workspace":  ws,
+			"Owner":      role == store.RoleOwner,
 			"Rail":       onboardingRail(0, ws.Forge, ws.Prefix, false),
 		}
 		s.addGitHubAppData(r, ws, data)
 		s.addGrantData(ws, data)
 		s.reportingState(ws, data)
+		if role != store.RoleOwner {
+			// Connecting is an owner's move; a member sees the state
+			// without the grant button.
+			delete(data, "GrantURL")
+		}
 		s.render(w, r, "onboarding.html", data)
 		return
 	}
@@ -131,19 +137,18 @@ func (s *Server) handleOnboarding(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "onboarding.html", data)
 }
 
-// userWorkspace returns the workspace the user belongs to with this prefix,
-// or nil — the membership gate for the ready state.
-func (s *Server) userWorkspace(r *http.Request, u *store.User, prefix string) *store.Workspace {
-	memberOf, err := s.store.ListWorkspacesForUser(r.Context(), u.ID)
+// userWorkspace returns the workspace the user belongs to with this prefix
+// and their role in it, or nil — the membership gate for the ready state.
+func (s *Server) userWorkspace(r *http.Request, u *store.User, prefix string) (*store.Workspace, store.Role) {
+	ws, err := s.store.WorkspaceByPrefix(r.Context(), prefix)
 	if err != nil {
-		return nil
+		return nil, ""
 	}
-	for _, ws := range memberOf {
-		if ws.Prefix == prefix {
-			return ws
-		}
+	role, member, err := s.seat(r.Context(), u, ws)
+	if err != nil || !member {
+		return nil, ""
 	}
-	return nil
+	return ws, role
 }
 
 // reportingState fills the reporting capability card's connect state:
@@ -212,7 +217,8 @@ func connectDest(prefix, from string) string {
 
 // setupViewData assembles the steps 2-3 payload (CI snippet, token and the
 // first-upload state) shared by the setup page and its htmx poll partial.
-func (s *Server) setupViewData(r *http.Request, ws *store.Workspace) (map[string]any, error) {
+// The token rides only on an owner's page.
+func (s *Server) setupViewData(r *http.Request, ws *store.Workspace, owner bool) (map[string]any, error) {
 	repos, err := s.workspaceRepos(r, ws)
 	if err != nil {
 		return nil, err
@@ -226,7 +232,13 @@ func (s *Server) setupViewData(r *http.Request, ws *store.Workspace) (map[string
 		// defaults to it, so onboarding drops GOCOV_SERVER (D: ServerImplicit).
 		"ServerImplicit": baseURL == hosted.DefaultServer,
 		"Repos":          repos,
-		"TokenMasked":    maskToken(ws.Token),
+		"Owner":          owner,
+		"Token":          "",
+		"TokenMasked":    "",
+	}
+	if owner {
+		data["Token"] = ws.Token
+		data["TokenMasked"] = maskToken(ws.Token)
 	}
 	s.addGitHubAppData(r, ws, data)
 	s.addGrantData(ws, data)

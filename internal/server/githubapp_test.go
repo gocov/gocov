@@ -92,10 +92,11 @@ func newGitHubAppFixture(t *testing.T, hosted, withWorkspace bool) (*githubAppFi
 		installURL: "https://github.com/apps/gocov/installations/new",
 	}
 	provider := &fakeProvider{name: "github", identity: &auth.Identity{
-		ForgeUUID:   "{uuid-gh-1}",
-		DisplayName: "Jane Dev",
-		Email:       "jane@example.com",
-		Workspaces:  []string{"acme", "janedev"},
+		ForgeUUID:       "{uuid-gh-1}",
+		DisplayName:     "Jane Dev",
+		Email:           "jane@example.com",
+		Workspaces:      []string{"acme", "janedev"},
+		OwnedWorkspaces: []string{"acme", "janedev"},
 	}}
 	f := &githubAppFixture{
 		fixture: &fixture{
@@ -328,6 +329,48 @@ func TestGitHubSetupClaimDeniedNonMember(t *testing.T) {
 	}
 	if _, err := f.store.WorkspaceByPrefix(t.Context(), "stranger"); err == nil {
 		t.Error("an unvouched account must not be registered")
+	}
+}
+
+func TestGitHubSetupIsOwnersOnly(t *testing.T) {
+	// Linking an installation to a tracked workspace is an owner's move.
+	// A member arriving with one — most likely an admin whose gocov role
+	// predates the promotion — is told to sign in again, and nothing links.
+	f, sess := newGitHubAppFixture(t, false, true)
+	demote(t, f.fixture, "acme")
+
+	rec := get(f.fixture, "/github/setup?installation_id=42", sess)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "Owners only") {
+		t.Fatalf("member linking an installation: status = %d, body = %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "Sign in again") {
+		t.Error("the denial must offer a re-auth to refresh the role")
+	}
+	if ws := f.reloadWorkspace(t, "acme"); ws.GitHubInstallationID != 0 {
+		t.Errorf("installation linked by a member: %d", ws.GitHubInstallationID)
+	}
+	if rec := postForm(f.fixture, "/workspaces/acme/github/disconnect", url.Values{}, sess); rec.Code != http.StatusForbidden {
+		t.Errorf("member disconnect: status = %d, want 403", rec.Code)
+	}
+}
+
+func TestGitHubSetupClaimNeedsAnOwnerOnTheForge(t *testing.T) {
+	// Install-first onboarding creates the workspace, so it takes the
+	// forge's admin role on the org — the same rule as /register.
+	f, sess := newGitHubAppFixture(t, true, false)
+	f.app.accounts[7] = "janedev"
+	users, _ := f.store.ListUsers(t.Context())
+	users[0].ForgeOwnedWorkspaces = nil // the forge lists janedev, but not as admin
+	if err := f.store.UpsertUser(t.Context(), users[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := get(f.fixture, "/github/setup?installation_id=7", sess)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "Owners only") {
+		t.Fatalf("member claiming via install: status = %d, body = %s", rec.Code, rec.Body)
+	}
+	if _, err := f.store.WorkspaceByPrefix(t.Context(), "janedev"); err == nil {
+		t.Error("a member's install must not register the workspace")
 	}
 }
 

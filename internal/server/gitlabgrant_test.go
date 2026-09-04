@@ -85,7 +85,8 @@ func newGLConnectFixture(t *testing.T) (*glConnectFixture, *http.Cookie) {
 				Hosted:  true,
 				Auths: []auth.Provider{&fakeProvider{name: "gitlab", identity: &auth.Identity{
 					ForgeUUID: "777", DisplayName: "Jane Dev", Email: "jane@example.com",
-					Workspaces: []string{"grp/sub", "janedev"},
+					Workspaces:      []string{"grp/sub", "janedev"},
+					OwnedWorkspaces: []string{"grp/sub", "janedev"},
 				}}},
 				GitLabConnect: gl,
 			}),

@@ -140,7 +140,7 @@ func (s *Server) authTokenless(w http.ResponseWriter, r *http.Request) (*tokenle
 	}
 	ws := s.forges.WorkspaceFor(ctx, repo.Slug, "github")
 	if ws == nil || ws.GitHubInstallationID == 0 {
-		httpError(w, http.StatusForbidden, "tokenless uploads need the gocov GitHub App installed on %s; an admin can connect it from the workspace settings", ownerOf(repo.Slug))
+		httpError(w, http.StatusForbidden, "tokenless uploads need the gocov GitHub App installed on %s; a workspace owner can connect it from the workspace settings", ownerOf(repo.Slug))
 		return nil, nil, false
 	}
 
@@ -152,7 +152,7 @@ func (s *Server) authTokenless(w http.ResponseWriter, r *http.Request) (*tokenle
 		httpError(w, http.StatusForbidden, "tokenless upload rejected: %s", rejected.Reason)
 		return nil, nil, false
 	case errors.Is(err, forge.ErrCredentialsRevoked):
-		httpError(w, http.StatusForbidden, "the gocov GitHub App installation for %s is no longer valid; an admin needs to reconnect it", ws.Prefix)
+		httpError(w, http.StatusForbidden, "the gocov GitHub App installation for %s is no longer valid; a workspace owner needs to reconnect it", ws.Prefix)
 		return nil, nil, false
 	default:
 		s.log.Error("tokenless verification", "repo", repo.Slug, "run", claim.RunID, "err", err)

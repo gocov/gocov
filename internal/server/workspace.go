@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -22,56 +24,110 @@ func workspaceURL(prefix, suffix string) string {
 // token rotation, default branch, one-click forge connection and gate
 // defaults. The onboarding/setup page (R4) lives next to it. Both are
 // members-only; anyone else 404s (like every other tenant surface, a
-// non-member must not learn the workspace exists).
+// non-member must not learn the workspace exists). Within the workspace
+// the role decides: a member reads the pages, an owner — the role the
+// forge's own admin/owner role maps to at sign-in — changes things.
+// Every mutation and the upload token are owner-only; a member who posts
+// anyway gets a 403, since the workspace's existence is no secret to
+// them.
 
 // memberWorkspace resolves the {prefix} path segment to a workspace the
-// signed-in user is a member of, writing a 404 otherwise. With auth off
-// there are no members, so the pages do not exist.
-func (s *Server) memberWorkspace(w http.ResponseWriter, r *http.Request) *store.Workspace {
+// signed-in user is a member of, writing a 404 otherwise, and returns
+// the user's role in it. With auth off there are no members, so the
+// pages do not exist.
+func (s *Server) memberWorkspace(w http.ResponseWriter, r *http.Request) (*store.Workspace, store.Role) {
 	if !s.authEnabled() {
 		http.NotFound(w, r)
-		return nil
+		return nil, ""
 	}
 	u := currentUser(r)
 	if u == nil {
 		http.NotFound(w, r)
-		return nil
+		return nil, ""
 	}
-	prefix := r.PathValue("prefix")
-	memberOf, err := s.store.ListWorkspacesForUser(r.Context(), u.ID)
+	ws, err := s.store.WorkspaceByPrefix(r.Context(), r.PathValue("prefix"))
+	if errors.Is(err, store.ErrNotFound) {
+		http.NotFound(w, r)
+		return nil, ""
+	}
+	if err != nil {
+		s.internalError(w, "loading workspace", err)
+		return nil, ""
+	}
+	role, member, err := s.seat(r.Context(), u, ws)
 	if err != nil {
 		s.internalError(w, "listing memberships", err)
+		return nil, ""
+	}
+	if !member {
+		http.NotFound(w, r)
+		return nil, ""
+	}
+	return ws, role
+}
+
+// ownerWorkspace is memberWorkspace for the owner-only routes: a member
+// who is not an owner gets a 403 instead of the page.
+func (s *Server) ownerWorkspace(w http.ResponseWriter, r *http.Request) *store.Workspace {
+	ws, role := s.memberWorkspace(w, r)
+	if ws == nil {
 		return nil
 	}
-	for _, ws := range memberOf {
-		if ws.Prefix == prefix {
-			return ws
+	if role != store.RoleOwner {
+		ownersOnly(w)
+		return nil
+	}
+	return ws
+}
+
+// seat reports the user's role in the workspace and whether they are a
+// member of it at all.
+func (s *Server) seat(ctx context.Context, u *store.User, ws *store.Workspace) (store.Role, bool, error) {
+	memberships, err := s.store.ListMembershipsForUser(ctx, u.ID)
+	if err != nil {
+		return "", false, err
+	}
+	for _, m := range memberships {
+		if m.WorkspaceID == ws.ID {
+			return m.Role, true, nil
 		}
 	}
-	http.NotFound(w, r)
-	return nil
+	return "", false, nil
+}
+
+// ownersOnly answers a member's attempt at an owner-only action. The
+// pages hide these controls from members, so this is the answer to a
+// hand-built request, not to a click.
+func ownersOnly(w http.ResponseWriter) {
+	http.Error(w, "only workspace owners can do this — on the forge, that is an admin or owner of the workspace", http.StatusForbidden)
 }
 
 // settingsData assembles the template payload for the settings page.
 // The upload token never leaves the server either: it is only ever shown
 // as newToken right after a rotation.
-func (s *Server) settingsData(r *http.Request, ws *store.Workspace, newToken, notice, errMsg string) map[string]any {
+func (s *Server) settingsData(r *http.Request, ws *store.Workspace, owner bool, newToken, notice, errMsg string) map[string]any {
 	data := map[string]any{
 		"Workspace":  ws,
 		"ForgeLabel": providerLabel(ws.Forge),
+		"Owner":      owner,
 		"NewToken":   newToken,
 		"Notice":     notice,
 		"Error":      errMsg,
-		// Uploads card: the token is shown to members on demand (Reveal).
+		// Uploads card: the token is shown to owners on demand (Reveal).
 		// It lives on the workspace row in the clear, so this exposes
-		// nothing the DB does not already hold; MaskedToken is the default.
-		"Token":       ws.Token,
-		"MaskedToken": maskSecret(ws.Token),
+		// nothing the DB does not already hold; MaskedToken is the
+		// default. A member's page carries neither.
+		"Token":       "",
+		"MaskedToken": "",
 		// Self-hosters need GOCOV_SERVER in CI; on the public hosted
 		// service the CLI already defaults to it, so the row is dropped.
 		"ServerURL":  strings.TrimSuffix(s.baseURL, "/"),
 		"ShowServer": strings.TrimSuffix(s.baseURL, "/") != hosted.DefaultServer,
 		"GateActive": gateActiveCount(ws.Gate),
+	}
+	if owner {
+		data["Token"] = ws.Token
+		data["MaskedToken"] = maskSecret(ws.Token)
 	}
 	if repos, err := s.workspaceRepos(r, ws); err == nil {
 		data["RepoCount"] = len(repos)
@@ -167,7 +223,7 @@ func (s *Server) addGitHubAppData(r *http.Request, ws *store.Workspace, data map
 
 // handleWorkspacePage implements GET /workspaces/{prefix}.
 func (s *Server) handleWorkspacePage(w http.ResponseWriter, r *http.Request) {
-	ws := s.memberWorkspace(w, r)
+	ws, role := s.memberWorkspace(w, r)
 	if ws == nil {
 		return
 	}
@@ -187,14 +243,14 @@ func (s *Server) handleWorkspacePage(w http.ResponseWriter, r *http.Request) {
 			notice = "GitHub App connected — statuses, PR comments and check runs now post as gocov[bot]."
 		}
 	}
-	s.render(w, r, "workspace.html", s.settingsData(r, ws, "", notice, ""))
+	s.render(w, r, "workspace.html", s.settingsData(r, ws, role == store.RoleOwner, "", notice, ""))
 }
 
 // handleWorkspaceRotate implements POST /workspaces/{prefix}/rotate-token.
 // The response renders the new token once; the old one is already dead by
 // then (single UPDATE, no grace period).
 func (s *Server) handleWorkspaceRotate(w http.ResponseWriter, r *http.Request) {
-	ws := s.memberWorkspace(w, r)
+	ws := s.ownerWorkspace(w, r)
 	if ws == nil {
 		return
 	}
@@ -209,14 +265,14 @@ func (s *Server) handleWorkspaceRotate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("workspace token rotated", "prefix", ws.Prefix, "user", currentUser(r).DisplayName)
-	s.render(w, r, "workspace.html", s.settingsData(r, ws, token,
+	s.render(w, r, "workspace.html", s.settingsData(r, ws, true, token,
 		"Token rotated — the previous token no longer works. Update your CI variable.", ""))
 }
 
 // handleWorkspaceSettings implements POST /workspaces/{prefix}/settings:
 // default branch and gate defaults for repos registered from now on.
 func (s *Server) handleWorkspaceSettings(w http.ResponseWriter, r *http.Request) {
-	ws := s.memberWorkspace(w, r)
+	ws := s.ownerWorkspace(w, r)
 	if ws == nil {
 		return
 	}
@@ -288,10 +344,10 @@ func validRetention(days int) bool {
 
 // handleWorkspaceDelete implements POST /workspaces/{prefix}/delete: it
 // removes the workspace and cascades its repos and coverage reports (the
-// store does the cascade). Members only; uploads with the token start
+// store does the cascade). Owners only; uploads with the token start
 // failing at once and nothing is changed on the forge.
 func (s *Server) handleWorkspaceDelete(w http.ResponseWriter, r *http.Request) {
-	ws := s.memberWorkspace(w, r)
+	ws := s.ownerWorkspace(w, r)
 	if ws == nil {
 		return
 	}
@@ -304,20 +360,22 @@ func (s *Server) handleWorkspaceDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 // settingsError re-renders the settings page with a validation message.
+// Only an owner's save can fail validation, so the page is an owner's.
 func (s *Server) settingsError(w http.ResponseWriter, r *http.Request, ws *store.Workspace, msg string) {
 	w.WriteHeader(http.StatusBadRequest)
-	s.render(w, r, "workspace.html", s.settingsData(r, ws, "", "", msg))
+	s.render(w, r, "workspace.html", s.settingsData(r, ws, true, "", "", msg))
 }
 
 // handleWorkspaceSetup implements GET /workspaces/{prefix}/setup (M3/R4):
 // the onboarding page with the forge-appropriate CI snippet, the upload
-// token pre-filled (D6) and the waiting-for-first-upload state.
+// token pre-filled (D6, owners only — a member gets the snippet without
+// it) and the waiting-for-first-upload state.
 func (s *Server) handleWorkspaceSetup(w http.ResponseWriter, r *http.Request) {
-	ws := s.memberWorkspace(w, r)
+	ws, role := s.memberWorkspace(w, r)
 	if ws == nil {
 		return
 	}
-	data, err := s.setupViewData(r, ws)
+	data, err := s.setupViewData(r, ws, role == store.RoleOwner)
 	if err != nil {
 		s.internalError(w, "listing workspace repos", err)
 		return
@@ -343,11 +401,11 @@ func (s *Server) handleWorkspaceSetup(w http.ResponseWriter, r *http.Request) {
 // the htmx poll target that flips the waiting state once the first
 // upload has auto-registered a repo.
 func (s *Server) handleWorkspaceSetupStatus(w http.ResponseWriter, r *http.Request) {
-	ws := s.memberWorkspace(w, r)
+	ws, role := s.memberWorkspace(w, r)
 	if ws == nil {
 		return
 	}
-	data, err := s.setupViewData(r, ws)
+	data, err := s.setupViewData(r, ws, role == store.RoleOwner)
 	if err != nil {
 		s.internalError(w, "listing workspace repos", err)
 		return

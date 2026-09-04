@@ -19,8 +19,20 @@ import (
 
 // newWorkspaceFixture builds a private-mode server with sign-in enabled,
 // the workspace acme (token ws-secret) and optionally the repo
-// acme/widgets (token secret-token), then signs the member in.
+// acme/widgets (token secret-token), then signs the owner in.
 func newWorkspaceFixture(t *testing.T, withRepo bool) (*fixture, *http.Cookie) {
+	t.Helper()
+	return newWorkspaceFixtureAs(t, withRepo, memberIdentity())
+}
+
+// newMemberFixture is newWorkspaceFixture with the account seated as a
+// plain member: the forge lists it in acme without the admin role.
+func newMemberFixture(t *testing.T, withRepo bool) (*fixture, *http.Cookie) {
+	t.Helper()
+	return newWorkspaceFixtureAs(t, withRepo, plainMemberIdentity())
+}
+
+func newWorkspaceFixtureAs(t *testing.T, withRepo bool, id *auth.Identity) (*fixture, *http.Cookie) {
 	t.Helper()
 	st := storemem.New()
 	ws := &store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "ws-secret", DefaultBranch: "main"}
@@ -41,13 +53,41 @@ func newWorkspaceFixture(t *testing.T, withRepo bool) (*fixture, *http.Cookie) {
 			Blobs:   blobmem.New(),
 			Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
 			BaseURL: "https://gocov.example",
-			Auths:   []auth.Provider{&fakeProvider{identity: memberIdentity()}},
+			Auths:   []auth.Provider{&fakeProvider{identity: id}},
 		}),
 		store: st,
 		forge: ff,
 		repo:  repo,
 	}
 	return f, signIn(t, f, "/")
+}
+
+// demote reseats the fixture's (only) user as a plain member of the
+// workspace — what the next login sync would do after the forge dropped
+// their admin role.
+func demote(t *testing.T, f *fixture, prefix string) {
+	t.Helper()
+	ctx := t.Context()
+	users, err := f.store.ListUsers(ctx)
+	if err != nil || len(users) != 1 {
+		t.Fatalf("users = %v, %v", users, err)
+	}
+	ws, err := f.store.WorkspaceByPrefix(ctx, prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberships, err := f.store.ListMembershipsForUser(ctx, users[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range memberships {
+		if memberships[i].WorkspaceID == ws.ID {
+			memberships[i].Role = store.RoleMember
+		}
+	}
+	if err := f.store.SetUserMemberships(ctx, users[0].ID, memberships); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func postForm(f *fixture, path string, form url.Values, cookies ...*http.Cookie) *httptest.ResponseRecorder {
@@ -90,6 +130,83 @@ func TestWorkspaceSettingsAccess(t *testing.T) {
 	// Without a session the auth middleware redirects to login.
 	if rec := get(f, "/workspaces/acme"); rec.Code != http.StatusFound {
 		t.Errorf("anonymous settings page: status = %d, want login redirect", rec.Code)
+	}
+}
+
+func TestMemberSettingsAreReadOnly(t *testing.T) {
+	// A member sees the settings page but nothing they cannot do: no
+	// token, no forms, a note saying why. The owner-only routes answer a
+	// hand-built POST with 403 and change nothing.
+	f, sess := newMemberFixture(t, true)
+	ctx := t.Context()
+
+	rec := get(f, "/workspaces/acme", sess)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("member settings page: status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "ws-secret") {
+		t.Error("member page carries the upload token")
+	}
+	for _, control := range []string{"Rotate token", "Delete this workspace", `action="/workspaces/acme/settings"`, "Grant write access"} {
+		if strings.Contains(body, control) {
+			t.Errorf("member page renders the owner control %q", control)
+		}
+	}
+	if !strings.Contains(body, "read-only") || !strings.Contains(body, "owner") {
+		t.Errorf("member page does not say the settings are read-only for members:\n%s", body)
+	}
+	// The values are still visible, just not editable.
+	if !strings.Contains(body, `value="main" disabled`) {
+		t.Errorf("member page does not show the default branch read-only:\n%s", body)
+	}
+
+	for _, post := range []struct {
+		path string
+		form url.Values
+	}{
+		{"/workspaces/acme/rotate-token", url.Values{}},
+		{"/workspaces/acme/settings", url.Values{"default_branch": {"develop"}}},
+		{"/workspaces/acme/delete", url.Values{}},
+		{"/workspaces/acme/bitbucket/disconnect", url.Values{}},
+	} {
+		if rec := postForm(f, post.path, post.form, sess); rec.Code != http.StatusForbidden {
+			t.Errorf("member POST %s: status = %d, want 403", post.path, rec.Code)
+		}
+	}
+	ws, err := f.store.WorkspaceByPrefix(ctx, "acme")
+	if err != nil || ws.Token != "ws-secret" || ws.DefaultBranch != "main" {
+		t.Errorf("a member's refused POSTs changed the workspace: %+v, %v", ws, err)
+	}
+
+	// The setup page (Wire up CI, so a workspace without repos yet) keeps
+	// the CI snippet for a member, minus the token.
+	f, sess = newMemberFixture(t, false)
+	rec = get(f, "/workspaces/acme/setup", sess)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("member setup page: status = %d", rec.Code)
+	}
+	if body := rec.Body.String(); strings.Contains(body, "ws-secret") || !strings.Contains(body, "owners only") {
+		t.Errorf("member setup page must withhold the token and say so:\n%s", body)
+	}
+	if rec := get(f, "/workspaces/acme/setup/status", sess); rec.Code != http.StatusOK {
+		t.Errorf("member setup poll: status = %d", rec.Code)
+	}
+}
+
+func TestOwnerDemotedOnTheForgeLosesTheControls(t *testing.T) {
+	// The role is whatever the last sign-in said; once it says member,
+	// the owner-only routes close — no session or page state keeps them.
+	f, sess := newWorkspaceFixture(t, false)
+	if rec := postForm(f, "/workspaces/acme/settings", url.Values{"default_branch": {"develop"}}, sess); rec.Code != http.StatusSeeOther {
+		t.Fatalf("owner save: status = %d", rec.Code)
+	}
+	demote(t, f, "acme")
+	if rec := postForm(f, "/workspaces/acme/settings", url.Values{"default_branch": {"main"}}, sess); rec.Code != http.StatusForbidden {
+		t.Errorf("demoted save: status = %d, want 403", rec.Code)
+	}
+	if ws, _ := f.store.WorkspaceByPrefix(t.Context(), "acme"); ws.DefaultBranch != "develop" {
+		t.Errorf("demoted save went through: branch = %q", ws.DefaultBranch)
 	}
 }
 
@@ -341,7 +458,7 @@ func TestSetupPageGitHubSnippet(t *testing.T) {
 		t.Fatal(err)
 	}
 	gh := &fakeProvider{name: "github", identity: &auth.Identity{
-		ForgeUUID: "42", DisplayName: "Hub Dev", Workspaces: []string{"myorg"},
+		ForgeUUID: "42", DisplayName: "Hub Dev", Workspaces: []string{"myorg"}, OwnedWorkspaces: []string{"myorg"},
 	}}
 	f := &fixture{
 		srv: New(Config{
@@ -424,7 +541,7 @@ func TestSetupPageHostedOmitsServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	bb := &fakeProvider{name: "bitbucket", identity: &auth.Identity{
-		ForgeUUID: "1", DisplayName: "Dev", Workspaces: []string{"acme"},
+		ForgeUUID: "1", DisplayName: "Dev", Workspaces: []string{"acme"}, OwnedWorkspaces: []string{"acme"},
 	}}
 	f := &fixture{
 		srv: New(Config{
