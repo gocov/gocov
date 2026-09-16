@@ -521,28 +521,9 @@ const maxUncoveredRanges = 6
 // uncoveredRanges formats the line ranges of never-executed blocks,
 // e.g. "45-52, 88 +3 more".
 func uncoveredRanges(blocks []profile.Block) string {
-	type span struct{ start, end int }
-	var spans []span
-	for _, b := range blocks {
-		if b.Count > 0 || b.NumStmts == 0 {
-			continue
-		}
-		spans = append(spans, span{b.StartLine, b.EndLine})
-	}
-	if len(spans) == 0 {
+	merged := diffcov.MergedSpans(blocks, func(b profile.Block) bool { return b.Count == 0 && b.NumStmts > 0 })
+	if len(merged) == 0 {
 		return ""
-	}
-	slices.SortFunc(spans, func(a, b span) int { return cmp.Compare(a.start, b.start) })
-	merged := spans[:1]
-	for _, sp := range spans[1:] {
-		last := &merged[len(merged)-1]
-		if sp.start <= last.end+1 {
-			if sp.end > last.end {
-				last.end = sp.end
-			}
-			continue
-		}
-		merged = append(merged, sp)
 	}
 
 	var parts []string
@@ -551,26 +532,24 @@ func uncoveredRanges(blocks []profile.Block) string {
 			parts = append(parts, fmt.Sprintf("+%d more", len(merged)-maxUncoveredRanges))
 			break
 		}
-		if sp.start == sp.end {
-			parts = append(parts, strconv.Itoa(sp.start))
+		if sp.Start == sp.End {
+			parts = append(parts, strconv.Itoa(sp.Start))
 		} else {
-			parts = append(parts, fmt.Sprintf("%d-%d", sp.start, sp.end))
+			parts = append(parts, fmt.Sprintf("%d-%d", sp.Start, sp.End))
 		}
 	}
 	return strings.Join(parts, ", ")
 }
 
 // blockLines yields every line the blocks span, paired with the block
-// spanning it, from line 1 up to at most limit (unbounded when limit is 0).
-// Parsers validate line ranges, but old rows predate that; the bound keeps
-// a bogus range from driving a long loop wherever a file length is known.
+// spanning it, from line 1 up to at most limit — the length of a file whose
+// content is at hand. Block ranges come from uploaders and may claim
+// millions of lines, so there is no unbounded mode: code without a file
+// length works on merged spans instead (diffcov.MergedSpans).
 func blockLines(blocks []profile.Block, limit int) iter.Seq2[int, profile.Block] {
 	return func(yield func(int, profile.Block) bool) {
 		for _, b := range blocks {
-			end := b.EndLine
-			if limit > 0 {
-				end = min(end, limit)
-			}
+			end := min(b.EndLine, limit)
 			for l := max(b.StartLine, 1); l <= end; l++ {
 				if !yield(l, b) {
 					return
@@ -591,43 +570,65 @@ func lineCounts(blocks []profile.Block, limit int) map[int]int {
 	return counts
 }
 
-// lineCoverage returns the executable and hit line sets for a file's blocks:
-// a line is executable when a statement block spans it, and hit when any such
-// block ran. The same rule the source view overlays, minus the blocks with
-// no statements, which the table's ranges leave out.
-func lineCoverage(blocks []profile.Block) (exec, hit map[int]bool) {
-	exec = map[int]bool{}
-	hit = map[int]bool{}
-	for l, b := range blockLines(blocks, 0) {
-		if b.NumStmts == 0 {
-			continue
+// subtractSpans returns the lines of a not in b; both sorted and merged.
+func subtractSpans(a, b []diffcov.Span) []diffcov.Span {
+	var out []diffcov.Span
+	j := 0
+	for _, sp := range a {
+		start := sp.Start
+		for j < len(b) && b[j].End < start {
+			j++
 		}
-		exec[l] = true
-		if b.Count > 0 {
-			hit[l] = true
+		for k := j; k < len(b) && b[k].Start <= sp.End; k++ {
+			if b[k].Start > start {
+				out = append(out, diffcov.Span{Start: start, End: b[k].Start - 1})
+			}
+			start = max(start, b[k].End+1)
+		}
+		if start <= sp.End {
+			out = append(out, diffcov.Span{Start: start, End: sp.End})
 		}
 	}
-	return exec, hit
+	return out
+}
+
+// intersectSpans returns the lines in both a and b; both sorted and merged.
+func intersectSpans(a, b []diffcov.Span) []diffcov.Span {
+	var out []diffcov.Span
+	for i, j := 0, 0; i < len(a) && j < len(b); {
+		if start, end := max(a[i].Start, b[j].Start), min(a[i].End, b[j].End); start <= end {
+			out = append(out, diffcov.Span{Start: start, End: end})
+		}
+		if a[i].End < b[j].End {
+			i++
+		} else {
+			j++
+		}
+	}
+	return out
 }
 
 // newlyUncovered lists the lines a file executes-but-misses now that were hit
 // at the baseline — the regressions this upload introduced, matched by line
 // number. Best effort without a line-level diff, the same basis the source
-// view uses to flag newly uncovered lines.
+// view uses to flag newly uncovered lines. A line is executable when a
+// statement block spans it and hit when any such block ran; it works on
+// spans rather than lines, since this renders on anonymous report pages
+// from uploader-declared ranges.
 func newlyUncovered(cur, base []profile.Block) string {
-	exec, hit := lineCoverage(cur)
-	_, baseHit := lineCoverage(base)
-	var lines []int
-	for l := range exec {
-		if !hit[l] && baseHit[l] {
-			lines = append(lines, l)
+	stmts := func(b profile.Block) bool { return b.NumStmts > 0 }
+	ran := func(b profile.Block) bool { return b.NumStmts > 0 && b.Count > 0 }
+	missed := subtractSpans(diffcov.MergedSpans(cur, stmts), diffcov.MergedSpans(cur, ran))
+	regressed := intersectSpans(missed, diffcov.MergedSpans(base, ran))
+	parts := make([]string, len(regressed))
+	for i, sp := range regressed {
+		if sp.Start == sp.End {
+			parts[i] = strconv.Itoa(sp.Start)
+		} else {
+			parts[i] = fmt.Sprintf("%d-%d", sp.Start, sp.End)
 		}
 	}
-	if len(lines) == 0 {
-		return ""
-	}
-	slices.Sort(lines)
-	return diffcov.Ranges(lines)
+	return strings.Join(parts, ", ")
 }
 
 // splitPath separates a file path into its directory prefix (with trailing

@@ -2,10 +2,13 @@ package server
 
 import (
 	"fmt"
+	"math/rand/v2"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/gocov/gocov/internal/diffcov"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 )
@@ -40,6 +43,92 @@ func TestUncoveredRanges(t *testing.T) {
 				t.Errorf("uncoveredRanges() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestNewlyUncovered(t *testing.T) {
+	b := func(start, end, stmts, count int) profile.Block {
+		return profile.Block{StartLine: start, EndLine: end, NumStmts: stmts, Count: count}
+	}
+	tests := []struct {
+		name      string
+		cur, base []profile.Block
+		want      string
+	}{
+		{"nothing regressed", []profile.Block{b(1, 5, 2, 1)}, []profile.Block{b(1, 5, 2, 1)}, ""},
+		{"whole block regressed", []profile.Block{b(3, 6, 2, 0)}, []profile.Block{b(3, 6, 2, 4)}, "3-6"},
+		{"only lines hit before", []profile.Block{b(1, 10, 2, 0)}, []profile.Block{b(4, 5, 1, 1), b(8, 8, 1, 2)}, "4-5, 8"},
+		{"hit by an overlapping block now", []profile.Block{b(1, 10, 2, 0), b(3, 4, 1, 1)}, []profile.Block{b(1, 10, 2, 1)}, "1-2, 5-10"},
+		{"zero statement blocks ignored", []profile.Block{b(1, 5, 0, 0)}, []profile.Block{b(1, 5, 2, 1)}, ""},
+		{"baseline zero statement hit ignored", []profile.Block{b(1, 5, 2, 0)}, []profile.Block{b(1, 5, 0, 1)}, ""},
+		{"lines below 1 dropped", []profile.Block{b(-3, 2, 1, 0)}, []profile.Block{b(-3, 2, 1, 1)}, "1-2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := newlyUncovered(tt.cur, tt.base); got != tt.want {
+				t.Errorf("newlyUncovered() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestNewlyUncoveredMatchesLineByLineRule checks the span arithmetic against
+// the plain per-line definition on many small random block sets.
+func TestNewlyUncoveredMatchesLineByLineRule(t *testing.T) {
+	lineByLine := func(cur, base []profile.Block) string {
+		exec, hit, baseHit := map[int]bool{}, map[int]bool{}, map[int]bool{}
+		mark := func(blocks []profile.Block, exec, hit map[int]bool) {
+			for _, b := range blocks {
+				for l := max(b.StartLine, 1); l <= b.EndLine && b.NumStmts > 0; l++ {
+					if exec != nil {
+						exec[l] = true
+					}
+					if b.Count > 0 {
+						hit[l] = true
+					}
+				}
+			}
+		}
+		mark(cur, exec, hit)
+		mark(base, nil, baseHit)
+		var lines []int
+		for l := range exec {
+			if !hit[l] && baseHit[l] {
+				lines = append(lines, l)
+			}
+		}
+		slices.Sort(lines)
+		return diffcov.Ranges(lines)
+	}
+	rng := rand.New(rand.NewPCG(1, 2))
+	blocks := func() []profile.Block {
+		out := make([]profile.Block, rng.IntN(6))
+		for i := range out {
+			start := rng.IntN(40) - 2
+			out[i] = profile.Block{StartLine: start, EndLine: start + rng.IntN(8) - 1, NumStmts: rng.IntN(2), Count: rng.IntN(2)}
+		}
+		return out
+	}
+	for range 2000 {
+		cur, base := blocks(), blocks()
+		if got, want := newlyUncovered(cur, base), lineByLine(cur, base); got != want {
+			t.Fatalf("newlyUncovered(%v, %v) = %q, want %q", cur, base, got, want)
+		}
+	}
+}
+
+// TestNewlyUncoveredIgnoresDeclaredSpan guards the report pages against
+// stored blocks that claim millions of lines: the work must follow the
+// number of blocks, not the lines they declare. Expanded line by line this
+// input is billions of iterations and would time the test out.
+func TestNewlyUncoveredIgnoresDeclaredSpan(t *testing.T) {
+	var cur, base []profile.Block
+	for col := range 500 {
+		cur = append(cur, profile.Block{StartLine: 1, StartCol: col, EndLine: 5_000_000, NumStmts: 1, Count: 0})
+		base = append(base, profile.Block{StartLine: 1, StartCol: col, EndLine: 5_000_000, NumStmts: 1, Count: 1})
+	}
+	if got := newlyUncovered(cur, base); got != "1-5000000" {
+		t.Errorf("newlyUncovered() = %q, want %q", got, "1-5000000")
 	}
 }
 

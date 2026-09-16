@@ -340,6 +340,30 @@ func TestCompute(t *testing.T) {
 			t.Errorf("unmatched = %v, want [main.go]", res.UnmatchedFiles)
 		}
 	})
+
+	t.Run("overlapping blocks: any covered block covers the line", func(t *testing.T) {
+		f := []FileBlocks{{Path: "a/b.go", Blocks: blocks([4]int{1, 10, 2, 0}, [4]int{4, 5, 1, 3}, [4]int{11, 12, 1, 0})}}
+		res := Compute(f, map[string][]int{"a/b.go": {3, 4, 5, 5, 12, 13}}, "")
+		if res.TotalLines != 4 || res.CoveredLines != 2 {
+			t.Fatalf("totals = %d/%d, want 2/4", res.CoveredLines, res.TotalLines)
+		}
+		if !reflect.DeepEqual(res.Files[0].UncoveredLines, []int{3, 12}) {
+			t.Errorf("uncovered = %v, want [3 12]", res.Files[0].UncoveredLines)
+		}
+	})
+
+	t.Run("declared span does not drive the cost", func(t *testing.T) {
+		// Block ranges come from the uploader. Expanded line by line these
+		// blocks are billions of iterations and would time the test out.
+		var bs []profile.Block
+		for col := range 500 {
+			bs = append(bs, profile.Block{StartLine: 1, StartCol: col, EndLine: 5_000_000, NumStmts: 1, Count: col % 2})
+		}
+		res := Compute([]FileBlocks{{Path: "a/b.go", Blocks: bs}}, map[string][]int{"a/b.go": {7, 4_999_999}}, "")
+		if res.TotalLines != 2 || res.CoveredLines != 2 {
+			t.Errorf("totals = %d/%d, want 2/2", res.CoveredLines, res.TotalLines)
+		}
+	})
 }
 
 func TestResultClone(t *testing.T) {
