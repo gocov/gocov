@@ -5,6 +5,7 @@ package diffcov
 
 import (
 	"bufio"
+	"cmp"
 	"fmt"
 	"io"
 	"maps"
@@ -185,19 +186,17 @@ func Compute(files []FileBlocks, added map[string][]int, pathPrefix string) *Res
 			continue
 		}
 
-		changed := make(map[int]bool, len(lines))
-		for _, l := range lines {
-			changed[l] = true
-		}
-		// executable[l] exists if line l is inside any block;
-		// value true if any such block has Count > 0.
+		// executable[l] exists if changed line l is inside any block;
+		// value true if any such block has Count > 0. Lines are looked up
+		// in merged block spans rather than expanding each block line by
+		// line: block ranges come from the uploader and may claim millions
+		// of lines.
+		all := mergedSpans(fb.Blocks, func(profile.Block) bool { return true })
+		ran := mergedSpans(fb.Blocks, func(b profile.Block) bool { return b.Count > 0 })
 		executable := map[int]bool{}
-		for _, b := range fb.Blocks {
-			for l := b.StartLine; l <= b.EndLine; l++ {
-				if !changed[l] {
-					continue
-				}
-				executable[l] = executable[l] || b.Count > 0
+		for _, l := range lines {
+			if inSpans(all, l) {
+				executable[l] = inSpans(ran, l)
 			}
 		}
 		if len(executable) == 0 {
@@ -218,6 +217,36 @@ func Compute(files []FileBlocks, added map[string][]int, pathPrefix string) *Res
 		res.TotalLines += fc.TotalLines
 	}
 	return res
+}
+
+// span is an inclusive run of line numbers.
+type span struct{ start, end int }
+
+// mergedSpans returns the line ranges of the blocks keep accepts, sorted,
+// with overlapping and adjacent ranges joined.
+func mergedSpans(blocks []profile.Block, keep func(profile.Block) bool) []span {
+	var spans []span
+	for _, b := range blocks {
+		if keep(b) && b.StartLine <= b.EndLine {
+			spans = append(spans, span{b.StartLine, b.EndLine})
+		}
+	}
+	slices.SortFunc(spans, func(a, b span) int { return cmp.Compare(a.start, b.start) })
+	var merged []span
+	for _, sp := range spans {
+		if n := len(merged); n > 0 && sp.start <= merged[n-1].end+1 {
+			merged[n-1].end = max(merged[n-1].end, sp.end)
+			continue
+		}
+		merged = append(merged, sp)
+	}
+	return merged
+}
+
+// inSpans reports whether line l falls inside any of the sorted, merged spans.
+func inSpans(spans []span, l int) bool {
+	i, _ := slices.BinarySearchFunc(spans, l, func(sp span, l int) int { return cmp.Compare(sp.end, l) })
+	return i < len(spans) && spans[i].start <= l
 }
 
 // matchFile finds the coverage entry for a repo-relative diff path.

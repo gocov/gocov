@@ -19,7 +19,6 @@ import (
 	"strings"
 
 	"github.com/gocov/gocov/internal/core"
-	"github.com/gocov/gocov/internal/diffcov"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 )
@@ -521,28 +520,9 @@ const maxUncoveredRanges = 6
 // uncoveredRanges formats the line ranges of never-executed blocks,
 // e.g. "45-52, 88 +3 more".
 func uncoveredRanges(blocks []profile.Block) string {
-	type span struct{ start, end int }
-	var spans []span
-	for _, b := range blocks {
-		if b.Count > 0 || b.NumStmts == 0 {
-			continue
-		}
-		spans = append(spans, span{b.StartLine, b.EndLine})
-	}
-	if len(spans) == 0 {
+	merged := blockSpans(blocks, func(b profile.Block) bool { return b.Count == 0 && b.NumStmts > 0 })
+	if len(merged) == 0 {
 		return ""
-	}
-	slices.SortFunc(spans, func(a, b span) int { return cmp.Compare(a.start, b.start) })
-	merged := spans[:1]
-	for _, sp := range spans[1:] {
-		last := &merged[len(merged)-1]
-		if sp.start <= last.end+1 {
-			if sp.end > last.end {
-				last.end = sp.end
-			}
-			continue
-		}
-		merged = append(merged, sp)
 	}
 
 	var parts []string
@@ -561,16 +541,14 @@ func uncoveredRanges(blocks []profile.Block) string {
 }
 
 // blockLines yields every line the blocks span, paired with the block
-// spanning it, from line 1 up to at most limit (unbounded when limit is 0).
-// Parsers validate line ranges, but old rows predate that; the bound keeps
-// a bogus range from driving a long loop wherever a file length is known.
+// spanning it, from line 1 up to at most limit — the length of a file whose
+// content is at hand. Block ranges come from uploaders and may claim
+// millions of lines, so there is no unbounded mode: code without a file
+// length works on merged spans instead (blockSpans).
 func blockLines(blocks []profile.Block, limit int) iter.Seq2[int, profile.Block] {
 	return func(yield func(int, profile.Block) bool) {
 		for _, b := range blocks {
-			end := b.EndLine
-			if limit > 0 {
-				end = min(end, limit)
-			}
+			end := min(b.EndLine, limit)
 			for l := max(b.StartLine, 1); l <= end; l++ {
 				if !yield(l, b) {
 					return
@@ -591,43 +569,92 @@ func lineCounts(blocks []profile.Block, limit int) map[int]int {
 	return counts
 }
 
-// lineCoverage returns the executable and hit line sets for a file's blocks:
-// a line is executable when a statement block spans it, and hit when any such
-// block ran. The same rule the source view overlays, minus the blocks with
-// no statements, which the table's ranges leave out.
-func lineCoverage(blocks []profile.Block) (exec, hit map[int]bool) {
-	exec = map[int]bool{}
-	hit = map[int]bool{}
-	for l, b := range blockLines(blocks, 0) {
-		if b.NumStmts == 0 {
+// lineSpan is an inclusive run of line numbers.
+type lineSpan struct{ start, end int }
+
+// blockSpans returns the lines spanned by the blocks keep accepts, as sorted
+// spans with overlapping and adjacent ones joined. Lines below 1 are dropped.
+// The cost follows the number of blocks, never the lines they claim, so a
+// stored block declaring millions of lines stays cheap to render.
+func blockSpans(blocks []profile.Block, keep func(profile.Block) bool) []lineSpan {
+	var spans []lineSpan
+	for _, b := range blocks {
+		if !keep(b) || b.EndLine < max(b.StartLine, 1) {
 			continue
 		}
-		exec[l] = true
-		if b.Count > 0 {
-			hit[l] = true
+		spans = append(spans, lineSpan{max(b.StartLine, 1), b.EndLine})
+	}
+	slices.SortFunc(spans, func(a, b lineSpan) int { return cmp.Compare(a.start, b.start) })
+	var merged []lineSpan
+	for _, sp := range spans {
+		if n := len(merged); n > 0 && sp.start <= merged[n-1].end+1 {
+			merged[n-1].end = max(merged[n-1].end, sp.end)
+			continue
+		}
+		merged = append(merged, sp)
+	}
+	return merged
+}
+
+// subtractSpans returns the lines of a not in b; both sorted and merged.
+func subtractSpans(a, b []lineSpan) []lineSpan {
+	var out []lineSpan
+	j := 0
+	for _, sp := range a {
+		start := sp.start
+		for j < len(b) && b[j].end < start {
+			j++
+		}
+		for k := j; k < len(b) && b[k].start <= sp.end; k++ {
+			if b[k].start > start {
+				out = append(out, lineSpan{start, b[k].start - 1})
+			}
+			start = max(start, b[k].end+1)
+		}
+		if start <= sp.end {
+			out = append(out, lineSpan{start, sp.end})
 		}
 	}
-	return exec, hit
+	return out
+}
+
+// intersectSpans returns the lines in both a and b; both sorted and merged.
+func intersectSpans(a, b []lineSpan) []lineSpan {
+	var out []lineSpan
+	for i, j := 0, 0; i < len(a) && j < len(b); {
+		if start, end := max(a[i].start, b[j].start), min(a[i].end, b[j].end); start <= end {
+			out = append(out, lineSpan{start, end})
+		}
+		if a[i].end < b[j].end {
+			i++
+		} else {
+			j++
+		}
+	}
+	return out
 }
 
 // newlyUncovered lists the lines a file executes-but-misses now that were hit
 // at the baseline — the regressions this upload introduced, matched by line
 // number. Best effort without a line-level diff, the same basis the source
-// view uses to flag newly uncovered lines.
+// view uses to flag newly uncovered lines. A line is executable when a
+// statement block spans it and hit when any such block ran; it works on
+// spans rather than lines, since this renders on anonymous report pages
+// from uploader-declared ranges.
 func newlyUncovered(cur, base []profile.Block) string {
-	exec, hit := lineCoverage(cur)
-	_, baseHit := lineCoverage(base)
-	var lines []int
-	for l := range exec {
-		if !hit[l] && baseHit[l] {
-			lines = append(lines, l)
+	stmts := func(b profile.Block) bool { return b.NumStmts > 0 }
+	ran := func(b profile.Block) bool { return b.NumStmts > 0 && b.Count > 0 }
+	missed := subtractSpans(blockSpans(cur, stmts), blockSpans(cur, ran))
+	regressed := intersectSpans(missed, blockSpans(base, ran))
+	parts := make([]string, len(regressed))
+	for i, sp := range regressed {
+		if sp.start == sp.end {
+			parts[i] = strconv.Itoa(sp.start)
+		} else {
+			parts[i] = fmt.Sprintf("%d-%d", sp.start, sp.end)
 		}
 	}
-	if len(lines) == 0 {
-		return ""
-	}
-	slices.Sort(lines)
-	return diffcov.Ranges(lines)
+	return strings.Join(parts, ", ")
 }
 
 // splitPath separates a file path into its directory prefix (with trailing
