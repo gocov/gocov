@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/gocov/gocov/internal/core"
+	"github.com/gocov/gocov/internal/diffcov"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 )
@@ -520,7 +521,7 @@ const maxUncoveredRanges = 6
 // uncoveredRanges formats the line ranges of never-executed blocks,
 // e.g. "45-52, 88 +3 more".
 func uncoveredRanges(blocks []profile.Block) string {
-	merged := blockSpans(blocks, func(b profile.Block) bool { return b.Count == 0 && b.NumStmts > 0 })
+	merged := diffcov.MergedSpans(blocks, func(b profile.Block) bool { return b.Count == 0 && b.NumStmts > 0 })
 	if len(merged) == 0 {
 		return ""
 	}
@@ -531,10 +532,10 @@ func uncoveredRanges(blocks []profile.Block) string {
 			parts = append(parts, fmt.Sprintf("+%d more", len(merged)-maxUncoveredRanges))
 			break
 		}
-		if sp.start == sp.end {
-			parts = append(parts, strconv.Itoa(sp.start))
+		if sp.Start == sp.End {
+			parts = append(parts, strconv.Itoa(sp.Start))
 		} else {
-			parts = append(parts, fmt.Sprintf("%d-%d", sp.start, sp.end))
+			parts = append(parts, fmt.Sprintf("%d-%d", sp.Start, sp.End))
 		}
 	}
 	return strings.Join(parts, ", ")
@@ -544,7 +545,7 @@ func uncoveredRanges(blocks []profile.Block) string {
 // spanning it, from line 1 up to at most limit — the length of a file whose
 // content is at hand. Block ranges come from uploaders and may claim
 // millions of lines, so there is no unbounded mode: code without a file
-// length works on merged spans instead (blockSpans).
+// length works on merged spans instead (diffcov.MergedSpans).
 func blockLines(blocks []profile.Block, limit int) iter.Seq2[int, profile.Block] {
 	return func(yield func(int, profile.Block) bool) {
 		for _, b := range blocks {
@@ -569,63 +570,36 @@ func lineCounts(blocks []profile.Block, limit int) map[int]int {
 	return counts
 }
 
-// lineSpan is an inclusive run of line numbers.
-type lineSpan struct{ start, end int }
-
-// blockSpans returns the lines spanned by the blocks keep accepts, as sorted
-// spans with overlapping and adjacent ones joined. Lines below 1 are dropped.
-// The cost follows the number of blocks, never the lines they claim, so a
-// stored block declaring millions of lines stays cheap to render.
-func blockSpans(blocks []profile.Block, keep func(profile.Block) bool) []lineSpan {
-	var spans []lineSpan
-	for _, b := range blocks {
-		if !keep(b) || b.EndLine < max(b.StartLine, 1) {
-			continue
-		}
-		spans = append(spans, lineSpan{max(b.StartLine, 1), b.EndLine})
-	}
-	slices.SortFunc(spans, func(a, b lineSpan) int { return cmp.Compare(a.start, b.start) })
-	var merged []lineSpan
-	for _, sp := range spans {
-		if n := len(merged); n > 0 && sp.start <= merged[n-1].end+1 {
-			merged[n-1].end = max(merged[n-1].end, sp.end)
-			continue
-		}
-		merged = append(merged, sp)
-	}
-	return merged
-}
-
 // subtractSpans returns the lines of a not in b; both sorted and merged.
-func subtractSpans(a, b []lineSpan) []lineSpan {
-	var out []lineSpan
+func subtractSpans(a, b []diffcov.Span) []diffcov.Span {
+	var out []diffcov.Span
 	j := 0
 	for _, sp := range a {
-		start := sp.start
-		for j < len(b) && b[j].end < start {
+		start := sp.Start
+		for j < len(b) && b[j].End < start {
 			j++
 		}
-		for k := j; k < len(b) && b[k].start <= sp.end; k++ {
-			if b[k].start > start {
-				out = append(out, lineSpan{start, b[k].start - 1})
+		for k := j; k < len(b) && b[k].Start <= sp.End; k++ {
+			if b[k].Start > start {
+				out = append(out, diffcov.Span{Start: start, End: b[k].Start - 1})
 			}
-			start = max(start, b[k].end+1)
+			start = max(start, b[k].End+1)
 		}
-		if start <= sp.end {
-			out = append(out, lineSpan{start, sp.end})
+		if start <= sp.End {
+			out = append(out, diffcov.Span{Start: start, End: sp.End})
 		}
 	}
 	return out
 }
 
 // intersectSpans returns the lines in both a and b; both sorted and merged.
-func intersectSpans(a, b []lineSpan) []lineSpan {
-	var out []lineSpan
+func intersectSpans(a, b []diffcov.Span) []diffcov.Span {
+	var out []diffcov.Span
 	for i, j := 0, 0; i < len(a) && j < len(b); {
-		if start, end := max(a[i].start, b[j].start), min(a[i].end, b[j].end); start <= end {
-			out = append(out, lineSpan{start, end})
+		if start, end := max(a[i].Start, b[j].Start), min(a[i].End, b[j].End); start <= end {
+			out = append(out, diffcov.Span{Start: start, End: end})
 		}
-		if a[i].end < b[j].end {
+		if a[i].End < b[j].End {
 			i++
 		} else {
 			j++
@@ -644,14 +618,14 @@ func intersectSpans(a, b []lineSpan) []lineSpan {
 func newlyUncovered(cur, base []profile.Block) string {
 	stmts := func(b profile.Block) bool { return b.NumStmts > 0 }
 	ran := func(b profile.Block) bool { return b.NumStmts > 0 && b.Count > 0 }
-	missed := subtractSpans(blockSpans(cur, stmts), blockSpans(cur, ran))
-	regressed := intersectSpans(missed, blockSpans(base, ran))
+	missed := subtractSpans(diffcov.MergedSpans(cur, stmts), diffcov.MergedSpans(cur, ran))
+	regressed := intersectSpans(missed, diffcov.MergedSpans(base, ran))
 	parts := make([]string, len(regressed))
 	for i, sp := range regressed {
-		if sp.start == sp.end {
-			parts[i] = strconv.Itoa(sp.start)
+		if sp.Start == sp.End {
+			parts[i] = strconv.Itoa(sp.Start)
 		} else {
-			parts[i] = fmt.Sprintf("%d-%d", sp.start, sp.end)
+			parts[i] = fmt.Sprintf("%d-%d", sp.Start, sp.End)
 		}
 	}
 	return strings.Join(parts, ", ")
