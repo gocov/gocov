@@ -81,3 +81,24 @@ func TestRepoPageCarriesSEOTags(t *testing.T) {
 		t.Error("repo page misses the meta description")
 	}
 }
+
+// Upload and source pages are per-commit snapshots of the repo page:
+// near-identical to each other, so they stay out of indexes while their
+// links remain crawlable.
+func TestUploadPagesAreNoindex(t *testing.T) {
+	f := newPublicFixture(t, store.VisibilityPublic, true)
+	seedUpload(t, f)
+
+	for _, path := range []string{"/uploads/1", "/uploads/1/files/a.go"} {
+		rec := get(f, path)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d", path, rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), `<meta name="robots" content="noindex, follow">`) {
+			t.Errorf("%s misses the noindex robots meta", path)
+		}
+	}
+	if strings.Contains(get(f, "/repos/bitbucket/acme/widgets").Body.String(), "noindex") {
+		t.Error("repo page is noindex; it is the page meant to rank")
+	}
+}

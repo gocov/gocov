@@ -1,4 +1,6 @@
 {{define "title"}}gocov — {{.File.Path}}{{end}}
+{{define "head"}}<meta name="robots" content="noindex, follow">
+{{end}}
 {{define "content"}}
 <div class="crumbs"><a href="/">Repos</a> / <a href="{{repourl .Repo}}"><code>{{.Repo.Slug}}</code></a> / <a href="/uploads/{{.Upload.ID}}"><code>{{short .Upload.CommitSHA}}</code></a> / <code>{{.File.Path}}</code></div>
 
