@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.25.1](https://github.com/gocov/gocov/compare/v0.25.0...v0.25.1) (2026-09-18)
+
+
+### Bug Fixes
+
+* bound coverage overlay work by block count, not declared line spans ([#141](https://github.com/gocov/gocov/issues/141)) ([54568fe](https://github.com/gocov/gocov/commit/54568fe3d7a4b076ed17f91a83f69fc29a741adc))
+* keep upload and source pages out of search indexes ([#143](https://github.com/gocov/gocov/issues/143)) ([becfb62](https://github.com/gocov/gocov/commit/becfb62a27efe35c8f64a43dda077db7b828940e))
+* record the CI-wiring step again ([#145](https://github.com/gocov/gocov/issues/145)) ([c6db132](https://github.com/gocov/gocov/commit/c6db1329e970c798f2af733fcfeac5f7896caa9e))
+
 ## [0.25.0](https://github.com/gocov/gocov/compare/v0.24.0...v0.25.0) (2026-09-08)
 
 
