@@ -288,7 +288,7 @@ document.addEventListener("click", (e) => {
   // The pages worth watching someone go through, and nothing that renders
   // coverage or source. The PostHog project carries the same list as a URL
   // trigger, so a page outside it is never recorded even if this drifts.
-  const replayPaths = /^\/(login|register|onboarding|github\/setup|workspaces\/[^/]+\/setup)\/?$/;
+  const replayPaths = /^\/(login|register|onboarding|github\/setup|workspaces\/[^/]+\/[^/]+\/setup)\/?$/;
   const replay = replayPaths.test(location.pathname);
   const script = document.createElement("script");
   script.src = meta.dataset.host + "/static/array.js";

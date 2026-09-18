@@ -2,11 +2,59 @@ package server
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/gocov/gocov/internal/store"
 )
+
+// Session replay is armed in the browser by a path list in static/app.js,
+// so renaming a route switches recording off on that page without any Go
+// test noticing: the CI step lost its recordings the day workspace URLs
+// grew a forge segment and the list kept matching one. Pin the list against
+// the routes it is meant to cover.
+func TestReplayPathsCoverTheSetupFlow(t *testing.T) {
+	replayPaths := replayPathsFromSnippet(t)
+	// Every page of the sign-in and setup flow, as the mux spells it.
+	for _, path := range []string{
+		"/login", "/register", "/onboarding", "/github/setup",
+		"/workspaces/github/acme/setup", "/workspaces/bitbucket/acme/setup",
+	} {
+		if !replayPaths.MatchString(path) {
+			t.Errorf("replay is off on %s; the setup flow is the part worth watching", path)
+		}
+	}
+	// Anything that renders coverage, source or a dashboard stays off.
+	for _, path := range []string{
+		"/", "/repos/github/acme/widgets", "/uploads/12", "/uploads/12/files/main.go",
+		"/workspaces/github/acme", "/repo-settings/github/acme/widgets",
+	} {
+		if replayPaths.MatchString(path) {
+			t.Errorf("replay is on for %s; only the sign-in and setup pages are recorded", path)
+		}
+	}
+}
+
+// replayPathsFromSnippet compiles the replayPaths literal out of app.js.
+// Go's regexp rejects JavaScript's escaped slashes; nothing else in the
+// literal is outside RE2, so that substitution is the whole translation.
+func replayPathsFromSnippet(t *testing.T) *regexp.Regexp {
+	t.Helper()
+	src, err := staticFS.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^\s*const replayPaths = /(.*)/;$`).FindSubmatch(src)
+	if m == nil {
+		t.Fatal("static/app.js no longer declares `const replayPaths = /.../;`")
+	}
+	re, err := regexp.Compile(strings.ReplaceAll(string(m[1]), `\/`, "/"))
+	if err != nil {
+		t.Fatalf("replayPaths is not a regexp Go can check: %v", err)
+	}
+	return re
+}
 
 // Without a key the pages must carry no trace of PostHog: that is the
 // "nothing off-site" promise self-hosted deployments rely on.
