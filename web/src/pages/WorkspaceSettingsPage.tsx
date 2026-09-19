@@ -18,8 +18,11 @@ import { usePageTitle } from "@/lib/title";
 import { routes } from "@/lib/urls";
 
 /** The codes the connect redirects carry, said the way this page can act on them. */
-const connectFailed = {
+const connectNotices = {
   connect_failed: "Connecting to the forge did not complete. Nothing was changed — try again from Reporting below.",
+  connect_owners_only:
+    "Connecting is a workspace owner’s move, and your last sign-in listed you as a member. Nothing was changed — " +
+    "if you have become an admin since, sign in again and connect from Reporting below.",
 };
 
 export default function WorkspaceSettingsPage() {
@@ -50,7 +53,7 @@ function WorkspaceSettingsView({ forge, prefix, settings }: { forge: string; pre
   const { workspace: ws, owner } = settings;
   // Where the server sends the browser back after a grant or an install —
   // this page holds the Connect button the consent started from.
-  const notice = useUrlNotice({ codes: connectFailed });
+  const notice = useUrlNotice({ codes: connectNotices });
 
   const save = useMutation({
     mutationFn: (input: WorkspaceSettingsInput) => apiPost<WorkspaceSettings>(`${path}/settings`, input),

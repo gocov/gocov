@@ -196,8 +196,21 @@ func TestGitLabConnectCallbackRejects(t *testing.T) {
 		&store.Workspace{Forge: "gitlab", Prefix: "beta", Token: "beta-tok", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
-	if rec := get(f.fixture, "/oauth/gitlab/callback?code=x&state=s", mk("s|beta"), sess); rec.Code != http.StatusNotFound {
-		t.Errorf("non-member workspace: status = %d, want 404", rec.Code)
+	if rec := get(f.fixture, "/oauth/gitlab/callback?code=x&state=s", mk("s|beta"), sess); rec.Code != http.StatusSeeOther ||
+		rec.Header().Get("Location") != "/?error=connect_denied" {
+		t.Errorf("non-member workspace: %d -> %q, want the dashboard's connect_denied notice", rec.Code, rec.Header().Get("Location"))
+	}
+	// A workspace that is not there reads exactly the same (D3).
+	if rec := get(f.fixture, "/oauth/gitlab/callback?code=x&state=s", mk("s|nowhere"), sess); rec.Code != http.StatusSeeOther ||
+		rec.Header().Get("Location") != "/?error=connect_denied" {
+		t.Errorf("missing workspace: %d -> %q, want the same answer as a non-member", rec.Code, rec.Header().Get("Location"))
+	}
+	// An owner demoted while the consent was open: still a member, so the
+	// settings page says whose move connecting is.
+	demote(t, f.fixture, "grp/sub")
+	if rec := get(f.fixture, "/oauth/gitlab/callback?code=x&state=s", mk("s|grp/sub"), sess); rec.Code != http.StatusSeeOther ||
+		rec.Header().Get("Location") != "/workspaces/gitlab/grp%2Fsub?error=connect_owners_only" {
+		t.Errorf("demoted owner: %d -> %q, want the settings page's connect_owners_only notice", rec.Code, rec.Header().Get("Location"))
 	}
 	if len(f.gl.exchanged) != 0 {
 		t.Errorf("rejected callbacks must not exchange codes; exchanged %v", f.gl.exchanged)

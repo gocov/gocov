@@ -139,7 +139,7 @@ func (s *Server) connectCallback(g *connectGrant, w http.ResponseWriter, r *http
 	ws, err := s.store.WorkspaceByPrefix(r.Context(), g.forge, prefix)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			http.NotFound(w, r)
+			s.connectDenied(w, r, g, u)
 			return true
 		}
 		s.internalError(w, "looking up workspace", err)
@@ -151,13 +151,16 @@ func (s *Server) connectCallback(g *connectGrant, w http.ResponseWriter, r *http
 		return true
 	}
 	if !member {
-		http.NotFound(w, r)
+		s.connectDenied(w, r, g, u)
 		return true
 	}
 	if role != store.RoleOwner {
 		// The consent was started by an owner's session; being demoted
 		// (or handing the redirect to a member) in between ends it here.
-		ownersOnly(w, r)
+		// A member may read the settings page, so that is where the app
+		// says whose move connecting is.
+		s.log.Warn(g.forge+" connect callback denied to member", "workspace", ws.Prefix, "user", u.DisplayName)
+		http.Redirect(w, r, settings+"?error=connect_owners_only", http.StatusSeeOther)
 		return true
 	}
 
@@ -190,6 +193,15 @@ func (s *Server) connectFailed(w http.ResponseWriter, r *http.Request, forge, pr
 		dest = workspacePath(forge, prefix)
 	}
 	http.Redirect(w, r, dest+"?error=connect_failed", http.StatusSeeOther)
+}
+
+// connectDenied ends a consent that came back for a workspace the viewer
+// has no seat in — or for one that is not there, which must read the same
+// (D3). Neither has a settings page to show them, so the dashboard carries
+// the notice, and the redirect names no workspace.
+func (s *Server) connectDenied(w http.ResponseWriter, r *http.Request, g *connectGrant, u *store.User) {
+	s.log.Warn(g.forge+" connect callback denied", "user", u.DisplayName)
+	http.Redirect(w, r, "/?error=connect_denied", http.StatusSeeOther)
 }
 
 // disconnectWorkspace forgets the workspace's connection — the GitHub App

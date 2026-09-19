@@ -18,9 +18,12 @@ import "./DashboardPage.css";
 import { attentionRows } from "@/lib/dashboard";
 
 /** The codes the connect redirects carry, said the way this page can act on them. */
-const connectFailed = {
+const connectNotices = {
   connect_failed:
     "Connecting to the forge did not complete. Nothing was changed — try again from the workspace settings.",
+  // Said the same whether the workspace is someone else's or not there at all.
+  connect_denied:
+    "That workspace was not connected: your account is not a member of it here. Nothing was changed.",
 };
 
 /** How the forge connection reads in the stat row. */
@@ -252,7 +255,7 @@ export default function DashboardPage() {
   // Where the server sends the browser back after an install or a grant. A
   // consent that failed before it named a workspace lands here, with no
   // settings page of its own to return to.
-  const notice = useUrlNotice({ codes: connectFailed });
+  const notice = useUrlNotice({ codes: connectNotices });
   const query = useQuery(dashboardQuery(params.get("ws") ?? ""));
   usePageTitle("repositories");
   return (
