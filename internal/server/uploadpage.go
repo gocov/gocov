@@ -88,7 +88,6 @@ func uploadProfileURL(u *store.Upload) string {
 // uploadPageDTO is the upload page for the app.
 type uploadPageDTO struct {
 	Repo         repoRefDTO    `json:"repo"`
-	PublicView   bool          `json:"public_view"`
 	Upload       uploadHeadDTO `json:"upload"`
 	Verdict      verdictDTO    `json:"verdict"`
 	CoveredStmts int64         `json:"covered_stmts"`
@@ -149,8 +148,7 @@ func (s *Server) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	u := d.Upload
 	dto := uploadPageDTO{
-		Repo:       newRepoRefDTO(d.Repo),
-		PublicView: s.publicView(r),
+		Repo: newRepoRefDTO(d.Repo),
 		Upload: uploadHeadDTO{
 			ID:            u.ID,
 			SHA:           u.CommitSHA,

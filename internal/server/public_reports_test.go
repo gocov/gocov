@@ -103,11 +103,10 @@ func TestPublicRepoReportPagesOpenAnonymously(t *testing.T) {
 	if !strings.Contains(body, `<link rel="canonical" href="https://gocov.example/repos/bitbucket/acme/widgets">`) {
 		t.Errorf("repo page head misses the canonical link:\n%s", body)
 	}
-	// Read-only: the app is told this is the anonymous view, so it draws
-	// neither the settings button nor the signed-in chrome.
+	// Read-only: a stranger is offered no settings button.
 	data := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets"))
-	if !data.PublicView || data.Repo.CanSettings {
-		t.Errorf("anonymous repo data = public view %v, settings %v", data.PublicView, data.Repo.CanSettings)
+	if data.Repo.CanSettings {
+		t.Error("anonymous repo data offers the settings button")
 	}
 	// The anonymous render is briefly cacheable and must say so — a shared
 	// cache with no policy would cache heuristically and keep serving after
@@ -131,8 +130,8 @@ func TestPublicRepoReportPagesOpenAnonymously(t *testing.T) {
 			t.Errorf("%s is indexable:\n%s", path, rec.Body)
 		}
 	}
-	if got := decodeJSON[uploadPageDTO](t, get(f, "/api/ui/uploads/1")); !got.PublicView {
-		t.Error("anonymous upload data is not marked a public view")
+	if rec := get(f, "/api/ui/uploads/1"); rec.Code != http.StatusOK {
+		t.Errorf("anonymous upload data: status = %d, want 200", rec.Code)
 	}
 
 	// Crawlers probe with HEAD; the mux serves it through the GET route,
@@ -213,9 +212,6 @@ func TestMemberViewOfPublicRepoIsUnchanged(t *testing.T) {
 		t.Errorf("member page Cache-Control = %q, want no-store", cc)
 	}
 	got := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets", sess))
-	if got.PublicView {
-		t.Error("a signed-in member reads as an anonymous visitor")
-	}
 	if !got.Repo.CanSettings {
 		t.Error("member repo data misses the settings button")
 	}
@@ -467,10 +463,10 @@ func TestAPIReportEndpointsFollowPublicReports(t *testing.T) {
 			t.Errorf("anonymous GET %s: status = %d, want 200", path, rec.Code)
 		}
 	}
-	// A read-only view says so, and offers no settings to a stranger.
+	// A read-only view offers no settings to a stranger.
 	repoPage := decodeJSON[repoPageDTO](t, get(f, paths[0]))
-	if !repoPage.PublicView || repoPage.Repo.CanSettings {
-		t.Errorf("anonymous repo page = public %v, settings %v", repoPage.PublicView, repoPage.Repo.CanSettings)
+	if repoPage.Repo.CanSettings {
+		t.Error("anonymous repo page offers the settings button")
 	}
 
 	// Turned off at the instance, the same paths are a 401 in JSON.
@@ -510,7 +506,7 @@ func TestAPIRepoSettingsStayClosedOnPublicRepos(t *testing.T) {
 	}
 	// The fixture's user is a member of acme, so settings are theirs; the
 	// public branch is what a stranger gets, tested above.
-	if got := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets", sess)); got.PublicView {
-		t.Error("a signed-in member reported as an anonymous view")
+	if got := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets", sess)); !got.Repo.CanSettings {
+		t.Error("a member of the workspace is refused the settings button")
 	}
 }

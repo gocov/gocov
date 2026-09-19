@@ -2,7 +2,6 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Link, useParams, useSearchParams } from "react-router";
 import { Chip, LinkButton, Mono, Select } from "@/components/atoms";
 import {
-  Banner,
   Breadcrumbs,
   Card,
   CopyField,
@@ -95,14 +94,6 @@ export default function RepoPage() {
             value={data.repo.badge_markdown}
             preview={<img className="RepoPage__badge" src={data.repo.badge_url} alt="coverage badge" />}
           />
-
-          {data.public_view && (
-            <Banner>
-              <a href="https://gocov.dev?ref=report-cta" rel="noopener">
-                Track your repo&rsquo;s coverage &mdash; free for public repos
-              </a>
-            </Banner>
-          )}
 
           {data.summary !== null && <Summary data={data} summary={data.summary} />}
 

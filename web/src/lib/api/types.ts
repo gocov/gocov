@@ -167,8 +167,6 @@ export interface RepoPage {
     /** Viewer may open the settings page. */
     can_settings: boolean;
   };
-  /** Anonymous read-only view of a public repo. */
-  public_view: boolean;
   branches: string[];
   /** The ?branch filter, "" = all branches. */
   branch: string;
@@ -212,7 +210,6 @@ export interface UploadRow {
 
 export interface UploadPage {
   repo: RepoRef;
-  public_view: boolean;
   upload: {
     id: number;
     sha: string;

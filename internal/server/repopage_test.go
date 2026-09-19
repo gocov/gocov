@@ -174,10 +174,6 @@ func TestAPIRepoPage(t *testing.T) {
 	if got.Page != 0 || got.HasOlder {
 		t.Errorf("paging = page %d, older %v", got.Page, got.HasOlder)
 	}
-	if got.PublicView {
-		t.Error("an open instance is not a public view")
-	}
-
 	// The branch filter moves the summary, trend and files with it.
 	feat := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets?branch=feat"))
 	if feat.Branch != "feat" || feat.TrendBranch != "feat" || len(feat.Uploads) != 1 {
