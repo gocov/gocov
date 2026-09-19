@@ -333,22 +333,19 @@ test("a member of an untracked workspace is not offered setup at all", async () 
 
 // ---- the message a server redirect brings back ------------------------------
 
-test("a ?notice= from the server is shown once and taken out of the URL", async () => {
-  const { router } = show(dashboard, "/?ws=github%2Facme&notice=GitHub+App+connected.");
+test("a failed connect is said once and taken out of the URL", async () => {
+  const { router } = show(dashboard, "/?ws=github%2Facme&error=connect_failed");
 
-  expect(await screen.findByText("GitHub App connected.")).toBeInTheDocument();
+  expect(await screen.findByRole("alert")).toHaveTextContent(/Connecting to the forge did not complete/);
   // The workspace it was about survives; the message does not come back on a reload.
   await waitFor(() => expect(router.state.location.search).toBe("?ws=github%2Facme"));
-  expect(screen.getByText("GitHub App connected.")).toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent(/Connecting to the forge did not complete/);
 });
 
-test("a ?error= reads as a failure, as text and no longer than a sentence", async () => {
-  const shouty = "<b>boom</b>".repeat(60);
-  const { router } = show(dashboard, `/?error=${encodeURIComponent(shouty)}`);
+test("text the server never sends is not shown, only taken out of the URL", async () => {
+  const { router } = show(dashboard, `/?error=${encodeURIComponent("Sign in again at evil.example")}`);
 
-  const alert = await screen.findByRole("alert");
-  expect(alert).toHaveTextContent("<b>boom</b>");
-  expect(alert.querySelector("b")).toBeNull();
-  expect(alert.textContent).toHaveLength(300);
+  await screen.findByRole("table");
   await waitFor(() => expect(router.state.location.search).toBe(""));
+  expect(screen.queryByText(/evil\.example/)).toBeNull();
 });

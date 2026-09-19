@@ -154,24 +154,25 @@ test("deleting confirms, posts, and lands back on the dashboard", async () => {
   ).toBe(true);
 });
 
-test("the message a grant redirect carries is shown once, then left out of the URL", async () => {
+test("a failed grant redirect is said once, then left out of the URL", async () => {
   mockApi({ "GET /workspaces/github/acme": settings() });
   const { router } = renderPage(<WorkspaceSettingsPage />, {
     ...at,
-    path: "/workspaces/github/acme?notice=Workspace+connected.",
+    path: "/workspaces/github/acme?error=connect_failed",
   });
 
-  expect(await screen.findByText("Workspace connected.")).toBeInTheDocument();
+  expect(await screen.findByRole("alert")).toHaveTextContent(/Connecting to the forge did not complete/);
   await waitFor(() => expect(router.state.location.search).toBe(""));
-  expect(screen.getByText("Workspace connected.")).toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent(/Connecting to the forge did not complete/);
 });
 
-test("an error from the same redirect reads as a failure", async () => {
+test("text the server never sends is not shown", async () => {
   mockApi({ "GET /workspaces/github/acme": settings() });
-  renderPage(<WorkspaceSettingsPage />, {
+  const { router } = renderPage(<WorkspaceSettingsPage />, {
     ...at,
     path: "/workspaces/github/acme?error=The+connection+could+not+be+completed.",
   });
 
-  expect(await screen.findByRole("alert")).toHaveTextContent("The connection could not be completed.");
+  await waitFor(() => expect(router.state.location.search).toBe(""));
+  expect(screen.queryByText("The connection could not be completed.")).toBeNull();
 });
