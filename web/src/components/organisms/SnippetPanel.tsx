@@ -129,7 +129,6 @@ export function SnippetPanel({ info, onReveal, onCopied }: Props) {
         <CodeBlock label={`${filename} snippet`}>{code}</CodeBlock>
         <div className="row">
           <CopyButton variant="primary" label="Copy snippet" value={code} onCopied={copied} />
-          <span className="muted small">{languageSpec(language).format}</span>
         </div>
       </div>
 

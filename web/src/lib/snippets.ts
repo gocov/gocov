@@ -16,8 +16,6 @@ export interface LanguageSpec {
   id: LanguageId;
   /** The picker's label. */
   label: string;
-  /** What the test tool writes — the format gocov will detect. */
-  format: string;
   /** The command that writes the coverage file. */
   test: string;
   /** Where it leaves it. */
@@ -31,7 +29,6 @@ export const languages: LanguageSpec[] = [
   {
     id: "go",
     label: "Go",
-    format: "Go cover profile",
     test: "go test ./... -covermode=atomic -coverprofile=coverage.out",
     file: "coverage.out",
     image: "golang:1.27",
@@ -39,7 +36,6 @@ export const languages: LanguageSpec[] = [
   {
     id: "js",
     label: "JS / TS",
-    format: "LCOV",
     test: "npx jest --coverage",
     file: "coverage/lcov.info",
     image: "node:24",
@@ -47,7 +43,6 @@ export const languages: LanguageSpec[] = [
   {
     id: "java",
     label: "Java / Kotlin",
-    format: "JaCoCo XML",
     test: "mvn verify",
     file: "target/site/jacoco/jacoco.xml",
     image: "maven:3-eclipse-temurin-21",
@@ -55,7 +50,6 @@ export const languages: LanguageSpec[] = [
   {
     id: "python",
     label: "Python",
-    format: "Cobertura XML",
     test: "pytest --cov --cov-report=xml",
     file: "coverage.xml",
     image: "python:3.13",
@@ -63,7 +57,6 @@ export const languages: LanguageSpec[] = [
   {
     id: "php",
     label: "PHP",
-    format: "Clover XML",
     test: "phpunit --coverage-clover clover.xml",
     file: "clover.xml",
     image: "php:8.4-cli",
@@ -71,7 +64,6 @@ export const languages: LanguageSpec[] = [
   {
     id: "ruby",
     label: "Ruby",
-    format: "SimpleCov",
     test: "bundle exec rspec",
     file: "coverage/.resultset.json",
     image: "ruby:3.4",
