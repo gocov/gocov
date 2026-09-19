@@ -124,10 +124,8 @@ test("a populated workspace shows its rollup, its notices and its repositories",
 
   expect(screen.getByRole("heading", { name: "Repositories" })).toBeInTheDocument();
   expect(screen.getAllByRole("row")).toHaveLength(5); // header + 4
-  expect(screen.getByRole("link", { name: "Setup instructions" })).toHaveAttribute(
-    "href",
-    "/workspaces/github/acme/setup",
-  );
+  // Nothing under the table repeats what "Add a repository" already offers.
+  expect(screen.queryByRole("link", { name: "Setup instructions" })).not.toBeInTheDocument();
 });
 
 test("the table filters without another request", async () => {

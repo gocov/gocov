@@ -14,7 +14,6 @@ import { pct, plural } from "@/lib/format";
 import { useUrlNotice } from "@/lib/notice";
 import { usePageTitle } from "@/lib/title";
 import { routes } from "@/lib/urls";
-import "./DashboardPage.css";
 import { attentionRows } from "@/lib/dashboard";
 
 /** The codes the connect redirects carry, said the way this page can act on them. */
@@ -211,12 +210,7 @@ function Workspace({ data, current }: { data: Dashboard; current: WorkspaceGroup
       <section className="stack stack-1">
         <SectionHeader title="Repositories" />
         {repos.length > 0 ? (
-          <>
-            <ReposTable repos={repos} />
-            <p className="Dashboard__hint">
-              Repositories appear here automatically on their first upload. <Link to={setup}>Setup instructions</Link>
-            </p>
-          </>
+          <ReposTable repos={repos} />
         ) : (
           <Card>
             <Card.Body>
