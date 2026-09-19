@@ -18,13 +18,7 @@ import (
 	"github.com/gocov/gocov/internal/webui"
 )
 
-const (
-	spaAssetPrefix = "/static/app/"
-	// appPrefix is where the app lived while it was built beside the
-	// template pages. Kept for one release as a redirect to the canonical
-	// URL it now answers directly.
-	appPrefix = "/app"
-)
+const spaAssetPrefix = "/static/app/"
 
 // shellTitle is the one tag web/index.html is contracted to carry
 // verbatim, and the anchor head injection replaces.
@@ -42,20 +36,6 @@ type appHead struct {
 func (s *Server) spaRoutes() {
 	assets := http.StripPrefix(spaAssetPrefix, http.FileServerFS(webui.FS()))
 	s.mux.Handle("GET "+spaAssetPrefix, spaAssetCache(assets))
-	s.mux.HandleFunc("GET "+appPrefix, redirectFromAppPrefix)
-	s.mux.HandleFunc("GET "+appPrefix+"/{path...}", redirectFromAppPrefix)
-}
-
-// redirectFromAppPrefix sends a pre-cutover /app/… link to the same path
-// without the prefix, which is now the page's own URL.
-func redirectFromAppPrefix(w http.ResponseWriter, r *http.Request) {
-	// EscapedPath, not Path: a GitLab workspace prefix rides as one %2F
-	// segment and must still be one when the browser comes back.
-	target := cmp.Or(strings.TrimPrefix(r.URL.EscapedPath(), appPrefix), "/")
-	if r.URL.RawQuery != "" {
-		target += "?" + r.URL.RawQuery
-	}
-	http.Redirect(w, r, target, http.StatusMovedPermanently)
 }
 
 // serveApp writes the app shell with the given status and head. The
