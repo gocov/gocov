@@ -33,13 +33,18 @@ cd "$(dirname "$0")/.."
 # CHANGELOG.md is excluded: its older entries name older releases on
 # purpose, and that is history, not drift. pinned_test.go is excluded
 # because its doc comment quotes the download-URL shape with a literal
-# version, and comments are not release-please's to bump.
+# version, and comments are not release-please's to bump. The web UI's
+# tests are excluded because they pass a made-up version on purpose, to
+# prove the snippet takes it from the server rather than hard-coding one;
+# the UI's own sources are still checked, so a literal pin creeping into
+# web/src/lib/snippets.ts fails here.
 pins=$(git grep -InEo \
   -e 'releases/download/v[0-9]+\.[0-9]+\.[0-9]+' \
   -e 'ver=v[0-9]+\.[0-9]+\.[0-9]+' \
   -e 'gocov-server:v[0-9]+\.[0-9]+\.[0-9]+' \
   -e 'GOCOV_VERSION=v[0-9]+\.[0-9]+\.[0-9]+' \
-  -- ':!CHANGELOG.md' ':!scripts/check-pins.sh' ':!internal/hosted/pinned_test.go' || true)
+  -- ':!CHANGELOG.md' ':!scripts/check-pins.sh' ':!internal/hosted/pinned_test.go' \
+     ':(exclude,glob)web/src/**/*.test.ts' ':(exclude,glob)web/src/**/*.test.tsx' || true)
 
 if [ -z "$pins" ]; then
   echo "check-pins: no CLI version pins found at all." >&2

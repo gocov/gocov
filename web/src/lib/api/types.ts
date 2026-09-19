@@ -411,7 +411,7 @@ export interface SetupInfo {
   server_implicit: boolean;
   /** GitLab only: the CI/CD Catalog component is usable (the instance's GitLab is gitlab.com). */
   gitlab_catalog: boolean;
-  /** The CLI release the raw-download snippets pin, "v0.25.0". */
+  /** The CLI release the raw-download snippets pin, in the form "v1.2.3". */
   cli_version: string;
   /** null for non-owners. */
   token_masked: string | null;

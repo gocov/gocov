@@ -92,7 +92,7 @@ export interface SnippetInput {
   baseUrl: string;
   /** GitLab only: the CI/CD Catalog component is reachable. */
   gitlabCatalog: boolean;
-  /** The CLI release the raw-download recipes pin, "v0.25.0". */
+  /** The CLI release the raw-download recipes pin, in the form "v1.2.3". */
   cliVersion: string;
 }
 
