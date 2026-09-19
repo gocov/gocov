@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -44,10 +43,6 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 // report and a page of uploads. The UI API copies it into its DTO.
 type repoPageData struct {
 	Repo *store.Repo
-	// Member is authorizeReport's verdict: the viewer is inside the
-	// workspace (or the instance is open), rather than admitted through
-	// the public-report branch.
-	Member bool
 	// Branch is the ?branch filter, empty for "all branches";
 	// TrendBranch is the branch the verdict, trend and files describe.
 	Branch      string
@@ -57,7 +52,7 @@ type repoPageData struct {
 	// Base is the report Latest is measured against, nil when the branch
 	// has no earlier passing report.
 	Base         *store.CommitReport
-	Verdict      *repoVerdictView
+	Verdict      *verdictView
 	LastUpload   *store.Upload
 	LastProv     *provView
 	FilesView    *filesViewData
@@ -149,7 +144,6 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 
 	d := &repoPageData{
 		Repo:         repo,
-		Member:       member,
 		Branch:       branch,
 		TrendBranch:  trendBranch,
 		Branches:     branches,
@@ -162,7 +156,11 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 	if latest != nil {
 		_, base := s.branchBaseReport(r.Context(), repo.ID, trendBranch)
 		d.Base = base
-		d.Verdict = s.repoVerdict(latest, repo, base)
+		var baseTotal *float64
+		if base != nil {
+			baseTotal = &base.TotalPct
+		}
+		d.Verdict = new(gateVerdict("The latest commit", latest.TotalPct, latest.DiffCoverage, latest.GateFailed, repo.Gate, baseTotal))
 		if lu, err := s.store.Upload(r.Context(), latest.UploadID); err == nil {
 			p := s.uploadProvenance(r.Context(), lu)
 			d.LastUpload, d.LastProv = lu, &p
@@ -374,30 +372,4 @@ func (s *Server) branchBaseReport(ctx context.Context, repoID int64, branch stri
 		return nil, nil
 	}
 	return reportBaseline(reports)
-}
-
-// repoVerdictView is the coverage verdict at the top of the repo page: the
-// branch's current standing against its gate, stated once. It mirrors the
-// upload page's verdict but reads a merged commit report.
-type repoVerdictView struct {
-	State  string // "pass", "fail" or "neutral" (no gate configured)
-	Reason string // prose walk-through of the gate rules and their outcome
-}
-
-// repoVerdict assembles the verdict from the branch's newest merged
-// report and the report it is compared against (nil when there is none).
-func (s *Server) repoVerdict(latest *store.CommitReport, repo *store.Repo, base *store.CommitReport) *repoVerdictView {
-	v := &repoVerdictView{State: "pass"}
-	var baseTotal float64
-	if base != nil {
-		baseTotal = base.TotalPct
-	}
-	switch {
-	case !repo.Gate.Configured():
-		v.State = "neutral"
-	case latest.GateFailed:
-		v.State = "fail"
-	}
-	v.Reason = core.GateReason(latest.TotalPct, latest.DiffCoverage, repo.Gate, baseTotal, base != nil, "The latest commit")
-	return v
 }

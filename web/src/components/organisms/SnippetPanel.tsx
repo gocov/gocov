@@ -4,6 +4,7 @@ import { CodeBlock, Mono, Notice } from "@/components/atoms";
 import { CopyButton, SecretField, SegmentedControl } from "@/components/molecules";
 import { track } from "@/lib/analytics";
 import type { SetupInfo } from "@/lib/api/types";
+import { readStored, writeStored } from "@/lib/storage";
 import { buildSnippet, languageSpec, languages, tokenWhere, type LanguageId } from "@/lib/snippets";
 import { routes } from "@/lib/urls";
 import "./SnippetPanel.css";
@@ -13,22 +14,11 @@ const STORAGE_KEY = "gocov.setup.language";
 
 /** Exported so the card around the panel can name the language in an event. */
 export function storedLanguage(): LanguageId {
-  try {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
-    if (saved) return languageSpec(saved).id;
-  } catch {
-    // Private mode, or storage denied: the default is just as good.
-  }
-  return "go";
+  const saved = readStored("localStorage", STORAGE_KEY);
+  return saved ? languageSpec(saved).id : "go";
 }
 
-function rememberLanguage(id: LanguageId): void {
-  try {
-    window.localStorage.setItem(STORAGE_KEY, id);
-  } catch {
-    // Nothing depends on it sticking.
-  }
-}
+const rememberLanguage = (id: LanguageId) => writeStored("localStorage", STORAGE_KEY, id);
 
 interface Props {
   info: SetupInfo;

@@ -1,18 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { DangerCard } from "@/components/organisms/DangerCard";
 import { GatesCard } from "@/components/organisms/GatesCard";
 import { ReportingCard } from "@/components/organisms/ReportingCard";
 import { TokenCard } from "@/components/organisms/TokenCard";
 import { SettingsLayout, type SettingsNavItem } from "@/components/templates/SettingsLayout";
-import { Button, Chip, InlineCode, Mono, Notice, Select, TextInput } from "@/components/atoms";
-import { Card, FormField, PageHeader, QueryBoundary } from "@/components/molecules";
+import { Chip, InlineCode, Mono, Notice, Select, TextInput } from "@/components/atoms";
+import { Card, FormField, PageHeader, QueryBoundary, SaveFooter } from "@/components/molecules";
 import { ApiError, apiPost } from "@/lib/api/client";
 import { workspaceSettingsPath, workspaceSettingsQuery } from "@/lib/api/queries";
 import type { TokenReveal, WorkspaceSettings, WorkspaceSettingsInput } from "@/lib/api/types";
 import { plural } from "@/lib/format";
 import { useUrlNotice } from "@/lib/notice";
+import { useSectionSave } from "@/lib/sectionSave";
 import { retentionOptions, workspaceInput } from "@/lib/settings";
 import { usePageTitle } from "@/lib/title";
 import { routes } from "@/lib/urls";
@@ -44,23 +44,19 @@ function WorkspaceSettingsView({ forge, prefix, settings }: { forge: string; pre
   const key = workspaceSettingsQuery(forge, prefix).queryKey;
   const path = workspaceSettingsPath(forge, prefix);
 
-  // Gates and Defaults are one document with two Save buttons: the form is
-  // shared, and whichever button is pressed posts all of it.
-  const [form, setForm] = useState<WorkspaceSettingsInput>(() => workspaceInput(settings));
-  const [pressed, setPressed] = useState("");
-  const [savedIn, setSavedIn] = useState("");
-
   const { workspace: ws, owner } = settings;
   // Where the server sends the browser back after a grant or an install —
   // this page holds the Connect button the consent started from.
   const notice = useUrlNotice({ codes: connectNotices });
 
-  const save = useMutation({
-    mutationFn: (input: WorkspaceSettingsInput) => apiPost<WorkspaceSettings>(`${path}/settings`, input),
-    onSuccess: (next) => {
+  // Gates and Defaults are one document with two Save buttons: the form is
+  // shared, and whichever button is pressed posts all of it.
+  const { form, update, section, error } = useSectionSave({
+    seed: () => workspaceInput(settings),
+    post: (input: WorkspaceSettingsInput) => apiPost<WorkspaceSettings>(`${path}/settings`, input),
+    onSaved: (next) => {
       client.setQueryData(key, next);
-      setForm(workspaceInput(next));
-      setSavedIn(pressed);
+      return workspaceInput(next);
     },
   });
 
@@ -77,30 +73,9 @@ function WorkspaceSettingsView({ forge, prefix, settings }: { forge: string; pre
     },
   });
 
-  function update(patch: Partial<WorkspaceSettingsInput>) {
-    setSavedIn("");
-    setForm((f) => ({ ...f, ...patch }));
-  }
-
-  function submit(section: string) {
-    setPressed(section);
-    setSavedIn("");
-    save.mutate(form);
-  }
-
-  /** Both editable cards carry the same button; only the pressed one says so. */
-  function saveFooter(section: string, hint: string, ownerOnly: string) {
-    if (!owner) return <span>{ownerOnly}</span>;
-    return (
-      <>
-        <Button variant="primary" onClick={() => submit(section)} disabled={save.isPending} loading={save.isPending && pressed === section}>
-          {save.isPending && pressed === section ? "Saving…" : "Save"}
-        </Button>
-        <span>{hint}</span>
-        {savedIn === section && <Chip tone="good">Saved</Chip>}
-      </>
-    );
-  }
+  const saveFooter = (id: string, hint: string, ownerOnly: string) => (
+    <SaveFooter owner={owner} hint={hint} ownerOnly={ownerOnly} {...section(id)} />
+  );
 
   const nav: SettingsNavItem[] = [
     ...(settings.reporting.available ? [{ id: "reporting", label: "Reporting", group: "Workspace" }] : []),
@@ -138,7 +113,7 @@ function WorkspaceSettingsView({ forge, prefix, settings }: { forge: string; pre
           at every sign-in.
         </Notice>
       )}
-      {save.isError && <Notice tone="bad">{save.error instanceof ApiError ? save.error.message : "The settings could not be saved."}</Notice>}
+      {error !== null && <Notice tone="bad">{error instanceof ApiError ? error.message : "The settings could not be saved."}</Notice>}
 
       {settings.reporting.available && (
         <SettingsLayout.Section id="reporting">

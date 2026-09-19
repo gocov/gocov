@@ -68,7 +68,6 @@ type dashStats struct {
 	GatesPassing   int
 	GatesTotal     int
 	StaleCount     int
-	Reporting      string // "Connected", "Not connected", "Reconnect needed", "Not available"
 	ReportingSub   string // "gocov[bot]", the granting account, or ""
 	ReportingState string // on / off / broken / "" (styling)
 }
@@ -471,43 +470,18 @@ func (s *Server) collectAttention(dv *dashboardView, repo *store.Repo, row *dash
 
 // fillReporting sets the Reporting stat from the current group's tracked
 // workspace connection. Untracked groups (or deployments without a one-click
-// mechanism) read as not connected.
+// mechanism) read as not connected, and only a working connection names
+// who it posts as.
 func (s *Server) fillReporting(st *dashStats, g *wsGroup) {
+	st.ReportingState = "off"
 	if g.Workspace == nil {
-		st.Reporting, st.ReportingState = "Not connected", "off"
 		return
 	}
-	ws := g.Workspace
-	switch ws.Forge {
-	case "github":
-		switch {
-		case ws.GitHubAppBroken:
-			st.Reporting, st.ReportingState = "Reconnect needed", "broken"
-		case ws.GitHubInstallationID != 0:
-			st.Reporting, st.ReportingState, st.ReportingSub = "Connected", "on", "gocov[bot]"
-		default:
-			st.Reporting, st.ReportingState = "Not connected", "off"
-		}
-	case "bitbucket":
-		switch {
-		case ws.BitbucketGrantBroken:
-			st.Reporting, st.ReportingState = "Reconnect needed", "broken"
-		case ws.BitbucketGrantAccount != "":
-			st.Reporting, st.ReportingState, st.ReportingSub = "Connected", "on", ws.BitbucketGrantAccount
-		default:
-			st.Reporting, st.ReportingState = "Not connected", "off"
-		}
-	case "gitlab":
-		switch {
-		case ws.GitLabGrantBroken:
-			st.Reporting, st.ReportingState = "Reconnect needed", "broken"
-		case ws.GitLabGrantAccount != "":
-			st.Reporting, st.ReportingState, st.ReportingSub = "Connected", "on", ws.GitLabGrantAccount
-		default:
-			st.Reporting, st.ReportingState = "Not connected", "off"
-		}
-	default:
-		st.Reporting, st.ReportingState = "Not connected", "off"
+	state, account := reportingState(g.Workspace)
+	st.ReportingState = state
+	if state == "on" {
+		// The GitHub App has no granting account; it posts as its bot.
+		st.ReportingSub = cmp.Or(account, "gocov[bot]")
 	}
 }
 

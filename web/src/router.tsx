@@ -1,6 +1,6 @@
+import { lazy, Suspense } from "react";
 import type { RouteObject } from "react-router";
 import { AppShell } from "@/components/templates";
-import ComponentsPage from "@/pages/ComponentsPage";
 import DashboardPage from "@/pages/DashboardPage";
 import LoginPage from "@/pages/LoginPage";
 import NotFoundPage from "@/pages/NotFoundPage";
@@ -11,6 +11,10 @@ import SourcePage from "@/pages/SourcePage";
 import UploadPage from "@/pages/UploadPage";
 import WorkspaceSettingsPage from "@/pages/WorkspaceSettingsPage";
 import WorkspaceSetupPage from "@/pages/WorkspaceSetupPage";
+
+// The component gallery is the team's, not a visitor's: its own chunk, fetched
+// only when someone opens /_components.
+const ComponentsPage = lazy(() => import("@/pages/ComponentsPage"));
 
 // The canonical URLs: the same shapes the Go server answers
 // (internal/server/server.go), which serves this app's shell for every one of
@@ -29,7 +33,14 @@ export const routes: RouteObject[] = [
       { path: "onboarding", element: <OnboardingPage /> },
       { path: "repo-settings/:forge/*", element: <RepoSettingsPage /> },
       { path: "login", element: <LoginPage /> },
-      { path: "_components", element: <ComponentsPage /> },
+      {
+        path: "_components",
+        element: (
+          <Suspense fallback={null}>
+            <ComponentsPage />
+          </Suspense>
+        ),
+      },
       { path: "*", element: <NotFoundPage /> },
     ],
   },

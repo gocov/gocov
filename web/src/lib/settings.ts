@@ -1,6 +1,6 @@
 // Pure helpers the two settings pages share: what a gate says about
-// itself, what the ignore box holds, and whether a form still matches the
-// document it was seeded from. No React, no fetching — every one of these
+// itself, what the ignore box holds, and the editable half of each settings
+// document. No React, no fetching — every one of these
 // is a function of its arguments.
 
 import type { Gate, RepoSettings, RepoSettingsInput, WorkspaceSettings, WorkspaceSettingsInput } from "./api/types";
@@ -15,14 +15,6 @@ export function gateActive(gate: Gate): number {
 export function gateLabel(gate: Gate): string {
   const n = gateActive(gate);
   return n === 0 ? "None active" : `${n} active`;
-}
-
-export function sameGate(a: Gate, b: Gate): boolean {
-  return (
-    a.min_coverage === b.min_coverage &&
-    a.min_diff_coverage === b.min_diff_coverage &&
-    a.max_coverage_drop === b.max_coverage_drop
-  );
 }
 
 /**
@@ -57,24 +49,6 @@ export function repoInput(settings: RepoSettings): RepoSettingsInput {
     ignore_paths: repo.ignore_paths,
     public_reports: repo.public_reports,
   };
-}
-
-/** Has the form moved away from what was saved? Drives the Save button. */
-export function workspaceDirty(form: WorkspaceSettingsInput, saved: WorkspaceSettingsInput): boolean {
-  return (
-    form.default_branch !== saved.default_branch ||
-    form.report_retention_days !== saved.report_retention_days ||
-    !sameGate(form.gate, saved.gate)
-  );
-}
-
-export function repoDirty(form: RepoSettingsInput, saved: RepoSettingsInput): boolean {
-  return (
-    form.default_branch !== saved.default_branch ||
-    form.ignore_paths !== saved.ignore_paths ||
-    form.public_reports !== saved.public_reports ||
-    !sameGate(form.gate, saved.gate)
-  );
 }
 
 /** The retention selector's three windows; 0 keeps reports forever. */

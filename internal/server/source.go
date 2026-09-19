@@ -52,8 +52,7 @@ type sourcePageData struct {
 	Lines       []sourceLine
 	// Delta is the file's coverage against the baseline commit, nil when
 	// there is no baseline (or no source to compare line by line).
-	Delta          *float64
-	NewlyUncovered int
+	Delta *float64
 }
 
 // buildSourcePage assembles the source view. A false second result means
@@ -73,7 +72,7 @@ func (s *Server) buildSourcePage(w http.ResponseWriter, r *http.Request) (*sourc
 	}
 	i := slices.IndexFunc(files, func(f *store.UploadFile) bool { return f.Path == path })
 	if i < 0 {
-		s.pageNotFound(w, r)
+		httpError(w, http.StatusNotFound, "not found")
 		return nil, false
 	}
 	file := files[i]
@@ -85,7 +84,7 @@ func (s *Server) buildSourcePage(w http.ResponseWriter, r *http.Request) (*sourc
 		// Compare against the file at the previous baseline commit to flag
 		// regressions and show a coverage delta.
 		if base := s.baseFileFor(r.Context(), repo, upload, file.Path); base != nil {
-			d.NewlyUncovered = markNewlyUncovered(d.Lines, base.Blocks)
+			markNewlyUncovered(d.Lines, base.Blocks)
 			d.Delta = new(file.Pct - base.Pct)
 		}
 	}

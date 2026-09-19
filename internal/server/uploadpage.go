@@ -66,12 +66,16 @@ func (s *Server) buildUploadPage(w http.ResponseWriter, r *http.Request) (*uploa
 		s.internalError(w, "loading upload files", err)
 		return nil, false
 	}
+	var baseTotal *float64
+	if base != nil {
+		baseTotal = &base.TotalPct
+	}
 	return &uploadPageData{
 		Upload:    upload,
 		Repo:      repo,
 		Base:      base,
 		FilesView: fv,
-		Verdict:   s.uploadVerdict(upload, repo, base),
+		Verdict:   gateVerdict("This upload", upload.TotalPct, upload.DiffCoverage, upload.GateFailed, repo.Gate, baseTotal),
 		Prov:      s.uploadProvenance(r.Context(), upload),
 	}, true
 }
@@ -332,28 +336,32 @@ func isSourceChanged(fPath, pathPrefix string, diffFiles map[string]bool) bool {
 	return false
 }
 
-// verdictView is the coverage verdict at the top of the upload page.
+// verdictView is a coverage standing against the repo's gate, stated once
+// at the top of the upload page (for that upload) and of the repo page
+// (for the branch's newest merged report).
 type verdictView struct {
 	State  string // "pass", "fail" or "neutral" (no gate configured)
 	Reason string // prose walk-through of the gate rules and their outcome
 }
 
-// uploadVerdict assembles the verdict. The headline pass/fail follows the
-// upload's stored gate result; the reason narrates each configured rule
-// against the values this upload measured, so a reader sees why it stands.
-func (s *Server) uploadVerdict(u *store.Upload, repo *store.Repo, base *store.Upload) verdictView {
+// gateVerdict assembles the verdict. The headline pass/fail follows the
+// stored gate result; the reason narrates each configured rule against
+// the values measured, so a reader sees why it stands. base is the total
+// it is compared against, nil when there is nothing earlier; subject is
+// how the reason names what was measured ("This upload").
+func gateVerdict(subject string, totalPct float64, diff *diffcov.Result, gateFailed bool, gate store.Gate, base *float64) verdictView {
 	v := verdictView{State: "pass"}
-	var baseTotal float64
-	if base != nil {
-		baseTotal = base.TotalPct
-	}
 	switch {
-	case !repo.Gate.Configured():
+	case !gate.Configured():
 		v.State = "neutral"
-	case u.GateFailed:
+	case gateFailed:
 		v.State = "fail"
 	}
-	v.Reason = core.GateReason(u.TotalPct, u.DiffCoverage, repo.Gate, baseTotal, base != nil, "This upload")
+	var baseTotal float64
+	if base != nil {
+		baseTotal = *base
+	}
+	v.Reason = core.GateReason(totalPct, diff, gate, baseTotal, base != nil, subject)
 	return v
 }
 

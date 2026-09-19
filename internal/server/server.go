@@ -316,19 +316,6 @@ func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
-// pageNotFound answers a browser-facing GET whose target is missing (or
-// hidden) with the shell and a 404 — or, when the request came from the
-// single-page app, with the UI API's JSON form of the same answer. The
-// shell says nothing about what was asked for, so a refused lookup and a
-// mistyped URL are the same response byte for byte (D3).
-func (s *Server) pageNotFound(w http.ResponseWriter, r *http.Request) {
-	if apiUIPath(r.URL.Path) {
-		httpError(w, http.StatusNotFound, "not found")
-		return
-	}
-	s.serveApp(w, r, http.StatusNotFound, appHead{})
-}
-
 // shortSHA abbreviates a commit identifier for display.
 func shortSHA(sha string) string {
 	if len(sha) > 12 {

@@ -132,12 +132,17 @@ func (s *Server) sessionUser(r *http.Request) *store.User {
 	return u
 }
 
+// loginURL is the sign-in page, coming back to next afterwards.
+func loginURL(next string) string {
+	return "/login?next=" + url.QueryEscape(next)
+}
+
 func redirectToLogin(w http.ResponseWriter, r *http.Request) {
 	next := r.URL.Path
 	if r.URL.RawQuery != "" {
 		next += "?" + r.URL.RawQuery
 	}
-	http.Redirect(w, r, "/login?next="+url.QueryEscape(next), http.StatusFound)
+	http.Redirect(w, r, loginURL(next), http.StatusFound)
 }
 
 // handleLogout implements POST /logout: the session dies server-side, so a

@@ -1,15 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { DangerCard } from "@/components/organisms/DangerCard";
 import { GatesCard } from "@/components/organisms/GatesCard";
 import { TokenCard } from "@/components/organisms/TokenCard";
 import { SettingsLayout, type SettingsNavItem } from "@/components/templates/SettingsLayout";
-import { Button, Checkbox, Chip, InlineCode, Mono, Notice, TextInput, Textarea } from "@/components/atoms";
-import { Breadcrumbs, Card, CopyField, FormField, PageHeader, QueryBoundary } from "@/components/molecules";
+import { Checkbox, Chip, InlineCode, Mono, Notice, TextInput, Textarea } from "@/components/atoms";
+import { Breadcrumbs, Card, CopyField, FormField, PageHeader, QueryBoundary, SaveFooter } from "@/components/molecules";
 import { ApiError, apiPost } from "@/lib/api/client";
 import { repoSettingsPath, repoSettingsQuery } from "@/lib/api/queries";
 import type { RepoSettings, RepoSettingsInput, TokenReveal } from "@/lib/api/types";
+import { useSectionSave } from "@/lib/sectionSave";
 import { ignorePatterns, patternLabel, repoInput } from "@/lib/settings";
 import { usePageTitle } from "@/lib/title";
 import { routes } from "@/lib/urls";
@@ -32,19 +32,15 @@ function RepoSettingsView({ forge, slug, settings }: { forge: string; slug: stri
   const navigate = useNavigate();
   const key = repoSettingsQuery(forge, slug).queryKey;
 
-  // Every editable card edits one document; each Save posts all of it.
-  const [form, setForm] = useState<RepoSettingsInput>(() => repoInput(settings));
-  const [pressed, setPressed] = useState("");
-  const [savedIn, setSavedIn] = useState("");
-
   const { repo, workspace, owner } = settings;
 
-  const save = useMutation({
-    mutationFn: (input: RepoSettingsInput) => apiPost<RepoSettings>(repoSettingsPath(forge, slug, "save"), input),
-    onSuccess: (next) => {
+  // Every editable card edits one document; each Save posts all of it.
+  const { form, update, section, error } = useSectionSave({
+    seed: () => repoInput(settings),
+    post: (input: RepoSettingsInput) => apiPost<RepoSettings>(repoSettingsPath(forge, slug, "save"), input),
+    onSaved: (next) => {
       client.setQueryData(key, next);
-      setForm(repoInput(next));
-      setSavedIn(pressed);
+      return repoInput(next);
     },
   });
 
@@ -56,29 +52,9 @@ function RepoSettingsView({ forge, slug, settings }: { forge: string; slug: stri
     },
   });
 
-  function update(patch: Partial<RepoSettingsInput>) {
-    setSavedIn("");
-    setForm((f) => ({ ...f, ...patch }));
-  }
-
-  function submit(section: string) {
-    setPressed(section);
-    setSavedIn("");
-    save.mutate(form);
-  }
-
-  function saveFooter(section: string, hint: string, ownerOnly: string) {
-    if (!owner) return <span>{ownerOnly}</span>;
-    return (
-      <>
-        <Button variant="primary" onClick={() => submit(section)} disabled={save.isPending} loading={save.isPending && pressed === section}>
-          {save.isPending && pressed === section ? "Saving…" : "Save"}
-        </Button>
-        <span>{hint}</span>
-        {savedIn === section && <Chip tone="good">Saved</Chip>}
-      </>
-    );
-  }
+  const saveFooter = (id: string, hint: string, ownerOnly: string) => (
+    <SaveFooter owner={owner} hint={hint} ownerOnly={ownerOnly} {...section(id)} />
+  );
 
   const nav: SettingsNavItem[] = [
     { id: "general", label: "General", group: "Repository" },
@@ -119,7 +95,7 @@ function RepoSettingsView({ forge, slug, settings }: { forge: string; slug: stri
           refresh at every sign-in.
         </Notice>
       )}
-      {save.isError && <Notice tone="bad">{save.error instanceof ApiError ? save.error.message : "The settings could not be saved."}</Notice>}
+      {error !== null && <Notice tone="bad">{error instanceof ApiError ? error.message : "The settings could not be saved."}</Notice>}
 
       <SettingsLayout.Section id="general">
         <Card>

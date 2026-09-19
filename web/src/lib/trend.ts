@@ -3,7 +3,7 @@
 // rendered page did. Pure: the component only places these coordinates.
 
 import type { TrendPoint } from "./api/types";
-import { shortSha } from "./format";
+import { pct, round1, shortSha, sig4 } from "./format";
 
 /** How far left of the last point the current-value label can reach, in viewBox units. */
 const LABEL_REACH = 64;
@@ -48,15 +48,7 @@ export interface TrendGeometry {
   lastDate: string;
 }
 
-/** SVG coordinates stay at one decimal, so the markup stays compact. */
-const round1 = (v: number) => Math.round(v * 10) / 10;
-
 const day = (iso: string) => iso.slice(0, 10);
-
-const pct1 = (v: number) => v.toFixed(1) + "%";
-
-/** Go's %.4g: four significant digits with trailing zeros dropped. */
-const sig4 = (v: number) => String(Number(v.toPrecision(4)));
 
 /**
  * The chart for a branch, given its points oldest first (the API already
@@ -95,12 +87,12 @@ export function trendGeometry(points: TrendPoint[], minCoverage: number | null):
     y: y(p.coverage),
     uploadId: p.upload_id,
     gateFailed: p.gate_failed,
-    label: `${day(p.at)} · ${pct1(p.coverage)} · ${shortSha(p.sha)}`,
+    label: `${day(p.at)} · ${pct(p.coverage)} · ${shortSha(p.sha)}`,
   }));
   const path = marks.map((m, i) => `${i === 0 ? "M" : " L"}${m.x} ${m.y}`).join("");
 
-  const grid: TrendLine[] = [{ y: y(hi), label: pct1(hi) }];
-  if (lo !== hi) grid.push({ y: y(lo), label: pct1(lo) });
+  const grid: TrendLine[] = [{ y: y(hi), label: pct(hi) }];
+  if (lo !== hi) grid.push({ y: y(lo), label: pct(lo) });
 
   const lastMark = marks[marks.length - 1] as TrendMark;
   // The label is right-aligned at the last point, so it stretches back over
@@ -120,7 +112,7 @@ export function trendGeometry(points: TrendPoint[], minCoverage: number | null):
     marks,
     grid,
     threshold: minCoverage === null ? null : { y: y(minCoverage), label: `gate ${sig4(minCoverage)}%` },
-    current: { x: lastMark.x, y: labelY, label: pct1(last.coverage) },
+    current: { x: lastMark.x, y: labelY, label: pct(last.coverage) },
     firstDate: day(first.at),
     lastDate: day(last.at),
   };

@@ -12,6 +12,7 @@ import { dashboardQuery, setupQuery, setupStatusQuery, workspaceSettingsPath } f
 import type { Dashboard, DashStats, TokenReveal, WorkspaceGroup } from "@/lib/api/types";
 import { pct, plural } from "@/lib/format";
 import { useUrlNotice } from "@/lib/notice";
+import { readStored, writeStored } from "@/lib/storage";
 import { usePageTitle } from "@/lib/title";
 import { routes } from "@/lib/urls";
 import { attentionRows } from "@/lib/dashboard";
@@ -42,22 +43,6 @@ const setupRoute = (ws: WorkspaceGroup) =>
 // knows whether the workspace has a report.
 const listeningKey = (ws: WorkspaceGroup) => `gocov.setup.listening.${ws.forge}/${ws.prefix}`;
 
-function read(store: "sessionStorage", key: string): string | null {
-  try {
-    return window[store].getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-function write(store: "sessionStorage", key: string, value: string): void {
-  try {
-    window[store].setItem(key, value);
-  } catch {
-    // Storage denied: the card simply forgets between visits.
-  }
-}
-
 /**
  * Setup as part of the dashboard rather than a wizard elsewhere. It fetches
  * its own data and fails quietly: a workspace's repositories are worth more
@@ -72,7 +57,7 @@ function SetupSection({ ws, hasReports }: { ws: WorkspaceGroup; hasReports: bool
   const [arrivedEmpty] = useState(!hasReports);
   const [dismissed, setDismissed] = useState(false);
   const [listeningSince, setListeningSince] = useState<number | null>(() => {
-    const saved = Number(read("sessionStorage", listeningKey(ws)));
+    const saved = Number(readStored("sessionStorage", listeningKey(ws)));
     return Number.isFinite(saved) && saved > 0 ? saved : null;
   });
 
@@ -116,7 +101,7 @@ function SetupSection({ ws, hasReports }: { ws: WorkspaceGroup; hasReports: bool
         if (listeningSince !== null) return;
         const now = Date.now();
         setListeningSince(now);
-        write("sessionStorage", listeningKey(ws), String(now));
+        writeStored("sessionStorage", listeningKey(ws), String(now));
       }}
       onDismiss={() => setDismissed(true)}
     />

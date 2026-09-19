@@ -8,8 +8,7 @@
 // Anyone can type a query string, so a value the page has no sentence for is
 // dropped rather than shown: the banner only ever says what the app wrote.
 
-import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router";
+import { useOneShotParams } from "./oneShotParams";
 
 export interface UrlNotice {
   text: string;
@@ -31,11 +30,7 @@ export interface UrlNoticeOptions {
  * server's and is ignored.
  */
 export function useUrlNotice({ codes }: UrlNoticeOptions): UrlNotice | null {
-  const [params, setParams] = useSearchParams();
-
-  // Captured on the first render: the effect below removes the parameters,
-  // and the message has to survive that.
-  const [notice] = useState<UrlNotice | null>(() => {
+  return useOneShotParams({ when: ["notice", "error"] }, (params) => {
     // hasOwn: "constructor" is a key of every object, and not a sentence.
     const say = (value: string | null) => (value !== null && Object.hasOwn(codes, value) ? codes[value] : undefined);
     const good = say(params.get("notice"));
@@ -44,14 +39,4 @@ export function useUrlNotice({ codes }: UrlNoticeOptions): UrlNotice | null {
     if (bad) return { text: bad, tone: "bad" };
     return null;
   });
-
-  useEffect(() => {
-    if (!params.has("notice") && !params.has("error")) return;
-    const next = new URLSearchParams(params);
-    next.delete("notice");
-    next.delete("error");
-    setParams(next, { replace: true });
-  }, [params, setParams]);
-
-  return notice;
 }

@@ -53,18 +53,24 @@ export function FilesTable({ view, heading = "Files" }: { view: FilesView; headi
   const isOpen = (path: string) => toggled[path] ?? defaults.has(path);
   const toggle = (path: string) => setToggled((was) => ({ ...was, [path]: !isOpen(path) }));
 
+  // Filtering walks every file and rebuilds the tree, so it runs when the
+  // search or the filter moves — not when a directory is opened or closed.
   const needle = query.trim().toLowerCase();
-  const keep = (row: FileRow) => (needle === "" || row.path.toLowerCase().includes(needle)) && keeps[filter](row);
+  const { matched, filtered } = useMemo(() => {
+    const keep = (row: FileRow) => (needle === "" || row.path.toLowerCase().includes(needle)) && keeps[filter](row);
+    return { matched: view.files.filter(keep), filtered: filterTree(tree, keep) };
+  }, [view.files, tree, needle, filter]);
+  const rows = mode === "list" ? matched.map(fileNode) : visibleRows(filtered, isOpen);
 
-  const matched = view.files.filter(keep);
-  const rows = mode === "list" ? matched.map(fileNode) : visibleRows(filterTree(tree, keep), isOpen);
-
-  const counts = {
-    total: view.files.length,
-    changed: view.files.filter(isChanged).length,
-    source: view.files.filter((f) => f.source_changed).length,
-    coverage: view.files.filter((f) => f.coverage_changed).length,
-  };
+  const counts = useMemo(
+    () => ({
+      total: view.files.length,
+      changed: view.files.filter(isChanged).length,
+      source: view.files.filter((f) => f.source_changed).length,
+      coverage: view.files.filter((f) => f.coverage_changed).length,
+    }),
+    [view.files],
+  );
 
   return (
     <section className="FilesTable stack stack-1">

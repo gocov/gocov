@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useNavigate } from "react-router";
 import { LinkButton, Notice } from "@/components/atoms";
 import { QueryBoundary } from "@/components/molecules";
 import { WorkspacePicker } from "@/components/organisms/WorkspacePicker";
@@ -8,6 +7,7 @@ import { ApiError, apiPost } from "@/lib/api/client";
 import { onboardingQuery } from "@/lib/api/queries";
 import type { OnboardingInfo, RegisterInput, RegisterResult } from "@/lib/api/types";
 import { connectOutcome, type ConnectOutcome } from "@/lib/connect";
+import { useOneShotParams } from "@/lib/oneShotParams";
 import { usePageTitle } from "@/lib/title";
 import { routes } from "@/lib/urls";
 import "./OnboardingPage.css";
@@ -37,25 +37,11 @@ export default function OnboardingPage() {
  * message itself stays for as long as the page is open.
  */
 function useConnectOutcome(): ConnectOutcome | null {
-  const [params, setParams] = useSearchParams();
-
-  // Captured on the first render, before the effect below strips the query.
-  const [outcome] = useState<ConnectOutcome | null>(() => {
+  return useOneShotParams({ when: ["connect"], also: ["ws", "installation_id"] }, (params) => {
     const code = params.get("connect");
     if (!code) return null;
     return connectOutcome(code, { ws: params.get("ws"), installationId: params.get("installation_id") });
   });
-
-  useEffect(() => {
-    if (!params.has("connect")) return;
-    const next = new URLSearchParams(params);
-    next.delete("connect");
-    next.delete("ws");
-    next.delete("installation_id");
-    setParams(next, { replace: true });
-  }, [params, setParams]);
-
-  return outcome;
 }
 
 /** What the deleted connect page used to be: the state, in words, with its ways out. */

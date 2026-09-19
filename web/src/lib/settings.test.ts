@@ -4,9 +4,7 @@ import {
   gateLabel,
   ignorePatterns,
   patternLabel,
-  repoDirty,
   repoInput,
-  workspaceDirty,
   workspaceInput,
 } from "./settings";
 
@@ -63,14 +61,6 @@ test("workspaceInput takes only the editable half, detached from the document", 
   expect(workspace.workspace.gate.min_coverage).toBe(80);
 });
 
-test("workspaceDirty sees every field it saves", () => {
-  const saved = workspaceInput(workspace);
-  expect(workspaceDirty(workspaceInput(workspace), saved)).toBe(false);
-  expect(workspaceDirty({ ...saved, default_branch: "trunk" }, saved)).toBe(true);
-  expect(workspaceDirty({ ...saved, report_retention_days: 0 }, saved)).toBe(true);
-  expect(workspaceDirty({ ...saved, gate: gate({ min_coverage: 81 }) }, saved)).toBe(true);
-});
-
 const repo: RepoSettings = {
   repo: {
     forge: "github",
@@ -88,7 +78,7 @@ const repo: RepoSettings = {
   token_masked: "gocov_live_••••",
 };
 
-test("repoInput and repoDirty cover every saved field", () => {
+test("repoInput covers every saved field", () => {
   const saved = repoInput(repo);
   expect(saved).toEqual({
     default_branch: "main",
@@ -96,8 +86,4 @@ test("repoInput and repoDirty cover every saved field", () => {
     ignore_paths: "vendor/**",
     public_reports: true,
   });
-  expect(repoDirty(repoInput(repo), saved)).toBe(false);
-  expect(repoDirty({ ...saved, ignore_paths: "" }, saved)).toBe(true);
-  expect(repoDirty({ ...saved, public_reports: false }, saved)).toBe(true);
-  expect(repoDirty({ ...saved, gate: gate() }, saved)).toBe(true);
 });

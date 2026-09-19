@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"net/url"
 	"time"
 
 	"github.com/gocov/gocov/internal/store"
@@ -133,7 +132,7 @@ func (s *Server) connectCallback(g *connectGrant, w http.ResponseWriter, r *http
 	if u == nil {
 		// The session expired during the consent; sign in and start again
 		// from the settings page the Connect button sits on.
-		http.Redirect(w, r, "/login?next="+url.QueryEscape(settings), http.StatusSeeOther)
+		http.Redirect(w, r, loginURL(settings), http.StatusSeeOther)
 		return true
 	}
 	ws, err := s.store.WorkspaceByPrefix(r.Context(), g.forge, prefix)

@@ -1,4 +1,4 @@
-import type { Trend } from "@/lib/format";
+import { round1, trend } from "@/lib/format";
 import "./Sparkline.css";
 
 // Geometry taken from newSparkView in internal/server/dashboard.go, so the
@@ -7,8 +7,6 @@ const TOP = 3;
 const BOT = 19;
 const WIDTH = 76;
 const MAX_POINTS = 12;
-
-const round1 = (v: number) => Math.round(v * 10) / 10;
 
 /**
  * A repo's recent coverage as a 76×22 glyph, oldest point first. Fewer than
@@ -30,7 +28,7 @@ export function Sparkline({ series, stale = false, label }: { series: number[]; 
   const first = points[0] ?? 0;
   const last = points[points.length - 1] ?? 0;
   // A stopped series has no meaningful direction.
-  const dir: Trend = stale || Math.abs(last - first) < 0.05 ? "flat" : last > first ? "up" : "down";
+  const dir = stale ? "flat" : trend(last - first);
   const tailY = y(last);
 
   return (

@@ -14,6 +14,7 @@ export { OptionRow } from "./OptionRow";
 export { PageHeader } from "./PageHeader";
 export { Pagination, type PageStep } from "./Pagination";
 export { ErrorState, NotFoundState, QueryBoundary, Skeleton } from "./QueryBoundary";
+export { SaveFooter } from "./SaveFooter";
 export { SecretField } from "./SecretField";
 export { SectionHeader } from "./SectionHeader";
 export { SegmentedControl, type SegmentOption } from "./SegmentedControl";

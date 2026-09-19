@@ -4,7 +4,7 @@
 // (collectAttention in internal/server/dashboard.go, and its inline script).
 
 import type { AttentionItem, DashRepo } from "./api/types";
-import { pct, plural } from "./format";
+import { pct, plural, sig4 } from "./format";
 import { routes } from "./urls";
 
 export type AttentionTone = "bad" | "warn";
@@ -39,12 +39,6 @@ export function attentionRows(items: AttentionItem[]): AttentionRow[] {
   return items.map((item) => ({ ...attentionCopy(item), key: `${item.kind}:${item.forge}/${item.slug}` }));
 }
 
-/** Go's %.4g for a threshold: 60 reads "60", 82.55 stays "82.55". */
-function threshold(v: number): string {
-  const s = v.toPrecision(4);
-  return s.includes(".") ? s.replace(/\.?0+$/, "") : s;
-}
-
 export function attentionCopy(item: AttentionItem): AttentionCopy {
   switch (item.kind) {
     case "failing":
@@ -57,7 +51,7 @@ export function attentionCopy(item: AttentionItem): AttentionCopy {
         message:
           item.min_coverage === null || item.coverage === null
             ? "Its latest report failed the coverage gate."
-            : `Coverage ${pct(item.coverage)}, below the ${threshold(item.min_coverage)}% minimum.`,
+            : `Coverage ${pct(item.coverage)}, below the ${sig4(item.min_coverage)}% minimum.`,
         action: "Open repo",
         to: routes.repo(item.forge, item.slug),
       };
@@ -77,9 +71,6 @@ export function attentionCopy(item: AttentionItem): AttentionCopy {
 
 export type RepoFilter = "all" | "failing" | "stale" | "nogate";
 export type RepoSort = "cov" | "drop" | "recent" | "name";
-
-/** The filter tabs, in the order they are shown. */
-export const repoFilters: RepoFilter[] = ["all", "failing", "stale", "nogate"];
 
 export function repoMatches(repo: DashRepo, filter: RepoFilter): boolean {
   switch (filter) {

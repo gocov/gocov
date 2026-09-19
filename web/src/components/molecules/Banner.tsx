@@ -1,26 +1,15 @@
 import { useState, type ReactNode } from "react";
+import { readStored, writeStored } from "@/lib/storage";
 import { Button, Icon } from "../atoms";
 import "./Banner.css";
 
 const key = (id: string) => `gocov.banner.${id}`;
 
-/** Storage can be denied outright (private mode, blocked cookies). */
-function dismissedBefore(id: string | undefined): boolean {
-  if (id === undefined) return false;
-  try {
-    return sessionStorage.getItem(key(id)) === "1";
-  } catch {
-    return false;
-  }
-}
+const dismissedBefore = (id: string | undefined) => id !== undefined && readStored("sessionStorage", key(id)) === "1";
 
+/** A banner that cannot be remembered simply comes back. */
 function rememberDismissal(id: string | undefined) {
-  if (id === undefined) return;
-  try {
-    sessionStorage.setItem(key(id), "1");
-  } catch {
-    // A banner that cannot be remembered simply comes back.
-  }
+  if (id !== undefined) writeStored("sessionStorage", key(id), "1");
 }
 
 /**

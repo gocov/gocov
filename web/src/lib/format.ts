@@ -8,6 +8,12 @@ export const level = (pct: number): Level => (pct < 50 ? "bad" : pct <= 75 ? "wa
 
 export const pct = (v: number) => v.toFixed(1) + "%";
 
+/** Go's %.4g, the way a gate threshold reads: 60 is "60", 82.55 stays "82.55". */
+export const sig4 = (v: number) => String(Number(v.toPrecision(4)));
+
+/** SVG coordinates stay at one decimal, so the markup stays compact. */
+export const round1 = (v: number) => Math.round(v * 10) / 10;
+
 export const shortSha = (sha: string) => (sha.length > 12 ? sha.slice(0, 12) : sha);
 
 export const humanInt = (n: number) => n.toLocaleString("en-US");
