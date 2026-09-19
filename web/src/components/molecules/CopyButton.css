@@ -1,0 +1,2 @@
+/* The width is fixed so "Copy" → "Copied" does not shuffle the row. */
+.CopyButton { min-width: 88px; }

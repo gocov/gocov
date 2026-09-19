@@ -1,0 +1,5 @@
+.InlineCode {
+  padding: 1px 4px;
+  border: 1px solid var(--border); border-radius: 3px;
+  background: var(--bg); overflow-wrap: anywhere;
+}

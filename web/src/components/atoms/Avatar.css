@@ -1,0 +1,7 @@
+.Avatar {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--muted); overflow: hidden;
+}
+.Avatar--initial { color: var(--text); }
+.Avatar__initial { font-size: var(--font-sm); font-weight: 600; line-height: 1; }

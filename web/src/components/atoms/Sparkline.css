@@ -1,0 +1,5 @@
+.Sparkline { display: inline-block; vertical-align: middle; color: var(--muted); }
+.Sparkline--up { color: var(--good); }
+.Sparkline--down { color: var(--bad); }
+.Sparkline--none { color: var(--muted); font-size: var(--font-sm); }
+.Sparkline__tail { stroke: var(--muted); stroke-dasharray: 2 3; }

@@ -1,0 +1,21 @@
+.AttentionList { list-style: none; margin: 0; padding: 0; }
+
+.AttentionList__item {
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+.AttentionList__item:last-child { border-bottom: 0; }
+
+/* The dot sits on the first line of the sentence beside it. */
+.AttentionList__mark { display: flex; align-items: center; flex: none; height: calc(var(--font-md) * 1.5); }
+.AttentionList__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.AttentionList__dot--bad { background: var(--bad); }
+.AttentionList__dot--warn { background: var(--warn); }
+
+.AttentionList__text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.AttentionList__message { color: var(--muted); font-size: var(--font-sm); }
+
+@media (max-width: 720px) {
+  .AttentionList__item { flex-wrap: wrap; gap: var(--space-1); }
+}

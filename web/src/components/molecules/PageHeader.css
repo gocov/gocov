@@ -1,0 +1,14 @@
+.PageHeader {
+  display: flex; align-items: flex-end; gap: var(--space-2); flex-wrap: wrap;
+  padding-bottom: var(--space-2);
+}
+/* The basis is what makes the actions drop to their own row on a narrow
+   screen instead of squeezing the title into a one-letter column. */
+.PageHeader__main { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; flex: 1 1 280px; }
+.PageHeader__title { display: flex; align-items: baseline; gap: var(--space-1); flex-wrap: wrap; min-width: 0; }
+/* A slug or file name in the title is still the title: keep the h1's size. */
+.PageHeader__title .Mono { font-size: inherit; }
+.PageHeader__meta { color: var(--muted); font-size: var(--font-sm); }
+.PageHeader__actions { display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; }
+/* Form controls fill their container by default; in the actions row they size to content. */
+.PageHeader__actions .Select, .PageHeader__actions .TextInput { width: auto; }

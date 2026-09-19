@@ -1,0 +1,15 @@
+/* The panel is a stack; the only things it owns are the width the prose
+   stops at, the filename caption above the block, and the disclosure. */
+.SnippetPanel__auth { color: var(--muted); font-size: var(--font-sm); max-width: 72ch; }
+
+.SnippetPanel__file { color: var(--muted); font-size: var(--font-sm); }
+
+.SnippetPanel__alt { border-top: 1px solid var(--border); padding-top: var(--space-2); }
+.SnippetPanel__alt > summary {
+  cursor: pointer;
+  font-size: var(--font-sm);
+  color: var(--muted);
+  list-style-position: inside;
+}
+.SnippetPanel__alt > summary:hover { color: var(--text); }
+.SnippetPanel__altBody { padding-top: var(--space-1); }

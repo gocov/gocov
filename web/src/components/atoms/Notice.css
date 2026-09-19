@@ -1,0 +1,12 @@
+.Notice {
+  display: flex; align-items: flex-start; gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--text); font-size: var(--font-md);
+}
+.Notice__mark { display: flex; align-items: center; height: 21px; color: var(--muted); }
+.Notice__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.Notice--good .Notice__mark { color: var(--good); }
+.Notice--warn .Notice__mark { color: var(--warn); }
+.Notice--bad .Notice__mark { color: var(--bad); }
+.Notice__body { flex: 1; min-width: 0; }

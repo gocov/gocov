@@ -1,0 +1,3 @@
+/* The page is layout from base.css (.stack) and its organisms; the only
+   thing it owns is the line of advice under the table. */
+.Dashboard__hint { color: var(--muted); font-size: var(--font-sm); }

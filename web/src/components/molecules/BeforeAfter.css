@@ -1,0 +1,6 @@
+.BeforeAfter {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: var(--font-sm); font-variant-numeric: tabular-nums; white-space: nowrap;
+  color: var(--muted);
+}
+.BeforeAfter__after { color: var(--text); font-weight: 500; }

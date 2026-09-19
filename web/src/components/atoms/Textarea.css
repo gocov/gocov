@@ -1,0 +1,10 @@
+.Textarea {
+  width: 100%; min-width: 0; padding: var(--space-1);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--text);
+  font: inherit; font-size: var(--font-md); line-height: 1.5; resize: vertical;
+}
+.Textarea::placeholder { color: var(--muted); }
+.Textarea:disabled { color: var(--muted); background: var(--bg); cursor: default; }
+.Textarea--mono { font-family: var(--mono); font-size: var(--font-sm); }
+.Textarea--invalid { border-color: var(--bad); }

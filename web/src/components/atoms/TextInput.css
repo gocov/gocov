@@ -1,0 +1,16 @@
+.TextInput {
+  height: var(--control); width: 100%; min-width: 0;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--text);
+  font: inherit; font-size: var(--font-md);
+}
+.TextInput::placeholder { color: var(--muted); }
+.TextInput:disabled { color: var(--muted); background: var(--bg); cursor: default; }
+.TextInput--invalid { border-color: var(--bad); }
+.TextInput--search { padding-left: var(--space-3); }
+
+.TextInput__wrap { position: relative; display: inline-flex; align-items: center; width: 100%; }
+.TextInput__icon {
+  position: absolute; left: var(--space-1); display: flex; color: var(--muted); pointer-events: none;
+}

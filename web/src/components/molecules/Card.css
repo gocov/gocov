@@ -1,0 +1,30 @@
+.Card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  overflow: hidden;
+}
+.Card__header {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+.Card__title { min-width: 0; }
+.Card__actions { display: flex; align-items: center; gap: var(--space-1); margin-left: auto; }
+.Card__body { padding: var(--space-2); }
+.Card__body--flush { padding: 0; overflow-x: auto; }
+.Card__footer {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  padding: var(--space-1) var(--space-2);
+  border-top: 1px solid var(--border);
+  color: var(--muted); font-size: var(--font-sm);
+}
+.Card--danger { border-color: color-mix(in srgb, var(--bad) 40%, var(--border)); }
+.Card--danger .Card__header { border-bottom-color: color-mix(in srgb, var(--bad) 40%, var(--border)); }
+.Card--danger .Card__title { color: var(--bad); }
+
+/* A table inside a flush body reaches the edges and scrolls sideways. */
+.Card__body--flush table { min-width: 100%; }
+.Card__body--flush th, .Card__body--flush td {
+  padding: var(--space-1) var(--space-2); text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+.Card__body--flush th { color: var(--muted); font-size: var(--font-sm); font-weight: 500; }
+.Card__body--flush tbody tr:last-child td { border-bottom: 0; }

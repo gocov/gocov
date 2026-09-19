@@ -1,0 +1,6 @@
+.CodeBlock {
+  margin: 0; padding: var(--space-2);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg); color: var(--text);
+  overflow-x: auto; line-height: 1.6;
+}

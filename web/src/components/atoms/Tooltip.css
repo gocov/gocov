@@ -1,0 +1,13 @@
+.Tooltip { position: relative; display: inline-flex; }
+.Tooltip__anchor { display: inline-flex; align-items: center; }
+.Tooltip__bubble {
+  position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+  z-index: 2; max-width: 220px; width: max-content;
+  padding: 4px var(--space-1);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--text);
+  font-size: var(--font-sm); line-height: 1.4; text-align: left;
+  opacity: 0; visibility: hidden; pointer-events: none;
+}
+.Tooltip__anchor:hover + .Tooltip__bubble,
+.Tooltip__anchor:focus-visible + .Tooltip__bubble { opacity: 1; visibility: visible; }
