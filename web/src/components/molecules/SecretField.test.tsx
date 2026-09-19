@@ -56,3 +56,14 @@ test("a variable shows its plain value without a reveal step", () => {
   expect(screen.getByText("https://gocov.example.com")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Reveal" })).not.toBeInTheDocument();
 });
+
+test("says a copy happened without saying what was copied", async () => {
+  const user = userEvent.setup();
+  const onCopy = vi.fn();
+  render(<SecretField name="GOCOV_TOKEN" kind="Secret" masked="•••" onReveal={async () => "gocov_live_9f2c"} onCopy={onCopy} />);
+
+  await user.click(screen.getByRole("button", { name: "Copy" }));
+  expect(onCopy).toHaveBeenCalledOnce();
+  // The callback is for an event: the secret is not its argument.
+  expect(JSON.stringify(onCopy.mock.calls)).not.toContain("gocov_live_9f2c");
+});

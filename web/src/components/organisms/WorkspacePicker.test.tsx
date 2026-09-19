@@ -92,7 +92,7 @@ test("Create and Join hand the prefix back", async () => {
 
 test("the row being registered spins, and the rest wait with it", () => {
   show({ info: info({ rows, membership_count: 4 }), busy: "acme" });
-  expect(screen.getByRole("button", { name: "Creating" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Creating…" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Join" })).toBeDisabled();
   expect(screen.queryByRole("button", { name: "Create" })).not.toBeInTheDocument();
 });

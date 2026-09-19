@@ -71,7 +71,7 @@ function RepoSettingsView({ forge, slug, settings }: { forge: string; slug: stri
     if (!owner) return <span>{ownerOnly}</span>;
     return (
       <>
-        <Button variant="primary" onClick={() => submit(section)} disabled={save.isPending}>
+        <Button variant="primary" onClick={() => submit(section)} disabled={save.isPending} loading={save.isPending && pressed === section}>
           {save.isPending && pressed === section ? "Saving…" : "Save"}
         </Button>
         <span>{hint}</span>

@@ -4,17 +4,8 @@ import { Link, NavLink, Outlet, useLocation } from "react-router";
 import { initAnalytics, usePageviews } from "@/lib/analytics";
 import { sessionQuery } from "@/lib/api/queries";
 import { routes, server } from "@/lib/urls";
-import { Button, Icon } from "../atoms";
+import { Button, Icon, Logo } from "../atoms";
 import "./AppShell.css";
-
-function Mark() {
-  return (
-    <svg viewBox="0 0 32 32" width="18" height="18" aria-hidden="true">
-      <circle cx="16" cy="16" r="12.5" fill="none" stroke="var(--border)" strokeWidth="5" />
-      <circle cx="16" cy="16" r="12.5" fill="none" stroke="var(--accent)" strokeWidth="5" strokeLinecap="round" strokeDasharray="61.3 78.5" transform="rotate(-90 16 16)" />
-    </svg>
-  );
-}
 
 async function signOut() {
   await fetch(server.logout(), { method: "POST", credentials: "same-origin" });
@@ -35,7 +26,7 @@ export function AppShell() {
       <header className="AppShell__bar">
         <nav className="AppShell__nav" aria-label="Main">
           <NavLink to="/" className="AppShell__brand">
-            <Mark /> gocov
+            <Logo /> gocov
           </NavLink>
           <NavLink to="/" end className="AppShell__link">
             Repositories

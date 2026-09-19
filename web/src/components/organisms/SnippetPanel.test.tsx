@@ -2,7 +2,10 @@ import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { SetupInfo } from "@/lib/api/types";
 import { renderPage } from "@/test/render";
+import { track } from "@/lib/analytics";
 import { SnippetPanel } from "./SnippetPanel";
+
+vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 const info: SetupInfo = {
   workspace: { forge: "github", prefix: "acme", forge_label: "GitHub" },
@@ -22,6 +25,7 @@ const reveal = vi.fn(async () => "gcv_the_whole_token");
 
 beforeEach(() => {
   reveal.mockClear();
+  vi.mocked(track).mockClear();
   window.localStorage.clear();
 });
 
@@ -90,6 +94,20 @@ test("“Use a token instead” swaps the snippet and reveals the token", async 
   // Closing it puts the identity-token snippet back.
   await user.click(screen.getByText("Use a token instead"));
   expect(snippetText()).toContain("id-token: write");
+});
+
+test("copying the token is an event that names the workspace's forge, never the token", async () => {
+  const user = userEvent.setup();
+  show({ tokenless: false });
+
+  // The snippet has its own Copy; the token's is the small one in its field.
+  const field = screen.getByText("GOCOV_TOKEN").closest(".SecretField") as HTMLElement;
+  await user.click(within(field).getByRole("button", { name: "Copy" }));
+
+  expect(await window.navigator.clipboard.readText()).toBe("gcv_the_whole_token");
+  const calls = vi.mocked(track).mock.calls.filter(([event]) => event === "copy_token_clicked");
+  expect(calls).toHaveLength(1);
+  expect(JSON.stringify(calls)).not.toContain("gcv_the_whole_token");
 });
 
 test("a token workspace shows where the secret goes, up front", () => {

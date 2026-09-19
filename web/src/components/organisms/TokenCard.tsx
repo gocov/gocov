@@ -85,7 +85,7 @@ export function TokenCard({ title, intro, serverUrl, tokenMasked, owner, onRevea
       <Card.Footer>
         {owner ? (
           <>
-            <Button onClick={() => setConfirming(true)} disabled={rotating}>
+            <Button onClick={() => setConfirming(true)} loading={rotating}>
               {rotating ? "Rotating…" : "Rotate token"}
             </Button>
             <span>The old token stops working the moment you rotate.</span>

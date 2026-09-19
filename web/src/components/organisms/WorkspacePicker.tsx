@@ -1,4 +1,4 @@
-import { Avatar, Button, LinkButton, Mono, Notice, Spinner } from "@/components/atoms";
+import { Avatar, Button, LinkButton, Mono, Notice } from "@/components/atoms";
 import { Card, EmptyState, OptionRow, PageHeader } from "@/components/molecules";
 import type { OnboardingInfo, OnboardingRow } from "@/lib/api/types";
 import { plural } from "@/lib/format";
@@ -65,15 +65,15 @@ export function WorkspacePicker({ info, busy, onRegister, onEvent }: WorkspacePi
               </Notice>
             ) : (
               <div className="stack">
-                {/* LinkButton forwards no handlers; the click is caught on its way out. */}
-                <span
-                  className="WorkspacePicker__act"
-                  onClick={() => onEvent?.("install_app_clicked", { forge: info.forge })}
-                >
-                  <LinkButton variant="primary" href={info.install_url}>
+                <div>
+                  <LinkButton
+                    variant="primary"
+                    href={info.install_url}
+                    onClick={() => onEvent?.("install_app_clicked", { forge: info.forge })}
+                  >
                     Install the gocov app
                   </LinkButton>
-                </span>
+                </div>
                 <p className="muted small">
                   gocov never needs your source code &mdash; only the coverage reports you upload.
                 </p>
@@ -95,12 +95,13 @@ export function WorkspacePicker({ info, busy, onRegister, onEvent }: WorkspacePi
       <Button
         variant={create ? "primary" : "default"}
         disabled={acting}
+        loading={busy === row.prefix}
         onClick={() => {
           onEvent?.("register_workspace_clicked", { forge: info.forge });
           onRegister(row.prefix);
         }}
       >
-        {busy === row.prefix ? <Spinner label={create ? "Creating" : "Joining"} /> : create ? "Create" : "Join"}
+        {busy !== row.prefix ? (create ? "Create" : "Join") : create ? "Creating…" : "Joining…"}
       </Button>
     );
   }

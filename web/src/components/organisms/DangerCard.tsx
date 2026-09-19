@@ -56,7 +56,7 @@ export function DangerCard({
       <Card.Footer>
         {owner ? (
           <>
-            <Button variant="danger" disabled={busy} onClick={() => setConfirming(true)}>
+            <Button variant="danger" loading={busy} onClick={() => setConfirming(true)}>
               {actionLabel}
             </Button>
             <span>{hint}</span>

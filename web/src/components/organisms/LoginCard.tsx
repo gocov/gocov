@@ -1,20 +1,11 @@
 import { Link } from "react-router";
-import { ForgeMark, Notice } from "@/components/atoms";
+import { ForgeMark, Logo, Notice } from "@/components/atoms";
 import { Card } from "@/components/molecules";
 import type { Forge, LoginInfo } from "@/lib/api/types";
 import { routes, server } from "@/lib/urls";
 import "./LoginCard.css";
 
 /** The ring, as the app bar wears it. Copied from AppShell — atoms own no mark. */
-function Mark() {
-  return (
-    <svg viewBox="0 0 32 32" width="34" height="34" aria-hidden="true">
-      <circle cx="16" cy="16" r="12.5" fill="none" stroke="var(--border)" strokeWidth="5" />
-      <circle cx="16" cy="16" r="12.5" fill="none" stroke="var(--accent)" strokeWidth="5" strokeLinecap="round" strokeDasharray="61.3 78.5" transform="rotate(-90 16 16)" />
-    </svg>
-  );
-}
-
 const forgeLabels: Record<string, string> = { github: "GitHub", gitlab: "GitLab", bitbucket: "Bitbucket" };
 
 const forgeLabel = (forge: Forge) => forgeLabels[forge] ?? forge.charAt(0).toUpperCase() + forge.slice(1);
@@ -49,7 +40,7 @@ export function LoginCard({
         <Card.Body>
           <div className="stack">
             <div className="LoginCard__head">
-              <Mark />
+              <Logo size={34} />
               <h1>Sign in to gocov</h1>
             </div>
 

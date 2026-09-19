@@ -12,6 +12,7 @@ import {
   Icon,
   InlineCode,
   LinkButton,
+  Logo,
   Mono,
   Notice,
   Select,
@@ -153,6 +154,11 @@ export default function ComponentsPage() {
         </Spec>
         <Spec caption="disabled">
           <Button disabled>Unavailable</Button>
+        </Spec>
+        <Spec caption="loading">
+          <Button variant="primary" loading>
+            Saving…
+          </Button>
         </Spec>
         <Spec caption="link in the app">
           <LinkButton to="/">Dashboard</LinkButton>
@@ -347,6 +353,15 @@ export default function ComponentsPage() {
         </Spec>
         <Spec caption="larger">
           <Avatar kind="forge" forge="gitlab" size={40} />
+        </Spec>
+      </Demo>
+
+      <Demo title="Logo" note="the coverage ring, drawn from the tokens">
+        <Spec caption="top bar">
+          <Logo />
+        </Spec>
+        <Spec caption="sign-in card">
+          <Logo size={34} />
         </Spec>
       </Demo>
 

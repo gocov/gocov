@@ -15,6 +15,8 @@ interface Props {
   onReveal?: () => Promise<string>;
   /** A viewer who may not see the value at all: the header, and nothing else. */
   locked?: boolean;
+  /** The value was copied (or the attempt made) — for the caller's event, never the value. */
+  onCopy?: () => void;
 }
 
 /**
@@ -22,7 +24,7 @@ interface Props {
  * and the value itself — masked until asked for. The value carries
  * data-ph-no-capture so session replay never records a token.
  */
-export function SecretField({ name, kind, note, value, masked, onReveal, locked }: Props) {
+export function SecretField({ name, kind, note, value, masked, onReveal, locked, onCopy }: Props) {
   const [revealed, setRevealed] = useState<string | undefined>(value);
   const [shown, setShown] = useState(value !== undefined);
   const [busy, setBusy] = useState(false);
@@ -76,7 +78,7 @@ export function SecretField({ name, kind, note, value, masked, onReveal, locked 
               {shown ? "Hide" : "Reveal"}
             </Button>
           )}
-          <CopyButton size="sm" value={() => fetchValue()} />
+          <CopyButton size="sm" value={() => fetchValue()} onCopied={onCopy} />
         </div>
       )}
       {error !== "" && (

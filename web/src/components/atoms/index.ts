@@ -9,6 +9,7 @@ export { Delta } from "./Delta";
 export { ForgeMark, type ForgeName } from "./ForgeMark";
 export { Icon, type IconName } from "./Icon";
 export { InlineCode } from "./InlineCode";
+export { Logo } from "./Logo";
 export { Mono } from "./Mono";
 export { Notice, type NoticeTone } from "./Notice";
 export { Select } from "./Select";

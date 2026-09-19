@@ -1,6 +1,7 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ReactNode } from "react";
 import { Link } from "react-router";
 import { Icon, type IconName } from "./Icon";
+import { Spinner } from "./Spinner";
 import "./Button.css";
 
 type Variant = "default" | "primary" | "danger" | "quiet";
@@ -13,35 +14,61 @@ interface Look {
   children: ReactNode;
 }
 
-const cls = ({ variant = "default", size = "md" }: Look, extra?: string) =>
+const cls = ({ variant = "default", size = "md" }: Pick<Look, "variant" | "size">, extra?: string) =>
   ["Button", variant !== "default" && `Button--${variant}`, size === "sm" && "Button--sm", extra].filter(Boolean).join(" ");
 
-export function Button({ variant, size, icon, children, className, type = "button", ...rest }: Look & ButtonHTMLAttributes<HTMLButtonElement>) {
+interface ButtonProps extends Look, Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children"> {
+  /**
+   * The action this button started is still running: a spinner takes the
+   * icon's place and the button cannot be pressed again. The words are the
+   * caller's — "Saving…" says more than a spinner does.
+   */
+  loading?: boolean;
+}
+
+export function Button({ variant, size, icon, loading = false, disabled, children, className, type = "button", ...rest }: ButtonProps) {
   return (
-    <button type={type} className={cls({ variant, size, children }, className)} {...rest}>
-      {icon && <Icon name={icon} />}
+    <button
+      type={type}
+      className={cls({ variant, size }, className)}
+      disabled={disabled || loading}
+      aria-busy={loading || undefined}
+      {...rest}
+    >
+      {loading ? <Spinner label={null} /> : icon && <Icon name={icon} />}
       {children}
     </button>
   );
 }
 
-/** A link that looks like a button: `to` stays in the app, `href` leaves it. */
-export function LinkButton({ to, href, external, ...look }: Look & { to?: string; href?: string; external?: boolean }) {
+type LinkButtonProps = Look &
+  Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href" | "children"> & {
+    to?: string;
+    href?: string;
+    external?: boolean;
+  };
+
+/**
+ * A link that looks like a button: `to` stays in the app, `href` leaves it.
+ * Everything else an anchor takes — onClick, aria-*, data-* — reaches the
+ * element either way.
+ */
+export function LinkButton({ to, href, external, variant, size, icon, children, className, ...rest }: LinkButtonProps) {
   const content = (
     <>
-      {look.icon && <Icon name={look.icon} />}
-      {look.children}
+      {icon && <Icon name={icon} />}
+      {children}
     </>
   );
   if (to !== undefined) {
     return (
-      <Link to={to} className={cls(look)}>
+      <Link to={to} className={cls({ variant, size }, className)} {...rest}>
         {content}
       </Link>
     );
   }
   return (
-    <a href={href} className={cls(look)} {...(external ? { target: "_blank", rel: "noopener" } : {})}>
+    <a href={href} className={cls({ variant, size }, className)} {...(external ? { target: "_blank", rel: "noopener" } : {})} {...rest}>
       {content}
     </a>
   );

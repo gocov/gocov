@@ -33,3 +33,29 @@ test("survives a browser with no clipboard at all", async () => {
   expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
   Object.defineProperty(navigator, "clipboard", { value: original, configurable: true });
 });
+
+test("tells its owner the copy happened, and whether it reached the clipboard", async () => {
+  const onCopied = vi.fn();
+  render(<CopyButton value="snippet" variant="primary" onCopied={onCopied} />);
+  const button = screen.getByRole("button", { name: "Copy" });
+  expect(button).toHaveClass("Button--primary");
+  await userEvent.setup().click(button);
+  expect(onCopied).toHaveBeenCalledExactlyOnceWith(true);
+});
+
+test("a blocked clipboard is still a copy that was asked for", async () => {
+  const original = navigator.clipboard;
+  Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+  const onCopied = vi.fn();
+  render(<CopyButton value="snippet" onCopied={onCopied} />);
+  await userEvent.click(screen.getByRole("button", { name: "Copy" }));
+  expect(onCopied).toHaveBeenCalledExactlyOnceWith(false);
+  Object.defineProperty(navigator, "clipboard", { value: original, configurable: true });
+});
+
+test("a value that could not be fetched was never copied", async () => {
+  const onCopied = vi.fn();
+  render(<CopyButton value={() => Promise.reject(new Error("forbidden"))} onCopied={onCopied} />);
+  await userEvent.setup().click(screen.getByRole("button", { name: "Copy" }));
+  expect(onCopied).not.toHaveBeenCalled();
+});

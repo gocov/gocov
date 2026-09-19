@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router";
-import { Button, CodeBlock, Mono, Notice } from "@/components/atoms";
-import { SecretField, SegmentedControl } from "@/components/molecules";
+import { CodeBlock, Mono, Notice } from "@/components/atoms";
+import { CopyButton, SecretField, SegmentedControl } from "@/components/molecules";
 import { track } from "@/lib/analytics";
 import type { SetupInfo } from "@/lib/api/types";
 import { buildSnippet, languageSpec, languages, tokenWhere, type LanguageId } from "@/lib/snippets";
@@ -30,21 +30,6 @@ function rememberLanguage(id: LanguageId): void {
   }
 }
 
-const COPIED_MS = 1200;
-
-/** Best effort: the snippet is on screen either way, so a failure is silent. */
-async function toClipboard(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    // A denied permission is the same as no clipboard at all.
-  }
-  return false;
-}
-
 interface Props {
   info: SetupInfo;
   /** Fetches the upload token. Called at most once; the value stays in state. */
@@ -62,7 +47,6 @@ interface Props {
 export function SnippetPanel({ info, onReveal, onCopied }: Props) {
   const [language, setLanguage] = useState<LanguageId>(storedLanguage);
   const [tokenOpen, setTokenOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
 
   const { forge, forge_label: forgeLabel, prefix } = info.workspace;
   // The alternative path rewrites the snippet while it is open: what is on
@@ -84,12 +68,6 @@ export function SnippetPanel({ info, onReveal, onCopied }: Props) {
     [forge, language, tokenless, info.server_implicit, info.base_url, info.gitlab_catalog, info.cli_version],
   );
 
-  useEffect(() => {
-    if (!copied) return;
-    const timer = setTimeout(() => setCopied(false), COPIED_MS);
-    return () => clearTimeout(timer);
-  }, [copied]);
-
   function pickLanguage(value: string) {
     const id = languageSpec(value).id;
     setLanguage(id);
@@ -97,10 +75,9 @@ export function SnippetPanel({ info, onReveal, onCopied }: Props) {
     track("language_selected", { ...events, language: id });
   }
 
-  async function copy() {
+  // Even a blocked clipboard means the snippet was asked for: setup moves on.
+  function copied() {
     track("copy_snippet_clicked", events);
-    if (await toClipboard(code)) setCopied(true);
-    // Even a failed clipboard means the snippet was asked for: setup moves on.
     onCopied?.();
   }
 
@@ -131,6 +108,7 @@ export function SnippetPanel({ info, onReveal, onCopied }: Props) {
               return onReveal();
             }
       }
+      onCopy={() => track("copy_token_clicked", events)}
     />
   );
 
@@ -160,9 +138,7 @@ export function SnippetPanel({ info, onReveal, onCopied }: Props) {
         <Mono className="SnippetPanel__file">{filename}</Mono>
         <CodeBlock label={`${filename} snippet`}>{code}</CodeBlock>
         <div className="row">
-          <Button variant="primary" icon={copied ? "check" : "copy"} onClick={() => void copy()}>
-            {copied ? "Copied" : "Copy snippet"}
-          </Button>
+          <CopyButton variant="primary" label="Copy snippet" value={code} onCopied={copied} />
           <span className="muted small">{languageSpec(language).format}</span>
         </div>
       </div>

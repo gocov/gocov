@@ -1,7 +1,4 @@
 .WorkspacePicker__rows { display: flex; flex-direction: column; }
 .WorkspacePicker__rows > * + * { border-top: 1px solid var(--border); }
 
-/* Wraps the install link only to catch its click; it must not add a box. */
-.WorkspacePicker__act { display: inline-flex; }
-
 .WorkspacePicker__foot { color: var(--muted); font-size: var(--font-sm); }

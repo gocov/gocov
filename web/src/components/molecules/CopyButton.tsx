@@ -38,16 +38,22 @@ async function writeClipboard(text: string): Promise<boolean> {
   return copyFallback(text);
 }
 
-/** Copies `value` and says so for a moment. Silent — and harmless — when it cannot. */
-export function CopyButton({
-  value,
-  label = "Copy",
-  size = "md",
-}: {
+interface Props {
   value: CopySource;
   label?: string;
   size?: "md" | "sm";
-}) {
+  variant?: "default" | "primary";
+  /**
+   * The copy was attempted: `ok` says whether the text reached the clipboard.
+   * It is called either way — someone who pressed Copy asked for the text,
+   * and a blocked clipboard does not change that — but not when the value
+   * itself could not be obtained.
+   */
+  onCopied?: (ok: boolean) => void;
+}
+
+/** Copies `value` and says so for a moment. Silent — and harmless — when it cannot. */
+export function CopyButton({ value, label = "Copy", size = "md", variant = "default", onCopied }: Props) {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -57,16 +63,20 @@ export function CopyButton({
   }, [copied]);
 
   async function copy() {
+    let text: string;
     try {
-      const text = typeof value === "function" ? await value() : value;
-      if (await writeClipboard(text)) setCopied(true);
+      text = typeof value === "function" ? await value() : value;
     } catch {
       // Fetching the value failed; whoever owns it reports that itself.
+      return;
     }
+    const ok = await writeClipboard(text);
+    if (ok) setCopied(true);
+    onCopied?.(ok);
   }
 
   return (
-    <Button className="CopyButton" size={size} icon={copied ? "check" : "copy"} onClick={() => void copy()}>
+    <Button className="CopyButton" size={size} variant={variant} icon={copied ? "check" : "copy"} onClick={() => void copy()}>
       {copied ? "Copied" : label}
     </Button>
   );
