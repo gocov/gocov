@@ -1,8 +1,8 @@
 # Forge apps & credentials
 
-This page is for self-hosters. It sets up what makes the **Connect workspace** button work on your instance — what
-users then do with that button is [Connect your forge](connecting.md); on the hosted service all of this is already
-done.
+This page is for self-hosters. It sets up what makes the connect button in workspace settings work on your instance —
+what users then do with that button is [Connect your forge](connecting.md); on the hosted service all of this is
+already done.
 
 Forge access is per workspace, through its one-click connection: a GitHub App installation, or a Bitbucket/GitLab
 OAuth grant. There is no manual bot token to provision. The OAuth consumer/app used for
@@ -33,10 +33,11 @@ GOCOV_GITHUB_APP_ID=...
 GOCOV_GITHUB_APP_PRIVATE_KEY=/path/to/gocov.private-key.pem  # or the PEM content itself
 ```
 
-Workspace owners then connect from the workspace settings or setup page; after GitHub's install screen they land back on gocov
-with the workspace connected. The App covers every surface, check runs included — it is the first-class Checks API
-citizen, so check runs are not permission-fragile — and posts as the app's bot identity (e.g. `gocov[bot]`). In hosted
-mode an install on an account with no workspace yet registers it on the spot (same claim rules as **/register**).
+Workspace owners then connect from workspace settings — and on GitHub the first screen a new signed-in user sees is
+that same install; after GitHub's install screen they land back on gocov with the workspace connected. The App covers
+every surface, check runs included — it is the first-class Checks API citizen, so check runs are not
+permission-fragile — and posts as the app's bot identity (e.g. `gocov[bot]`). In hosted mode an install on an account
+with no workspace yet registers it on the spot (same rules as creating one from the picker).
 
 The *Actions: Read-only* permission is what powers
 [tokenless fork-PR uploads](pull-requests.md#fork-prs-without-a-token): the server verifies a claimed workflow run
@@ -62,14 +63,14 @@ The value is hex-decoded straight into the AES-256 key — there is no key-stret
 `openssl rand -hex 32` rather than inventing a passphrase; the server refuses to boot on anything else.
 
 The grant covers every surface: build status, Code Insights report and annotations, PR diff coverage, PR comments,
-source view and default branch. Bitbucket has no app identity, so posts appear as the account that clicked Connect —
-the UI states this at connect time, and teams with a bot account should connect with it.
+source view and default branch. Bitbucket has no app identity, so posts appear as the account that granted the access
+— the UI states this at connect time, and teams with a bot account should connect with it.
 
 ## GitLab
 
 Same shape as Bitbucket: the sign-in OAuth application, plus `GOCOV_SECRET_KEY`, plus one extra scope — the
 application must carry **`api` in addition to** `read_user` and `read_api`. Sign-in keeps requesting only the read
-scopes; the bigger consent happens solely on Connect. Posts appear as the account that clicked Connect.
+scopes; the bigger consent happens solely on **Grant write access**. Posts appear as the account that granted it.
 
 ## How grants are stored
 

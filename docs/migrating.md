@@ -12,7 +12,7 @@ switch the badge and the required checks.
 
 ## The order that works
 
-1. [Sign in](getting-started.md), claim the workspace and connect it to the forge. Nothing changes in your repos yet.
+1. [Sign in](getting-started.md), create the workspace and connect it to the forge. Nothing changes in your repos yet.
 2. Add the gocov upload step **next to** the existing one. From the next push both report; compare the numbers on a
    few pull requests. Paths that do not line up show as an empty diff coverage —
    [Why coverage changed](coverage-changed.md) has the fixes.
@@ -74,10 +74,10 @@ CLI or action inputs. The table maps each `codecov.yml` key to where it went.
 
 | `codecov.yml` | gocov |
 |---|---|
-| `coverage.status.project.default.target: 80%` | Gate → **Min coverage** `80`. |
-| `coverage.status.project.default.target: auto` + `threshold: 2` | Gate → **Max coverage drop** `2`. Codecov compares with the base commit; gocov compares with the latest gate-passing upload on the default branch, so a drop cannot be laundered by re-running CI or ratcheted down push by push. |
-| `coverage.status.patch.default.target: 80%` | Gate → **Min diff coverage** `80`. |
-| `coverage.status.patch.default.target: auto` | No direct equivalent. Set **Min diff coverage** to the total you expect of new code, or leave it empty: diff coverage is still reported on every PR. |
+| `coverage.status.project.default.target: 80%` | Gate → **Minimum total coverage** `80`. |
+| `coverage.status.project.default.target: auto` + `threshold: 2` | Gate → **Maximum coverage drop** `2`. Codecov compares with the base commit; gocov compares with the latest gate-passing upload on the default branch, so a drop cannot be laundered by re-running CI or ratcheted down push by push. |
+| `coverage.status.patch.default.target: 80%` | Gate → **Minimum diff coverage** `80`. |
+| `coverage.status.patch.default.target: auto` | No direct equivalent. Set **Minimum diff coverage** to the total you expect of new code, or leave it empty: diff coverage is still reported on every PR. |
 | `informational: true` | Leave the corresponding gate field empty. The number is still reported; it just cannot fail the status. |
 | `threshold` on `patch` | — (diff coverage has a minimum, not a drop tolerance). |
 | `if_ci_failed`, `only_pulls`, `branches`, `paths` on a status | — . The gate applies to every upload; the diff rule only has something to measure on PR uploads. |
@@ -165,8 +165,8 @@ test:
 ### Thresholds, checks and the badge
 
 Coveralls' repository settings map onto the [gate](coverage-gate.md): **Coverage threshold for failure** is
-**Min coverage**, **Coverage decrease threshold for failure** is **Max coverage drop**. Coveralls has no
-per-PR-lines rule; **Min diff coverage** is the one you gain.
+**Minimum total coverage**, **Coverage decrease threshold for failure** is **Maximum coverage drop**. Coveralls has no
+per-PR-lines rule; **Minimum diff coverage** is the one you gain.
 
 Replace the `coverage/coveralls` required check with `gocov` or `gocov coverage`, then the badge:
 
@@ -185,7 +185,7 @@ Neither the Codecov token nor the Coveralls repo token has an equivalent that yo
 Pipelines and GitLab CI the job proves its own identity with a short-lived OIDC token the forge mints, and gocov
 verifies it through the workspace's connection — nothing to create, share or rotate. The per-CI pages show the one
 line that turns it on. A CI that cannot mint one uses the workspace's **upload token** as a `GOCOV_TOKEN` variable
-instead; owners find it on the setup page.
+instead; owners reveal it in workspace settings, under *Uploads*.
 
 ## What you will not find
 

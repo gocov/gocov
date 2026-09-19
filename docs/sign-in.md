@@ -95,15 +95,17 @@ until one of the new admins signs in.
 ## Hosted mode (self-service signup)
 
 `GOCOV_MODE=hosted` turns the instance into a self-service one: any forge account may sign in, and a user who belongs to
-no tracked workspace lands on **/register**, which lists the workspaces their forge account is a member of (captured at
-sign-in). Claiming one creates the workspace, seats the user as its owner and shows the upload token — once; afterwards
-it can only be rotated. Creating a workspace takes an [owner's role](#owners-and-members) on the forge, since it mints
-the token and makes a tenant; a member sees the workspace marked *owners only* and asks an admin to register it. Only
-workspaces the forge itself reports for the account can be registered, so there is nothing to dispute: if a colleague
-registered your workspace first, signing in simply makes you a member (or an owner, if the forge says so).
+no tracked workspace lands on the workspace picker, which lists the workspaces their forge account is a member of
+(captured at sign-in) with **Create**, **Join** or **Open** beside each. On GitHub, where the instance has an App, the
+same screen is the App install instead: installing it registers the workspace. Creating a workspace seats the user as
+its owner and mints its upload token, which owners can reveal — and rotate — in workspace settings from then on.
+Creating one takes an [owner's role](#owners-and-members) on the forge, since it mints the token and makes a tenant; a
+member sees the workspace marked as needing an owner and asks an admin to register it. Only workspaces the forge itself
+reports for the account can be registered, so there is nothing to dispute: if a colleague registered your workspace
+first, signing in simply makes you a member (or an owner, if the forge says so).
 
-Registration lands on an onboarding page: the forge-appropriate CI snippet with the server URL and token pre-filled, and
-a live "waiting for your first upload" state that flips to the repo link once coverage arrives.
+Registration lands on the new workspace's dashboard, where a **Set up coverage** card carries the forge-appropriate CI
+snippet — server URL filled in, token folded away behind it — and waits for the first upload.
 
 The default (`GOCOV_MODE=private`) keeps exactly the behavior described above — self-hosted deployments upgrade
 with zero change. Hosted mode requires at least one sign-in provider.
@@ -112,8 +114,8 @@ with zero change. Hosted mode requires at least one sign-in provider.
 
 A brand-new instance tracks no workspaces yet, so the derived allow-set is empty and no one could sign in. Set
 `GOCOV_ALLOWED_WORKSPACES` to the workspace/org you want to track (e.g. `GOCOV_ALLOWED_WORKSPACES=myorg`)
-so its members can sign in; the first member to sign in lands on the onboarding wizard and, if the forge lists them as
-an admin of the workspace, registers it, which mints its upload token. With an explicit `GOCOV_ALLOWED_WORKSPACES`,
+so its members can sign in; the first member to sign in lands on the workspace picker and, if the forge lists them as
+an admin of the workspace, creates it there, which mints its upload token. With an explicit `GOCOV_ALLOWED_WORKSPACES`,
 sign-in stays pinned to that list no matter what gets registered later; leave it unset and the allow-set grows to
 include every workspace registered from the UI. Signed-in users can register any workspace their forge account lists
 them as an [owner](#owners-and-members) of.
