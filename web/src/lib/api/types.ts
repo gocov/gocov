@@ -137,6 +137,12 @@ export interface FileRow {
   uncovered: string;
   /** Coverage of the same path at the baseline; null when absent or no baseline. */
   before: number | null;
+  /**
+   * The baseline's own statement counts for the path, null with `before`. A
+   * directory's "before" is rolled up from these.
+   */
+  before_covered_stmts: number | null;
+  before_total_stmts: number | null;
   new_file: boolean;
   /** Ranges covered at the baseline but not now. */
   newly_uncovered: string;

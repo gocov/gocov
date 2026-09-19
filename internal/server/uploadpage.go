@@ -238,6 +238,8 @@ func (s *Server) buildFilesViewData(ctx context.Context, upload *store.Upload, b
 			if bf, ok := baseFiles[f.Path]; ok {
 				row.HasBefore = true
 				row.BeforePct = bf.Pct
+				row.BeforeCovered = bf.CoveredStmts
+				row.BeforeTotal = bf.TotalStmts
 				row.DeltaVal = f.Pct - bf.Pct
 				// A move too small to show as a percentage is not a change.
 				if row.DeltaVal >= deltaEpsilon || row.DeltaVal <= -deltaEpsilon {
@@ -296,6 +298,8 @@ type uploadFileRow struct {
 	Uncovered         string  // all-time uncovered ranges, shown when there is no baseline
 	HasBefore         bool    // the path existed at the baseline
 	BeforePct         float64 // baseline coverage
+	BeforeCovered     int64   // baseline covered statements
+	BeforeTotal       int64   // baseline total statements
 	DeltaVal          float64 // after − before, for ordering
 	NewFile           bool    // absent from the baseline upload
 	NewlyMiss         string  // ranges covered at the baseline but uncovered now

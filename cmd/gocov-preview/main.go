@@ -177,7 +177,7 @@ func main() {
 		CreatedAt: base.Add(44 * 24 * time.Hour),
 	}
 	baseFiles := append([]*store.UploadFile{{
-		Path: "internal/billing/charge.go", Pct: 49.0, CoveredStmts: 15, TotalStmts: 26,
+		Path: "internal/billing/charge.go", Pct: 57.7, CoveredStmts: 15, TotalStmts: 26,
 		Blocks: chargeBaseBlocks(),
 	}}, steadyFiles()...)
 	if err := st.CreateUpload(ctx, baseUpload, baseFiles); err != nil {

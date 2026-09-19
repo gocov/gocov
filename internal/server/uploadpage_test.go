@@ -164,9 +164,21 @@ func TestAPIUploadPageBeforeAfter(t *testing.T) {
 	if a.NewlyUncovered != "7-9" || !a.CoverageChanged {
 		t.Errorf("a.go regression = %+v, want lines 7-9 newly uncovered", a)
 	}
+	// The baseline's own counts ride along, so the app's directory rollup
+	// weighs a.go by what it had then (8 of 8), not by what it has now.
+	if a.BeforeCoveredStmts == nil || a.BeforeTotalStmts == nil || *a.BeforeCoveredStmts != 8 || *a.BeforeTotalStmts != 8 {
+		t.Errorf("a.go baseline statements = %v/%v, want 8 of 8", a.BeforeCoveredStmts, a.BeforeTotalStmts)
+	}
 	// An unchanged file is still listed, and says it did not move.
 	if b := byPath["example.com/m/b.go"]; b.CoverageChanged || b.NewFile {
 		t.Errorf("b.go = %+v, want it listed as unchanged", b)
+	}
+	// The first upload has nothing before it: all three baseline fields are null.
+	first := decodeJSON[uploadPageDTO](t, get(f, "/api/ui/uploads/1"))
+	for _, row := range first.Files.Files {
+		if row.Before != nil || row.BeforeCoveredStmts != nil || row.BeforeTotalStmts != nil {
+			t.Errorf("%s on the first upload = %+v, want no baseline fields", row.Path, row)
+		}
 	}
 }
 

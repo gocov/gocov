@@ -154,16 +154,20 @@ type verdictDTO struct {
 // fileRowDTO is one file of an upload with its baseline comparison. The
 // tree the files card draws is built client-side from these rows.
 type fileRowDTO struct {
-	Path            string   `json:"path"`
-	Coverage        float64  `json:"coverage"`
-	CoveredStmts    int64    `json:"covered_stmts"`
-	TotalStmts      int64    `json:"total_stmts"`
-	Uncovered       string   `json:"uncovered"`
-	Before          *float64 `json:"before"`
-	NewFile         bool     `json:"new_file"`
-	NewlyUncovered  string   `json:"newly_uncovered"`
-	SourceChanged   bool     `json:"source_changed"`
-	CoverageChanged bool     `json:"coverage_changed"`
+	Path         string   `json:"path"`
+	Coverage     float64  `json:"coverage"`
+	CoveredStmts int64    `json:"covered_stmts"`
+	TotalStmts   int64    `json:"total_stmts"`
+	Uncovered    string   `json:"uncovered"`
+	Before       *float64 `json:"before"`
+	// The baseline's own statement counts, null with Before. A directory's
+	// "before" is a rollup of these, not an average of its files' percentages.
+	BeforeCoveredStmts *int64 `json:"before_covered_stmts"`
+	BeforeTotalStmts   *int64 `json:"before_total_stmts"`
+	NewFile            bool   `json:"new_file"`
+	NewlyUncovered     string `json:"newly_uncovered"`
+	SourceChanged      bool   `json:"source_changed"`
+	CoverageChanged    bool   `json:"coverage_changed"`
 }
 
 // filesViewDTO is the files card: which upload the rows came from, and
@@ -193,6 +197,8 @@ func newFilesViewDTO(fv *filesViewData) *filesViewDTO {
 		}
 		if row.HasBefore {
 			file.Before = &row.BeforePct
+			file.BeforeCoveredStmts = &row.BeforeCovered
+			file.BeforeTotalStmts = &row.BeforeTotal
 		}
 		dto.Files = append(dto.Files, file)
 	}

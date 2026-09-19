@@ -49,6 +49,8 @@ const repo = (over: Partial<RepoPageData> = {}): RepoPageData => ({
         total_stmts: 10,
         uncovered: "12-18",
         before: 62,
+        before_covered_stmts: 31,
+        before_total_stmts: 50,
         new_file: false,
         newly_uncovered: "",
         source_changed: true,

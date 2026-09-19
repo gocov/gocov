@@ -8,6 +8,8 @@ const file = (path: string, covered: number, total: number, extra: Partial<FileR
   total_stmts: total,
   uncovered: "",
   before: null,
+  before_covered_stmts: null,
+  before_total_stmts: null,
   new_file: false,
   newly_uncovered: "",
   source_changed: false,
@@ -68,15 +70,33 @@ test("directories come before files, each side alphabetical", () => {
   expect(names(tree)).toEqual(["aa", "ab", "ba.go", "zz.go"]);
 });
 
-test("a directory's baseline is the weighted rollup of the files that had one", () => {
+/** A file that had `covered` of `total` statements at the baseline. */
+const was = (covered: number, total: number): Partial<FileRow> => ({
+  before: (covered / total) * 100,
+  before_covered_stmts: covered,
+  before_total_stmts: total,
+});
+
+test("a directory's baseline is rolled up from the baseline's own statement counts", () => {
   const tree = buildFileTree([
-    file("internal/a.go", 8, 10, { before: 50 }),
-    file("internal/b.go", 5, 10, { before: 70 }),
+    file("internal/a.go", 8, 10, was(5, 10)),
+    file("internal/b.go", 5, 10, was(7, 10)),
     file("internal/new.go", 3, 10, { new_file: true }),
   ]);
   const [dir] = dirs(tree);
-  // (50% of 10 + 70% of 10) / 20 statements.
+  // (5 + 7) of 20 baseline statements; the new file had none to add.
   expect(dir?.before).toBeCloseTo(60, 5);
+});
+
+test("a file that grew since the baseline weighs what it weighed then", () => {
+  const tree = buildFileTree([
+    // 1 of 2 statements then, 90 of 100 now: weighting its 50% by today's
+    // hundred statements would drag the directory's "before" down to ~55%.
+    file("internal/grew.go", 90, 100, was(1, 2)),
+    file("internal/same.go", 10, 10, was(10, 10)),
+  ]);
+  const [dir] = dirs(tree);
+  expect(dir?.before).toBeCloseTo((11 / 12) * 100, 5);
 });
 
 test("a directory without any baseline below it has none", () => {

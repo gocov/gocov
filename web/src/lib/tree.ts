@@ -99,17 +99,17 @@ function absorb(into: Roll, from: Roll) {
 }
 
 /**
- * A file's contribution. The API sends a baseline coverage but not the
- * baseline's own statement counts, so a directory's "before" is weighted by
- * the file's current statements — an approximation of the server's rollup,
- * exact whenever a file's statement count did not move.
+ * A file's contribution: its statements now, and the statements the same
+ * path had at the baseline. A directory's "before" is covered over total of
+ * those baseline counts, so a file that grew or shrank since weighs what it
+ * weighed then. A file with no baseline adds nothing to it.
  */
 function fileRoll(row: FileRow): Roll {
   return {
     covered: row.covered_stmts,
     total: row.total_stmts,
-    beforeCovered: row.before === null ? 0 : (row.before / 100) * row.total_stmts,
-    beforeTotal: row.before === null ? 0 : row.total_stmts,
+    beforeCovered: row.before_covered_stmts ?? 0,
+    beforeTotal: row.before_total_stmts ?? 0,
     changed: isChanged(row),
     sourceChanged: row.source_changed,
     coverageChanged: row.coverage_changed,

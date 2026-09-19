@@ -11,6 +11,8 @@ const file = (path: string, over: Partial<FileRow> = {}): FileRow => ({
   total_stmts: 10,
   uncovered: "12-18, 40",
   before: null,
+  before_covered_stmts: null,
+  before_total_stmts: null,
   new_file: false,
   newly_uncovered: "",
   source_changed: false,
@@ -22,10 +24,10 @@ const withBase: FilesView = {
   upload_id: 412,
   has_base: true,
   files: [
-    file("internal/server/api.go", { before: 62, coverage: 80, source_changed: true, coverage_changed: true, newly_uncovered: "44-46" }),
-    file("internal/server/spa.go", { before: 80, coverage: 80 }),
+    file("internal/server/api.go", { before: 62, before_covered_stmts: 31, before_total_stmts: 50, coverage: 80, source_changed: true, coverage_changed: true, newly_uncovered: "44-46" }),
+    file("internal/server/spa.go", { before: 80, before_covered_stmts: 8, before_total_stmts: 10, coverage: 80 }),
     file("internal/core/pipeline.go", { new_file: true, coverage: 55 }),
-    file("main.go", { before: 90, coverage: 90 }),
+    file("main.go", { before: 90, before_covered_stmts: 9, before_total_stmts: 10, coverage: 90 }),
   ],
 };
 
