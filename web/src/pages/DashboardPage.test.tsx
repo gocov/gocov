@@ -91,7 +91,10 @@ const dashboard: Dashboard = {
   ],
 };
 
-const show = (data: Dashboard, path = "/", route = "/", extra: Record<string, unknown> = {}) => {
+// The dashboard answers on the index route and on a workspace's own address.
+const routeFor = (path: string) => (path.startsWith("/w/") ? "/w/:forge/*" : "/");
+
+const show = (data: Dashboard, path = "/", route = routeFor(path), extra: Record<string, unknown> = {}) => {
   const fetchMock = mockApi({ "GET /dashboard": data, ...extra });
   return { fetchMock, ...renderPage(<DashboardPage />, { route, path }) };
 };
@@ -104,10 +107,10 @@ test("a populated workspace shows its rollup, its notices and its repositories",
   expect(within(heading).getByRole("button", { name: /acme/ })).toBeInTheDocument();
   expect(screen.getByText("4 repositories · 74.6% covered")).toBeInTheDocument();
 
-  expect(screen.getByRole("link", { name: "Workspace settings" })).toHaveAttribute("href", "/workspaces/github/acme");
+  expect(screen.getByRole("link", { name: "Workspace settings" })).toHaveAttribute("href", "/workspace-settings/github/acme");
   expect(screen.getByRole("link", { name: "Add a repository" })).toHaveAttribute(
     "href",
-    "/workspaces/github/acme/setup",
+    "/workspace-setup/github/acme",
   );
 
   // The three stat tiles.
@@ -138,10 +141,16 @@ test("the table filters without another request", async () => {
   expect(fetchMock.mock.calls.length).toBe(calls);
 });
 
-test("?ws picks the workspace the query asks the server for", async () => {
-  const { fetchMock } = show(dashboard, "/?ws=gitlab/acme-labs");
+test("the path picks the workspace the query asks the server for", async () => {
+  const { fetchMock } = show(dashboard, "/w/gitlab/acme-labs");
   await screen.findByRole("table");
   expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/api/ui/dashboard?ws=gitlab%2Facme-labs");
+});
+
+test("a nested GitLab group is a path like any other", async () => {
+  const { fetchMock } = show(dashboard, "/w/gitlab/grp/sub");
+  await screen.findByRole("table");
+  expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/api/ui/dashboard?ws=gitlab%2Fgrp%2Fsub");
 });
 
 test("an untracked workspace has no settings page and onboards instead", async () => {
@@ -162,7 +171,7 @@ test("a workspace with no repositories yet points at the setup instructions", as
   expect(screen.getByText("no uploads yet")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Setup instructions" })).toHaveAttribute(
     "href",
-    "/workspaces/github/acme/setup",
+    "/workspace-setup/github/acme",
   );
 });
 
@@ -229,8 +238,8 @@ const empty: Dashboard = {
 };
 
 const setupPaths = (info: SetupInfo, status: SetupStatus) => ({
-  "GET /workspaces/github/acme/setup": info,
-  "GET /workspaces/github/acme/setup/status": status,
+  "GET /workspace-setup/github/acme": info,
+  "GET /workspace-setup-status/github/acme": status,
 });
 
 test("a tracked workspace with no report yet leads with the setup card", async () => {
@@ -264,7 +273,7 @@ test("the first report stops the poll and refreshes the table", async () => {
 
   expect(await screen.findByRole("heading", { name: "Coverage is flowing" })).toBeInTheDocument();
 
-  const polls = () => fetchMock.mock.calls.filter((c) => String(c[0]).endsWith("/setup/status")).length;
+  const polls = () => fetchMock.mock.calls.filter((c) => String(c[0]).includes("/workspace-setup-status/")).length;
   const dashboards = () => fetchMock.mock.calls.filter((c) => String(c[0]).startsWith("/api/ui/dashboard")).length;
   expect(polls()).toBe(1);
   // The table was drawn before the repository existed, so it is re-read.
@@ -279,7 +288,7 @@ test("a workspace whose first report already landed never polls", async () => {
   const { fetchMock } = show(empty, "/", "/", setupPaths(withReport, arrived));
 
   expect(await screen.findByRole("heading", { name: "Coverage is flowing" })).toBeInTheDocument();
-  expect(fetchMock.mock.calls.filter((c) => String(c[0]).endsWith("/setup/status"))).toHaveLength(0);
+  expect(fetchMock.mock.calls.filter((c) => String(c[0]).includes("/workspace-setup-status/"))).toHaveLength(0);
 });
 
 test("an established workspace is never congratulated on its setup", async () => {
@@ -288,7 +297,7 @@ test("an established workspace is never congratulated on its setup", async () =>
 
   expect(await screen.findByRole("table")).toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "Coverage is flowing" })).not.toBeInTheDocument();
-  expect(fetchMock.mock.calls.filter((c) => String(c[0]).includes("/setup"))).toHaveLength(0);
+  expect(fetchMock.mock.calls.filter((c) => String(c[0]).includes("/workspace-setup"))).toHaveLength(0);
 });
 
 test("the payoff can be put away, and never comes back on a later visit", async () => {
@@ -308,12 +317,12 @@ test("the payoff can be put away, and never comes back on a later visit", async 
   const { fetchMock } = show(dashboard, "/", "/", setupPaths(withReport, arrived));
   expect(await screen.findByRole("table")).toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "Coverage is flowing" })).not.toBeInTheDocument();
-  expect(fetchMock.mock.calls.filter((c) => String(c[0]).includes("/setup"))).toHaveLength(0);
+  expect(fetchMock.mock.calls.filter((c) => String(c[0]).includes("/workspace-setup"))).toHaveLength(0);
 });
 
 test("a setup card that cannot load leaves the dashboard untouched", async () => {
   show(empty, "/", "/", {
-    "GET /workspaces/github/acme/setup": { status: 500, error: "boom" },
+    "GET /workspace-setup/github/acme": { status: 500, error: "boom" },
   });
 
   expect(await screen.findByText(/No repositories in this workspace yet/)).toBeInTheDocument();
@@ -326,17 +335,18 @@ test("a member of an untracked workspace is not offered setup at all", async () 
   const { fetchMock } = show({ ...empty, current: untracked, switcher: [untracked] });
 
   await screen.findByText(/No repositories in this workspace yet/);
-  expect(fetchMock.mock.calls.filter((c) => String(c[0]).includes("/setup"))).toHaveLength(0);
+  expect(fetchMock.mock.calls.filter((c) => String(c[0]).includes("/workspace-setup"))).toHaveLength(0);
 });
 
 // ---- the message a server redirect brings back ------------------------------
 
 test("a failed connect is said once and taken out of the URL", async () => {
-  const { router } = show(dashboard, "/?ws=github%2Facme&error=connect_failed");
+  const { router } = show(dashboard, "/w/github/acme?error=connect_failed");
 
   expect(await screen.findByRole("alert")).toHaveTextContent(/Connecting to the forge did not complete/);
   // The workspace it was about survives; the message does not come back on a reload.
-  await waitFor(() => expect(router.state.location.search).toBe("?ws=github%2Facme"));
+  await waitFor(() => expect(router.state.location.search).toBe(""));
+  expect(router.state.location.pathname).toBe("/w/github/acme");
   expect(screen.getByRole("alert")).toHaveTextContent(/Connecting to the forge did not complete/);
 });
 

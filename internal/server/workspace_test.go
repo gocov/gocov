@@ -96,7 +96,7 @@ func demote(t *testing.T, f *fixture, prefix string) {
 func TestWorkspaceSettingsPageAccess(t *testing.T) {
 	f, sess := newWorkspaceFixture(t, true)
 
-	for _, path := range []string{"/workspaces/bitbucket/acme", "/workspaces/bitbucket/acme/setup"} {
+	for _, path := range []string{"/w/bitbucket/acme", "/workspace-settings/bitbucket/acme", "/workspace-setup/bitbucket/acme"} {
 		rec := get(f, path, sess)
 		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `id="root"`) {
 			t.Errorf("member GET %s: status = %d, want the shell", path, rec.Code)
@@ -113,11 +113,11 @@ func TestWorkspaceSettingsPageAccess(t *testing.T) {
 		&store.Workspace{Forge: "bitbucket", Prefix: "beta", Token: "beta-tok", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
-	if rec := get(f, "/api/ui/workspaces/bitbucket/beta", sess); rec.Code != http.StatusNotFound {
+	if rec := get(f, "/api/ui/workspace-settings/bitbucket/beta", sess); rec.Code != http.StatusNotFound {
 		t.Errorf("non-member workspace: status = %d, want 404", rec.Code)
 	}
 	// Without a session the auth middleware redirects to login.
-	if rec := get(f, "/workspaces/bitbucket/acme"); rec.Code != http.StatusFound {
+	if rec := get(f, "/workspace-settings/bitbucket/acme"); rec.Code != http.StatusFound {
 		t.Errorf("anonymous settings page: status = %d, want login redirect", rec.Code)
 	}
 }
@@ -127,7 +127,7 @@ func TestOwnerDemotedOnTheForgeLosesTheControls(t *testing.T) {
 	// the owner-only endpoints close — no session or page state keeps them.
 	f, sess := newWorkspaceFixture(t, false)
 	save := func() *httptest.ResponseRecorder {
-		return postJSON(t, f, "/api/ui/workspaces/bitbucket/acme/settings",
+		return postJSON(t, f, "/api/ui/workspace-settings/save/bitbucket/acme",
 			workspaceSettingsInput{DefaultBranch: "develop"}, sess)
 	}
 	wantStatus(t, save(), "owner save", http.StatusOK)
@@ -149,9 +149,9 @@ func TestWorkspaceSettingsNeedAuthEnabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, path := range []string{
-		"/api/ui/workspaces/bitbucket/acme",
-		"/api/ui/workspaces/bitbucket/acme/setup",
-		"/api/ui/workspaces/bitbucket/acme/setup/status",
+		"/api/ui/workspace-settings/bitbucket/acme",
+		"/api/ui/workspace-setup/bitbucket/acme",
+		"/api/ui/workspace-setup-status/bitbucket/acme",
 	} {
 		if rec := get(f, path); rec.Code != http.StatusNotFound {
 			t.Errorf("GET %s in open mode: status = %d, want 404", path, rec.Code)
@@ -171,7 +171,7 @@ func TestWorkspaceRotateTokenKillsTheOldOne(t *testing.T) {
 		t.Fatalf("upload with workspace token: status = %d, body = %s", rec.Code, rec.Body)
 	}
 
-	rot := postJSON(t, f, "/api/ui/workspaces/bitbucket/acme/rotate-token", nil, sess)
+	rot := postJSON(t, f, "/api/ui/workspace-settings/rotate-token/bitbucket/acme", nil, sess)
 	wantStatus(t, rot, "rotate", http.StatusOK)
 	token := decodeJSON[tokenRevealDTO](t, rot).Token
 	if token == "" || token == "ws-secret" {
@@ -188,7 +188,7 @@ func TestWorkspaceRotateTokenKillsTheOldOne(t *testing.T) {
 	}
 
 	// Reveal answers with the current token, never the pre-rotation one.
-	reveal := postJSON(t, f, "/api/ui/workspaces/bitbucket/acme/reveal-token", nil, sess)
+	reveal := postJSON(t, f, "/api/ui/workspace-settings/reveal-token/bitbucket/acme", nil, sess)
 	if got := decodeJSON[tokenRevealDTO](t, reveal).Token; got != token {
 		t.Errorf("revealed token = %q, want the rotated one", got)
 	}
@@ -208,7 +208,7 @@ func TestWorkspaceDeleteCascades(t *testing.T) {
 		t.Fatalf("repo not present before delete: %v", err)
 	}
 
-	wantStatus(t, postJSON(t, f, "/api/ui/workspaces/bitbucket/acme/delete", nil, sess), "delete", http.StatusNoContent)
+	wantStatus(t, postJSON(t, f, "/api/ui/workspace-settings/delete/bitbucket/acme", nil, sess), "delete", http.StatusNoContent)
 	if _, err := f.store.WorkspaceByPrefix(ctx, "bitbucket", "acme"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("workspace survived delete: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestWorkspaceDeleteCascades(t *testing.T) {
 		&store.Workspace{Forge: "bitbucket", Prefix: "beta", Token: "beta-tok", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
-	if rec := postJSON(t, f2, "/api/ui/workspaces/bitbucket/beta/delete", nil, sess2); rec.Code != http.StatusNotFound {
+	if rec := postJSON(t, f2, "/api/ui/workspace-settings/delete/bitbucket/beta", nil, sess2); rec.Code != http.StatusNotFound {
 		t.Errorf("non-member delete: status = %d, want 404", rec.Code)
 	}
 	if _, err := f2.store.WorkspaceByPrefix(ctx, "bitbucket", "beta"); err != nil {
@@ -257,7 +257,7 @@ func TestAPIWorkspaceSetupSnippetInputs(t *testing.T) {
 			store: st,
 		}
 		sess := signInVia(t, f, "gitlab")
-		return decodeJSON[setupInfoDTO](t, get(f, "/api/ui/workspaces/gitlab/grp%2Fteam/setup", sess))
+		return decodeJSON[setupInfoDTO](t, get(f, "/api/ui/workspace-setup/gitlab/grp/team", sess))
 	}
 
 	// A self-hosted instance facing gitlab.com: the component is offered
@@ -289,7 +289,7 @@ func TestAPIWorkspaceSetupBrokenConnection(t *testing.T) {
 	if err := f.store.SetWorkspaceBitbucketGrant(t.Context(), ws.ID, "acme-ci", "rt", true); err != nil {
 		t.Fatal(err)
 	}
-	got := decodeJSON[setupInfoDTO](t, get(f, "/api/ui/workspaces/bitbucket/acme/setup", sess))
+	got := decodeJSON[setupInfoDTO](t, get(f, "/api/ui/workspace-setup/bitbucket/acme", sess))
 	if got.Tokenless || !got.ConnectionBroken {
 		t.Errorf("broken connection = tokenless %v, broken %v; want the token path back",
 			got.Tokenless, got.ConnectionBroken)
@@ -333,18 +333,19 @@ func TestGitLabSubgroupWorkspace(t *testing.T) {
 	}
 	sess := signInVia(t, f, "gitlab")
 
-	// The settings and setup screens live behind the %2F-encoded prefix.
+	// A nested prefix is a slash everywhere: the pages and their endpoints
+	// take it as the trailing wildcard, never as one %2F segment.
 	for _, path := range []string{
-		"/workspaces/gitlab/grp%2Fsub", "/workspaces/gitlab/grp%2Fsub/setup",
-		"/api/ui/workspaces/gitlab/grp%2Fsub", "/api/ui/workspaces/gitlab/grp%2Fsub/setup",
+		"/w/gitlab/grp/sub", "/workspace-settings/gitlab/grp/sub", "/workspace-setup/gitlab/grp/sub",
+		"/api/ui/workspace-settings/gitlab/grp/sub", "/api/ui/workspace-setup/gitlab/grp/sub",
 	} {
 		if rec := get(f, path, sess); rec.Code != http.StatusOK {
 			t.Errorf("GET %s: status = %d, want 200", path, rec.Code)
 		}
 	}
-	// The raw-slash form must not resolve to the workspace endpoints.
-	if rec := get(f, "/api/ui/workspaces/gitlab/grp/sub", sess); rec.Code != http.StatusNotFound {
-		t.Errorf("raw-slash workspace path: status = %d, want 404", rec.Code)
+	// The parent group is not the subgroup: membership is of grp/sub alone.
+	if rec := get(f, "/api/ui/workspace-settings/gitlab/grp", sess); rec.Code != http.StatusNotFound {
+		t.Errorf("parent group settings: status = %d, want 404", rec.Code)
 	}
 
 	// Membership at subgroup depth scopes repo visibility: the subgroup's
@@ -356,7 +357,7 @@ func TestGitLabSubgroupWorkspace(t *testing.T) {
 		t.Errorf("non-member repo page: status = %d, want 404", rec.Code)
 	}
 	// The subgroup's own repo is what its setup screen counts.
-	if got := decodeJSON[setupInfoDTO](t, get(f, "/api/ui/workspaces/gitlab/grp%2Fsub/setup", sess)); got.Status.RepoCount != 1 {
+	if got := decodeJSON[setupInfoDTO](t, get(f, "/api/ui/workspace-setup/gitlab/grp/sub", sess)); got.Status.RepoCount != 1 {
 		t.Errorf("subgroup setup repo count = %d, want its one project", got.Status.RepoCount)
 	}
 }
@@ -364,7 +365,7 @@ func TestGitLabSubgroupWorkspace(t *testing.T) {
 func TestAPIWorkspaceSettings(t *testing.T) {
 	f, sess := newWorkspaceFixture(t, true)
 
-	got := decodeJSON[workspaceSettingsDTO](t, get(f, "/api/ui/workspaces/bitbucket/acme", sess))
+	got := decodeJSON[workspaceSettingsDTO](t, get(f, "/api/ui/workspace-settings/bitbucket/acme", sess))
 	if got.Workspace.Prefix != "acme" || got.Workspace.ForgeLabel != "Bitbucket" {
 		t.Errorf("workspace = %+v", got.Workspace)
 	}
@@ -384,7 +385,7 @@ func TestAPIWorkspaceSettings(t *testing.T) {
 	}
 
 	// Saving comes back as the saved settings.
-	saved := postJSON(t, f, "/api/ui/workspaces/bitbucket/acme/settings", workspaceSettingsInput{
+	saved := postJSON(t, f, "/api/ui/workspace-settings/save/bitbucket/acme", workspaceSettingsInput{
 		DefaultBranch:       "develop",
 		ReportRetentionDays: 90,
 		Gate:                gateDTO{MinCoverage: new(float64(75))},
@@ -403,7 +404,7 @@ func TestAPIWorkspaceSettings(t *testing.T) {
 	}
 
 	// Rotation hands back the new token, and it is the stored one.
-	rec := postJSON(t, f, "/api/ui/workspaces/bitbucket/acme/rotate-token", nil, sess)
+	rec := postJSON(t, f, "/api/ui/workspace-settings/rotate-token/bitbucket/acme", nil, sess)
 	wantStatus(t, rec, "rotate", http.StatusOK)
 	rotated := decodeJSON[tokenRevealDTO](t, rec).Token
 	if rotated == "" || rotated == "ws-secret" {
@@ -414,7 +415,7 @@ func TestAPIWorkspaceSettings(t *testing.T) {
 	}
 
 	// Delete answers with no content and cascades.
-	del := postJSON(t, f, "/api/ui/workspaces/bitbucket/acme/delete", nil, sess)
+	del := postJSON(t, f, "/api/ui/workspace-settings/delete/bitbucket/acme", nil, sess)
 	wantStatus(t, del, "delete", http.StatusNoContent)
 	if _, err := f.store.WorkspaceByPrefix(t.Context(), "bitbucket", "acme"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("workspace survived the delete: %v", err)
@@ -432,7 +433,7 @@ func TestAPIWorkspaceSettingsValidation(t *testing.T) {
 		{"unknown retention", workspaceSettingsInput{DefaultBranch: "main", ReportRetentionDays: 7}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			rec := postJSON(t, f, "/api/ui/workspaces/bitbucket/acme/settings", tc.in, sess)
+			rec := postJSON(t, f, "/api/ui/workspace-settings/save/bitbucket/acme", tc.in, sess)
 			if rec.Code != http.StatusUnprocessableEntity {
 				t.Fatalf("status = %d, want 422 (body %s)", rec.Code, rec.Body)
 			}
@@ -444,7 +445,7 @@ func TestAPIWorkspaceSettingsValidation(t *testing.T) {
 		})
 	}
 	// A field the app does not know about is a mistake, not a default.
-	rec := postJSON(t, f, "/api/ui/workspaces/bitbucket/acme/settings",
+	rec := postJSON(t, f, "/api/ui/workspace-settings/save/bitbucket/acme",
 		map[string]any{"default_branch": "main", "nonsense": 1}, sess)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("unknown field: status = %d, want 400", rec.Code)
@@ -459,30 +460,30 @@ func TestAPIWorkspaceSettingsValidation(t *testing.T) {
 // does not write.
 func TestAPIWorkspaceAccess(t *testing.T) {
 	f, sess := newWorkspaceFixture(t, false)
-	if rec := get(f, "/api/ui/workspaces/bitbucket/acme"); rec.Code != http.StatusUnauthorized {
+	if rec := get(f, "/api/ui/workspace-settings/bitbucket/acme"); rec.Code != http.StatusUnauthorized {
 		t.Errorf("signed-out GET: status = %d, want 401", rec.Code)
 	}
 	if err := f.store.CreateWorkspace(t.Context(),
 		&store.Workspace{Forge: "bitbucket", Prefix: "beta", Token: "bt", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
-	if rec := get(f, "/api/ui/workspaces/bitbucket/beta", sess); rec.Code != http.StatusNotFound {
+	if rec := get(f, "/api/ui/workspace-settings/bitbucket/beta", sess); rec.Code != http.StatusNotFound {
 		t.Errorf("non-member GET: status = %d, want 404", rec.Code)
 	}
 
 	member, msess := newMemberFixture(t, false)
-	if rec := get(member, "/api/ui/workspaces/bitbucket/acme", msess); rec.Code != http.StatusOK {
+	if rec := get(member, "/api/ui/workspace-settings/bitbucket/acme", msess); rec.Code != http.StatusOK {
 		t.Fatalf("member GET: status = %d", rec.Code)
 	}
-	if got := decodeJSON[workspaceSettingsDTO](t, get(member, "/api/ui/workspaces/bitbucket/acme", msess)); got.Owner || got.TokenMasked != nil {
+	if got := decodeJSON[workspaceSettingsDTO](t, get(member, "/api/ui/workspace-settings/bitbucket/acme", msess)); got.Owner || got.TokenMasked != nil {
 		t.Errorf("member settings = %+v, want no ownership and no token", got)
 	}
 	for _, path := range []string{
-		"/api/ui/workspaces/bitbucket/acme/settings",
-		"/api/ui/workspaces/bitbucket/acme/rotate-token",
-		"/api/ui/workspaces/bitbucket/acme/reveal-token",
-		"/api/ui/workspaces/bitbucket/acme/disconnect",
-		"/api/ui/workspaces/bitbucket/acme/delete",
+		"/api/ui/workspace-settings/save/bitbucket/acme",
+		"/api/ui/workspace-settings/rotate-token/bitbucket/acme",
+		"/api/ui/workspace-settings/reveal-token/bitbucket/acme",
+		"/api/ui/workspace-settings/disconnect/bitbucket/acme",
+		"/api/ui/workspace-settings/delete/bitbucket/acme",
 	} {
 		rec := postJSON(t, member, path, workspaceSettingsInput{DefaultBranch: "develop"}, msess)
 		if rec.Code != http.StatusForbidden {

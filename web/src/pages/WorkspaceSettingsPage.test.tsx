@@ -30,12 +30,12 @@ const settings = (over: Partial<WorkspaceSettings> = {}): WorkspaceSettings => (
   ...over,
 });
 
-const at = { route: "workspaces/:forge/:prefix", path: "/workspaces/github/acme" };
+const at = { route: "workspace-settings/:forge/*", path: "/workspace-settings/github/acme" };
 
 const section = (id: string) => within(document.getElementById(id) as HTMLElement);
 
 test("an owner sees every section and the workspace it belongs to", async () => {
-  mockApi({ "GET /workspaces/github/acme": settings() });
+  mockApi({ "GET /workspace-settings/github/acme": settings() });
   renderPage(<WorkspaceSettingsPage />, at);
 
   expect(await screen.findByRole("heading", { name: /Workspace acme/ })).toBeInTheDocument();
@@ -43,7 +43,7 @@ test("an owner sees every section and the workspace it belongs to", async () => 
   expect(screen.getByText(/GitHub · 8 repositories/)).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Setup instructions" })).toHaveAttribute(
     "href",
-    "/workspaces/github/acme/setup",
+    "/workspace-setup/github/acme",
   );
   for (const label of ["Reporting", "Uploads", "Coverage gates", "Defaults", "Delete workspace"]) {
     expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
@@ -57,8 +57,8 @@ test("gates and defaults are one form: either Save posts all of it", async () =>
     workspace: { ...settings().workspace, default_branch: "trunk", report_retention_days: 365 },
   });
   mockApi({
-    "GET /workspaces/github/acme": settings(),
-    "POST /workspaces/github/acme/settings": (init: RequestInit | undefined) => {
+    "GET /workspace-settings/github/acme": settings(),
+    "POST /workspace-settings/save/github/acme": (init: RequestInit | undefined) => {
       posted = JSON.parse(String(init?.body)) as WorkspaceSettingsInput;
       return saved;
     },
@@ -87,8 +87,8 @@ test("gates and defaults are one form: either Save posts all of it", async () =>
 test("a rejected save shows the server's own message", async () => {
   const user = userEvent.setup();
   mockApi({
-    "GET /workspaces/github/acme": settings(),
-    "POST /workspaces/github/acme/settings": { status: 422, error: "Default branch cannot be empty." },
+    "GET /workspace-settings/github/acme": settings(),
+    "POST /workspace-settings/save/github/acme": { status: 422, error: "Default branch cannot be empty." },
   });
   renderPage(<WorkspaceSettingsPage />, at);
   await screen.findByRole("heading", { name: /Workspace acme/ });
@@ -101,7 +101,7 @@ test("a rejected save shows the server's own message", async () => {
 
 test("a member sees read-only settings and never asks for the token", async () => {
   const fetchMock = mockApi({
-    "GET /workspaces/github/acme": settings({ owner: false, token_masked: null }),
+    "GET /workspace-settings/github/acme": settings({ owner: false, token_masked: null }),
   });
   renderPage(<WorkspaceSettingsPage />, at);
   await screen.findByRole("heading", { name: /Workspace acme/ });
@@ -119,8 +119,8 @@ test("a member sees read-only settings and never asks for the token", async () =
 test("disconnecting reporting posts once confirmed and re-reads the answer", async () => {
   const user = userEvent.setup();
   mockApi({
-    "GET /workspaces/github/acme": settings(),
-    "POST /workspaces/github/acme/disconnect": settings({
+    "GET /workspace-settings/github/acme": settings(),
+    "POST /workspace-settings/disconnect/github/acme": settings({
       reporting: { available: true, state: "off", account: "", connect_url: "https://github.com/apps/gocov" },
     }),
   });
@@ -137,8 +137,8 @@ test("disconnecting reporting posts once confirmed and re-reads the answer", asy
 test("deleting confirms, posts, and lands back on the dashboard", async () => {
   const user = userEvent.setup();
   const fetchMock = mockApi({
-    "GET /workspaces/github/acme": settings(),
-    "POST /workspaces/github/acme/delete": null,
+    "GET /workspace-settings/github/acme": settings(),
+    "POST /workspace-settings/delete/github/acme": null,
   });
   const { router } = renderPage(<WorkspaceSettingsPage />, at);
   await screen.findByRole("heading", { name: /Workspace acme/ });
@@ -150,15 +150,15 @@ test("deleting confirms, posts, and lands back on the dashboard", async () => {
   await user.click(buttons().at(-1)!);
   await waitFor(() => expect(router.state.location.pathname).toBe("/"));
   expect(
-    fetchMock.mock.calls.some(([url, init]) => init?.method === "POST" && String(url).endsWith("/delete")),
+    fetchMock.mock.calls.some(([url, init]) => init?.method === "POST" && String(url).includes("/workspace-settings/delete/")),
   ).toBe(true);
 });
 
 test("a failed grant redirect is said once, then left out of the URL", async () => {
-  mockApi({ "GET /workspaces/github/acme": settings() });
+  mockApi({ "GET /workspace-settings/github/acme": settings() });
   const { router } = renderPage(<WorkspaceSettingsPage />, {
     ...at,
-    path: "/workspaces/github/acme?error=connect_failed",
+    path: "/workspace-settings/github/acme?error=connect_failed",
   });
 
   expect(await screen.findByRole("alert")).toHaveTextContent(/Connecting to the forge did not complete/);
@@ -167,12 +167,22 @@ test("a failed grant redirect is said once, then left out of the URL", async () 
 });
 
 test("text the server never sends is not shown", async () => {
-  mockApi({ "GET /workspaces/github/acme": settings() });
+  mockApi({ "GET /workspace-settings/github/acme": settings() });
   const { router } = renderPage(<WorkspaceSettingsPage />, {
     ...at,
-    path: "/workspaces/github/acme?error=The+connection+could+not+be+completed.",
+    path: "/workspace-settings/github/acme?error=The+connection+could+not+be+completed.",
   });
 
   await waitFor(() => expect(router.state.location.search).toBe(""));
   expect(screen.queryByText("The connection could not be completed.")).toBeNull();
+});
+
+test("a nested GitLab group's settings are asked for by its whole path", async () => {
+  const nested = settings({ workspace: { ...settings().workspace, forge: "gitlab", prefix: "grp/sub", forge_label: "GitLab" } });
+  const fetchMock = mockApi({ "GET /workspace-settings/gitlab/grp/sub": nested });
+  renderPage(<WorkspaceSettingsPage />, { ...at, path: "/workspace-settings/gitlab/grp/sub" });
+
+  expect(await screen.findByRole("heading", { name: /Workspace grp\/sub/ })).toBeInTheDocument();
+  expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/api/ui/workspace-settings/gitlab/grp/sub");
+  expect(screen.getByRole("link", { name: "Setup instructions" })).toHaveAttribute("href", "/workspace-setup/gitlab/grp/sub");
 });

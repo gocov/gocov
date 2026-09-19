@@ -231,7 +231,7 @@ func (s *Server) routes() {
 	// link, or the Bitbucket/GitLab consent grant. It is a browser
 	// navigation into the forge's consent screen, so it stays a route of
 	// its own rather than moving to the UI API.
-	s.mux.HandleFunc("GET /workspaces/{forge}/{prefix}/connect", s.handleConnect)
+	s.mux.HandleFunc("GET /workspace-connect/{forge}/{prefix...}", s.handleConnect)
 	s.mux.HandleFunc("GET /uploads/{id}/profile", s.handleUploadProfile)
 	s.spaRoutes()
 	s.apiRoutes()
@@ -240,14 +240,19 @@ func (s *Server) routes() {
 	// code and the head tags are Go's, the body is the app's. Tenant
 	// pages carry the forge before the name: repo slugs and workspace
 	// prefixes are unique per forge, not globally (urls.go). Repo slugs
-	// contain a slash (workspace/repo), so a slug must ride as a trailing
-	// {slug...} wildcard — a single {slug} segment cannot match it on a
-	// live server (only httptest preserves the %2F).
-	s.mux.HandleFunc("GET /{$}", s.handleAppPage)
+	// contain a slash (workspace/repo), and GitLab workspace prefixes can
+	// (grp/sub), so both ride as a trailing {slug...} / {prefix...}
+	// wildcard — a single segment cannot match one on a live server (only
+	// httptest preserves the %2F).
+	s.mux.HandleFunc("GET /{$}", s.handleHome)
 	s.mux.HandleFunc("GET /onboarding", s.handleAppPage)
 	s.mux.HandleFunc("GET /_components", s.handleAppPage)
-	s.mux.HandleFunc("GET /workspaces/{forge}/{prefix}", s.handleAppPage)
-	s.mux.HandleFunc("GET /workspaces/{forge}/{prefix}/setup", s.handleAppPage)
+	s.mux.HandleFunc("GET /w/{forge}/{prefix...}", s.handleAppPage)
+	s.mux.HandleFunc("GET /workspace-settings/{forge}/{prefix...}", s.handleAppPage)
+	s.mux.HandleFunc("GET /workspace-setup/{forge}/{prefix...}", s.handleAppPage)
+	// Where those three lived through v0.25 (urls.go).
+	s.mux.HandleFunc("GET /workspaces/{forge}/{prefix}", s.handleLegacyWorkspacePage)
+	s.mux.HandleFunc("GET /workspaces/{forge}/{prefix}/setup", s.handleLegacyWorkspacePage)
 	s.mux.HandleFunc("GET /repo-settings/{forge}/{slug...}", s.handleAppPage)
 	// The report pages settle their own access before serving the shell,
 	// so a hidden repo answers exactly as it did (D3).

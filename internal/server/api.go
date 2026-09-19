@@ -48,14 +48,17 @@ func (s *Server) apiRoutes() {
 	// screen that waits for the first report.
 	handle("GET /api/ui/onboarding", s.handleAPIOnboarding)
 	handle("POST /api/ui/onboarding/register", s.handleAPIRegister)
-	handle("GET /api/ui/workspaces/{forge}/{prefix}/setup", s.handleAPIWorkspaceSetup)
-	handle("GET /api/ui/workspaces/{forge}/{prefix}/setup/status", s.handleAPIWorkspaceSetupStatus)
-	handle("GET /api/ui/workspaces/{forge}/{prefix}", s.handleAPIWorkspace)
-	handle("POST /api/ui/workspaces/{forge}/{prefix}/settings", s.handleAPIWorkspaceSettings)
-	handle("POST /api/ui/workspaces/{forge}/{prefix}/rotate-token", s.handleAPIWorkspaceRotate)
-	handle("POST /api/ui/workspaces/{forge}/{prefix}/reveal-token", s.handleAPIWorkspaceReveal)
-	handle("POST /api/ui/workspaces/{forge}/{prefix}/disconnect", s.handleAPIWorkspaceDisconnect)
-	handle("POST /api/ui/workspaces/{forge}/{prefix}/delete", s.handleAPIWorkspaceDelete)
+	// A GitLab workspace prefix carries slashes like a repo slug does, so
+	// the workspace endpoints take the same shape as the repo ones below:
+	// the trailing {prefix...} wildcard, the verb before it.
+	handle("GET /api/ui/workspace-setup/{forge}/{prefix...}", s.handleAPIWorkspaceSetup)
+	handle("GET /api/ui/workspace-setup-status/{forge}/{prefix...}", s.handleAPIWorkspaceSetupStatus)
+	handle("GET /api/ui/workspace-settings/{forge}/{prefix...}", s.handleAPIWorkspace)
+	handle("POST /api/ui/workspace-settings/save/{forge}/{prefix...}", s.handleAPIWorkspaceSettings)
+	handle("POST /api/ui/workspace-settings/rotate-token/{forge}/{prefix...}", s.handleAPIWorkspaceRotate)
+	handle("POST /api/ui/workspace-settings/reveal-token/{forge}/{prefix...}", s.handleAPIWorkspaceReveal)
+	handle("POST /api/ui/workspace-settings/disconnect/{forge}/{prefix...}", s.handleAPIWorkspaceDisconnect)
+	handle("POST /api/ui/workspace-settings/delete/{forge}/{prefix...}", s.handleAPIWorkspaceDelete)
 	// Repo slugs carry a slash, so they ride as the trailing {slug...}
 	// wildcard and the mutating verb goes before them — the same shape the
 	// pages use (see the route table in server.go).

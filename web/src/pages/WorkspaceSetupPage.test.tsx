@@ -22,14 +22,14 @@ const info: SetupInfo = {
 
 const show = (over: Partial<SetupInfo> = {}, status?: SetupStatus) => {
   const fetchMock = mockApi({
-    "GET /workspaces/github/acme/setup": { ...info, ...over },
-    "GET /workspaces/github/acme/setup/status": status ?? { ...info.status, ...over.status },
+    "GET /workspace-setup/github/acme": { ...info, ...over },
+    "GET /workspace-setup-status/github/acme": status ?? { ...info.status, ...over.status },
   });
   return {
     fetchMock,
     ...renderPage(<WorkspaceSetupPage />, {
-      route: "workspaces/:forge/:prefix/setup",
-      path: "/workspaces/github/acme/setup",
+      route: "workspace-setup/:forge/*",
+      path: "/workspace-setup/github/acme",
     }),
   };
 };
@@ -40,7 +40,7 @@ test("the page is the snippet, with the trail back to the workspace", async () =
   expect(await screen.findByRole("heading", { level: 1, name: "Add a repository" })).toBeInTheDocument();
   expect(document.title).toBe("add a repository — gocov");
   expect(screen.getByRole("link", { name: "Repositories" })).toHaveAttribute("href", "/");
-  expect(screen.getByRole("link", { name: "acme" })).toHaveAttribute("href", "/?ws=github%2Facme");
+  expect(screen.getByRole("link", { name: "acme" })).toHaveAttribute("href", "/w/github/acme");
   expect(screen.getByRole("button", { name: "Copy snippet" })).toBeInTheDocument();
   expect(screen.getByText(".github/workflows/ci.yml")).toBeInTheDocument();
   expect(screen.getByText(/Listening for an upload from acme/)).toBeInTheDocument();
@@ -50,7 +50,7 @@ test("a repository that registers while the page is open says so", async () => {
   show({}, { repo_count: 3, first_report: null, reports_posted: "" });
 
   expect(await screen.findByText("New repository received.")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Open the dashboard" })).toHaveAttribute("href", "/?ws=github%2Facme");
+  expect(screen.getByRole("link", { name: "Open the dashboard" })).toHaveAttribute("href", "/w/github/acme");
   expect(screen.queryByText(/Listening for an upload/)).not.toBeInTheDocument();
 });
 
@@ -63,10 +63,10 @@ test("a member without the token still gets the snippet", async () => {
 });
 
 test("a workspace the viewer cannot see answers with the not-found panel", async () => {
-  mockApi({ "GET /workspaces/github/acme/setup": { status: 404, error: "not found" } });
+  mockApi({ "GET /workspace-setup/github/acme": { status: 404, error: "not found" } });
   renderPage(<WorkspaceSetupPage />, {
-    route: "workspaces/:forge/:prefix/setup",
-    path: "/workspaces/github/acme/setup",
+    route: "workspace-setup/:forge/*",
+    path: "/workspace-setup/github/acme",
   });
 
   expect(await screen.findByText(/We couldn’t find that page/)).toBeInTheDocument();

@@ -2,7 +2,6 @@ package server
 
 import (
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/gocov/gocov/internal/hosted"
@@ -21,15 +20,6 @@ import (
 // approval); for Bitbucket/GitLab it is picked from the sign-in
 // membership snapshot. Either way the account lands on that workspace's
 // dashboard, which is where the checklist lives.
-
-// workspaceHomeURL is a workspace's home: the dashboard scoped to it,
-// where the setup checklist and the first report appear. Everything that
-// creates or connects a workspace — the claim, the GitHub App install,
-// a finished grant — ends here. The value carries a slash between forge
-// and prefix, and GitLab prefixes carry more, so it rides escaped.
-func workspaceHomeURL(ws *store.Workspace) string {
-	return "/?ws=" + url.QueryEscape(wsKey{ws.Forge, ws.Prefix}.String())
-}
 
 // splitConnectState parses the connect state cookie value (state|prefix).
 func splitConnectState(v string) (state, prefix string) {
@@ -250,7 +240,7 @@ func (s *Server) newSetupStatusDTO(r *http.Request, ws *store.Workspace) (setupS
 }
 
 // handleAPIWorkspaceSetup implements
-// GET /api/ui/workspaces/{forge}/{prefix}/setup: members read it, as on
+// GET /api/ui/workspace-setup/{forge}/{prefix...}: members read it, as on
 // the page; the masked token is an owner's alone.
 func (s *Server) handleAPIWorkspaceSetup(w http.ResponseWriter, r *http.Request) {
 	ws, role := s.memberWorkspace(w, r)
@@ -286,7 +276,7 @@ func (s *Server) handleAPIWorkspaceSetup(w http.ResponseWriter, r *http.Request)
 }
 
 // handleAPIWorkspaceSetupStatus implements
-// GET /api/ui/workspaces/{forge}/{prefix}/setup/status, the app's poll
+// GET /api/ui/workspace-setup-status/{forge}/{prefix...}, the app's poll
 // while it waits for the first report.
 func (s *Server) handleAPIWorkspaceSetupStatus(w http.ResponseWriter, r *http.Request) {
 	ws, _ := s.memberWorkspace(w, r)

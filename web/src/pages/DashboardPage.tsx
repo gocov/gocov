@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
 import { Chip, CoverageFigure, LinkButton, Mono, Notice, type Tone } from "@/components/atoms";
 import { Card, EmptyState, PageHeader, QueryBoundary, SectionHeader, StatRow, StatTile } from "@/components/molecules";
 import { AttentionList } from "@/components/organisms/AttentionList";
@@ -94,7 +94,7 @@ function SetupSection({ ws, hasReports }: { ws: WorkspaceGroup; hasReports: bool
       status={live}
       listeningSince={listeningSince}
       onReveal={async () => {
-        const { token } = await apiPost<TokenReveal>(workspaceSettingsPath(ws.forge, ws.prefix) + "/reveal-token");
+        const { token } = await apiPost<TokenReveal>(workspaceSettingsPath(ws.forge, ws.prefix, "reveal-token"));
         return token;
       }}
       onCopied={() => {
@@ -228,14 +228,19 @@ function DashboardView({ data }: { data: Dashboard }) {
   return <Workspace data={data} current={data.current} />;
 }
 
-/** The index route: one workspace's repositories, chosen with ?ws=forge/prefix. */
+/**
+ * One workspace's repositories: /w/{forge}/{prefix}, or the index route, where
+ * the server picks the viewer's first workspace. The prefix is the route's
+ * splat — a GitLab group nests (grp/sub).
+ */
 export default function DashboardPage() {
-  const [params] = useSearchParams();
+  const { forge, "*": prefix } = useParams();
+  const ws = forge && prefix ? `${forge}/${prefix}` : "";
   // Where the server sends the browser back after an install or a grant. A
   // consent that failed before it named a workspace lands here, with no
   // settings page of its own to return to.
   const notice = useUrlNotice({ codes: connectNotices });
-  const query = useQuery(dashboardQuery(params.get("ws") ?? ""));
+  const query = useQuery(dashboardQuery(ws));
   usePageTitle("repositories");
   return (
     <div className="stack stack-3">

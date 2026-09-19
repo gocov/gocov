@@ -42,7 +42,7 @@ test("an owner sees the trail, every section, and the badge to copy", async () =
   expect(await screen.findByRole("heading", { name: /Settings acme\/api/ })).toBeInTheDocument();
   expect(document.title).toBe("acme/api settings — gocov");
   const trail = screen.getByRole("navigation", { name: "Breadcrumb" });
-  expect(within(trail).getByRole("link", { name: "acme" })).toHaveAttribute("href", "/workspaces/github/acme");
+  expect(within(trail).getByRole("link", { name: "acme" })).toHaveAttribute("href", "/workspace-settings/github/acme");
   expect(within(trail).getByRole("link", { name: "acme/api" })).toHaveAttribute("href", "/repos/github/acme/api");
   for (const label of ["General", "Coverage gates", "Ignored files", "Public reports", "Uploads", "Badge", "Remove repository"]) {
     expect(screen.getByRole("link", { name: label })).toBeInTheDocument();

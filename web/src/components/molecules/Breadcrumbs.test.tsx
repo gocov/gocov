@@ -7,7 +7,7 @@ test("links every step but the one you are on", () => {
     <MemoryRouter>
       <Breadcrumbs
         items={[
-          { label: "acme", to: "/?ws=github/acme" },
+          { label: "acme", to: "/w/github/acme" },
           { label: "acme/api", to: "/repos/github/acme/api" },
           { label: "Upload 412" },
         ]}

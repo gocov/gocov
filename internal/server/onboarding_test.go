@@ -44,7 +44,7 @@ func TestReportsPostedMsg(t *testing.T) {
 
 func TestAPIWorkspaceSetup(t *testing.T) {
 	f, sess := newWorkspaceFixture(t, true) // an owner of acme, one repo
-	const path = "/api/ui/workspaces/bitbucket/acme/setup"
+	const path = "/api/ui/workspace-setup/bitbucket/acme"
 
 	rec := get(f, path, sess)
 	wantStatus(t, rec, "GET setup", http.StatusOK)
@@ -73,7 +73,7 @@ func TestAPIWorkspaceSetup(t *testing.T) {
 		t.Errorf("status before any report = %+v", got.Status)
 	}
 	// The poll answers with exactly the embedded status.
-	if st := decodeJSON[setupStatusDTO](t, get(f, path+"/status", sess)); !reflect.DeepEqual(st, got.Status) {
+	if st := decodeJSON[setupStatusDTO](t, get(f, strings.Replace(path, "/workspace-setup/", "/workspace-setup-status/", 1), sess)); !reflect.DeepEqual(st, got.Status) {
 		t.Errorf("poll = %+v, want the embedded status %+v", st, got.Status)
 	}
 
@@ -95,7 +95,7 @@ func TestAPIWorkspaceSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	st := decodeJSON[setupStatusDTO](t, get(f, path+"/status", sess))
+	st := decodeJSON[setupStatusDTO](t, get(f, strings.Replace(path, "/workspace-setup/", "/workspace-setup-status/", 1), sess))
 	if st.FirstReport == nil {
 		t.Fatalf("first report missing after an upload landed: %+v", st)
 	}
@@ -125,7 +125,7 @@ func TestAPIWorkspaceSetupAccess(t *testing.T) {
 	// A member reads the setup screen — they need the snippet too — but
 	// the token is not theirs, not even masked.
 	f, sess := newMemberFixture(t, true)
-	const path = "/api/ui/workspaces/bitbucket/acme/setup"
+	const path = "/api/ui/workspace-setup/bitbucket/acme"
 	rec := get(f, path, sess)
 	wantStatus(t, rec, "member GET setup", http.StatusOK)
 	if got := decodeJSON[setupInfoDTO](t, rec); got.Owner || got.TokenMasked != nil {
@@ -138,12 +138,12 @@ func TestAPIWorkspaceSetupAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range []string{
-		"/api/ui/workspaces/bitbucket/beta/setup",
-		"/api/ui/workspaces/bitbucket/beta/setup/status",
+		"/api/ui/workspace-setup/bitbucket/beta",
+		"/api/ui/workspace-setup-status/bitbucket/beta",
 	} {
 		wantStatus(t, get(f, p, sess), "non-member "+p, http.StatusNotFound)
 	}
 	// Signed out, the app is told to sign in rather than redirected.
 	wantStatus(t, get(f, path), "signed-out setup", http.StatusUnauthorized)
-	wantStatus(t, get(f, path+"/status"), "signed-out status", http.StatusUnauthorized)
+	wantStatus(t, get(f, strings.Replace(path, "/workspace-setup/", "/workspace-setup-status/", 1)), "signed-out status", http.StatusUnauthorized)
 }

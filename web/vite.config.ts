@@ -9,13 +9,12 @@ const backend = process.env.GOCOV_BACKEND ?? "http://localhost:8099";
 
 // Everything the Go server still answers itself: the page routes are the
 // SPA's now. A key starting with "^" is matched as a regex, which is how the
-// two endpoints that live inside SPA route shapes — the raw profile download
-// and the forge consent start — are picked out without the pages around them.
+// one endpoint that lives inside an SPA route shape — the raw profile
+// download — is picked out without the pages around it.
 const serverPaths = [
   "/api", "/oauth", "/logout", "/badge", "/static", "/healthz",
-  "/robots.txt", "/sitemap.xml", "/github",
+  "/robots.txt", "/sitemap.xml", "/github", "/workspace-connect",
   String.raw`^/uploads/\d+/profile$`,
-  String.raw`^/workspaces/[^/]+/[^/]+/connect$`,
 ];
 
 export default defineConfig(({ command }) => ({

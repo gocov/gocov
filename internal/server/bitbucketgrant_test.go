@@ -132,7 +132,7 @@ func (f *bbConnectFixture) upload(t *testing.T) uploadResponse {
 func TestBitbucketConnectFlow(t *testing.T) {
 	f, sess := newBBConnectFixture(t)
 
-	start := get(f.fixture, "/workspaces/bitbucket/acme/connect", sess)
+	start := get(f.fixture, "/workspace-connect/bitbucket/acme", sess)
 	if start.Code != http.StatusFound {
 		t.Fatalf("connect start: status = %d", start.Code)
 	}
@@ -155,7 +155,7 @@ func TestBitbucketConnectFlow(t *testing.T) {
 	if cb.Code != http.StatusSeeOther {
 		t.Fatalf("callback: status = %d, body = %s", cb.Code, cb.Body)
 	}
-	if loc := cb.Header().Get("Location"); loc != "/?ws=bitbucket%2Facme" {
+	if loc := cb.Header().Get("Location"); loc != "/w/bitbucket/acme" {
 		t.Errorf("callback redirect = %q, want the workspace's dashboard", loc)
 	}
 	ws := f.workspace(t)
@@ -180,7 +180,7 @@ func TestBitbucketConnectCallbackRejects(t *testing.T) {
 	// No session: back to sign-in, aimed at the settings page the Connect
 	// button sits on.
 	if rec := get(f.fixture, "/oauth/bitbucket/callback?code=x&state=s", mk("s|acme")); rec.Code != http.StatusSeeOther ||
-		rec.Header().Get("Location") != "/login?next=%2Fworkspaces%2Fbitbucket%2Facme" {
+		rec.Header().Get("Location") != "/login?next=%2Fworkspace-settings%2Fbitbucket%2Facme" {
 		t.Errorf("no session: %d -> %q, want the login redirect back to the settings page",
 			rec.Code, rec.Header().Get("Location"))
 	}
@@ -202,7 +202,7 @@ func TestBitbucketConnectCallbackRejects(t *testing.T) {
 	// settings page says whose move connecting is.
 	demote(t, f.fixture, "acme")
 	if rec := get(f.fixture, "/oauth/bitbucket/callback?code=x&state=s", mk("s|acme"), sess); rec.Code != http.StatusSeeOther ||
-		rec.Header().Get("Location") != "/workspaces/bitbucket/acme?error=connect_owners_only" {
+		rec.Header().Get("Location") != "/workspace-settings/bitbucket/acme?error=connect_owners_only" {
 		t.Errorf("demoted owner: %d -> %q, want the settings page's connect_owners_only notice", rec.Code, rec.Header().Get("Location"))
 	}
 	if len(f.bb.exchanged) != 0 {
@@ -214,7 +214,7 @@ func TestBitbucketConnectRequiresFeature(t *testing.T) {
 	// No BitbucketConnect configured: the connect start does not exist,
 	// and a stray connect cookie on the sign-in callback changes nothing.
 	f, sess := newWorkspaceFixture(t, false)
-	if rec := get(f, "/workspaces/bitbucket/acme/connect", sess); rec.Code != http.StatusNotFound {
+	if rec := get(f, "/workspace-connect/bitbucket/acme", sess); rec.Code != http.StatusNotFound {
 		t.Errorf("connect without feature: status = %d, want 404", rec.Code)
 	}
 	stray := &http.Cookie{Name: connectStateCookie, Value: "s|acme"}
@@ -298,11 +298,11 @@ func TestBitbucketConnectIsOwnersOnly(t *testing.T) {
 	// is an owner's move; a member gets a 403 on both routes.
 	f, sess := newBBConnectFixture(t)
 	demote(t, f.fixture, "acme")
-	if rec := get(f.fixture, "/workspaces/bitbucket/acme/connect", sess); rec.Code != http.StatusForbidden {
+	if rec := get(f.fixture, "/workspace-connect/bitbucket/acme", sess); rec.Code != http.StatusForbidden {
 		t.Errorf("member connect: status = %d, want 403", rec.Code)
 	}
 	f.grant(t, "gocov-bot", "rt", false)
-	if rec := postJSON(t, f.fixture, "/api/ui/workspaces/bitbucket/acme/disconnect", nil, sess); rec.Code != http.StatusForbidden {
+	if rec := postJSON(t, f.fixture, "/api/ui/workspace-settings/disconnect/bitbucket/acme", nil, sess); rec.Code != http.StatusForbidden {
 		t.Errorf("member disconnect: status = %d, want 403", rec.Code)
 	}
 	if ws := f.workspace(t); ws.BitbucketGrantAccount != "gocov-bot" {
@@ -314,7 +314,7 @@ func TestBitbucketDisconnect(t *testing.T) {
 	f, sess := newBBConnectFixture(t)
 	f.grant(t, "covbot", "rt-0", false)
 
-	wantStatus(t, postJSON(t, f.fixture, "/api/ui/workspaces/bitbucket/acme/disconnect", nil, sess),
+	wantStatus(t, postJSON(t, f.fixture, "/api/ui/workspace-settings/disconnect/bitbucket/acme", nil, sess),
 		"disconnect", http.StatusOK)
 	ws := f.workspace(t)
 	if ws.BitbucketGrantAccount != "" || ws.BitbucketRefreshToken != "" || ws.BitbucketGrantBroken {
@@ -329,8 +329,8 @@ func TestBitbucketDisconnect(t *testing.T) {
 func TestBitbucketReportingStates(t *testing.T) {
 	f, sess := newBBConnectFixture(t)
 	const (
-		path       = "/api/ui/workspaces/bitbucket/acme"
-		connectURL = "/workspaces/bitbucket/acme/connect"
+		path       = "/api/ui/workspace-settings/bitbucket/acme"
+		connectURL = "/workspace-connect/bitbucket/acme"
 	)
 
 	got := decodeJSON[workspaceSettingsDTO](t, get(f.fixture, path, sess))

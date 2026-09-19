@@ -129,7 +129,7 @@ test("a member who may not see the token is told who has it", () => {
 test("a broken connection explains why the token is back, and links to the fix", () => {
   show({ tokenless: false, connection_broken: true });
   expect(screen.getByText(/no longer works/)).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Reconnect it" })).toHaveAttribute("href", "/workspaces/github/acme");
+  expect(screen.getByRole("link", { name: "Reconnect it" })).toHaveAttribute("href", "/workspace-settings/github/acme");
 });
 
 test("a self-hosted instance also hands over GOCOV_SERVER", () => {

@@ -62,7 +62,7 @@ func connectGrantFor(forgeName string) *connectGrant {
 	return nil
 }
 
-// handleConnect implements GET /workspaces/{forge}/{prefix}/connect: the
+// handleConnect implements GET /workspace-connect/{forge}/{prefix...}: the
 // start of the connect grant — state cookie, then the forge's consent
 // page. A GitHub workspace connects by installing the App instead, so it
 // has no grant to start and the page does not exist.
@@ -127,7 +127,7 @@ func (s *Server) connectCallback(g *connectGrant, w http.ResponseWriter, r *http
 		s.connectFailed(w, r, g.forge, prefix)
 		return true
 	}
-	settings := workspacePath(g.forge, prefix)
+	settings := workspaceSettingsPath(g.forge, prefix)
 	u := s.sessionUser(r)
 	if u == nil {
 		// The session expired during the consent; sign in and start again
@@ -189,7 +189,7 @@ func (s *Server) connectCallback(g *connectGrant, w http.ResponseWriter, r *http
 func (s *Server) connectFailed(w http.ResponseWriter, r *http.Request, forge, prefix string) {
 	dest := "/"
 	if prefix != "" {
-		dest = workspacePath(forge, prefix)
+		dest = workspaceSettingsPath(forge, prefix)
 	}
 	http.Redirect(w, r, dest+"?error=connect_failed", http.StatusSeeOther)
 }

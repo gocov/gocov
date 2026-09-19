@@ -107,7 +107,7 @@ try {
   await shoot("login.png", { x: 0, y: 0, width: 1280, height: 697 });
 
   // Sign in through the preview's bounce-back provider.
-  await go("/oauth/bitbucket/start?next=%2F%3Fws%3Dbitbucket%252Facme", `document.querySelector('table')`);
+  await go("/oauth/bitbucket/start?next=%2Fw%2Fbitbucket%2Facme", `document.querySelector('table')`);
 
   // 2. Dashboard.
   await shoot("dashboard.png", await pageDownTo(`document.querySelector('main').lastElementChild`, 40));
@@ -130,13 +130,13 @@ try {
 
   // 7. Reporting broken: the settings card of a workspace whose grant was revoked.
   // Signed in through GitHub, as an owner, so the card offers the reinstall.
-  await go("/oauth/github/start?next=%2Fworkspaces%2Fgithub%2Fgh-broken", `document.querySelector('#reporting')`);
+  await go("/oauth/github/start?next=%2Fworkspace-settings%2Fgithub%2Fgh-broken", `document.querySelector('#reporting')`);
   await shoot("reporting-broken.png", await rectOf(`document.querySelector('#reporting')`, 16));
 
   // 8. The setup card on the dashboard of a connected GitHub workspace with no
   // report yet: the tokenless snippet, which is what most people will see.
   await evaluate(`localStorage.setItem('gocov.setup.language', 'go')`);
-  await go("/?ws=github%2Fgh-connected", `document.querySelector('.SetupChecklist pre')`);
+  await go("/w/github/gh-connected", `document.querySelector('.SetupChecklist pre')`);
   await shoot("onboarding.png", await pageDownTo(`document.querySelector('.SetupChecklist')`, 32));
 } finally {
   ws.close();

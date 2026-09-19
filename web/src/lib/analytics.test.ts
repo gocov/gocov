@@ -91,15 +91,18 @@ test("the dashboard is never recorded: it names private repositories", async () 
   expect((ph.init.mock.calls[0] as [string, Record<string, unknown>])[1].disable_session_recording).toBe(true);
 });
 
-test("session replay is off outside the setup pages", async () => {
-  vi.stubGlobal("location", { pathname: "/repos/github/acme/api", search: "" });
-  const a = await fresh();
-  a.initAnalytics(config);
-  const ph = arrive();
-  expect((ph.init.mock.calls[0] as [string, Record<string, unknown>])[1].disable_session_recording).toBe(true);
-});
+test.each(["/repos/github/acme/api", "/w/github/acme", "/workspace-settings/github/acme"])(
+  "session replay is off on %s, outside the setup pages",
+  async (pathname) => {
+    vi.stubGlobal("location", { pathname, search: "" });
+    const a = await fresh();
+    a.initAnalytics(config);
+    const ph = arrive();
+    expect((ph.init.mock.calls[0] as [string, Record<string, unknown>])[1].disable_session_recording).toBe(true);
+  },
+);
 
-test.each(["/onboarding", "/workspaces/github/acme/setup"])(
+test.each(["/onboarding", "/workspace-setup/github/acme", "/workspace-setup/gitlab/grp/sub"])(
   "session replay is on for %s, where someone is being set up",
   async (pathname) => {
     vi.stubGlobal("location", { pathname, search: "" });

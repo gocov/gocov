@@ -38,11 +38,11 @@ test("the title opens a list of the other workspaces", async () => {
 
   const current = screen.getByRole("link", { name: /^acme74\.6%$/ });
   expect(current).toHaveAttribute("aria-current", "true");
-  expect(current).toHaveAttribute("href", "/?ws=github%2Facme");
+  expect(current).toHaveAttribute("href", "/w/github/acme");
 
   const other = screen.getByRole("link", { name: /acme-labs/ });
   expect(other).not.toHaveAttribute("aria-current");
-  expect(other).toHaveAttribute("href", "/?ws=gitlab%2Facme-labs");
+  expect(other).toHaveAttribute("href", "/w/gitlab/acme-labs");
   // No coverage yet reads as a dash, not 0%.
   expect(other).toHaveTextContent("—");
 

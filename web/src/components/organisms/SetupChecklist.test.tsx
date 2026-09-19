@@ -158,7 +158,7 @@ test("the first report turns the card into the payoff", async () => {
   expect(screen.getByText("main")).toBeInTheDocument();
   expect(screen.getByText("abcdef012345")).toBeInTheDocument();
   expect(screen.getByText("Commit status posted as gocov[bot].")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Set a coverage gate" })).toHaveAttribute("href", "/workspaces/github/acme");
+  expect(screen.getByRole("link", { name: "Set a coverage gate" })).toHaveAttribute("href", "/workspace-settings/github/acme");
   // Reporting is already on: nothing to offer.
   expect(screen.queryByRole("link", { name: "Turn on reporting" })).not.toBeInTheDocument();
   expect(screen.queryByText(/Listening for the first upload/)).not.toBeInTheDocument();
@@ -175,7 +175,7 @@ test("with reporting off, the payoff says so and offers to turn it on", () => {
   });
 
   expect(screen.getByText("Nothing was posted back to GitHub yet.")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Turn on reporting" })).toHaveAttribute("href", "/workspaces/github/acme");
+  expect(screen.getByRole("link", { name: "Turn on reporting" })).toHaveAttribute("href", "/workspace-settings/github/acme");
 });
 
 test("where the deployment cannot report at all, the payoff stays quiet about it", () => {

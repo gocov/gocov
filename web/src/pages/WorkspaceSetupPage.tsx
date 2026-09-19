@@ -46,7 +46,7 @@ function Setup({ info }: { info: SetupInfo }) {
           <SnippetPanel
             info={info}
             onReveal={async () => {
-              const { token } = await apiPost<TokenReveal>(workspaceSettingsPath(forge, prefix) + "/reveal-token");
+              const { token } = await apiPost<TokenReveal>(workspaceSettingsPath(forge, prefix, "reveal-token"));
               return token;
             }}
           />
@@ -71,7 +71,8 @@ function Setup({ info }: { info: SetupInfo }) {
 
 /** "Add a repository": the same snippet, independent of first-run setup. */
 export default function WorkspaceSetupPage() {
-  const { forge = "", prefix = "" } = useParams();
+  // The prefix is the route's splat: a GitLab group nests (grp/sub).
+  const { forge = "", "*": prefix = "" } = useParams();
   const query = useQuery(setupQuery(forge, prefix));
   usePageTitle("add a repository");
   return <QueryBoundary query={query}>{(info) => <Setup info={info} />}</QueryBoundary>;
