@@ -177,7 +177,7 @@ func main() {
 		CreatedAt: base.Add(44 * 24 * time.Hour),
 	}
 	baseFiles := append([]*store.UploadFile{{
-		Path: "internal/billing/charge.go", Pct: 49.0, CoveredStmts: 15, TotalStmts: 26,
+		Path: "internal/billing/charge.go", Pct: 57.7, CoveredStmts: 15, TotalStmts: 26,
 		Blocks: chargeBaseBlocks(),
 	}}, steadyFiles()...)
 	if err := st.CreateUpload(ctx, baseUpload, baseFiles); err != nil {
@@ -306,7 +306,7 @@ func main() {
 	if cfg.Auth {
 		auths = []auth.Provider{
 			devAuth{forge: "bitbucket", workspaces: []string{"acme", "personal", "bb-connected", "bb-broken"}},
-			devAuth{forge: "github", workspaces: []string{"gh-new", "gh-connected", "gh-broken"}},
+			devAuth{forge: "github", workspaces: []string{"gh-new", "gh-broken", "gh-connected"}},
 			devAuth{forge: "gitlab", workspaces: []string{"gl-group/platform", "gl-connected", "gl-broken", "gl-personal"}},
 		}
 		hosted = true

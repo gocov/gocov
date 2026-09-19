@@ -1,0 +1,14 @@
+.Toggle {
+  flex: none; display: inline-flex; align-items: center;
+  width: 34px; height: 20px; padding: 2px;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); cursor: pointer;
+}
+.Toggle__knob {
+  width: 14px; height: 14px; border-radius: 50%; background: var(--muted);
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+.Toggle--on { border-color: var(--text); background: var(--text); }
+.Toggle--on .Toggle__knob { background: var(--bg); transform: translateX(14px); }
+.Toggle:disabled { opacity: 0.45; cursor: default; }
+@media (prefers-reduced-motion: reduce) { .Toggle__knob { transition: none; } }

@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"iter"
 	"net/http"
 	"slices"
 	"strings"
@@ -23,45 +22,45 @@ const maxSourceBytes = 1 << 20
 type sourceLine struct {
 	No      int
 	Class   string // "hit", "miss" or "" for non-executable lines
-	Hits    string // "3×", "✗" or ""
+	Count   int    // executions, meaningful only on an executable line
 	Text    string
-	Anchor  string // element id on the first line of a miss run, else ""
-	NewMiss bool   // uncovered now but covered at the baseline commit
-	FoldID  string // set when the line sits inside a collapsed fold
-}
-
-// sourceItem is one row of the rendered source: either a code line or a
-// fold bar standing in for a collapsed run of covered lines.
-type sourceItem struct {
-	Line *sourceLine
-	Fold *foldInfo
-}
-
-// foldInfo is a collapsed run of contiguous non-miss lines.
-type foldInfo struct {
-	ID    string
-	Lines int
-	Label string
-}
-
-// missBlock is one contiguous run of uncovered lines, positioned against
-// the file height for the source view's miss-map rail.
-type missBlock struct {
-	Anchor    string // id of the run's first line, e.g. "L88"
-	StartLine int
-	EndLine   int
-	Lines     int     // uncovered lines in the run
-	Top       float64 // rail offset, percent of file height
-	Height    float64 // rail length, percent of file height
+	NewMiss bool // uncovered now but covered at the baseline commit
 }
 
 // handleSource implements GET /uploads/{id}/files/{path...} — the file's
-// source at the upload's commit with per-line coverage overlay. Only paths
-// recorded in the upload can be viewed.
+// source at the upload's commit with per-line coverage overlay. The
+// upload decides access, exactly as on the upload page; which paths the
+// upload recorded is the UI API's answer to give, so the page neither
+// reads the file list nor fetches the source.
 func (s *Server) handleSource(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := s.reportUpload(w, r); !ok {
+		return
+	}
+	s.serveApp(w, r, http.StatusOK, sourcePageHead(r.PathValue("path")))
+}
+
+// sourcePageData is one file's source at an upload's commit with its
+// coverage overlay, as read from the store and the forge. The UI API
+// hands the lines over as they are; the folds and the miss rail are the
+// client's to draw.
+type sourcePageData struct {
+	Repo   *store.Repo
+	Upload *store.Upload
+	File   *store.UploadFile
+	// Unavailable is why no source could be shown; Lines is then empty.
+	Unavailable string
+	Lines       []sourceLine
+	// Delta is the file's coverage against the baseline commit, nil when
+	// there is no baseline (or no source to compare line by line).
+	Delta *float64
+}
+
+// buildSourcePage assembles the source view. A false second result means
+// the answer is already written.
+func (s *Server) buildSourcePage(w http.ResponseWriter, r *http.Request) (*sourcePageData, bool) {
 	upload, repo, ok := s.reportUpload(w, r)
 	if !ok {
-		return
+		return nil, false
 	}
 	path := r.PathValue("path")
 	// Access was settled before this per-file lookup, so a signed-out
@@ -69,56 +68,93 @@ func (s *Server) handleSource(w http.ResponseWriter, r *http.Request) {
 	files, err := s.store.UploadFiles(r.Context(), upload.ID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.internalError(w, "loading upload files", err)
-		return
+		return nil, false
 	}
 	i := slices.IndexFunc(files, func(f *store.UploadFile) bool { return f.Path == path })
 	if i < 0 {
-		s.renderNotFound(w, r)
-		return
+		httpError(w, http.StatusNotFound, "not found")
+		return nil, false
 	}
 	file := files[i]
 
 	source, unavailable := s.fetchSource(r, repo, upload, file)
-	dir, base := splitPath(file.Path)
-	data := map[string]any{
-		"Repo":           repo,
-		"Upload":         upload,
-		"File":           file,
-		"FileDir":        dir,
-		"FileBase":       base,
-		"Uncovered":      uncoveredRanges(file.Blocks),
-		"Unavailable":    unavailable, // reason string when no source could be shown
-		"Lines":          nil,
-		"Items":          nil,
-		"MissBlocks":     nil,
-		"MissLines":      0,
-		"NewlyUncovered": 0,
-		"Delta":          nil,
-		"PublicView":     s.publicView(r),
-	}
+	d := &sourcePageData{Repo: repo, Upload: upload, File: file, Unavailable: unavailable}
 	if unavailable == "" {
-		lines := renderSourceLines(source, file.Blocks)
-		blocks, missLines := annotateMisses(lines)
+		d.Lines = renderSourceLines(source, file.Blocks)
 		// Compare against the file at the previous baseline commit to flag
 		// regressions and show a coverage delta.
 		if base := s.baseFileFor(r.Context(), repo, upload, file.Path); base != nil {
-			data["NewlyUncovered"] = markNewlyUncovered(lines, base.Blocks)
-			d := file.Pct - base.Pct
-			cls, arrow := "flat", "→"
-			switch {
-			case d > 0.05:
-				cls, arrow = "up", "▲"
-			case d < -0.05:
-				cls, arrow = "down", "▼"
-			}
-			data["Delta"] = map[string]any{"Class": cls, "Arrow": arrow, "Text": fmt.Sprintf("%+.1f%%", d)}
+			markNewlyUncovered(d.Lines, base.Blocks)
+			d.Delta = new(file.Pct - base.Pct)
 		}
-		data["Lines"] = lines
-		data["Items"] = foldItems(lines)
-		data["MissBlocks"] = blocks
-		data["MissLines"] = missLines
 	}
-	s.render(w, r, "source.html", data)
+	return d, true
+}
+
+// sourcePageDTO is the source view for the app: the lines with their
+// coverage, and nothing computed from them — the folds and the miss rail
+// are the client's to draw.
+type sourcePageDTO struct {
+	Repo   repoRefDTO      `json:"repo"`
+	Upload sourceUploadDTO `json:"upload"`
+	File   sourceFileDTO   `json:"file"`
+	Delta  *float64        `json:"delta"`
+	// Unavailable is non-empty when the source could not be fetched, and
+	// says why; Lines is then empty.
+	Unavailable string          `json:"unavailable"`
+	Uncovered   string          `json:"uncovered"`
+	Lines       []sourceLineDTO `json:"lines"`
+}
+
+type sourceUploadDTO struct {
+	ID  int64  `json:"id"`
+	SHA string `json:"sha"`
+}
+
+type sourceFileDTO struct {
+	Path         string  `json:"path"`
+	Coverage     float64 `json:"coverage"`
+	CoveredStmts int64   `json:"covered_stmts"`
+	TotalStmts   int64   `json:"total_stmts"`
+}
+
+// sourceLineDTO is one line of source: its text, how often it ran (null
+// when it is not a statement) and whether this commit newly lost it.
+type sourceLineDTO struct {
+	No      int    `json:"no"`
+	Text    string `json:"text"`
+	Hits    *int   `json:"hits"`
+	NewMiss bool   `json:"new_miss"`
+}
+
+// handleAPISource implements GET /api/ui/uploads/{id}/files/{path...}.
+func (s *Server) handleAPISource(w http.ResponseWriter, r *http.Request) {
+	d, ok := s.buildSourcePage(w, r)
+	if !ok {
+		return
+	}
+	dto := sourcePageDTO{
+		Repo:   newRepoRefDTO(d.Repo),
+		Upload: sourceUploadDTO{ID: d.Upload.ID, SHA: d.Upload.CommitSHA},
+		File: sourceFileDTO{
+			Path:         d.File.Path,
+			Coverage:     d.File.Pct,
+			CoveredStmts: d.File.CoveredStmts,
+			TotalStmts:   d.File.TotalStmts,
+		},
+		Delta:       d.Delta,
+		Unavailable: d.Unavailable,
+		Uncovered:   uncoveredRanges(d.File.Blocks),
+		Lines:       make([]sourceLineDTO, 0, len(d.Lines)),
+	}
+	for _, line := range d.Lines {
+		l := sourceLineDTO{No: line.No, Text: line.Text, NewMiss: line.NewMiss}
+		if line.Class != "" { // executable: a statement block spans it
+			l.Hits = new(line.Count)
+		}
+		dto.Lines = append(dto.Lines, l)
+	}
+	s.writeJSON(w, dto)
 }
 
 // fetchSource returns the file content at the upload's commit, preferring
@@ -310,66 +346,15 @@ func renderSourceLines(source []byte, blocks []profile.Block) []sourceLine {
 		no := i + 1
 		line := sourceLine{No: no, Text: strings.TrimSuffix(raw, "\r")}
 		if n, executable := counts[no]; executable {
+			line.Count = n
+			line.Class = "miss"
 			if n > 0 {
 				line.Class = "hit"
-				line.Hits = fmt.Sprintf("%d×", n)
-			} else {
-				line.Class = "miss"
-				line.Hits = "✗"
 			}
 		}
 		lines = append(lines, line)
 	}
 	return lines
-}
-
-// lineRuns splits rendered lines into maximal runs of misses and of
-// non-misses, yielding each run's [start, end) index range — the unit the
-// miss-map rail and the folds both work in.
-func lineRuns(lines []sourceLine) iter.Seq2[int, int] {
-	return func(yield func(int, int) bool) {
-		miss := func(i int) bool { return lines[i].Class == "miss" }
-		for i := 0; i < len(lines); {
-			j := i + 1
-			for j < len(lines) && miss(j) == miss(i) {
-				j++
-			}
-			if !yield(i, j) {
-				return
-			}
-			i = j
-		}
-	}
-}
-
-// minMissHeight keeps a one- or two-line miss run tall enough to stay a
-// clickable target on the rail even in a long file.
-const minMissHeight = 0.8
-
-// annotateMisses tags the first line of each contiguous uncovered run with
-// a jump anchor and returns those runs positioned against the file height
-// for the miss-map rail, plus the total uncovered-line count. It mutates
-// lines to set the anchors.
-func annotateMisses(lines []sourceLine) ([]missBlock, int) {
-	total := float64(len(lines))
-	var blocks []missBlock
-	missLines := 0
-	for i, j := range lineRuns(lines) {
-		if lines[i].Class != "miss" {
-			continue
-		}
-		run := j - i
-		missLines += run
-		anchor := fmt.Sprintf("L%d", lines[i].No)
-		lines[i].Anchor = anchor
-		blocks = append(blocks, missBlock{
-			Anchor: anchor, StartLine: lines[i].No, EndLine: lines[j-1].No,
-			Lines:  run,
-			Top:    float64(lines[i].No-1) / total * 100,
-			Height: max(float64(run)/total*100, minMissHeight),
-		})
-	}
-	return blocks, missLines
 }
 
 // baseBaselineScan bounds how far back the baseline search reads uploads.
@@ -444,34 +429,4 @@ func markNewlyUncovered(lines []sourceLine, baseBlocks []profile.Block) int {
 		}
 	}
 	return n
-}
-
-// foldThreshold is the shortest run of contiguous covered/non-executable
-// lines that collapses into a fold bar. Uncovered lines never fold.
-const foldThreshold = 10
-
-// foldItems lays the rendered lines out as display rows, collapsing long
-// runs of non-miss lines into fold bars. Each folded line keeps a FoldID
-// so the client can reveal exactly that run when its bar is expanded.
-func foldItems(lines []sourceLine) []sourceItem {
-	items := make([]sourceItem, 0, len(lines))
-	folds := 0
-	for i, j := range lineRuns(lines) {
-		run := j - i
-		foldID := ""
-		if lines[i].Class != "miss" && run >= foldThreshold {
-			folds++
-			foldID = fmt.Sprintf("f%d", folds)
-			label := fmt.Sprintf("%d lines", run)
-			if slices.ContainsFunc(lines[i:j], func(l sourceLine) bool { return l.Class == "hit" }) {
-				label += ", fully covered"
-			}
-			items = append(items, sourceItem{Fold: &foldInfo{ID: foldID, Lines: run, Label: label}})
-		}
-		for _, ln := range lines[i:j] {
-			ln.FoldID = foldID
-			items = append(items, sourceItem{Line: &ln})
-		}
-	}
-	return items
 }

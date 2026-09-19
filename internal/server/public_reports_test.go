@@ -9,7 +9,6 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -95,20 +94,20 @@ func TestPublicRepoReportPagesOpenAnonymously(t *testing.T) {
 	if repoPage.Code != http.StatusOK {
 		t.Fatalf("repo page anonymous: status = %d", repoPage.Code)
 	}
+	// The head names the repo — this page is the SEO surface — and points
+	// crawlers at the canonical URL.
 	body := repoPage.Body.String()
-	if !strings.Contains(body, "acme/widgets") {
-		t.Error("repo page misses the slug")
+	if !strings.Contains(body, "<title>acme/widgets code coverage — gocov</title>") {
+		t.Errorf("repo page head misses its title:\n%s", body)
 	}
-	// Read-only: no settings link, no member chrome — and the visitor CTA
-	// band is there.
-	if strings.Contains(body, "/repo-settings/bitbucket/") {
-		t.Error("anonymous repo page shows the settings link")
+	if !strings.Contains(body, `<link rel="canonical" href="https://gocov.example/repos/bitbucket/acme/widgets">`) {
+		t.Errorf("repo page head misses the canonical link:\n%s", body)
 	}
-	if strings.Contains(body, "Sign out") {
-		t.Error("anonymous repo page shows the signed-in chrome")
-	}
-	if !strings.Contains(body, "public-cta") {
-		t.Error("anonymous repo page misses the CTA band")
+	// Read-only: the app is told this is the anonymous view, so it draws
+	// neither the settings button nor the signed-in chrome.
+	data := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets"))
+	if !data.PublicView || data.Repo.CanSettings {
+		t.Errorf("anonymous repo data = public view %v, settings %v", data.PublicView, data.Repo.CanSettings)
 	}
 	// The anonymous render is briefly cacheable and must say so — a shared
 	// cache with no policy would cache heuristically and keep serving after
@@ -121,17 +120,19 @@ func TestPublicRepoReportPagesOpenAnonymously(t *testing.T) {
 		t.Errorf("anonymous public page Vary = %q, want Cookie", v)
 	}
 
-	uploadPage := get(f, "/uploads/1")
-	if uploadPage.Code != http.StatusOK {
-		t.Fatalf("upload page anonymous: status = %d", uploadPage.Code)
+	// The per-commit pages stay out of search indexes while their links
+	// still count towards the repo page.
+	for _, path := range []string{"/uploads/1", "/uploads/1/files/a.go"} {
+		rec := get(f, path)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s anonymous: status = %d", path, rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), noindexHead) {
+			t.Errorf("%s is indexable:\n%s", path, rec.Body)
+		}
 	}
-	if !strings.Contains(uploadPage.Body.String(), "public-cta") {
-		t.Error("anonymous upload page misses the CTA band")
-	}
-
-	src := get(f, "/uploads/1/files/a.go")
-	if src.Code != http.StatusOK {
-		t.Fatalf("source page anonymous: status = %d", src.Code)
+	if got := decodeJSON[uploadPageDTO](t, get(f, "/api/ui/uploads/1")); !got.PublicView {
+		t.Error("anonymous upload data is not marked a public view")
 	}
 
 	// Crawlers probe with HEAD; the mux serves it through the GET route,
@@ -208,15 +209,15 @@ func TestMemberViewOfPublicRepoIsUnchanged(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("member repo page: status = %d", rec.Code)
 	}
-	body := rec.Body.String()
-	if strings.Contains(body, "public-cta") {
-		t.Error("signed-in member sees the visitor CTA band")
-	}
-	if !strings.Contains(body, "/repo-settings/bitbucket/acme/widgets") {
-		t.Error("member repo page misses the settings link")
-	}
 	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
 		t.Errorf("member page Cache-Control = %q, want no-store", cc)
+	}
+	got := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets", sess))
+	if got.PublicView {
+		t.Error("a signed-in member reads as an anonymous visitor")
+	}
+	if !got.Repo.CanSettings {
+		t.Error("member repo data misses the settings button")
 	}
 }
 
@@ -272,34 +273,34 @@ func TestPublicReportsToggleInRepoSettings(t *testing.T) {
 	f := newPublicFixture(t, store.VisibilityPublic, true)
 	sess := signIn(t, f, "/")
 
-	// The switch renders for a public repo.
-	page := get(f, "/repo-settings/bitbucket/acme/widgets", sess)
-	if page.Code != http.StatusOK {
-		t.Fatalf("settings page: status = %d", page.Code)
-	}
-	if !strings.Contains(page.Body.String(), "Public reports") {
-		t.Error("settings page misses the Public reports switch")
+	// The switch is meaningful for a public repo, so the settings screen
+	// offers it.
+	const settings = "/api/ui/repo-settings/bitbucket/acme/widgets"
+	got := decodeJSON[repoSettingsDTO](t, get(f, settings, sess))
+	if !got.ShowPublicReports || !got.Repo.PublicReports {
+		t.Errorf("settings = show %v, on %v; want the switch offered and on",
+			got.ShowPublicReports, got.Repo.PublicReports)
 	}
 
-	// Saving without the checkbox turns public pages off at once.
-	rec := postForm(f, "/repo-settings/save/bitbucket/acme/widgets", url.Values{"default_branch": {"main"}}, sess)
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("save: status = %d, body = %s", rec.Code, rec.Body)
+	// Turning it off closes the public pages at once.
+	save := func(on bool) {
+		t.Helper()
+		rec := postJSON(t, f, "/api/ui/repo-settings/save/bitbucket/acme/widgets",
+			repoSettingsInput{DefaultBranch: "main", PublicReports: on}, sess)
+		wantStatus(t, rec, "save", http.StatusOK)
 	}
+	save(false)
 	repo, err := f.store.RepoBySlug(t.Context(), "bitbucket", "acme/widgets")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !repo.PublicReportsDisabled {
-		t.Error("saving with the checkbox off did not disable public reports")
+		t.Error("saving with the switch off did not disable public reports")
 	}
 	wantLoginRedirect(t, get(f, "/repos/bitbucket/acme/widgets"), "/repos/bitbucket/acme/widgets")
 
-	// Saving with the checkbox on reopens them.
-	rec = postForm(f, "/repo-settings/save/bitbucket/acme/widgets", url.Values{"default_branch": {"main"}, "public_reports": {"on"}}, sess)
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("re-save: status = %d", rec.Code)
-	}
+	// Turning it back on reopens them.
+	save(true)
 	if rec := get(f, "/repos/bitbucket/acme/widgets"); rec.Code != http.StatusOK {
 		t.Errorf("public page after reopening: status = %d", rec.Code)
 	}
@@ -309,14 +310,14 @@ func TestPrivateRepoSettingsHideTheSwitchAndKeepTheValue(t *testing.T) {
 	f := newPublicFixture(t, store.VisibilityPrivate, true)
 	sess := signIn(t, f, "/")
 
-	page := get(f, "/repo-settings/bitbucket/acme/widgets", sess)
-	if strings.Contains(page.Body.String(), "Public reports") {
-		t.Error("private repo settings render the Public reports switch")
+	if got := decodeJSON[repoSettingsDTO](t, get(f, "/api/ui/repo-settings/bitbucket/acme/widgets", sess)); got.ShowPublicReports {
+		t.Error("private repo settings offer the Public reports switch")
 	}
-	// A save without the (absent) checkbox must not flip the stored value.
-	if rec := postForm(f, "/repo-settings/save/bitbucket/acme/widgets", url.Values{"default_branch": {"main"}}, sess); rec.Code != http.StatusSeeOther {
-		t.Fatalf("save: status = %d", rec.Code)
-	}
+	// A save that carries the switch off anyway must not flip the stored
+	// value: the screen never showed it, so it decided nothing.
+	rec := postJSON(t, f, "/api/ui/repo-settings/save/bitbucket/acme/widgets",
+		repoSettingsInput{DefaultBranch: "main"}, sess)
+	wantStatus(t, rec, "save", http.StatusOK)
 	repo, err := f.store.RepoBySlug(t.Context(), "bitbucket", "acme/widgets")
 	if err != nil {
 		t.Fatal(err)
@@ -445,5 +446,71 @@ func waitForVisibility(t *testing.T, st *storemem.Store, slug, want string) {
 			t.Fatalf("visibility = %q, want %q (background re-check never landed)", stored.Visibility, want)
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// The app's version of the report pages reads exactly as the pages do:
+// anonymously on a public repo, behind a 401 otherwise — and never with a
+// login redirect, which the app could not follow.
+func TestAPIReportEndpointsFollowPublicReports(t *testing.T) {
+	paths := []string{
+		"/api/ui/repos/bitbucket/acme/widgets",
+		"/api/ui/uploads/1",
+		"/api/ui/uploads/1/files/a.go",
+	}
+
+	f := newPublicFixture(t, store.VisibilityPublic, true)
+	seedUpload(t, f)
+	for _, path := range paths {
+		rec := get(f, path)
+		if rec.Code != http.StatusOK {
+			t.Errorf("anonymous GET %s: status = %d, want 200", path, rec.Code)
+		}
+	}
+	// A read-only view says so, and offers no settings to a stranger.
+	repoPage := decodeJSON[repoPageDTO](t, get(f, paths[0]))
+	if !repoPage.PublicView || repoPage.Repo.CanSettings {
+		t.Errorf("anonymous repo page = public %v, settings %v", repoPage.PublicView, repoPage.Repo.CanSettings)
+	}
+
+	// Turned off at the instance, the same paths are a 401 in JSON.
+	closed := newPublicFixture(t, store.VisibilityPublic, false)
+	seedUpload(t, closed)
+	for _, path := range paths {
+		rec := get(closed, path)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("anonymous GET %s with public reports off: status = %d, want 401", path, rec.Code)
+		}
+		if loc := rec.Header().Get("Location"); loc != "" {
+			t.Errorf("GET %s answered the app with a redirect to %q", path, loc)
+		}
+	}
+
+	// A private repo keeps the wall even while the instance allows public
+	// reports — and a missing upload answers the same way, so a probe
+	// learns nothing either way.
+	private := newPublicFixture(t, store.VisibilityPrivate, true)
+	seedUpload(t, private)
+	for _, path := range append(paths, "/api/ui/uploads/999") {
+		if rec := get(private, path); rec.Code != http.StatusUnauthorized {
+			t.Errorf("anonymous GET %s on a private repo: status = %d, want 401", path, rec.Code)
+		}
+	}
+}
+
+// A signed-in stranger on a public repo reads the report and nothing
+// more; the repo's own settings do not exist for them.
+func TestAPIRepoSettingsStayClosedOnPublicRepos(t *testing.T) {
+	f := newPublicFixture(t, store.VisibilityPublic, true)
+	seedUpload(t, f)
+	sess := signIn(t, f, "/")
+
+	if rec := get(f, "/api/ui/repos/bitbucket/acme/widgets", sess); rec.Code != http.StatusOK {
+		t.Fatalf("member repo page: status = %d", rec.Code)
+	}
+	// The fixture's user is a member of acme, so settings are theirs; the
+	// public branch is what a stranger gets, tested above.
+	if got := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets", sess)); got.PublicView {
+		t.Error("a signed-in member reported as an anonymous view")
 	}
 }

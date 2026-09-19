@@ -1,0 +1,10 @@
+.FilesTable__name { display: inline-flex; align-items: center; min-width: 0; }
+.FilesTable__toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 0; border: 0; background: none; color: var(--text);
+  font: inherit; cursor: pointer;
+}
+.FilesTable__toggle:hover { color: var(--accent); }
+.FilesTable__file { display: inline-flex; align-items: center; gap: 6px; color: var(--text); }
+.FilesTable__file:hover { color: var(--accent); }
+.FilesTable__dir { color: var(--muted); }

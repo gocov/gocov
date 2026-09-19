@@ -1,0 +1,10 @@
+.AppShell__bar { border-bottom: 1px solid var(--border); background: var(--surface); }
+.AppShell__nav { display: flex; align-items: center; gap: var(--space-2); max-width: var(--page); margin: 0 auto; padding: 0 var(--space-2); height: 48px; font-size: var(--font-sm); }
+.AppShell__brand { display: flex; align-items: center; gap: var(--space-1); color: var(--text); font-weight: 600; font-size: var(--font-md); }
+.AppShell__brand:hover { text-decoration: none; }
+.AppShell__nav > * { white-space: nowrap; flex: none; }
+.AppShell__nav > .spacer { flex: 1; }
+.AppShell__link { color: var(--muted); }
+.AppShell__link:hover, .AppShell__link[aria-current="page"] { color: var(--text); text-decoration: none; }
+.AppShell__notice { border-bottom: 1px solid var(--border); padding: var(--space-1) var(--space-2); font-size: var(--font-sm); color: var(--muted); text-align: center; }
+.AppShell__main { max-width: var(--page); margin: 0 auto; padding: var(--space-3) var(--space-2); }

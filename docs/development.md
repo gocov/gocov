@@ -19,6 +19,40 @@ GOCOV_TEST_DATABASE_URL=postgres://gocov:gocov@localhost:5433/gocov go test ./..
 docker stop gocov-test-db
 ```
 
+## Web UI
+
+The web UI is a single-page app in `web/` (Vite, React, TypeScript, React Router, TanStack Query, Vitest). It is the
+UI: it answers the canonical URLs — `/`, `/repos/…`, `/workspaces/…` — and there are no server-rendered pages left
+behind it. Go still decides every status code, redirect and access answer and injects the per-page `<title>` and meta
+tags into the shell; the app reads its data from a private JSON API under `/api/ui/`, authenticated by the same
+session cookie.
+
+```sh
+cd web
+npm ci
+npm test           # unit tests
+npm run build      # typecheck, then bundle into internal/webui/dist
+```
+
+The bundle is embedded into `gocov-server` (`internal/webui`), so a shipping binary needs the web build to run first —
+the Dockerfile and the release workflow do. Without it everything still builds and tests with the Go toolchain alone:
+the binary then serves a built-in placeholder shell in place of the app, so status codes, redirects and head injection
+stay testable without Node.
+
+For live reload, run a backend and the Vite dev server side by side and open <http://localhost:5173/>:
+
+```sh
+GOCOV_PREVIEW_AUTH=1 go run ./cmd/gocov-preview   # in-memory store, synthetic history, fake sign-in
+cd web && npm run dev                             # proxies /api, /oauth, /static … to the backend
+```
+
+`GOCOV_BACKEND` points the dev server at a backend other than `http://localhost:8099`. The component conventions and the
+design tokens are described in `web/README.md`.
+
+The screenshots under `docs/assets/` are generated, not hand-taken: with a fresh preview running (after
+`npm run build` in `web/`), `node scripts/docs-screenshots.mjs` drives headless Chrome through the pages and rewrites
+them all. Re-run it after a change to how a documented page looks.
+
 ## Configuration
 
 Every environment variable the binaries read is declared as a tagged struct field in `internal/config`:
@@ -102,12 +136,12 @@ Bitbucket repo and the GitLab catalog reads the gitlab.com project, so verify-re
 
 ### Where the version is written down
 
-In the snippets a user copies — the CI recipes in [gitlab-ci](gitlab-ci.md) and [ci-other](ci-other.md), and the
-onboarding wizard's template — plus the `PinnedCLIVersion` constant in `internal/hosted` that the wizard and its
-test read. The copies cannot share that constant — some are Markdown, one is a Go template — so release-please
-rewrites them all, guided by `x-release-please-start-version` markers (and a line marker on the constant). The
-markers sit *outside* the snippets: an HTML comment in the Markdown, a Go template comment in the page, so neither
-shows up in what a reader copies and neither reaches the browser.
+In the snippets a user copies — the CI recipes in [gitlab-ci](gitlab-ci.md) and [ci-other](ci-other.md) — plus the
+`PinnedCLIVersion` constant in `internal/hosted`. The web UI is not one of the copies: it assembles its setup
+snippet in the browser from the version the API hands it, which is that constant. The Markdown cannot read a Go
+constant, so release-please rewrites those copies, guided by `x-release-please-start-version` markers (and a line
+marker on the constant). The markers sit *outside* the snippets — HTML comments in the Markdown — so they never
+show up in what a reader copies.
 
 Copies drift, and in August they did: the pipe image spent ten days baking a CLI two releases older than the one the
 action installed, and nothing said so. Two scripts close that off from opposite ends.

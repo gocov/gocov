@@ -1,0 +1,13 @@
+.Checkbox { display: inline-flex; align-items: flex-start; gap: var(--space-1); cursor: pointer; }
+.Checkbox__input { position: absolute; width: 16px; height: 16px; margin: 0; opacity: 0; cursor: pointer; }
+.Checkbox__box {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; margin-top: 2px;
+  border: 1px solid var(--border); border-radius: 3px; background: var(--surface); color: transparent;
+}
+.Checkbox__input:checked + .Checkbox__box { border-color: var(--text); background: var(--text); color: var(--bg); }
+.Checkbox__input:focus-visible + .Checkbox__box { outline: 2px solid var(--ring); outline-offset: 1px; }
+.Checkbox__input:disabled + .Checkbox__box { opacity: 0.45; }
+.Checkbox__input:disabled ~ .Checkbox__label { color: var(--muted); }
+.Checkbox:has(.Checkbox__input:disabled) { cursor: default; }
+.Checkbox__label { font-size: var(--font-md); }

@@ -30,14 +30,9 @@ type connectGrant struct {
 	// forge names the forge everywhere: store value, route segment, log
 	// prefix and connector lookup.
 	forge string
-	// label is the forge as people see it.
-	label string
 	// cookie binds the consent redirect to the browser that started it,
 	// and carries the workspace prefix being connected.
 	cookie string
-	// dataKey is the template flag saying this deployment offers the
-	// grant for the workspace's forge; the reporting card keys off it.
-	dataKey string
 	// set writes the grant's columns on the workspace row.
 	set func(st store.Store, ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error
 }
@@ -52,10 +47,8 @@ const (
 // connectGrants lists the grant-backed forges. Whether a deployment
 // actually offers a grant is the connector's presence in core.Forges.
 var connectGrants = []*connectGrant{
-	{forge: "bitbucket", label: "Bitbucket", cookie: connectStateCookie,
-		dataKey: "BitbucketConnect", set: store.Store.SetWorkspaceBitbucketGrant},
-	{forge: "gitlab", label: "GitLab", cookie: glConnectStateCookie,
-		dataKey: "GitLabConnect", set: store.Store.SetWorkspaceGitLabGrant},
+	{forge: "bitbucket", cookie: connectStateCookie, set: store.Store.SetWorkspaceBitbucketGrant},
+	{forge: "gitlab", cookie: glConnectStateCookie, set: store.Store.SetWorkspaceGitLabGrant},
 }
 
 // connectGrantFor returns the grant description for a forge, nil for a
@@ -97,7 +90,7 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     g.cookie,
-		Value:    state + "|" + ws.Prefix + "|" + connectFrom(r),
+		Value:    state + "|" + ws.Prefix,
 		Path:     "/",
 		MaxAge:   int((10 * time.Minute).Seconds()),
 		HttpOnly: true,
@@ -121,7 +114,7 @@ func (s *Server) connectCallback(g *connectGrant, w http.ResponseWriter, r *http
 	if err != nil {
 		return false
 	}
-	state, prefix, from := splitConnectState(c.Value)
+	state, prefix := splitConnectState(c.Value)
 	if state == "" || r.FormValue("state") != state {
 		// Not this flow's redirect (a plain sign-in, or garbage); the
 		// stale cookie stays until it expires or a connect finishes.
@@ -131,21 +124,21 @@ func (s *Server) connectCallback(g *connectGrant, w http.ResponseWriter, r *http
 	code := r.FormValue("code")
 	if r.FormValue("error") != "" || code == "" || prefix == "" {
 		s.log.Warn(g.forge+" connect callback rejected", "forge_error", r.FormValue("error"))
-		s.renderConnect(w, r, http.StatusBadRequest, "Connect failed",
-			"The consent redirect could not be validated. Start again from the workspace settings page.")
+		s.connectFailed(w, r, g.forge, prefix)
 		return true
 	}
+	settings := workspacePath(g.forge, prefix)
 	u := s.sessionUser(r)
 	if u == nil {
-		s.renderConnect(w, r, http.StatusForbidden, "Sign in first",
-			"Your gocov session expired during the consent. Sign in and start the connect again "+
-				"from the workspace settings page.")
+		// The session expired during the consent; sign in and start again
+		// from the settings page the Connect button sits on.
+		http.Redirect(w, r, loginURL(settings), http.StatusSeeOther)
 		return true
 	}
 	ws, err := s.store.WorkspaceByPrefix(r.Context(), g.forge, prefix)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			http.NotFound(w, r)
+			s.connectDenied(w, r, g, u)
 			return true
 		}
 		s.internalError(w, "looking up workspace", err)
@@ -157,22 +150,23 @@ func (s *Server) connectCallback(g *connectGrant, w http.ResponseWriter, r *http
 		return true
 	}
 	if !member {
-		http.NotFound(w, r)
+		s.connectDenied(w, r, g, u)
 		return true
 	}
 	if role != store.RoleOwner {
 		// The consent was started by an owner's session; being demoted
 		// (or handing the redirect to a member) in between ends it here.
-		ownersOnly(w)
+		// A member may read the settings page, so that is where the app
+		// says whose move connecting is.
+		s.log.Warn(g.forge+" connect callback denied to member", "workspace", ws.Prefix, "user", u.DisplayName)
+		http.Redirect(w, r, settings+"?error=connect_owners_only", http.StatusSeeOther)
 		return true
 	}
 
 	grant, err := connector.Exchange(r.Context(), code, s.redirectURI(g.forge))
 	if err != nil {
 		s.log.Error(g.forge+" connect exchange", "workspace", ws.Prefix, "err", err)
-		s.renderConnect(w, r, http.StatusBadGateway, g.label+" did not confirm the grant",
-			"The authorization could not be completed with "+g.label+". Start again from the "+
-				"workspace settings page.")
+		s.connectFailed(w, r, g.forge, prefix)
 		return true
 	}
 	if err := g.set(s.store, r.Context(), ws.ID, grant.Account, grant.RefreshToken, false); err != nil {
@@ -181,45 +175,58 @@ func (s *Server) connectCallback(g *connectGrant, w http.ResponseWriter, r *http
 	}
 	s.forges.CacheGrantToken(g.forge, ws.ID, grant.AccessToken, grant.TTL)
 	s.log.Info(g.forge+" workspace connected", "workspace", ws.Prefix, "account", grant.Account, "user", u.DisplayName)
-	http.Redirect(w, r, connectDest(ws, from), http.StatusSeeOther)
+	// A connected workspace's home is its dashboard, where the setup
+	// checklist reads the connection it just gained.
+	http.Redirect(w, r, workspaceHomeURL(ws), http.StatusSeeOther)
 	return true
 }
 
-// handleDisconnect implements POST /workspaces/{forge}/{prefix}/disconnect:
-// forget the grant. The consent itself lives on the forge (the account's
-// authorized-applications page); this only stops gocov using it and
-// drops resolution back to the credential chain. A GitHub workspace's
-// connection is its App installation link; forgetting that is
-// githubDisconnect's job.
-func (s *Server) handleDisconnect(w http.ResponseWriter, r *http.Request) {
-	ws := s.ownerWorkspace(w, r)
-	if ws == nil {
-		return
+// connectFailed sends a consent that could not be completed back to the
+// workspace's settings page, where the Connect button is, with ?error=
+// for the app to explain and offer another try. A callback that never
+// named a workspace has no settings page to return to; the dashboard
+// carries the same notice instead.
+func (s *Server) connectFailed(w http.ResponseWriter, r *http.Request, forge, prefix string) {
+	dest := "/"
+	if prefix != "" {
+		dest = workspacePath(forge, prefix)
 	}
+	http.Redirect(w, r, dest+"?error=connect_failed", http.StatusSeeOther)
+}
+
+// connectDenied ends a consent that came back for a workspace the viewer
+// has no seat in — or for one that is not there, which must read the same
+// (D3). Neither has a settings page to show them, so the dashboard carries
+// the notice, and the redirect names no workspace.
+func (s *Server) connectDenied(w http.ResponseWriter, r *http.Request, g *connectGrant, u *store.User) {
+	s.log.Warn(g.forge+" connect callback denied", "user", u.DisplayName)
+	http.Redirect(w, r, "/?error=connect_denied", http.StatusSeeOther)
+}
+
+// disconnectWorkspace forgets the workspace's connection — the GitHub App
+// installation link, or the grant — and reports whether it could. A false
+// result means the answer (a 404 for a forge with no connect mechanism,
+// or an internal error) is already written; the caller then writes
+// nothing of its own.
+func (s *Server) disconnectWorkspace(w http.ResponseWriter, r *http.Request, ws *store.Workspace) bool {
+	actor := currentUser(r).DisplayName
 	if ws.Forge == "github" {
-		s.githubDisconnect(w, r, ws)
-		return
+		if err := s.githubDisconnect(r.Context(), ws, actor); err != nil {
+			s.internalError(w, "disconnecting workspace", err)
+			return false
+		}
+		return true
 	}
 	g := connectGrantFor(ws.Forge)
 	if g == nil {
-		http.NotFound(w, r)
-		return
+		tenantNotFound(w, r)
+		return false
 	}
 	if err := g.set(s.store, r.Context(), ws.ID, "", "", false); err != nil {
 		s.internalError(w, "disconnecting "+g.forge+" grant", err)
-		return
+		return false
 	}
 	s.forges.DropGrantToken(g.forge, ws.ID)
-	s.log.Info(g.forge+" workspace disconnected", "workspace", ws.Prefix, "user", currentUser(r).DisplayName)
-	http.Redirect(w, r, workspaceURL(ws, "?saved=1"), http.StatusSeeOther)
-}
-
-// addGrantData flags, for the settings and setup pages, that this
-// deployment offers the connect grant for the workspace's forge. The
-// connection's state itself is folded into the reporting card by
-// addReportingState.
-func (s *Server) addGrantData(ws *store.Workspace, data map[string]any) {
-	if g := connectGrantFor(ws.Forge); g != nil && s.forges.Connector(g.forge) != nil {
-		data[g.dataKey] = true
-	}
+	s.log.Info(g.forge+" workspace disconnected", "workspace", ws.Prefix, "user", actor)
+	return true
 }

@@ -1,0 +1,8 @@
+.Spinner {
+  flex: none; display: inline-block; width: 14px; height: 14px;
+  border: 2px solid var(--border); border-top-color: var(--muted); border-radius: 50%;
+  vertical-align: -2px;
+  animation: Spinner-turn 0.7s linear infinite;
+}
+@keyframes Spinner-turn { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .Spinner { animation: none; } }

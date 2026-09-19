@@ -1,0 +1,4 @@
+.UploadsTable__branch {
+  display: flex; align-items: center; gap: var(--space-1);
+  color: var(--muted); font-size: var(--font-sm);
+}

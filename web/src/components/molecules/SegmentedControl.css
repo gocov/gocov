@@ -1,0 +1,19 @@
+.SegmentedControl {
+  display: inline-flex; align-items: center;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+  /* Four long options outgrow a phone: scroll inside the control, never the page. */
+  max-width: 100%; overflow-x: auto; scrollbar-width: none;
+}
+.SegmentedControl__option {
+  flex: none;
+  display: inline-flex; align-items: center; gap: 6px;
+  height: var(--control-sm); padding: 0 var(--space-1);
+  border: 0; border-left: 1px solid var(--border);
+  background: none; color: var(--muted);
+  font: inherit; font-size: var(--font-sm); white-space: nowrap; cursor: pointer;
+}
+.SegmentedControl__option:first-child { border-left: 0; }
+.SegmentedControl__option:hover { background: var(--hover); color: var(--text); }
+.SegmentedControl__option[aria-pressed="true"] { background: var(--hover); color: var(--text); font-weight: 500; }
+.SegmentedControl__option:disabled { opacity: 0.45; cursor: default; }
+.SegmentedControl__count { color: var(--muted); font-variant-numeric: tabular-nums; }

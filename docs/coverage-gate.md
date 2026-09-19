@@ -1,13 +1,17 @@
 # Coverage gate
 
-Set the gate on a workspace's **settings** page (Defaults & coverage gate): a minimum total percentage, a minimum diff
-coverage for the changed lines of PR uploads, and a max total-coverage drop. Each rule is optional — leave a field empty
-to disable it — and the values apply to repos registered from then on.
+A gate is three rules, each optional — leave one off to disable it: a minimum total percentage, a minimum diff
+coverage for the changed lines of PR uploads, and a max total-coverage drop.
 
-- **Min coverage** — the minimum total percentage.
-- **Min diff coverage** — applies to the changed lines of PR uploads (skipped when no diff coverage is available).
-- **Max coverage drop** — bounds how far total coverage may fall below the latest gate-passing upload on the default
-  branch; `0` forbids any drop.
+Every repository has its own gate, set under **Coverage gates** on its repository settings page. The same card on a
+workspace's settings page sets the gate repositories registered in that workspace *from then on* start with: it is
+copied into a repository once, when its first upload registers it, and never read again — so changing it leaves
+existing repositories exactly as they are, and those are changed one at a time in their own settings.
+
+- **Minimum total coverage** — the minimum total percentage.
+- **Minimum diff coverage** — applies to the changed lines of PR uploads (skipped when no diff coverage is available).
+- **Maximum coverage drop** — bounds how far total coverage may fall below the latest gate-passing upload on the
+  default branch; `0` forbids any drop.
 
 ![A repo page's gate verdict: gate passing at 82.0%, down 2.0%, above the minimum of 70%, with the commit it compared against](assets/gate-verdict.png)
 

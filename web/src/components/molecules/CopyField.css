@@ -1,0 +1,9 @@
+.CopyField { display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; }
+.CopyField__preview { display: flex; align-items: center; flex: none; }
+.CopyField__input {
+  flex: 1; min-width: 160px;
+  height: var(--control); padding: 0 var(--space-1);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg); color: var(--text);
+  font-family: var(--mono); font-size: var(--font-sm); text-overflow: ellipsis;
+}

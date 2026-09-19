@@ -185,11 +185,22 @@ func (s *Server) reportUpload(w http.ResponseWriter, r *http.Request) (*store.Up
 // missing session got before public report pages existed — a 404 here
 // would tell a signed-out browser which slugs and upload ids exist.
 func (s *Server) reportNotFound(w http.ResponseWriter, r *http.Request) {
-	if s.authEnabled() && currentUser(r) == nil {
+	signedOut := s.authEnabled() && currentUser(r) == nil
+	if apiUIPath(r.URL.Path) {
+		// The same two answers in the UI API's terms: 401 sends the app to
+		// sign-in, 404 shows its not-found panel.
+		if signedOut {
+			httpError(w, http.StatusUnauthorized, "sign-in required")
+			return
+		}
+		httpError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if signedOut {
 		redirectToLogin(w, r)
 		return
 	}
-	s.renderNotFound(w, r)
+	s.serveApp(w, r, http.StatusNotFound, appHead{})
 }
 
 // publicView reports whether this render is the anonymous read-only view
@@ -241,31 +252,15 @@ func admits(allowed map[wsKey]bool, forge, name string) bool {
 	return allowed[wsKey{forge, name}] || allowed[wsKey{"", name}]
 }
 
-// trackedWorkspace is one entry of the login page's "tracked workspaces"
-// line: the name, and the forge it is tracked on so a member of the
-// same-named workspace elsewhere can see why they were turned away.
-// Forge is the forge's label, empty for an operator-listed name.
-type trackedWorkspace struct {
-	Name  string
-	Forge string
-}
-
-// trackedWorkspaces renders the allowed set for the login page, so it is
-// obvious whose coverage an instance holds.
-func (s *Server) trackedWorkspaces(r *http.Request) []trackedWorkspace {
+// trackedWorkspaceKeys is the allowed set as the store names it — forge
+// and prefix, in listing order — which is what the UI API hands the app
+// to label itself. An unreadable set reads as no disclosure at all.
+func (s *Server) trackedWorkspaceKeys(r *http.Request) []wsKey {
 	set, err := s.allowedWorkspaceSet(r)
 	if err != nil {
 		return nil
 	}
-	out := make([]trackedWorkspace, 0, len(set))
-	for _, k := range sortedKeys(set) {
-		tw := trackedWorkspace{Name: k.prefix}
-		if k.forge != "" {
-			tw.Forge = providerLabel(k.forge)
-		}
-		out = append(out, tw)
-	}
-	return out
+	return sortedKeys(set)
 }
 
 // sortedKeys orders an allow-set by forge, then name — the store's own

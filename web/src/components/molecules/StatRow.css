@@ -1,0 +1,18 @@
+.StatRow {
+  display: grid; grid-template-columns: repeat(var(--stat-cols, 4), minmax(0, 1fr));
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+}
+.StatTile {
+  display: flex; flex-direction: column; gap: 4px; min-width: 0;
+  padding: var(--space-2);
+}
+.StatTile + .StatTile { border-left: 1px solid var(--border); }
+.StatTile__label { color: var(--muted); font-size: var(--font-sm); }
+.StatTile__value { font-size: var(--font-lg); font-weight: 600; font-variant-numeric: tabular-nums; }
+.StatTile__hint { color: var(--muted); font-size: var(--font-sm); }
+
+@media (max-width: 720px) {
+  .StatRow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .StatTile:nth-child(odd) { border-left: none; }
+  .StatTile:nth-child(n + 3) { border-top: 1px solid var(--border); }
+}

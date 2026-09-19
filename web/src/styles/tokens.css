@@ -1,0 +1,49 @@
+/* The whole visual language. Deliberately small: nine colours, three
+   spacing steps, four type sizes, one radius, no shadows. A component that
+   needs something that is not here is the signal to rethink the component,
+   not to add a token. */
+:root {
+  --bg: #fafafa;
+  --surface: #ffffff;
+  --border: #e5e5e5;
+  --text: #171717;
+  --muted: #737373;
+  --accent: #0e7a9e;
+  /* Coverage and gate status — semantic, never decorative:
+     good > 75% · warn 50–75% · bad < 50%. */
+  --good: #1a7f37;
+  --warn: #9a6700;
+  --bad: #cf222e;
+
+  --space-1: 8px;
+  --space-2: 16px;
+  --space-3: 32px;
+
+  --font-sm: 12.5px;
+  --font-md: 14px;
+  --font-lg: 20px;
+  --font-xl: 32px;
+
+  --radius: 6px;
+  --control: 32px;    /* height of buttons, inputs, selects */
+  --control-sm: 26px; /* their small size */
+  --page: 1040px;  /* content column */
+
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+
+  /* Derived, not new colours. */
+  --hover: color-mix(in srgb, var(--text) 5%, transparent);
+  --ring: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+:root[data-theme="dark"] {
+  --bg: #0a0a0a; --surface: #141414; --border: #2a2a2a; --text: #ededed; --muted: #8f8f8f;
+  --accent: #58b7d6; --good: #3fb950; --warn: #d29922; --bad: #f85149;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0a0a0a; --surface: #141414; --border: #2a2a2a; --text: #ededed; --muted: #8f8f8f;
+    --accent: #58b7d6; --good: #3fb950; --warn: #d29922; --bad: #f85149;
+  }
+}

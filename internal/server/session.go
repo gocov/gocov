@@ -62,7 +62,7 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		}
 		u := s.sessionUser(r)
 		if u == nil {
-			if s.publicReportCandidate(r) {
+			if s.publicReportCandidate(r) || apiSignedOutPath(r.URL.Path) {
 				// No session and possibly no login wall: the handler
 				// checks whether the repo behind the path is effectively
 				// public and redirects to login itself when it is not,
@@ -70,6 +70,12 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 				// see before these pages existed. No no-store header:
 				// the render is anonymous and cacheable.
 				next.ServeHTTP(w, r)
+				return
+			}
+			if apiUIPath(r.URL.Path) {
+				// The app, not the browser, follows up on a missing
+				// session: it sends the viewer to /login itself.
+				httpError(w, http.StatusUnauthorized, "sign-in required")
 				return
 			}
 			redirectToLogin(w, r)
@@ -91,8 +97,10 @@ func (s *Server) publicReportCandidate(r *http.Request) bool {
 	if !s.publicReports || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
 		return false
 	}
-	return strings.HasPrefix(r.URL.Path, "/repos/") ||
-		strings.HasPrefix(r.URL.Path, "/uploads/")
+	// The same two report surfaces, as pages and as the UI API behind the
+	// single-page app's versions of them.
+	p := strings.TrimPrefix(r.URL.Path, strings.TrimSuffix(apiUIPrefix, "/"))
+	return strings.HasPrefix(p, "/repos/") || strings.HasPrefix(p, "/uploads/")
 }
 
 // publicPath reports whether a path must work without a session: the CI
@@ -124,12 +132,17 @@ func (s *Server) sessionUser(r *http.Request) *store.User {
 	return u
 }
 
+// loginURL is the sign-in page, coming back to next afterwards.
+func loginURL(next string) string {
+	return "/login?next=" + url.QueryEscape(next)
+}
+
 func redirectToLogin(w http.ResponseWriter, r *http.Request) {
 	next := r.URL.Path
 	if r.URL.RawQuery != "" {
 		next += "?" + r.URL.RawQuery
 	}
-	http.Redirect(w, r, "/login?next="+url.QueryEscape(next), http.StatusFound)
+	http.Redirect(w, r, loginURL(next), http.StatusFound)
 }
 
 // handleLogout implements POST /logout: the session dies server-side, so a

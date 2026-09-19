@@ -1,0 +1,10 @@
+.CoverageFigure {
+  display: inline-block; font-weight: 600; line-height: 1.1;
+  font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+}
+.CoverageFigure--lg { font-size: var(--font-xl); }
+.CoverageFigure--md { font-size: var(--font-lg); }
+.CoverageFigure--good { color: var(--good); }
+.CoverageFigure--warn { color: var(--warn); }
+.CoverageFigure--bad { color: var(--bad); }
+.CoverageFigure--none { color: var(--muted); }

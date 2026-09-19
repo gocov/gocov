@@ -7,7 +7,7 @@ allowed-tools: Bash, Read, Grep, Glob, Edit
 # Check the CLI version pins
 
 Every install snippet gocov hands a user names an exact CLI release, copied into
-several places because some are Markdown and one is a Go template. Run
+several places because they are separate documents. Run
 `scripts/check-pins.sh`. It holds those copies to *each other*, nothing more: whether
 the version is the newest release is `/verify-release`'s job, after a release.
 
@@ -23,9 +23,10 @@ fix the stragglers and re-run until green. What to know while editing:
   sit between `x-release-please-start-version` / `x-release-please-end` markers, and
   release-please rewrites them on the next release. Change the version inside the
   markers only; never move or remove the markers.
-- The wizard copy is `internal/server/templates/onboarding.html`; `internal/hosted`
-  holds the version the server itself advertises, and `TestPinnedCLIVersionIsInSync`
-  there fails when the docs and that constant disagree. After editing, run:
+- The web UI's setup screen is not a copy: it writes its snippet from
+  `hosted.PinnedCLIVersion` (`internal/hosted`), the version the server itself
+  advertises, and `TestPinnedCLIVersionIsInSync` there fails when the docs and that
+  constant disagree. After editing, run:
 
   ```sh
   scripts/check-pins.sh && go test ./internal/hosted/

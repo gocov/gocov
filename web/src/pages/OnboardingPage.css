@@ -1,0 +1,2 @@
+/* One decision, so the column is narrower than the page. */
+.OnboardingPage { max-width: 560px; margin: 0 auto; }

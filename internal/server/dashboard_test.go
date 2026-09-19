@@ -1,6 +1,9 @@
 package server
 
 import (
+	"math"
+	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -8,31 +11,11 @@ import (
 	"github.com/gocov/gocov/internal/store"
 )
 
-func TestIndexListsWorkspaceRepos(t *testing.T) {
-	f := newFixture(t, nil)
-	second := &store.Repo{Forge: "bitbucket", Slug: "acme/gadgets", Token: "tok2", DefaultBranch: "main"}
-	if err := f.store.CreateRepo(t.Context(), second); err != nil {
-		t.Fatal(err)
-	}
-
-	body := get(f, "/").Body.String()
-	for _, want := range []string{
-		`href="/repos/bitbucket/acme/widgets"`, `href="/repos/bitbucket/acme/gadgets"`,
-		`data-name="widgets"`, `data-name="gadgets"`,
-		`id="repo-search"`, `id="repo-sort"`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("dashboard missing %q:\n%s", want, body)
-		}
-	}
-}
-
-// TestDashboardNeedsAttention seeds a workspace with a failing gate, a stale
-// feed and a gated-but-unwatched repo, then checks the rollups the preview
-// data cannot show: the needs-attention list, the filter counts and the
-// statement-weighted workspace coverage.
-
-func TestDashboardNeedsAttention(t *testing.T) {
+// TestAPIDashboardNeedsAttention seeds a workspace with a failing gate, a
+// stale feed and a gated-but-unwatched repo, then checks the rollups one
+// repo cannot show: every needs-attention cause with the numbers behind
+// it, the stale count and the statement-weighted workspace coverage.
+func TestAPIDashboardNeedsAttention(t *testing.T) {
 	f := newFixture(t, nil) // acme/widgets exists but has no reports
 	report := func(slug string, min *float64, pct float64, failed bool, age time.Duration) {
 		repo := &store.Repo{Forge: "bitbucket", Slug: slug, Token: slug, DefaultBranch: "main"}
@@ -55,51 +38,39 @@ func TestDashboardNeedsAttention(t *testing.T) {
 	report("acme/mobile", &min60, 80, false, 20*24*time.Hour) // passing but stale
 	report("acme/android", nil, 70, false, time.Hour)         // no gate
 
-	body := get(f, "/").Body.String()
-	for _, want := range []string{
-		"Needs attention",
-		`<span class="mono">importer</span> is failing its coverage gate`,
-		"below the 60% minimum",
-		`No uploads from <span class="mono">mobile</span> in 20 days`,
-		`<span class="mono">android</span> has no coverage gate`,
-		// repo-settings takes the slug as a trailing {slug...} wildcard, so the
-		// slash rides bare — a %2F-escaped single segment 404s on a live server.
-		`/repo-settings/bitbucket/acme/android`,
-		`Failing<span class="n">1</span>`,
-		`Stale<span class="n">1</span>`,
-		// android has no gate; widgets has no gate and no report — both count.
-		`No gate<span class="n">2</span>`,
-		// weighted: (40+80+70)/300 = 63.3%
-		"63.3%",
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("dashboard missing %q:\n%s", want, body)
-		}
+	got := decodeJSON[dashboardDTO](t, get(f, "/api/ui/dashboard"))
+	byCause := map[string]attentionDTO{}
+	for _, item := range got.Attention {
+		byCause[item.Kind] = item
+	}
+	// android has no gate, and that is a choice, not an event: it stays out
+	// of the list (the table's row and the No gate filter carry it).
+	if len(got.Attention) != 2 || len(byCause) != 2 {
+		t.Fatalf("attention = %+v, want exactly the failing and the stale notice", got.Attention)
+	}
+	if item := byCause["failing"]; item.Name != "importer" || item.MinCoverage == nil || *item.MinCoverage != 60 {
+		t.Errorf("failing notice = %+v, want importer against its 60%% minimum", item)
+	}
+	if item := byCause["stale"]; item.Name != "mobile" || item.StaleDays == nil || *item.StaleDays != 20 {
+		t.Errorf("stale notice = %+v, want mobile at 20 days", item)
+	}
+	// Most severe first, so the list reads top-down.
+	if got.Attention[0].Kind != "failing" || got.Attention[1].Kind != "stale" {
+		t.Errorf("attention order = %q, want failing before stale",
+			[]string{got.Attention[0].Kind, got.Attention[1].Kind})
+	}
+	if got.Stats.StaleCount != 1 {
+		t.Errorf("stale count = %d, want 1", got.Stats.StaleCount)
+	}
+	// Statement-weighted across the three repos that reported: (40+80+70)/300.
+	if got.Stats.Coverage == nil || math.Abs(*got.Stats.Coverage-63.333) > 0.01 {
+		t.Errorf("workspace coverage = %v, want the statement-weighted 63.3%%", got.Stats.Coverage)
 	}
 }
 
-func TestIndexShowsGateAndDelta(t *testing.T) {
-	f := newFixture(t, nil)
-	// 80% baseline first; the gate arrives afterwards so the baseline
-	// remains usable for the delta.
-	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile)
-	f.repo.Gate = store.Gate{MinCoverage: new(float64(90))}
-	if err := f.store.UpdateRepo(t.Context(), f.repo); err != nil {
-		t.Fatal(err)
-	}
-	better := "mode: set\nexample.com/m/a.go:1.1,5.2 10 3\n" // 100%, passes the gate
-	doUpload(t, f, "secret-token", map[string]string{"commit": "c2", "branch": "main"}, better)
-
-	body := get(f, "/").Body.String()
-	if !strings.Contains(body, "chip pass") {
-		t.Errorf("gate chip missing: %s", body)
-	}
-	if !strings.Contains(body, "delta up") || !strings.Contains(body, "20.0%") {
-		t.Errorf("delta missing: %s", body)
-	}
-}
-
-func TestIndexDeltaSkipsGateFailedBaselines(t *testing.T) {
+// The delta a row shows is measured against the last gate-passing report,
+// never against a failure in between.
+func TestAPIDashboardDeltaSkipsGateFailedBaselines(t *testing.T) {
 	f := newFixture(t, nil)
 	// 80% baseline before any gate exists.
 	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile)
@@ -114,65 +85,120 @@ func TestIndexDeltaSkipsGateFailedBaselines(t *testing.T) {
 	best := "mode: set\nexample.com/m/a.go:1.1,5.2 10 3\n"
 	doUpload(t, f, "secret-token", map[string]string{"commit": "c3", "branch": "main"}, best)
 
-	body := get(f, "/").Body.String()
-	if !strings.Contains(body, "20.0%") || strings.Contains(body, "50.0%") {
-		t.Errorf("delta must use the last gate-passing baseline: %s", body)
+	got := decodeJSON[dashboardDTO](t, get(f, "/api/ui/dashboard"))
+	if len(got.Repos) != 1 {
+		t.Fatalf("repos = %+v, want one row", got.Repos)
+	}
+	if d := got.Repos[0].Delta; d == nil || *d != 20 {
+		t.Errorf("delta = %v, want +20 against the last gate-passing baseline", d)
 	}
 }
 
-func TestSparkView(t *testing.T) {
-	// Reports come newest first; the glyph reads chronologically, left to
-	// right across the 76px box, with the series' own min and max on the
-	// 3..19 band.
-	reports := func(pcts ...float64) []*store.CommitReport {
-		var rs []*store.CommitReport
-		for i, pct := range pcts {
-			rs = append(rs, trendReport(int64(len(pcts)-i), pct, "", false))
-		}
-		return rs
+// sparkSeries is the sparkline the app plots: the branch's own commits,
+// oldest first, capped at the last dozen.
+func TestSparkSeries(t *testing.T) {
+	report := func(id int64, pct float64, prID string) *store.CommitReport {
+		return &store.CommitReport{UploadID: id, CommitSHA: "sha", TotalPct: pct, PRID: prID}
 	}
-	for _, tc := range []struct {
-		name     string
-		reports  []*store.CommitReport
-		stale    bool
-		wantPath string
-		wantTail string
-		wantCls  string
-	}{
-		{"rising", reports(80, 70), false, "M0 19 L76 3", "", "up"},
-		{"falling", reports(70, 80), false, "M0 3 L76 19", "", "down"},
-		{"flat", reports(75, 75), false, "M0 11 L76 11", "", ""},
-		// A stale series stops short and a tail carries its last value to the
-		// right edge; direction means nothing once the feed has stopped.
-		{"stale", reports(80, 70), true, "M0 19 L46 3", "M46 3 L76 3", ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			sv := newSparkView(tc.reports, tc.stale)
-			if sv == nil {
-				t.Fatal("nil sparkline")
-			}
-			if sv.Path != tc.wantPath || sv.Tail != tc.wantTail || sv.Class != tc.wantCls {
-				t.Errorf("sparkline = %+v, want path %q tail %q class %q", *sv, tc.wantPath, tc.wantTail, tc.wantCls)
-			}
-		})
+	// Reports arrive newest first; the series reads chronologically.
+	got := sparkSeries([]*store.CommitReport{report(2, 90, ""), report(1, 80, "")})
+	if !slices.Equal(got, []float64{80, 90}) {
+		t.Errorf("series = %v, want the two points oldest first", got)
 	}
-
-	// Fewer than two branch commits draw nothing — a PR report does not count.
-	if sv := newSparkView(reports(80), false); sv != nil {
-		t.Errorf("one report: got %+v, want nil", sv)
+	// A PR report is not one of the branch's own commits.
+	got = sparkSeries([]*store.CommitReport{report(2, 90, "7"), report(1, 80, "")})
+	if !slices.Equal(got, []float64{80}) {
+		t.Errorf("series = %v, want the PR report excluded", got)
 	}
-	pr := []*store.CommitReport{trendReport(2, 90, "7", false), trendReport(1, 80, "", false)}
-	if sv := newSparkView(pr, false); sv != nil {
-		t.Errorf("one non-PR report: got %+v, want nil", sv)
-	}
-
-	// Only the last dozen points are drawn: the first of thirteen drops off.
-	var pcts []float64
+	// Only the last dozen points survive: the first of thirteen drops off.
+	var many []*store.CommitReport
 	for i := range 13 {
-		pcts = append(pcts, float64(50+i))
+		many = append(many, report(int64(13-i), float64(62-i), ""))
 	}
-	sv := newSparkView(reports(pcts...), false)
-	if got := strings.Count(sv.Path, " L"); got != 11 {
-		t.Errorf("segments = %d, want 11 (twelve points)", got)
+	if got := sparkSeries(many); len(got) != 12 || got[0] != 51 {
+		t.Errorf("series = %v, want the newest twelve points", got)
+	}
+}
+
+func TestAPIDashboard(t *testing.T) {
+	f := newFixture(t, nil)
+	min90 := 90.0
+	f.repo.Gate = store.Gate{MinCoverage: &min90}
+	if err := f.store.UpdateRepo(t.Context(), f.repo); err != nil {
+		t.Fatal(err)
+	}
+	// Two reports so the row carries a series; the second fails the gate.
+	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"},
+		"mode: set\nexample.com/m/a.go:1.1,5.2 10 3\n") // 100%, passes
+	doUpload(t, f, "secret-token", map[string]string{"commit": "c2", "branch": "main"}, testProfile) // 80%, fails
+
+	got := decodeJSON[dashboardDTO](t, get(f, "/api/ui/dashboard"))
+	if got.NeedsOnboarding {
+		t.Error("open instance asked for onboarding")
+	}
+	if got.Current == nil || got.Current.Prefix != "acme" || got.Current.Forge != "bitbucket" {
+		t.Fatalf("current workspace = %+v, want acme on bitbucket", got.Current)
+	}
+	if len(got.Repos) != 1 {
+		t.Fatalf("repos = %+v, want one row", got.Repos)
+	}
+	row := got.Repos[0]
+	if row.Slug != "acme/widgets" || row.Name != "widgets" {
+		t.Errorf("row names = %q/%q", row.Slug, row.Name)
+	}
+	if row.Coverage == nil || *row.Coverage != 80 {
+		t.Errorf("coverage = %v, want 80", row.Coverage)
+	}
+	if row.Delta == nil || *row.Delta != -20 {
+		t.Errorf("delta = %v, want -20 against the passing baseline", row.Delta)
+	}
+	if row.Gate != "fail" {
+		t.Errorf("gate = %q, want fail", row.Gate)
+	}
+	if !slices.Equal(row.Series, []float64{100, 80}) {
+		t.Errorf("series = %v, want the branch's two points oldest first", row.Series)
+	}
+	if row.UploadedAt == nil {
+		t.Error("row carries no upload time")
+	}
+	if got.Stats.GatesTotal != 1 || got.Stats.GatesPassing != 0 {
+		t.Errorf("gate stats = %d/%d, want 0/1", got.Stats.GatesPassing, got.Stats.GatesTotal)
+	}
+	if got.Stats.Reporting != "not_connected" {
+		t.Errorf("reporting = %q, want not_connected", got.Stats.Reporting)
+	}
+	if len(got.Attention) != 1 || got.Attention[0].Kind != "failing" {
+		t.Fatalf("attention = %+v, want one failing notice", got.Attention)
+	}
+	item := got.Attention[0]
+	if item.Slug != "acme/widgets" || item.Coverage == nil || *item.Coverage != 80 ||
+		item.MinCoverage == nil || *item.MinCoverage != 90 || item.StaleDays != nil {
+		t.Errorf("attention item = %+v, want the raw numbers behind the sentence", item)
+	}
+}
+
+// An empty instance still answers with a whole, empty dashboard — the app
+// renders the empty state from it rather than from a missing field.
+func TestAPIDashboardEmpty(t *testing.T) {
+	// The repo exists but belongs to no registered workspace, so the
+	// signed-in user is a member of nothing and sees nothing.
+	f := newAuthFixture(t, &fakeProvider{identity: memberIdentity()}, nil)
+	sess := signIn(t, f, "/")
+	rec := get(f, "/api/ui/dashboard", sess)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	// Lists are lists even when empty: the app maps over them unguarded.
+	for _, want := range []string{`"repos":[]`, `"switcher":[]`, `"attention":[]`, `"current":null`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("empty dashboard missing %s:\n%s", want, rec.Body)
+		}
+	}
+	got := decodeJSON[dashboardDTO](t, rec)
+	if got.Current != nil || len(got.Repos) != 0 || len(got.Switcher) != 0 || len(got.Attention) != 0 {
+		t.Errorf("empty dashboard = %+v", got)
+	}
+	if !got.CanOnboard {
+		t.Error("a signed-in user may register a workspace")
 	}
 }

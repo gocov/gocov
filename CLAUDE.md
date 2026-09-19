@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 gocov is a self-hostable coverage-tracking service (Coveralls/Codecov alternative): a single Go binary + Postgres, AGPL-3.0. Direct dependencies are pgx and caarlos0/env (tag-based env parsing, itself dependency-free); everything else is stdlib.
 
-Package-specific conventions live in `.claude/rules/` and load when you touch the matching paths (`core`, `server`, `forge`, `config`, `store`, `docs`). Slash commands: `/release`, `/verify-release`, `/check-pins`, `/docs-check`.
+Package-specific conventions live in `.claude/rules/` and load when you touch the matching paths (`core`, `server`, `forge`, `config`, `store`, `docs`, `web`). Slash commands: `/release`, `/verify-release`, `/check-pins`, `/docs-check`.
 
 ## Commands
 
@@ -23,14 +23,16 @@ docker run --rm -d --name gocov-test-db -p 5433:5432 \
 GOCOV_TEST_DATABASE_URL=postgres://gocov:gocov@localhost:5433/gocov go test ./...
 ```
 
-For eyeballing UI changes without Postgres or OAuth, run the dev harness: `go run ./cmd/gocov-preview` serves the web UI from an in-memory store seeded with synthetic history (`GOCOV_PREVIEW_AUTH=1` adds fake sign-in so login/registration/settings pages are previewable). `docker compose up` runs the real thing.
+For eyeballing UI changes without Postgres or OAuth, run the dev harness: `go run ./cmd/gocov-preview` serves the web UI (build it first: `npm run build` in `web/`) from an in-memory store seeded with synthetic history (`GOCOV_PREVIEW_AUTH=1` adds fake sign-in so login/registration/settings pages are previewable). `docker compose up` runs the real thing.
 
-CI (`.github/workflows/ci.yml`) runs vet + tests with a Postgres service and builds the docs site strictly; there is no separate linter.
+The web UI is a single-page app in `web/` (Vite, React, TypeScript), embedded into the server through `internal/webui`: Go serves its shell for every page route and answers its data under `/api/ui/`. It has its own toolchain — `cd web && npm ci && npm test && npm run build` — and Go builds and tests never depend on it (without a web build the server serves a placeholder shell).
+
+CI (`.github/workflows/ci.yml`) runs vet + tests with a Postgres service, tests and builds the web UI, and builds the docs site strictly; there is no separate linter.
 
 ## Architecture
 
 Three binaries in `cmd/`:
-- `gocov-server` — API + web UI, configured entirely via environment variables.
+- `gocov-server` — API + web UI (the embedded single-page app), configured entirely via environment variables.
 - `gocov` — the upload CLI users run in CI. Detects the coverage format from file content (`detect.go`); defaults to the hosted server URL in `internal/hosted`.
 - `gocov-preview` — throwaway dev harness, not part of the product.
 
@@ -43,7 +45,7 @@ Everything hangs off four interfaces, each with a production implementation and 
 | `blobstore.Store` (raw uploaded profiles) | `blobstore/postgres` | `blobstore/memory` |
 | `profile.Parser` (one per format: go, lcov, jacoco, cobertura, clover, simplecov) | `internal/profile` | — |
 
-New formats, forges, or storage backends slot in behind these interfaces. The line that matters most: `internal/core` is the coverage pipeline and imports no HTTP (a test enforces it); `internal/server` is the transport and web UI around it. `internal/diffcov` computes diff coverage against forge-fetched diffs, `internal/auth` handles OAuth sign-in per forge, `internal/secretbox` encrypts stored grant refresh tokens, and `internal/config` is the single declaration of every environment variable. SQL migrations are numbered files under `internal/store/postgres/migrations/`.
+New formats, forges, or storage backends slot in behind these interfaces. The line that matters most: `internal/core` is the coverage pipeline and imports no HTTP (a test enforces it); `internal/server` is the transport around it — the upload API, the UI's JSON API and the shell of the single-page app in `web/`. `internal/diffcov` computes diff coverage against forge-fetched diffs, `internal/auth` handles OAuth sign-in per forge, `internal/secretbox` encrypts stored grant refresh tokens, and `internal/config` is the single declaration of every environment variable. SQL migrations are numbered files under `internal/store/postgres/migrations/`.
 
 The `Hosted` config flag switches the instance to self-service mode (any forge account may sign in and register workspaces); the default private mode restricts sign-in to members of tracked workspaces.
 

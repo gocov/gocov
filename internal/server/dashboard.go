@@ -3,9 +3,7 @@ package server
 import (
 	"cmp"
 	"context"
-	"fmt"
 	"net/http"
-	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -31,7 +29,6 @@ type dashboardView struct {
 	Repos     []*dashRepo
 	Stats     dashStats
 	Attention []attnItem
-	Counts    filterCounts
 }
 
 // wsGroup is one workspace in the switcher — its identity, a repo count, and a
@@ -40,43 +37,28 @@ type wsGroup struct {
 	Prefix    string
 	Forge     string
 	Workspace *store.Workspace
-	Initial   string // avatar letter
-	ForgeCls  string // gh / bb / gl — avatar colour
 	ForgeName string // GitHub / Bitbucket / GitLab
 	RepoCount int
 	HasCov    bool
 	Pct       float64
 	Current   bool
-	Href      string
 
 	repos []*store.Repo // repos bucketed into this group (assembly-only)
 }
 
-// dashRepo is one row of the repositories table. The *Sort fields feed the
-// client-side sort control as plain data attributes.
+// dashRepo is one row of the repositories table.
 type dashRepo struct {
-	Repo    *store.Repo
-	Name    string // slug with the workspace prefix trimmed
-	Latest  *store.CommitReport
-	Delta   *deltaView
-	Gate    string // pass / fail / ""
-	State   string // space-joined flags for data-state (failing/stale/nogate/ok)
-	Stale   bool
-	Spark   *sparkView
-	LastAgo string
+	Repo   *store.Repo
+	Name   string // slug with the workspace prefix trimmed
+	Latest *store.CommitReport
+	Gate   string // pass / fail / ""
+	Stale  bool
+	Series []float64 // the sparkline's points, for the app to plot
 
 	HasReport bool
 	CovVal    float64
 	HasDelta  bool
 	DropVal   float64
-	UpUnix    int64
-}
-
-// sparkView is a tiny inline coverage sparkline, plotted in a 76x22 viewBox.
-type sparkView struct {
-	Path  string
-	Class string // up / down / "" (flat)
-	Tail  string // dashed continuation, drawn for stale repos whose series stopped
 }
 
 // dashStats is the three-up rollup above the tables.
@@ -86,39 +68,108 @@ type dashStats struct {
 	GatesPassing   int
 	GatesTotal     int
 	StaleCount     int
-	Reporting      string // "Connected", "Not connected", "Reconnect needed", "Not available"
 	ReportingSub   string // "gocov[bot]", the granting account, or ""
 	ReportingState string // on / off / broken / "" (styling)
 }
 
-// attnItem is one entry in the Needs-attention list.
+// attnItem is one needs-attention notice as data: which condition raised
+// it, the repo it is about and the numbers behind it. The app writes the
+// sentence.
 type attnItem struct {
-	Kind   string // bad / warn / info — icon colour
-	Icon   string // ✗ / ! / ?
-	Pre    string // text before the repo name
-	Repo   string // repo name, rendered monospace
-	Post   string // text after the repo name
-	Msg    string
-	Action string
-	Href   string
+	cause       string // failing / stale
+	name        string // repo name as the table shows it
+	repo        *store.Repo
+	coverage    *float64
+	minCoverage *float64
+	staleDays   *int
 }
 
-type filterCounts struct{ All, Failing, Stale, NoGate int }
+// dashboardDTO is the dashboard as the app reads it: the assembly below,
+// minus the sentences.
+type dashboardDTO struct {
+	// NeedsOnboarding is the state a hosted user with no workspace lands
+	// in: the app routes itself to onboarding. The rest is then empty.
+	NeedsOnboarding bool           `json:"needs_onboarding"`
+	CanOnboard      bool           `json:"can_onboard"`
+	Current         *wsGroupDTO    `json:"current"`
+	Switcher        []wsGroupDTO   `json:"switcher"`
+	Repos           []dashRepoDTO  `json:"repos"`
+	Stats           dashStatsDTO   `json:"stats"`
+	Attention       []attentionDTO `json:"attention"`
+}
 
-// handleIndex implements GET / — the workspace-scoped repo dashboard: a
-// switcher over the viewer's workspaces, a stat rollup, the needs-attention
-// list and the repositories table. See dashboard.go for the assembly.
-func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+// wsGroupDTO is one workspace in the switcher.
+type wsGroupDTO struct {
+	Forge     string   `json:"forge"`
+	Prefix    string   `json:"prefix"`
+	ForgeName string   `json:"forge_name"`
+	RepoCount int      `json:"repo_count"`
+	Coverage  *float64 `json:"coverage"`
+	Current   bool     `json:"current"`
+	// Tracked marks a registered workspace — the ones with a settings page.
+	Tracked bool `json:"tracked"`
+}
+
+// dashRepoDTO is one row of the repositories table.
+type dashRepoDTO struct {
+	Forge      string     `json:"forge"`
+	Slug       string     `json:"slug"`
+	Name       string     `json:"name"`
+	Coverage   *float64   `json:"coverage"`
+	Delta      *float64   `json:"delta"`
+	Gate       string     `json:"gate"` // pass / fail / none
+	Stale      bool       `json:"stale"`
+	Series     []float64  `json:"series"`
+	UploadedAt *time.Time `json:"uploaded_at"`
+}
+
+// dashStatsDTO is the rollup above the tables.
+type dashStatsDTO struct {
+	Coverage     *float64 `json:"coverage"`
+	GatesPassing int      `json:"gates_passing"`
+	GatesTotal   int      `json:"gates_total"`
+	StaleCount   int      `json:"stale_count"`
+	Reporting    string   `json:"reporting"` // connected / not_connected / broken
+	ReportingAs  string   `json:"reporting_as"`
+}
+
+// attentionDTO is one needs-attention notice as data: which condition
+// raised it and the numbers behind it. The app writes the sentence.
+type attentionDTO struct {
+	Kind        string   `json:"kind"` // failing / stale
+	Forge       string   `json:"forge"`
+	Slug        string   `json:"slug"`
+	Name        string   `json:"name"`
+	Coverage    *float64 `json:"coverage"`
+	MinCoverage *float64 `json:"min_coverage"`
+	StaleDays   *int     `json:"stale_days"`
+}
+
+// reportingStates maps the styling state the dashboard computes to the
+// word the API reports it with.
+var reportingStates = map[string]string{"on": "connected", "off": "not_connected", "broken": "broken"}
+
+// handleAPIDashboard implements GET /api/ui/dashboard?ws=.
+func (s *Server) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
+	dto := dashboardDTO{
+		// A signed-in user may register a workspace; an open instance has
+		// no identity to register from.
+		CanOnboard: currentUser(r) != nil,
+		Switcher:   []wsGroupDTO{},
+		Repos:      []dashRepoDTO{},
+		Attention:  []attentionDTO{},
+	}
 	scope, err := s.userScope(r)
 	if err != nil {
 		s.internalError(w, "scoping repos", err)
 		return
 	}
 	// A hosted user without a single workspace membership would see a
-	// permanently empty dashboard; registration is the only useful page
-	// for them (M3/R1).
+	// permanently empty dashboard; onboarding is the only useful screen
+	// for them (M3/R1), and the app routes itself there.
 	if s.hosted && scope.scoped && len(scope.prefixes) == 0 && currentUser(r) != nil {
-		http.Redirect(w, r, "/onboarding", http.StatusFound)
+		dto.NeedsOnboarding = true
+		s.writeJSON(w, dto)
 		return
 	}
 	dash, err := s.buildDashboard(r, strings.TrimSpace(r.FormValue("ws")))
@@ -126,13 +177,69 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "building dashboard", err)
 		return
 	}
-	s.render(w, r, "index.html", map[string]any{
-		"Dash": dash,
-		// A signed-in user can register a workspace from the onboarding
-		// wizard (hosted and private mode alike); an open instance has no
-		// identity to register from and points at sign-in instead.
-		"CanOnboard": currentUser(r) != nil,
-	})
+	if dash == nil { // no repos and no workspaces at all
+		s.writeJSON(w, dto)
+		return
+	}
+
+	for _, g := range dash.Switcher {
+		dto.Switcher = append(dto.Switcher, newWSGroupDTO(g))
+	}
+	if dash.Current != nil {
+		cur := newWSGroupDTO(dash.Current)
+		dto.Current = &cur
+	}
+	for _, row := range dash.Repos {
+		repo := dashRepoDTO{
+			Forge:    row.Repo.Forge,
+			Slug:     row.Repo.Slug,
+			Name:     row.Name,
+			Coverage: optPct(row.HasReport, row.CovVal),
+			Delta:    optPct(row.HasDelta, row.DropVal),
+			Gate:     cmp.Or(row.Gate, "none"),
+			Stale:    row.Stale,
+			Series:   row.Series,
+		}
+		if repo.Series == nil {
+			repo.Series = []float64{}
+		}
+		if row.Latest != nil {
+			repo.UploadedAt = &row.Latest.CreatedAt
+		}
+		dto.Repos = append(dto.Repos, repo)
+	}
+	for _, item := range dash.Attention {
+		dto.Attention = append(dto.Attention, attentionDTO{
+			Kind:        item.cause,
+			Forge:       item.repo.Forge,
+			Slug:        item.repo.Slug,
+			Name:        item.name,
+			Coverage:    item.coverage,
+			MinCoverage: item.minCoverage,
+			StaleDays:   item.staleDays,
+		})
+	}
+	dto.Stats = dashStatsDTO{
+		Coverage:     optPct(dash.Stats.HasCoverage, dash.Stats.CoveragePct),
+		GatesPassing: dash.Stats.GatesPassing,
+		GatesTotal:   dash.Stats.GatesTotal,
+		StaleCount:   dash.Stats.StaleCount,
+		Reporting:    reportingStates[dash.Stats.ReportingState],
+		ReportingAs:  dash.Stats.ReportingSub,
+	}
+	s.writeJSON(w, dto)
+}
+
+func newWSGroupDTO(g *wsGroup) wsGroupDTO {
+	return wsGroupDTO{
+		Forge:     g.Forge,
+		Prefix:    g.Prefix,
+		ForgeName: g.ForgeName,
+		RepoCount: g.RepoCount,
+		Coverage:  optPct(g.HasCov, g.Pct),
+		Current:   g.Current,
+		Tracked:   g.Workspace != nil,
+	}
 }
 
 // buildDashboard assembles the dashboard for the given ?ws selection. Returns a
@@ -203,7 +310,6 @@ func (s *Server) buildDashboard(r *http.Request, selected string) (*dashboardVie
 		g := groups[k]
 		s.fillGroupMeta(ctx, g)
 		g.Current = g == cur
-		g.Href = "/?ws=" + url.QueryEscape(k.String()) // GitLab prefixes carry slashes too
 		dv.Switcher = append(dv.Switcher, g)
 	}
 
@@ -239,7 +345,7 @@ func (s *Server) groupPrefix(repo *store.Repo, tracked []*store.Workspace) strin
 // coverage over its repos' latest default-branch reports. This runs for every
 // group, so it stays to one report lookup per repo.
 func (s *Server) fillGroupMeta(ctx context.Context, g *wsGroup) {
-	g.Initial, g.ForgeCls, g.ForgeName = forgeAvatar(g.Prefix, g.Forge)
+	g.ForgeName = providerLabels[g.Forge]
 	g.RepoCount = len(g.repos)
 	var covered, total int64
 	for _, repo := range g.repos {
@@ -278,8 +384,6 @@ func (s *Server) fillCurrent(r *http.Request, dv *dashboardView) {
 			row.Latest = latest
 			row.HasReport = true
 			row.CovVal = latest.TotalPct
-			row.UpUnix = latest.CreatedAt.Unix()
-			row.LastAgo = timeAgo(latest.CreatedAt)
 			covered += latest.CoveredStmts
 			total += latest.TotalStmts
 		}
@@ -294,33 +398,12 @@ func (s *Server) fillCurrent(r *http.Request, dv *dashboardView) {
 		if _, base := reportBaseline(reports); base != nil {
 			row.HasDelta = true
 			row.DropVal = latest.TotalPct - base.TotalPct
-			row.Delta = newDeltaView(row.DropVal)
 		}
-		row.Spark = newSparkView(reports, stale)
-
-		// State flags drive both the filter tabs and the needs-attention list.
-		var flags []string
-		if row.Gate == "fail" {
-			flags = append(flags, "failing")
-			dv.Counts.Failing++
-		}
-		if stale {
-			flags = append(flags, "stale")
-			dv.Counts.Stale++
-		}
-		if !repo.Gate.Configured() {
-			flags = append(flags, "nogate")
-			dv.Counts.NoGate++
-		}
-		if len(flags) == 0 {
-			flags = append(flags, "ok")
-		}
-		row.State = strings.Join(flags, " ")
+		row.Series = sparkSeries(reports)
 
 		dv.Repos = append(dv.Repos, row)
 		s.collectAttention(dv, repo, row, latest, stale)
 	}
-	dv.Counts.All = len(dv.Repos)
 
 	// Default order: lowest coverage first (repos without a report sort last),
 	// so the rows needing work lead. The client re-sorts on the sort control.
@@ -339,10 +422,15 @@ func (s *Server) fillCurrent(r *http.Request, dv *dashboardView) {
 
 	// Attention reads most-severe first: failing, then stale, then no-gate.
 	slices.SortStableFunc(dv.Attention, func(a, b attnItem) int {
-		return cmp.Compare(attnRank(a.Kind), attnRank(b.Kind))
+		return cmp.Compare(attnRank(a.cause), attnRank(b.cause))
 	})
 
-	dv.Stats = dashStats{StaleCount: dv.Counts.Stale}
+	dv.Stats = dashStats{}
+	for _, row := range dv.Repos {
+		if row.Stale {
+			dv.Stats.StaleCount++
+		}
+	}
 	if total > 0 {
 		dv.Stats.HasCoverage = true
 		dv.Stats.CoveragePct = 100 * float64(covered) / float64(total)
@@ -360,153 +448,64 @@ func (s *Server) fillCurrent(r *http.Request, dv *dashboardView) {
 }
 
 // collectAttention appends the needs-attention entries a repo warrants: a
-// failing gate, a stale feed, or a missing gate. Only repos that have uploaded
-// raise stale/no-gate notices — a brand-new repo is not a problem.
+// failing gate or a stale feed — things that happened. A repo without a gate
+// is a standing choice, not an event: listing it made the section permanent,
+// and a notice that is always there stops being read. The table still offers
+// "Set a gate" on its row and counts it under the No gate filter.
 func (s *Server) collectAttention(dv *dashboardView, repo *store.Repo, row *dashRepo, latest *store.CommitReport, stale bool) {
 	if row.Gate == "fail" {
-		msg := "Its latest report failed the coverage gate."
-		if repo.Gate.MinCoverage != nil {
-			msg = fmt.Sprintf("Coverage %.1f%%, below the %.4g%% minimum.", latest.TotalPct, *repo.Gate.MinCoverage)
-		}
 		dv.Attention = append(dv.Attention, attnItem{
-			Kind: "bad", Icon: "✗", Repo: row.Name, Post: " is failing its coverage gate",
-			Msg: msg, Action: "Open repo", Href: repoURL(repo),
+			cause: "failing", name: row.Name, repo: repo,
+			coverage: &latest.TotalPct, minCoverage: repo.Gate.MinCoverage,
 		})
 	}
 	if stale {
 		days := int(time.Since(latest.CreatedAt).Hours() / 24)
 		dv.Attention = append(dv.Attention, attnItem{
-			Kind: "warn", Icon: "!", Pre: "No uploads from ", Repo: row.Name,
-			Post:   fmt.Sprintf(" in %d days", days),
-			Msg:    "Its last pipeline run did not reach the upload step; the coverage shown is stale.",
-			Action: "Open repo", Href: repoURL(repo),
-		})
-	}
-	if !repo.Gate.Configured() && latest != nil {
-		dv.Attention = append(dv.Attention, attnItem{
-			Kind: "info", Icon: "?", Repo: row.Name, Post: " has no coverage gate",
-			Msg:    "Uploads are recorded, but nothing blocks a drop.",
-			Action: "Set a gate", Href: repoSettingsURL(repo, ""),
+			cause: "stale", name: row.Name, repo: repo,
+			coverage: &latest.TotalPct, staleDays: &days,
 		})
 	}
 }
 
 // fillReporting sets the Reporting stat from the current group's tracked
 // workspace connection. Untracked groups (or deployments without a one-click
-// mechanism) read as not connected.
+// mechanism) read as not connected, and only a working connection names
+// who it posts as.
 func (s *Server) fillReporting(st *dashStats, g *wsGroup) {
+	st.ReportingState = "off"
 	if g.Workspace == nil {
-		st.Reporting, st.ReportingState = "Not connected", "off"
 		return
 	}
-	ws := g.Workspace
-	switch ws.Forge {
-	case "github":
-		switch {
-		case ws.GitHubAppBroken:
-			st.Reporting, st.ReportingState = "Reconnect needed", "broken"
-		case ws.GitHubInstallationID != 0:
-			st.Reporting, st.ReportingState, st.ReportingSub = "Connected", "on", "gocov[bot]"
-		default:
-			st.Reporting, st.ReportingState = "Not connected", "off"
-		}
-	case "bitbucket":
-		switch {
-		case ws.BitbucketGrantBroken:
-			st.Reporting, st.ReportingState = "Reconnect needed", "broken"
-		case ws.BitbucketGrantAccount != "":
-			st.Reporting, st.ReportingState, st.ReportingSub = "Connected", "on", ws.BitbucketGrantAccount
-		default:
-			st.Reporting, st.ReportingState = "Not connected", "off"
-		}
-	case "gitlab":
-		switch {
-		case ws.GitLabGrantBroken:
-			st.Reporting, st.ReportingState = "Reconnect needed", "broken"
-		case ws.GitLabGrantAccount != "":
-			st.Reporting, st.ReportingState, st.ReportingSub = "Connected", "on", ws.GitLabGrantAccount
-		default:
-			st.Reporting, st.ReportingState = "Not connected", "off"
-		}
-	default:
-		st.Reporting, st.ReportingState = "Not connected", "off"
+	state, account := reportingState(g.Workspace)
+	st.ReportingState = state
+	if state == "on" {
+		// The GitHub App has no granting account; it posts as its bot.
+		st.ReportingSub = cmp.Or(account, "gocov[bot]")
 	}
 }
 
-func attnRank(kind string) int {
-	switch kind {
-	case "bad":
+func attnRank(cause string) int {
+	if cause == "failing" {
 		return 0
-	case "warn":
-		return 1
-	default:
-		return 2
 	}
+	return 1
 }
 
-// newSparkView plots a repo's recent coverage as a compact sparkline. It needs
-// at least two branch commits (PR reports excluded); fewer returns nil and the
-// cell shows a dash. A stale repo's line is compressed to the left with a
-// dashed tail, signalling that the series simply stopped.
-func newSparkView(reports []*store.CommitReport, stale bool) *sparkView {
-	var series []float64 // chronological
+// sparkSeries is a repo's recent branch coverage, oldest first: the
+// points the dashboard plots as a sparkline and hands the app to draw its
+// own. PR reports are excluded — the series follows the branch's own
+// commits — and only the last dozen points are kept, since older ones
+// crowd the glyph.
+func sparkSeries(reports []*store.CommitReport) []float64 {
+	var series []float64
 	for _, report := range slices.Backward(reports) {
 		if report.PRID == "" {
 			series = append(series, report.TotalPct)
 		}
 	}
-	if len(series) > 12 { // keep the last dozen points; older ones crowd the glyph
+	if len(series) > 12 {
 		series = series[len(series)-12:]
 	}
-	if len(series) < 2 {
-		return nil
-	}
-	lo, hi := slices.Min(series), slices.Max(series)
-	const top, bot = 3.0, 19.0 // vertical plot band within the 22px box
-	right := 76.0
-	if stale {
-		right = 46.0 // leave room for the dashed "stopped" tail
-	}
-	y := func(v float64) float64 {
-		if hi == lo {
-			return (top + bot) / 2
-		}
-		return round1(bot - (v-lo)/(hi-lo)*(bot-top))
-	}
-	var path linePath
-	for i, v := range series {
-		path.lineTo(round1(right*float64(i)/float64(len(series)-1)), y(v))
-	}
-	sv := &sparkView{Path: path.String()}
-	last := series[len(series)-1]
-	switch {
-	case last > series[0]+0.05:
-		sv.Class = "up"
-	case last < series[0]-0.05:
-		sv.Class = "down"
-	}
-	if stale {
-		ly := y(last)
-		sv.Tail = fmt.Sprintf("M%g %g L76 %g", right, ly, ly)
-		sv.Class = "" // a stopped series has no meaningful direction
-	}
-	return sv
-}
-
-// forgeAvatar returns the switcher avatar letter, colour class and forge label.
-func forgeAvatar(prefix, forge string) (initial, cls, name string) {
-	initial = "?"
-	if rs := []rune(prefix); len(rs) > 0 {
-		initial = strings.ToUpper(string(rs[0]))
-	}
-	switch forge {
-	case "github":
-		return initial, "gh", "GitHub"
-	case "bitbucket":
-		return initial, "bb", "Bitbucket"
-	case "gitlab":
-		return initial, "gl", "GitLab"
-	default:
-		return initial, "", ""
-	}
+	return series
 }

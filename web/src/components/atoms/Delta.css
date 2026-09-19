@@ -1,0 +1,7 @@
+.Delta {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: var(--font-sm); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.Delta--up { color: var(--good); }
+.Delta--down { color: var(--bad); }
+.Delta--flat, .Delta--none { color: var(--muted); }

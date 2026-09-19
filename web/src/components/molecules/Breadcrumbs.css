@@ -1,0 +1,8 @@
+.Breadcrumbs { font-size: var(--font-sm); color: var(--muted); }
+.Breadcrumbs__list { display: flex; align-items: center; flex-wrap: wrap; margin: 0; padding: 0; list-style: none; }
+.Breadcrumbs__item { display: flex; align-items: center; min-width: 0; }
+.Breadcrumbs__sep { display: flex; color: var(--border); padding: 0 4px; }
+.Breadcrumbs__label {
+  max-width: 24ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.Breadcrumbs__label[aria-current="page"] { color: var(--text); }

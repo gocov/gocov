@@ -16,3 +16,7 @@ deploy/certs/
 /site/
 .venv/
 .wrangler/
+/internal/webui/dist/*
+!/internal/webui/dist/.gitkeep
+/web/node_modules/
+/web/tsconfig.tsbuildinfo

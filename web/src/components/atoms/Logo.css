@@ -1,0 +1,4 @@
+.Logo { flex: none; display: block; }
+.Logo__track, .Logo__arc { fill: none; stroke-width: 5; }
+.Logo__track { stroke: var(--border); }
+.Logo__arc { stroke: var(--accent); stroke-linecap: round; }

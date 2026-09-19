@@ -45,7 +45,7 @@ integration tests run too; say whether they ran or skipped.
 Then, only when the diff touches them:
 - `docs/`, `zensical.toml`, `overrides/`: run `/docs-check`.
 - `docs/gitlab-ci.md`, `docs/ci-other.md`, `docs/self-hosting.md`,
-  `internal/server/templates/onboarding.html`, `internal/hosted/`: run `/check-pins`.
+  `web/src/lib/snippets.ts`, `internal/hosted/`: run `/check-pins`.
 - `internal/config/` or `docs/configuration.md`: `go test ./internal/config/` covers
   `TestConfigurationDocIsInSync`; make sure it was not skipped.
 - a new migration under `internal/store/postgres/migrations/`: confirm its number is

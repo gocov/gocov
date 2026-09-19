@@ -1,0 +1,14 @@
+.ConfirmDialog {
+  width: min(420px, calc(100vw - var(--space-3)));
+  padding: var(--space-2);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--text);
+}
+.ConfirmDialog::backdrop { background: color-mix(in srgb, var(--text) 30%, transparent); }
+.ConfirmDialog__title { margin-bottom: var(--space-1); }
+.ConfirmDialog--danger .ConfirmDialog__title { color: var(--bad); }
+.ConfirmDialog__body { color: var(--muted); }
+.ConfirmDialog__actions {
+  display: flex; align-items: center; justify-content: flex-end; gap: var(--space-1);
+  margin-top: var(--space-2);
+}
