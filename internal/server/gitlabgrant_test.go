@@ -139,7 +139,7 @@ func (f *glConnectFixture) upload(t *testing.T) uploadResponse {
 func TestGitLabConnectFlow(t *testing.T) {
 	f, sess := newGLConnectFixture(t)
 
-	start := get(f.fixture, "/workspaces/gitlab/grp%2Fsub/connect", sess)
+	start := get(f.fixture, "/workspace-connect/gitlab/grp/sub", sess)
 	if start.Code != http.StatusFound {
 		t.Fatalf("connect start: status = %d", start.Code)
 	}
@@ -162,8 +162,8 @@ func TestGitLabConnectFlow(t *testing.T) {
 	if cb.Code != http.StatusSeeOther {
 		t.Fatalf("callback: status = %d, body = %s", cb.Code, cb.Body)
 	}
-	// The nested prefix must come back escaped in the redirect's ?ws=.
-	if loc := cb.Header().Get("Location"); loc != "/?ws=gitlab%2Fgrp%2Fsub" {
+	// The nested prefix comes back as the path it is, slashes and all.
+	if loc := cb.Header().Get("Location"); loc != "/w/gitlab/grp/sub" {
 		t.Errorf("callback redirect = %q, want the workspace's dashboard", loc)
 	}
 	ws := f.workspace(t)
@@ -187,7 +187,7 @@ func TestGitLabConnectCallbackRejects(t *testing.T) {
 	// No session: back to sign-in, aimed at the settings page the Connect
 	// button sits on.
 	if rec := get(f.fixture, "/oauth/gitlab/callback?code=x&state=s", mk("s|grp/sub")); rec.Code != http.StatusSeeOther ||
-		rec.Header().Get("Location") != "/login?next=%2Fworkspaces%2Fgitlab%2Fgrp%252Fsub" {
+		rec.Header().Get("Location") != "/login?next=%2Fworkspace-settings%2Fgitlab%2Fgrp%2Fsub" {
 		t.Errorf("no session: %d -> %q, want the login redirect back to the settings page",
 			rec.Code, rec.Header().Get("Location"))
 	}
@@ -209,7 +209,7 @@ func TestGitLabConnectCallbackRejects(t *testing.T) {
 	// settings page says whose move connecting is.
 	demote(t, f.fixture, "grp/sub")
 	if rec := get(f.fixture, "/oauth/gitlab/callback?code=x&state=s", mk("s|grp/sub"), sess); rec.Code != http.StatusSeeOther ||
-		rec.Header().Get("Location") != "/workspaces/gitlab/grp%2Fsub?error=connect_owners_only" {
+		rec.Header().Get("Location") != "/workspace-settings/gitlab/grp/sub?error=connect_owners_only" {
 		t.Errorf("demoted owner: %d -> %q, want the settings page's connect_owners_only notice", rec.Code, rec.Header().Get("Location"))
 	}
 	if len(f.gl.exchanged) != 0 {
@@ -229,7 +229,7 @@ func TestGitLabConnectRequiresFeature(t *testing.T) {
 		Hosted:  true,
 	})}
 	sess := signInVia(t, f, "gitlab")
-	if rec := get(f, "/workspaces/gitlab/grp/connect", sess); rec.Code != http.StatusNotFound {
+	if rec := get(f, "/workspace-connect/gitlab/grp", sess); rec.Code != http.StatusNotFound {
 		t.Errorf("connect without feature: status = %d, want 404", rec.Code)
 	}
 	stray := &http.Cookie{Name: glConnectStateCookie, Value: "s|grp"}
@@ -314,7 +314,7 @@ func TestGitLabDisconnect(t *testing.T) {
 	f, sess := newGLConnectFixture(t)
 	f.grant(t, "covbot", "rt-0", false)
 
-	wantStatus(t, postJSON(t, f.fixture, "/api/ui/workspaces/gitlab/grp%2Fsub/disconnect", nil, sess),
+	wantStatus(t, postJSON(t, f.fixture, "/api/ui/workspace-settings/disconnect/gitlab/grp/sub", nil, sess),
 		"disconnect", http.StatusOK)
 	ws := f.workspace(t)
 	if ws.GitLabGrantAccount != "" || ws.GitLabRefreshToken != "" || ws.GitLabGrantBroken {
@@ -329,8 +329,8 @@ func TestGitLabDisconnect(t *testing.T) {
 func TestGitLabReportingStates(t *testing.T) {
 	f, sess := newGLConnectFixture(t)
 	const (
-		path       = "/api/ui/workspaces/gitlab/grp%2Fsub"
-		connectURL = "/workspaces/gitlab/grp%2Fsub/connect"
+		path       = "/api/ui/workspace-settings/gitlab/grp/sub"
+		connectURL = "/workspace-connect/gitlab/grp/sub"
 	)
 
 	got := decodeJSON[workspaceSettingsDTO](t, get(f.fixture, path, sess))

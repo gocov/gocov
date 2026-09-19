@@ -156,7 +156,7 @@ func (s *Server) connectNew(w http.ResponseWriter, r *http.Request, u *store.Use
 	http.Redirect(w, r, workspaceHomeURL(ws), http.StatusSeeOther)
 }
 
-// githubDisconnect is POST /workspaces/github/{prefix}/disconnect: forget
+// githubDisconnect is the GitHub half of the disconnect endpoint: forget
 // the installation link. The installation itself lives on GitHub —
 // uninstalling there is the org owner's move; this only stops gocov
 // using it and drops resolution back to the credential chain.

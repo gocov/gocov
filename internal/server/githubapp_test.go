@@ -163,7 +163,7 @@ func TestGitHubSetupConnectsWorkspace(t *testing.T) {
 	}
 	// A connected workspace's home is its dashboard, where the setup
 	// checklist reads the connection it just gained.
-	if loc := rec.Header().Get("Location"); loc != "/?ws=github%2Facme" {
+	if loc := rec.Header().Get("Location"); loc != "/w/github/acme" {
 		t.Errorf("redirect = %q, want the workspace's dashboard", loc)
 	}
 	ws := f.reloadWorkspace(t, "acme")
@@ -172,7 +172,7 @@ func TestGitHubSetupConnectsWorkspace(t *testing.T) {
 	}
 
 	// The settings screen reads the connection as on, posting as gocov[bot].
-	got := decodeJSON[workspaceSettingsDTO](t, get(f.fixture, "/api/ui/workspaces/github/acme", sess))
+	got := decodeJSON[workspaceSettingsDTO](t, get(f.fixture, "/api/ui/workspace-settings/github/acme", sess))
 	if got.Reporting.State != "on" {
 		t.Errorf("reporting = %+v, want the App connected", got.Reporting)
 	}
@@ -261,7 +261,7 @@ func TestGitHubSetupClaimsWorkspaceHosted(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/?ws=github%2Fjanedev" {
+	if loc := rec.Header().Get("Location"); loc != "/w/github/janedev" {
 		t.Errorf("redirect = %q, want the new workspace's dashboard (activation moment)", loc)
 	}
 	ws := f.reloadWorkspace(t, "janedev")
@@ -269,7 +269,7 @@ func TestGitHubSetupClaimsWorkspaceHosted(t *testing.T) {
 		t.Errorf("claimed workspace: installation = %d, forge = %q", ws.GitHubInstallationID, ws.Forge)
 	}
 	// The registering user must be a member (RegisterWorkspace semantics).
-	if rec := get(f.fixture, "/api/ui/workspaces/github/janedev", sess); rec.Code != http.StatusOK {
+	if rec := get(f.fixture, "/api/ui/workspace-settings/github/janedev", sess); rec.Code != http.StatusOK {
 		t.Errorf("claimer cannot read the workspace: status = %d", rec.Code)
 	}
 }
@@ -286,7 +286,7 @@ func TestGitHubSetupClaimPrivateMode(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/?ws=github%2Fjanedev" {
+	if loc := rec.Header().Get("Location"); loc != "/w/github/janedev" {
 		t.Errorf("redirect = %q, want the new workspace's dashboard", loc)
 	}
 	ws, err := f.store.WorkspaceByPrefix(t.Context(), "github", "janedev")
@@ -349,7 +349,7 @@ func TestGitHubSetupIsOwnersOnly(t *testing.T) {
 	if ws := f.reloadWorkspace(t, "acme"); ws.GitHubInstallationID != 0 {
 		t.Errorf("installation linked by a member: %d", ws.GitHubInstallationID)
 	}
-	if rec := postJSON(t, f.fixture, "/api/ui/workspaces/github/acme/disconnect", nil, sess); rec.Code != http.StatusForbidden {
+	if rec := postJSON(t, f.fixture, "/api/ui/workspace-settings/disconnect/github/acme", nil, sess); rec.Code != http.StatusForbidden {
 		t.Errorf("member disconnect: status = %d, want 403", rec.Code)
 	}
 }
@@ -375,7 +375,7 @@ func TestGitHubDisconnect(t *testing.T) {
 	f, sess := newGitHubAppFixture(t, false, true)
 	f.connectWorkspace(t, 42)
 
-	rec := postJSON(t, f.fixture, "/api/ui/workspaces/github/acme/disconnect", nil, sess)
+	rec := postJSON(t, f.fixture, "/api/ui/workspace-settings/disconnect/github/acme", nil, sess)
 	wantStatus(t, rec, "disconnect", http.StatusOK)
 	if ws := f.reloadWorkspace(t, "acme"); ws.GitHubInstallationID != 0 || ws.GitHubAppBroken {
 		t.Errorf("after disconnect: id = %d, broken = %v", ws.GitHubInstallationID, ws.GitHubAppBroken)
@@ -507,13 +507,13 @@ func TestUploadWorkspaceTokenUsesInstallation(t *testing.T) {
 func TestGitHubReportingStates(t *testing.T) {
 	f, sess := newGitHubAppFixture(t, false, true)
 
-	got := decodeJSON[workspaceSettingsDTO](t, get(f.fixture, "/api/ui/workspaces/github/acme", sess))
+	got := decodeJSON[workspaceSettingsDTO](t, get(f.fixture, "/api/ui/workspace-settings/github/acme", sess))
 	if !got.Reporting.Available || got.Reporting.State != "off" || got.Reporting.ConnectURL != f.app.installURL {
 		t.Errorf("unconnected reporting = %+v, want the install link", got.Reporting)
 	}
 
 	f.connectWorkspace(t, 42)
-	got = decodeJSON[workspaceSettingsDTO](t, get(f.fixture, "/api/ui/workspaces/github/acme", sess))
+	got = decodeJSON[workspaceSettingsDTO](t, get(f.fixture, "/api/ui/workspace-settings/github/acme", sess))
 	if got.Reporting.State != "on" {
 		t.Errorf("connected reporting = %+v", got.Reporting)
 	}
@@ -523,7 +523,7 @@ func TestGitHubReportingStates(t *testing.T) {
 	if err := f.store.UpdateWorkspace(t.Context(), ws); err != nil {
 		t.Fatal(err)
 	}
-	got = decodeJSON[workspaceSettingsDTO](t, get(f.fixture, "/api/ui/workspaces/github/acme", sess))
+	got = decodeJSON[workspaceSettingsDTO](t, get(f.fixture, "/api/ui/workspace-settings/github/acme", sess))
 	if got.Reporting.State != "broken" || got.Reporting.ConnectURL != f.app.installURL {
 		t.Errorf("broken reporting = %+v, want the reinstall link", got.Reporting)
 	}

@@ -275,12 +275,12 @@ export interface SourceLine {
 }
 
 // ---- workspace settings -----------------------------------------------------
-// GET    /api/ui/workspaces/{forge}/{prefix}
-// POST   /api/ui/workspaces/{forge}/{prefix}/settings      WorkspaceSettingsInput → WorkspaceSettings
-// POST   /api/ui/workspaces/{forge}/{prefix}/rotate-token  → TokenReveal
-// POST   /api/ui/workspaces/{forge}/{prefix}/reveal-token  → TokenReveal
-// POST   /api/ui/workspaces/{forge}/{prefix}/disconnect    → WorkspaceSettings
-// POST   /api/ui/workspaces/{forge}/{prefix}/delete        → 204
+// GET    /api/ui/workspace-settings/{forge}/{prefix...}
+// POST   /api/ui/workspace-settings/save/{forge}/{prefix...}          WorkspaceSettingsInput → WorkspaceSettings
+// POST   /api/ui/workspace-settings/rotate-token/{forge}/{prefix...}  → TokenReveal
+// POST   /api/ui/workspace-settings/reveal-token/{forge}/{prefix...}  → TokenReveal
+// POST   /api/ui/workspace-settings/disconnect/{forge}/{prefix...}    → WorkspaceSettings
+// POST   /api/ui/workspace-settings/delete/{forge}/{prefix...}        → 204
 // Mutations are owner-only (403 otherwise).
 
 export interface WorkspaceSettings {
@@ -398,8 +398,8 @@ export interface RegisterResult {
 }
 
 // ---- onboarding: wiring CI and the first report -----------------------------
-// GET /api/ui/workspaces/{forge}/{prefix}/setup         → SetupInfo   (members)
-// GET /api/ui/workspaces/{forge}/{prefix}/setup/status  → SetupStatus (members; polled every 3s)
+// GET /api/ui/workspace-setup/{forge}/{prefix...}         → SetupInfo   (members)
+// GET /api/ui/workspace-setup-status/{forge}/{prefix...}  → SetupStatus (members; polled every 3s)
 // The upload token comes from the workspace reveal-token POST (owners).
 
 export interface SetupInfo {

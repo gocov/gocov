@@ -316,7 +316,7 @@ func TestSanitizeNextKeepsInSitePaths(t *testing.T) {
 	for next, want := range map[string]string{
 		"/":                                   "/",
 		"/onboarding":                         "/onboarding",
-		"/workspaces/bitbucket/acme":          "/workspaces/bitbucket/acme",
+		"/w/bitbucket/acme":                   "/w/bitbucket/acme",
 		"/repos/bitbucket/acme/web":           "/repos/bitbucket/acme/web",
 		"/repos/bitbucket/acme/web?tab=files": "/repos/bitbucket/acme/web?tab=files",
 		"/github/setup?installation_id=42&setup_action=install": "/github/setup?installation_id=42&setup_action=install",

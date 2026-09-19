@@ -28,7 +28,8 @@ const connectNotices = {
 export default function WorkspaceSettingsPage() {
   const params = useParams();
   const forge = params.forge ?? "";
-  const prefix = params.prefix ?? "";
+  // The prefix is the route's splat: a GitLab group nests (grp/sub).
+  const prefix = params["*"] ?? "";
   const query = useQuery(workspaceSettingsQuery(forge, prefix));
   usePageTitle(`${prefix} settings`);
   return (
@@ -42,7 +43,7 @@ function WorkspaceSettingsView({ forge, prefix, settings }: { forge: string; pre
   const client = useQueryClient();
   const navigate = useNavigate();
   const key = workspaceSettingsQuery(forge, prefix).queryKey;
-  const path = workspaceSettingsPath(forge, prefix);
+  const path = (action: string) => workspaceSettingsPath(forge, prefix, action);
 
   const { workspace: ws, owner } = settings;
   // Where the server sends the browser back after a grant or an install —
@@ -53,7 +54,7 @@ function WorkspaceSettingsView({ forge, prefix, settings }: { forge: string; pre
   // shared, and whichever button is pressed posts all of it.
   const { form, update, section, error } = useSectionSave({
     seed: () => workspaceInput(settings),
-    post: (input: WorkspaceSettingsInput) => apiPost<WorkspaceSettings>(`${path}/settings`, input),
+    post: (input: WorkspaceSettingsInput) => apiPost<WorkspaceSettings>(path("save"), input),
     onSaved: (next) => {
       client.setQueryData(key, next);
       return workspaceInput(next);
@@ -61,12 +62,12 @@ function WorkspaceSettingsView({ forge, prefix, settings }: { forge: string; pre
   });
 
   const disconnect = useMutation({
-    mutationFn: () => apiPost<WorkspaceSettings>(`${path}/disconnect`),
+    mutationFn: () => apiPost<WorkspaceSettings>(path("disconnect")),
     onSuccess: (next) => client.setQueryData(key, next),
   });
 
   const remove = useMutation({
-    mutationFn: () => apiPost<void>(`${path}/delete`),
+    mutationFn: () => apiPost<void>(path("delete")),
     onSuccess: async () => {
       await client.invalidateQueries({ queryKey: ["dashboard"] });
       void navigate(routes.dashboard());
@@ -140,9 +141,9 @@ function WorkspaceSettingsView({ forge, prefix, settings }: { forge: string; pre
           serverUrl={settings.server_url}
           tokenMasked={settings.token_masked}
           owner={owner}
-          onReveal={() => apiPost<TokenReveal>(`${path}/reveal-token`).then((r) => r.token)}
+          onReveal={() => apiPost<TokenReveal>(path("reveal-token")).then((r) => r.token)}
           onRotate={() =>
-            apiPost<TokenReveal>(`${path}/rotate-token`).then((r) => {
+            apiPost<TokenReveal>(path("rotate-token")).then((r) => {
               // The masked form in the cache is the old one now; the token
               // itself stays out of the cache.
               void client.invalidateQueries({ queryKey: key });

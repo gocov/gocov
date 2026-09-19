@@ -43,8 +43,7 @@ test("Create registers the workspace and lands on its dashboard", async () => {
 
   await user.click(await screen.findByRole("button", { name: "Create" }));
 
-  await waitFor(() => expect(router.state.location.search).toBe("?ws=bitbucket%2Facme"));
-  expect(router.state.location.pathname).toBe("/");
+  await waitFor(() => expect(router.state.location.pathname).toBe("/w/bitbucket/acme"));
   expect(posted).toEqual({ prefix: "acme" });
 });
 

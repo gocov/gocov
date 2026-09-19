@@ -14,7 +14,7 @@ const qs = (params: Record<string, string | number | undefined>) => {
   return s ? "?" + s : "";
 };
 
-/** Slugs and source paths carry slashes that must stay slashes. */
+/** Slugs, source paths and workspace prefixes carry slashes that must stay slashes. */
 const segs = (path: string) => path.split("/").map(encodeURIComponent).join("/");
 
 export const sessionQuery = () =>
@@ -41,8 +41,15 @@ export const sourceQuery = (id: string, path: string) =>
     queryFn: () => apiGet<SourcePage>(`/uploads/${encodeURIComponent(id)}/files/${segs(path)}`),
   });
 
-export const workspaceSettingsPath = (forge: string, prefix: string) =>
-  `/workspaces/${encodeURIComponent(forge)}/${encodeURIComponent(prefix)}`;
+/**
+ * action "" = the settings document itself. A GitLab prefix nests (grp/sub),
+ * so like a slug it keeps its slashes and the verb rides before it.
+ */
+export const workspaceSettingsPath = (forge: string, prefix: string, action = "") =>
+  `/workspace-settings/${action ? action + "/" : ""}${encodeURIComponent(forge)}/${segs(prefix)}`;
+
+const workspaceSetupPath = (forge: string, prefix: string, status = false) =>
+  `/workspace-setup${status ? "-status" : ""}/${encodeURIComponent(forge)}/${segs(prefix)}`;
 
 export const workspaceSettingsQuery = (forge: string, prefix: string) =>
   queryOptions({
@@ -65,13 +72,13 @@ export const onboardingQuery = () => queryOptions({ queryKey: ["onboarding"], qu
 export const setupQuery = (forge: string, prefix: string) =>
   queryOptions({
     queryKey: ["setup", forge, prefix],
-    queryFn: () => apiGet<SetupInfo>(workspaceSettingsPath(forge, prefix) + "/setup"),
+    queryFn: () => apiGet<SetupInfo>(workspaceSetupPath(forge, prefix)),
   });
 
 /** Poll with `refetchInterval` while waiting for the first upload. */
 export const setupStatusQuery = (forge: string, prefix: string) =>
   queryOptions({
     queryKey: ["setup-status", forge, prefix],
-    queryFn: () => apiGet<SetupStatus>(workspaceSettingsPath(forge, prefix) + "/setup/status"),
+    queryFn: () => apiGet<SetupStatus>(workspaceSetupPath(forge, prefix, true)),
   });
 

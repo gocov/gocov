@@ -43,7 +43,7 @@ declare global {
  * `session_recording_url_trigger_config` must list exactly these patterns, so
  * a page outside them is never recorded even if this drifts.
  */
-const replayPaths = /^\/onboarding\/?$|^\/workspaces\/[^/]+\/[^/]+\/setup\/?$/;
+const replayPaths = /^\/onboarding\/?$|^\/workspace-setup\/[^/]+\/.+$/;
 
 /** Set as soon as a key arrives, so a second call cannot load the script twice. */
 let started = false;

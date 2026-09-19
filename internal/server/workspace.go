@@ -177,7 +177,7 @@ func (s *Server) connectURL(r *http.Request, ws *store.Workspace) string {
 	if ws.Forge == "github" {
 		return s.forges.InstallURL(r.Context())
 	}
-	return workspaceURL(ws, "/connect")
+	return workspaceConnectURL(ws)
 }
 
 // maskSecret renders a token as its last eight characters behind a run of
@@ -309,7 +309,7 @@ func (s *Server) newWorkspaceSettingsDTO(r *http.Request, ws *store.Workspace, o
 	return dto
 }
 
-// handleAPIWorkspace implements GET /api/ui/workspaces/{forge}/{prefix}.
+// handleAPIWorkspace implements GET /api/ui/workspace-settings/{forge}/{prefix...}.
 func (s *Server) handleAPIWorkspace(w http.ResponseWriter, r *http.Request) {
 	ws, role := s.memberWorkspace(w, r)
 	if ws == nil {
@@ -319,7 +319,7 @@ func (s *Server) handleAPIWorkspace(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAPIWorkspaceSettings implements
-// POST /api/ui/workspaces/{forge}/{prefix}/settings.
+// POST /api/ui/workspace-settings/save/{forge}/{prefix...}.
 func (s *Server) handleAPIWorkspaceSettings(w http.ResponseWriter, r *http.Request) {
 	ws := s.ownerWorkspace(w, r)
 	if ws == nil {
@@ -360,7 +360,7 @@ type tokenRevealDTO struct {
 }
 
 // handleAPIWorkspaceRotate implements
-// POST /api/ui/workspaces/{forge}/{prefix}/rotate-token. The new token is
+// POST /api/ui/workspace-settings/rotate-token/{forge}/{prefix...}. The new token is
 // in the response; the old one is already dead by then.
 func (s *Server) handleAPIWorkspaceRotate(w http.ResponseWriter, r *http.Request) {
 	ws := s.ownerWorkspace(w, r)
@@ -384,7 +384,7 @@ func (s *Server) handleAPIWorkspaceRotate(w http.ResponseWriter, r *http.Request
 }
 
 // handleAPIWorkspaceReveal implements
-// POST /api/ui/workspaces/{forge}/{prefix}/reveal-token: the stored token
+// POST /api/ui/workspace-settings/reveal-token/{forge}/{prefix...}: the stored token
 // behind the masked form, for an owner who asked to see it. It lives on
 // the workspace row in the clear, so this exposes nothing the database
 // does not already hold.
@@ -397,7 +397,7 @@ func (s *Server) handleAPIWorkspaceReveal(w http.ResponseWriter, r *http.Request
 }
 
 // handleAPIWorkspaceDisconnect implements
-// POST /api/ui/workspaces/{forge}/{prefix}/disconnect.
+// POST /api/ui/workspace-settings/disconnect/{forge}/{prefix...}.
 func (s *Server) handleAPIWorkspaceDisconnect(w http.ResponseWriter, r *http.Request) {
 	ws := s.ownerWorkspace(w, r)
 	if ws == nil {
@@ -410,7 +410,7 @@ func (s *Server) handleAPIWorkspaceDisconnect(w http.ResponseWriter, r *http.Req
 }
 
 // handleAPIWorkspaceDelete implements
-// POST /api/ui/workspaces/{forge}/{prefix}/delete: the workspace and its
+// POST /api/ui/workspace-settings/delete/{forge}/{prefix...}: the workspace and its
 // repos and reports go (the store cascades). Uploads with the token start
 // failing at once; nothing changes on the forge.
 func (s *Server) handleAPIWorkspaceDelete(w http.ResponseWriter, r *http.Request) {

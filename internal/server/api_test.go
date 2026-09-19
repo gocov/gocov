@@ -195,9 +195,9 @@ func TestAPINeverLeaksTokens(t *testing.T) {
 		"/api/ui/repos/bitbucket/acme/widgets",
 		"/api/ui/uploads/1",
 		"/api/ui/uploads/1/files/a.go",
-		"/api/ui/workspaces/bitbucket/acme",
-		"/api/ui/workspaces/bitbucket/acme/setup",
-		"/api/ui/workspaces/bitbucket/acme/setup/status",
+		"/api/ui/workspace-settings/bitbucket/acme",
+		"/api/ui/workspace-setup/bitbucket/acme",
+		"/api/ui/workspace-setup-status/bitbucket/acme",
 		"/api/ui/onboarding",
 		"/api/ui/repo-settings/bitbucket/acme/widgets",
 	} {
@@ -213,7 +213,7 @@ func TestAPINeverLeaksTokens(t *testing.T) {
 	// The two endpoints that may: an owner asking for the value behind the
 	// mask, and a rotation handing back what it just wrote.
 	for path, want := range map[string]string{
-		"/api/ui/workspaces/bitbucket/acme/reveal-token":            wsToken,
+		"/api/ui/workspace-settings/reveal-token/bitbucket/acme":    wsToken,
 		"/api/ui/repo-settings/reveal-token/bitbucket/acme/widgets": repoToken,
 	} {
 		rec := postJSON(t, f, path, nil, sess)

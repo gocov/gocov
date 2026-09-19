@@ -22,7 +22,7 @@ docker stop gocov-test-db
 ## Web UI
 
 The web UI is a single-page app in `web/` (Vite, React, TypeScript, React Router, TanStack Query, Vitest). It is the
-UI: it answers the canonical URLs — `/`, `/repos/…`, `/workspaces/…` — and there are no server-rendered pages left
+UI: it answers the canonical URLs — `/`, `/w/…`, `/repos/…`, `/workspace-settings/…` — and there are no server-rendered pages left
 behind it. Go still decides every status code, redirect and access answer and injects the per-page `<title>` and meta
 tags into the shell; the app reads its data from a private JSON API under `/api/ui/`, authenticated by the same
 session cookie.

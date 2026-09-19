@@ -16,21 +16,21 @@ const at = (path: string) => {
 };
 
 test("no parameter, no message", () => {
-  const { result } = at("/?ws=github/acme");
+  const { result } = at("/w/github/acme?sort=name");
   expect(result.current.notice).toBeNull();
-  expect(result.current.location.search).toBe("?ws=github/acme");
+  expect(result.current.location.search).toBe("?sort=name");
 });
 
 test("a notice reads neutral and leaves the URL once it has been read", async () => {
-  const { result } = at("/workspaces/github/acme?notice=connected&ws=github%2Facme");
+  const { result } = at("/workspace-settings/github/acme?notice=connected&sort=name");
   expect(result.current.notice).toEqual({ text: "Workspace connected.", tone: "neutral" });
-  await waitFor(() => expect(result.current.location.search).toBe("?ws=github%2Facme"));
+  await waitFor(() => expect(result.current.location.search).toBe("?sort=name"));
   // The message stays on screen after the URL has been cleaned up.
   expect(result.current.notice).toEqual({ text: "Workspace connected.", tone: "neutral" });
 });
 
 test("an error code becomes the page's sentence and reads bad", async () => {
-  const { result } = at("/workspaces/github/acme?error=connect_failed");
+  const { result } = at("/workspace-settings/github/acme?error=connect_failed");
   expect(result.current.notice).toEqual({
     text: "Connecting to the forge did not complete.",
     tone: "bad",

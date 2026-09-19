@@ -1,6 +1,6 @@
 # gocov web UI
 
-The single-page app: Vite · React · TypeScript · React Router · TanStack Query · Vitest. Built into `../internal/webui/dist` and embedded in the Go binary; it is the UI, at the canonical URLs (`/`, `/repos/…`, `/uploads/…`, `/workspaces/…`, `/repo-settings/…`, `/login`, `/onboarding`), and Go serves `index.html` as the shell for every one of them.
+The single-page app: Vite · React · TypeScript · React Router · TanStack Query · Vitest. Built into `../internal/webui/dist` and embedded in the Go binary; it is the UI, at the canonical URLs (`/`, `/w/…`, `/repos/…`, `/uploads/…`, `/workspace-settings/…`, `/workspace-setup/…`, `/repo-settings/…`, `/login`, `/onboarding`), and Go serves `index.html` as the shell for every one of them.
 
 ```sh
 npm ci
@@ -51,7 +51,7 @@ Everything visual comes from [`src/styles/tokens.css`](src/styles/tokens.css). I
 - Numbers and ISO timestamps come from the API; words come from `lib/format.ts` (`pct`, `deltaText`, `timeAgo`, `level`, …). Add helpers there, with a test.
 - Links inside the SPA use `<Link to={routes.x(...)}>` from `lib/urls.ts`; what the browser leaves the app for (`server.*`: the OAuth start, logout, docs) uses a plain `<a href>`.
 - Every page calls `usePageTitle()` from `lib/title.ts`; a title that needs loaded data is passed as `undefined` until it lands. `index.html` carries exactly `<title>gocov</title>` on one line, which the Go server replaces to inject per-page head tags — `src/test/shell.test.ts` guards it.
-- Slugs and file paths contain slashes: routes end in a splat, read it with `useParams()["*"]`.
+- Slugs, workspace prefixes (a GitLab group nests: `grp/sub`) and file paths contain slashes: routes end in a splat, read it with `useParams()["*"]`. Nothing rides as a `%2F` segment — a proxy in front of the server may decode or refuse one — so a page or an action is named *before* the workspace (`/workspace-settings/{forge}/{prefix…}`), never after it.
 
 ## Tests
 

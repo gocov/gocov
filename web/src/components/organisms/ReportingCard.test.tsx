@@ -72,13 +72,13 @@ test("a disconnected GitLab workspace is offered the grant, in GitLab's words", 
   show({
     forge: "gitlab",
     forgeLabel: "GitLab",
-    reporting: reporting({ state: "off", connect_url: "/workspaces/gitlab/acme/connect" }),
+    reporting: reporting({ state: "off", connect_url: "/workspace-settings/gitlab/acme/connect" }),
   });
   expect(screen.getByText("Not connected")).toBeInTheDocument();
   expect(screen.getByText(/commit statuses and merge-request comments/)).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Grant write access" })).toHaveAttribute(
     "href",
-    "/workspaces/gitlab/acme/connect",
+    "/workspace-settings/gitlab/acme/connect",
   );
   expect(screen.queryByRole("button", { name: "Disconnect" })).not.toBeInTheDocument();
 });
@@ -87,7 +87,7 @@ test("a broken Bitbucket grant explains itself and offers it again", () => {
   show({
     forge: "bitbucket",
     forgeLabel: "Bitbucket",
-    reporting: reporting({ state: "broken", account: "omer", connect_url: "/workspaces/bitbucket/acme/connect" }),
+    reporting: reporting({ state: "broken", account: "omer", connect_url: "/workspace-settings/bitbucket/acme/connect" }),
   });
   expect(screen.getByText("Reconnect needed")).toBeInTheDocument();
   expect(screen.getByRole("alert")).toHaveTextContent("The grant stopped working");

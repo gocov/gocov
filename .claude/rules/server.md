@@ -17,6 +17,6 @@ Files are named for what they serve — one screen or concern each (`page`-style
 
 ## Gotchas
 
-- Repo slugs contain a slash (`workspace/repo`), so routes use the `{slug...}` wildcard, not `{slug}`. A single-segment pattern still passes `httptest` handler tests but 404s on the live mux — keep new slug routes on `{slug...}` (see the comment near the route table in `server.go`).
+- Repo slugs contain a slash (`workspace/repo`) and GitLab workspace prefixes can (`grp/sub`), so routes use the `{slug...}` / `{prefix...}` wildcard, not a single segment. A single-segment pattern still passes `httptest` handler tests but 404s on the live mux, and an escaped `%2F` segment is a proxy's to decode or refuse. A wildcard must come last, so a page or a verb is named before the tenant: `/workspace-settings/save/{forge}/{prefix...}`, never `/workspaces/{forge}/{prefix}/settings` (see `urls.go` and the route table in `server.go`). The pre-v0.26 addresses (`/?ws=`, `/workspaces/{forge}/{prefix}[/setup]`) answer with a 301.
 - Every upload re-reads and re-merges all parts for the commit under a lock — see `maxPartsPerCommit` in `upload.go` before changing the merge path.
 - For eyeballing UI changes without Postgres or OAuth: `go run ./cmd/gocov-preview` (`GOCOV_PREVIEW_AUTH=1` adds fake sign-in). The preview server is configured in `.claude/launch.json`; use the browser preview tools rather than curl to check a rendered page. It needs a web build (`cd web && npm run build`) — without one every page serves the built-in stand-in shell instead.

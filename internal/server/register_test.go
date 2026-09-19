@@ -141,7 +141,7 @@ func TestRegisterCreatesWorkspaceAndSeatsTheFounder(t *testing.T) {
 		t.Errorf("workspace = %+v", ws)
 	}
 	// The setup screen hands the founder the token to paste into CI (D6).
-	reveal := postJSON(t, f, "/api/ui/workspaces/bitbucket/personal/reveal-token", nil, sess)
+	reveal := postJSON(t, f, "/api/ui/workspace-settings/reveal-token/bitbucket/personal", nil, sess)
 	wantStatus(t, reveal, "reveal token", http.StatusOK)
 	if got := decodeJSON[tokenRevealDTO](t, reveal).Token; got != ws.Token {
 		t.Errorf("revealed token = %q, want the workspace's", got)

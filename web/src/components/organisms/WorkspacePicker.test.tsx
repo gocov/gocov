@@ -72,7 +72,7 @@ test("every membership gets one action or the reason there is none, free ones fi
 
   expect(screen.getByRole("button", { name: "Create" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Join" })).toBeEnabled();
-  expect(screen.getByRole("link", { name: "Open" })).toHaveAttribute("href", "/?ws=bitbucket%2Fmine");
+  expect(screen.getByRole("link", { name: "Open" })).toHaveAttribute("href", "/w/bitbucket/mine");
   expect(screen.getByText("Creating it takes an owner of the workspace — ask one to sign in and set it up.")).toBeInTheDocument();
   // unowned carries no control of its own.
   expect(screen.getAllByRole("button")).toHaveLength(2);

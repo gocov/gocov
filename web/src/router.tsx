@@ -18,7 +18,7 @@ const ComponentsPage = lazy(() => import("@/pages/ComponentsPage"));
 
 // The canonical URLs: the same shapes the Go server answers
 // (internal/server/server.go), which serves this app's shell for every one of
-// them. Slugs and file paths contain slashes and ride as the trailing splat:
+// them. Slugs, workspace prefixes and file paths contain slashes and ride as the trailing splat:
 // read them with useParams()["*"].
 export const routes: RouteObject[] = [
   {
@@ -28,8 +28,9 @@ export const routes: RouteObject[] = [
       { path: "repos/:forge/*", element: <RepoPage /> },
       { path: "uploads/:id", element: <UploadPage /> },
       { path: "uploads/:id/files/*", element: <SourcePage /> },
-      { path: "workspaces/:forge/:prefix", element: <WorkspaceSettingsPage /> },
-      { path: "workspaces/:forge/:prefix/setup", element: <WorkspaceSetupPage /> },
+      { path: "w/:forge/*", element: <DashboardPage /> },
+      { path: "workspace-settings/:forge/*", element: <WorkspaceSettingsPage /> },
+      { path: "workspace-setup/:forge/*", element: <WorkspaceSetupPage /> },
       { path: "onboarding", element: <OnboardingPage /> },
       { path: "repo-settings/:forge/*", element: <RepoSettingsPage /> },
       { path: "login", element: <LoginPage /> },
