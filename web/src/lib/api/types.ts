@@ -162,8 +162,6 @@ export interface RepoPage {
   repo: RepoRef & {
     default_branch: string;
     gate: Gate;
-    badge_url: string;
-    badge_markdown: string;
     /** Viewer may open the settings page. */
     can_settings: boolean;
   };

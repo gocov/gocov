@@ -4,7 +4,6 @@ import { Chip, LinkButton, Mono, Select } from "@/components/atoms";
 import {
   Breadcrumbs,
   Card,
-  CopyField,
   KeyValue,
   KeyValueList,
   PageHeader,
@@ -87,12 +86,6 @@ export default function RepoPage() {
                 {data.repo.can_settings && <LinkButton to={routes.repoSettings(forge, slug)}>Settings</LinkButton>}
               </>
             }
-          />
-
-          <CopyField
-            label="Badge markdown"
-            value={data.repo.badge_markdown}
-            preview={<img className="RepoPage__badge" src={data.repo.badge_url} alt="coverage badge" />}
           />
 
           {data.summary !== null && <Summary data={data} summary={data.summary} />}

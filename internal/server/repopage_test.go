@@ -123,9 +123,6 @@ func TestAPIRepoPage(t *testing.T) {
 	if got.Repo.Gate.MinCoverage == nil || *got.Repo.Gate.MinCoverage != 50 {
 		t.Errorf("gate = %+v, want the repo's minimum", got.Repo.Gate)
 	}
-	if got.Repo.BadgeURL != "/badge/bitbucket/acme/widgets.svg" {
-		t.Errorf("badge url = %q", got.Repo.BadgeURL)
-	}
 	if !slices.Equal(got.Branches, []string{"feat", "main"}) {
 		t.Errorf("branches = %v", got.Branches)
 	}

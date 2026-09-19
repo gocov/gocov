@@ -12,8 +12,6 @@ const repo = (over: Partial<RepoPageData> = {}): RepoPageData => ({
     slug: "acme/api",
     default_branch: "main",
     gate: { min_coverage: 80, min_diff_coverage: null, max_coverage_drop: null },
-    badge_url: "/badge/github/acme/api",
-    badge_markdown: "![coverage](https://app.gocov.dev/badge/github/acme/api)",
     can_settings: true,
   },
   branches: ["main", "fix/upload"],
@@ -73,16 +71,12 @@ const show = (data: RepoPageData, path = "/repos/github/acme/api") => {
 
 const urls = (fetchMock: ReturnType<typeof mockApi>) => fetchMock.mock.calls.map(([input]) => String(input));
 
-test("the page leads with the repo, its badge and its verdict", async () => {
+test("the page leads with the repo and its verdict", async () => {
   show(repo());
 
   expect(await screen.findByRole("heading", { level: 1, name: "acme/api" })).toBeInTheDocument();
   expect(document.title).toBe("acme/api code coverage — gocov");
   expect(screen.getByText(/default branch/)).toHaveTextContent("default branch main · 12,480 statements");
-  expect(screen.getByRole("img", { name: "coverage badge" })).toHaveAttribute("src", "/badge/github/acme/api");
-  expect(screen.getByRole("textbox", { name: "Badge markdown" })).toHaveValue(
-    "![coverage](https://app.gocov.dev/badge/github/acme/api)",
-  );
   expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/repo-settings/github/acme/api");
 
   expect(screen.getByText("Gate passing")).toBeInTheDocument();

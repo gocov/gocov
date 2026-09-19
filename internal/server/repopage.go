@@ -201,8 +201,6 @@ type repoHeadDTO struct {
 	repoRefDTO
 	DefaultBranch string  `json:"default_branch"`
 	Gate          gateDTO `json:"gate"`
-	BadgeURL      string  `json:"badge_url"`
-	BadgeMarkdown string  `json:"badge_markdown"`
 	// CanSettings is the settings button: members of a tracked workspace.
 	CanSettings bool `json:"can_settings"`
 }
@@ -263,8 +261,6 @@ func (s *Server) handleAPIRepo(w http.ResponseWriter, r *http.Request) {
 			repoRefDTO:    newRepoRefDTO(d.Repo),
 			DefaultBranch: d.Repo.DefaultBranch,
 			Gate:          newGateDTO(d.Repo.Gate),
-			BadgeURL:      badgeURL(d.Repo),
-			BadgeMarkdown: s.badgeMarkdown(d.Repo),
 			CanSettings:   d.Settings,
 		},
 		Branches:    d.Branches,

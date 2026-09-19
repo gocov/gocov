@@ -1,3 +1,2 @@
-.RepoPage__badge { display: block; max-height: var(--control-sm); width: auto; }
 /* The tiles' figures are large by default; a timestamp reads better small. */
 .RepoPage__stat { font-size: var(--font-md); font-weight: 400; }
