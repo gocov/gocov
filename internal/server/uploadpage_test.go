@@ -1,7 +1,6 @@
 package server
 
 import (
-	"fmt"
 	"math/rand/v2"
 	"net/http"
 	"slices"
@@ -132,21 +131,6 @@ func TestNewlyUncoveredIgnoresDeclaredSpan(t *testing.T) {
 	}
 }
 
-// TestIndexListsWorkspaceRepos checks that both repos of a workspace render on
-// the dashboard, each carrying the data-name hook the client-side search/sort
-// operate on. (Search, filter and sort run in the browser over these rows, so
-// there is no server-side ?q filter to assert.)
-
-func TestUploadPageShowsUncoveredRanges(t *testing.T) {
-	f := newFixture(t, nil)
-	// a.go block 7.1,9.2 is uncovered in testProfile -> "7-9".
-	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile)
-	body := get(f, "/uploads/1").Body.String()
-	if !strings.Contains(body, `class="uncov"`) || !strings.Contains(body, "7-9") {
-		t.Errorf("uncovered ranges missing: %s", body)
-	}
-}
-
 // testProfileFull covers a.go's 7-9 block that testProfile leaves uncovered,
 // so a following testProfile upload reads as a regression: a.go drops
 // 100% -> 75% and lines 7-9 become newly uncovered.
@@ -157,31 +141,71 @@ example.com/m/a.go:7.1,9.2 2 1
 example.com/m/b.go:1.1,3.2 2 1
 `
 
-func TestUploadPageBeforeAfter(t *testing.T) {
+// The files card's before → after column and the regression it names: a
+// baseline upload covers a.go fully, the head upload drops it to 75% and
+// leaves lines 7-9 uncovered.
+func TestAPIUploadPageBeforeAfter(t *testing.T) {
 	f := newFixture(t, nil)
-	// A passing baseline on main, then a regressing head upload.
 	doUpload(t, f, "secret-token", map[string]string{"commit": "base1", "branch": "main"}, testProfileFull)
 	doUpload(t, f, "secret-token", map[string]string{"commit": "head1", "branch": "main"}, testProfile)
 
-	body := get(f, "/uploads/2").Body.String()
-	for _, want := range []string{
-		`class="ba"`,                            // before -> after column rendered
-		"100.0%",                                // a.go coverage at the baseline
-		"75.0%",                                 // a.go coverage now
-		`class="delta`,                          // per-file delta
-		"7-9",                                   // lines newly uncovered by this upload
-		`class="verdict`,                        //
-		`aria-pressed="true" data-filter="all"`, // every file listed by default
-		`Changed<span class="n">1</span>`,       // a.go is the one file that moved
-		`data-changed="false"`,                  // b.go, unchanged, still listed
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("upload page missing %q\n%s", want, body)
+	got := decodeJSON[uploadPageDTO](t, get(f, "/api/ui/uploads/2"))
+	if got.Files == nil || !got.Files.HasBase {
+		t.Fatalf("files = %+v, want a baseline to compare against", got.Files)
+	}
+	byPath := map[string]fileRowDTO{}
+	for _, row := range got.Files.Files {
+		byPath[row.Path] = row
+	}
+	a := byPath["example.com/m/a.go"]
+	if a.Before == nil || *a.Before != 100 || a.Coverage != 75 {
+		t.Errorf("a.go = %+v, want 100%% before and 75%% now", a)
+	}
+	if a.NewlyUncovered != "7-9" || !a.CoverageChanged {
+		t.Errorf("a.go regression = %+v, want lines 7-9 newly uncovered", a)
+	}
+	// The baseline's own counts ride along, so the app's directory rollup
+	// weighs a.go by what it had then (8 of 8), not by what it has now.
+	if a.BeforeCoveredStmts == nil || a.BeforeTotalStmts == nil || *a.BeforeCoveredStmts != 8 || *a.BeforeTotalStmts != 8 {
+		t.Errorf("a.go baseline statements = %v/%v, want 8 of 8", a.BeforeCoveredStmts, a.BeforeTotalStmts)
+	}
+	// An unchanged file is still listed, and says it did not move.
+	if b := byPath["example.com/m/b.go"]; b.CoverageChanged || b.NewFile {
+		t.Errorf("b.go = %+v, want it listed as unchanged", b)
+	}
+	// The first upload has nothing before it: all three baseline fields are null.
+	first := decodeJSON[uploadPageDTO](t, get(f, "/api/ui/uploads/1"))
+	for _, row := range first.Files.Files {
+		if row.Before != nil || row.BeforeCoveredStmts != nil || row.BeforeTotalStmts != nil {
+			t.Errorf("%s on the first upload = %+v, want no baseline fields", row.Path, row)
 		}
 	}
 }
 
-func TestUploadPageShowsProvenance(t *testing.T) {
+// A PR build on a branch with no upload of its own is still baselined —
+// against the default branch, the state it would merge into.
+func TestAPIUploadPagePRBaselinesAgainstDefaultBranch(t *testing.T) {
+	f := newFixture(t, nil)
+	doUpload(t, f, "secret-token", map[string]string{"commit": "main1", "branch": "main"}, testProfileFull)
+	doUpload(t, f, "secret-token", map[string]string{"commit": "pr1", "branch": "feature/x", "pr_id": "7"}, testProfile)
+
+	got := decodeJSON[uploadPageDTO](t, get(f, "/api/ui/uploads/2"))
+	if got.Files == nil || !got.Files.HasBase {
+		t.Fatalf("files = %+v, want main's upload as the baseline", got.Files)
+	}
+	for _, row := range got.Files.Files {
+		if row.Path == "example.com/m/a.go" && (row.Before == nil || *row.Before != 100) {
+			t.Errorf("a.go = %+v, want 100%% at the main baseline", row)
+		}
+	}
+	if got.Verdict.Base == nil || got.Verdict.Base.UploadID != 1 {
+		t.Errorf("base = %+v, want main's upload", got.Verdict.Base)
+	}
+}
+
+// The provenance card: how the upload arrived, as the CLI and the action
+// reported it.
+func TestAPIUploadPageProvenance(t *testing.T) {
 	f := newFixture(t, nil)
 	doUpload(t, f, "secret-token", map[string]string{
 		"commit": "c1", "branch": "main",
@@ -193,39 +217,19 @@ func TestUploadPageShowsProvenance(t *testing.T) {
 		"ci_run_url":     "https://github.com/acme/widgets/actions/runs/7",
 	}, testProfile)
 
-	body := get(f, "/uploads/1").Body.String()
-	for _, want := range []string{
-		"Fix the ledger reconcile", // commit subject as the heading
-		"Ada Lovelace",             // author
-		"GitHub Actions",           // CI provider label
-		"view run",                 // CI run link
-		"gocov v1.2.3",             // uploader
-		"coverage.out",             // profile filename
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("upload page missing %q\n%s", want, body)
-		}
+	got := decodeJSON[uploadPageDTO](t, get(f, "/api/ui/uploads/1"))
+	if got.Upload.CommitMessage != "Fix the ledger reconcile" || got.Upload.CommitAuthor != "Ada Lovelace" {
+		t.Errorf("commit = %+v", got.Upload)
 	}
-}
-
-func TestUploadPagePRBaselinesAgainstDefaultBranch(t *testing.T) {
-	f := newFixture(t, nil)
-	// A passing baseline on main, then a PR upload on a feature branch with
-	// no prior upload of its own: it must still show before -> after, baselined
-	// against main.
-	doUpload(t, f, "secret-token", map[string]string{"commit": "main1", "branch": "main"}, testProfileFull)
-	doUpload(t, f, "secret-token", map[string]string{"commit": "pr1", "branch": "feature/x", "pr_id": "7"}, testProfile)
-
-	body := get(f, "/uploads/2").Body.String()
-	for _, want := range []string{
-		`id="file-filters"`, // baseline resolved -> filter tabs rendered
-		`class="ba"`,        // before -> after rendered
-		"100.0%",            // a.go at the main baseline
-		"75.0%",             // a.go on the PR
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("PR upload page missing %q\n%s", want, body)
-		}
+	prov := got.Provenance
+	if prov.CILabel != "GitHub Actions" || prov.CIRunURL != "https://github.com/acme/widgets/actions/runs/7" {
+		t.Errorf("CI = %+v", prov)
+	}
+	if prov.Uploader != "gocov v1.2.3" || prov.UploaderKind != "Action" {
+		t.Errorf("uploader = %+v", prov)
+	}
+	if prov.ProfileName != "coverage.out" || prov.Format != "go" {
+		t.Errorf("profile = %+v", prov)
 	}
 }
 
@@ -245,84 +249,6 @@ func TestUploadProfileDownload(t *testing.T) {
 	}
 	if rec := get(f, "/uploads/999/profile"); rec.Code != http.StatusNotFound {
 		t.Errorf("missing upload profile: code = %d, want 404", rec.Code)
-	}
-}
-
-func TestUploadPageTreeAndFilters(t *testing.T) {
-	f := newFixture(t, nil)
-	// Base upload on main
-	doUpload(t, f, "secret-token", map[string]string{"commit": "base1", "branch": "main"}, testProfileFull)
-	// Head upload on main: a.go coverage drops (Coverage changed)
-	doUpload(t, f, "secret-token", map[string]string{"commit": "head1", "branch": "main"}, testProfile)
-
-	body := get(f, "/uploads/2").Body.String()
-	for _, want := range []string{
-		`id="view-mode"`,
-		`data-view="tree"`,
-		`data-view="list"`,
-		`id="file-filters"`,
-		`data-filter="all"`,
-		`data-filter="changed"`,
-		`data-filter="source"`,
-		`data-filter="coverage"`,
-		`id="file-search"`,
-		`id="filetable-tree"`,
-		`class="tree-row tree-dir`,
-		`class="tree-row tree-file`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("upload page missing %q in response", want)
-		}
-	}
-}
-
-func TestBuildFileTree(t *testing.T) {
-	rows := []uploadFileRow{
-		{
-			UploadFile: &store.UploadFile{Path: "cmd/gocov/client.go", CoveredStmts: 8, TotalStmts: 10, Pct: 80.0},
-			Dir:        "cmd/gocov/",
-			Base:       "client.go",
-		},
-		{
-			UploadFile: &store.UploadFile{Path: "cmd/gocov/main.go", CoveredStmts: 12, TotalStmts: 20, Pct: 60.0},
-			Dir:        "cmd/gocov/",
-			Base:       "main.go",
-		},
-		{
-			UploadFile: &store.UploadFile{Path: "internal/server/upload.go", CoveredStmts: 30, TotalStmts: 40, Pct: 75.0},
-			Dir:        "internal/server/",
-			Base:       "upload.go",
-		},
-	}
-	tree := buildFileTree(rows, false)
-	if len(tree) == 0 {
-		t.Fatal("expected non-empty tree")
-	}
-
-	var foundCmdGocov, foundInternalServer bool
-	for _, tr := range tree {
-		if tr.IsDir && tr.Path == "cmd/gocov" {
-			foundCmdGocov = true
-			if tr.TotalStmts != 30 || tr.CoveredStmts != 20 {
-				t.Errorf("cmd/gocov stmts = %d/%d, want 20/30", tr.CoveredStmts, tr.TotalStmts)
-			}
-			expectedPct := float64(20) / float64(30) * 100
-			if tr.Pct != expectedPct {
-				t.Errorf("cmd/gocov pct = %f, want %f", tr.Pct, expectedPct)
-			}
-		}
-		if tr.IsDir && tr.Path == "internal/server" {
-			foundInternalServer = true
-			if tr.TotalStmts != 40 || tr.CoveredStmts != 30 {
-				t.Errorf("internal/server stmts = %d/%d, want 30/40", tr.CoveredStmts, tr.TotalStmts)
-			}
-		}
-	}
-	if !foundCmdGocov {
-		t.Error("cmd/gocov directory row not found in tree")
-	}
-	if !foundInternalServer {
-		t.Error("internal/server directory row not found in tree")
 	}
 }
 
@@ -350,68 +276,9 @@ func TestIsSourceChanged(t *testing.T) {
 	}
 }
 
-func TestBuildFileTreeFoldsUnchangedDirectories(t *testing.T) {
-	file := func(path string, changed bool) uploadFileRow {
-		dir, base := splitPath(path)
-		return uploadFileRow{
-			UploadFile: &store.UploadFile{Path: path, CoveredStmts: 1, TotalStmts: 2, Pct: 50},
-			Dir:        dir, Base: base, Changed: changed,
-		}
-	}
-	state := func(rows []treeRow) map[string]string {
-		got := map[string]string{}
-		for _, r := range rows {
-			s := "closed"
-			if r.Open {
-				s = "open"
-			}
-			if r.Hidden {
-				s += ",hidden"
-			}
-			got[r.Path] = s
-		}
-		return got
-	}
-
-	// With a baseline and a change, only the path to the change is open.
-	got := state(buildFileTree([]uploadFileRow{
-		file("internal/api/handler.go", false),
-		file("internal/billing/charge.go", true),
-		file("cmd/gocov/main.go", false),
-	}, true))
-	for path, want := range map[string]string{
-		"internal":                   "open",
-		"internal/billing":           "open",
-		"internal/billing/charge.go": "closed",
-		"internal/api":               "closed",
-		"internal/api/handler.go":    "closed,hidden",
-		"cmd/gocov":                  "closed",
-		"cmd/gocov/main.go":          "closed,hidden",
-	} {
-		if got[path] != want {
-			t.Errorf("%s: got %q, want %q", path, got[path], want)
-		}
-	}
-
-	// Without any change the top level is open and everything below folded.
-	got = state(buildFileTree([]uploadFileRow{
-		file("internal/api/handler.go", false),
-		file("internal/billing/charge.go", false),
-	}, false))
-	for path, want := range map[string]string{
-		"internal":                   "open",
-		"internal/api":               "closed",
-		"internal/api/handler.go":    "closed,hidden",
-		"internal/billing":           "closed",
-		"internal/billing/charge.go": "closed,hidden",
-	} {
-		if got[path] != want {
-			t.Errorf("no-base %s: got %q, want %q", path, got[path], want)
-		}
-	}
-}
-
-func TestUploadPageDiffCoverageSourceChanged(t *testing.T) {
+// A file the PR's diff touches is flagged as source-changed, which is
+// what the files card filters on.
+func TestAPIUploadPageDiffCoverageSourceChanged(t *testing.T) {
 	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
 	f.forge.DiffText = testPRDiff
 
@@ -420,73 +287,93 @@ func TestUploadPageDiffCoverageSourceChanged(t *testing.T) {
 		"commit": "prcommit1", "branch": "feature/x", "pr_id": "42",
 	}, testProfile)
 
-	body := get(f, "/uploads/2").Body.String()
-	if !strings.Contains(body, `Source Changed<span class="n">1</span>`) {
-		t.Errorf("expected Source Changed to have count 1, got body:\n%s", body)
+	got := decodeJSON[uploadPageDTO](t, get(f, "/api/ui/uploads/2"))
+	if got.Files == nil {
+		t.Fatal("no files card")
 	}
-	if !strings.Contains(body, `data-source="true"`) {
-		t.Errorf("expected row with data-source=true, got body:\n%s", body)
+	changed := 0
+	for _, row := range got.Files.Files {
+		if row.SourceChanged {
+			changed++
+		}
+	}
+	if changed != 1 {
+		t.Errorf("source-changed files = %d, want the diff's one file: %+v", changed, got.Files.Files)
+	}
+	if got.Diff == nil || got.Diff.TotalLines == 0 {
+		t.Errorf("diff coverage = %+v, want the PR's measured diff", got.Diff)
 	}
 }
 
 // fakeProvider is an auth.Provider whose Identity is canned.
 
-func TestBuildFileTreeRollsUpBaseline(t *testing.T) {
-	file := func(path string, covered, total int64, c fileCompare) uploadFileRow {
-		dir, base := splitPath(path)
-		return uploadFileRow{
-			UploadFile:  &store.UploadFile{Path: path, CoveredStmts: covered, TotalStmts: total, Pct: float64(covered) / float64(total) * 100},
-			fileCompare: c,
-			Dir:         dir, Base: base,
-		}
-	}
-	before := func(covered, total int64, pct float64) fileCompare {
-		return fileCompare{HasBefore: true, BeforeCovered: covered, BeforeTotal: total, BeforeStr: fmt.Sprintf("%.1f%%", pct)}
-	}
-	regressed := before(6, 10, 60)
-	regressed.DeltaVal, regressed.Delta = 20, newDeltaView(20)
-	regressed.NewlyMiss = "12-14"
-	regressed.Changed, regressed.IsCoverageChanged = true, true
-	rows := []uploadFileRow{
-		file("cmd/gocov/client.go", 8, 10, regressed),
-		file("cmd/gocov/main.go", 12, 20, before(12, 20, 60)),
-		file("internal/server/upload.go", 30, 40, fileCompare{NewFile: true, Changed: true, IsCoverageChanged: true}),
-	}
-	byPath := map[string]treeRow{}
-	for _, tr := range buildFileTree(rows, true) {
-		byPath[tr.Path] = tr
-	}
+func TestAPIUploadPage(t *testing.T) {
+	f := newFixture(t, nil)
+	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"},
+		"mode: set\nexample.com/m/a.go:1.1,5.2 10 3\n") // 100% baseline
+	doUpload(t, f, "secret-token", map[string]string{
+		"commit": "c2", "branch": "main", "commit_message": "fix the thing", "commit_author": "Jane Dev",
+	}, testProfile)
 
-	// A directory's baseline is the sum of its files' — 18 of 30 before,
-	// 20 of 30 now — and its delta is the rollup's own, not any file's.
-	dir := byPath["cmd/gocov"]
-	if !dir.IsDir || !dir.HasBefore || dir.BeforeCovered != 18 || dir.BeforeTotal != 30 || dir.BeforeStr != "60.0%" {
-		t.Errorf("cmd/gocov baseline = %+v, want 18/30 (60.0%%)", dir.fileCompare)
+	got := decodeJSON[uploadPageDTO](t, get(f, "/api/ui/uploads/2"))
+	if got.Repo.Slug != "acme/widgets" {
+		t.Errorf("repo = %+v", got.Repo)
 	}
-	if dir.Delta == nil || dir.Delta.Text != "+6.7%" || dir.Delta.Class != "up" {
-		t.Errorf("cmd/gocov delta = %+v, want +6.7%% up", dir.Delta)
+	if got.Upload.ID != 2 || got.Upload.SHA != "c2" || got.Upload.Branch != "main" {
+		t.Errorf("upload = %+v", got.Upload)
 	}
-	if !dir.Changed || !dir.IsCoverageChanged || dir.IsSourceChanged {
-		t.Errorf("cmd/gocov flags = %+v, want changed by coverage only", dir.fileCompare)
+	if got.Upload.CommitMessage != "fix the thing" || got.Upload.CommitAuthor != "Jane Dev" {
+		t.Errorf("commit metadata = %+v", got.Upload)
 	}
-	if dir.NewFile || dir.NewlyMiss != "" || dir.Uncovered != "" {
-		t.Errorf("cmd/gocov carries file-only fields: %+v", dir.fileCompare)
+	if got.Upload.Tokenless {
+		t.Error("a token-authenticated upload reported as tokenless")
 	}
+	// No gate is configured, so the verdict is neutral — but the numbers
+	// against the baseline are still there.
+	if got.Verdict.State != "neutral" || got.Verdict.Coverage != 80 {
+		t.Errorf("verdict = %+v", got.Verdict)
+	}
+	if got.Verdict.Delta == nil || *got.Verdict.Delta != -20 {
+		t.Errorf("delta = %v, want -20", got.Verdict.Delta)
+	}
+	if got.Verdict.Base == nil || got.Verdict.Base.UploadID != 1 {
+		t.Errorf("base = %+v, want the first upload", got.Verdict.Base)
+	}
+	if got.CoveredStmts != 8 || got.TotalStmts != 10 || got.FileCount != 2 {
+		t.Errorf("totals = %d/%d over %d files", got.CoveredStmts, got.TotalStmts, got.FileCount)
+	}
+	if got.Format != "go" {
+		t.Errorf("format = %q", got.Format)
+	}
+	if got.Diff != nil {
+		t.Errorf("diff = %+v, want none for a branch build", got.Diff)
+	}
+	if got.Files == nil || len(got.Files.Files) != 2 || got.Files.UploadID != 2 {
+		t.Fatalf("files = %+v", got.Files)
+	}
+	if got.Provenance.ProfileName != "coverage.out" || got.Provenance.PartsNote == "" {
+		t.Errorf("provenance = %+v", got.Provenance)
+	}
+	if got.Provenance.ReceivedAt.IsZero() {
+		t.Error("provenance carries no received time")
+	}
+	if got.DownloadURL == nil || *got.DownloadURL != "/uploads/2/profile" {
+		t.Errorf("download url = %v", got.DownloadURL)
+	}
+}
 
-	// A directory whose only file is new has nothing to compare against.
-	dir = byPath["internal/server"]
-	if dir.HasBefore || dir.Delta != nil || dir.BeforeStr != "" {
-		t.Errorf("internal/server baseline = %+v, want none", dir.fileCompare)
+// An upload whose raw profile was never stored offers no download.
+func TestAPIUploadPageWithoutProfile(t *testing.T) {
+	f := newFixture(t, nil)
+	u := &store.Upload{RepoID: f.repo.ID, CommitSHA: "c1", Branch: "main", Format: "go", TotalPct: 80, Part: "default"}
+	if err := f.store.CreateUpload(t.Context(), u, nil); err != nil {
+		t.Fatal(err)
 	}
-	if !dir.Changed || dir.NewFile {
-		t.Errorf("internal/server flags = %+v, want changed, not itself new", dir.fileCompare)
+	got := decodeJSON[uploadPageDTO](t, get(f, "/api/ui/uploads/1"))
+	if got.DownloadURL != nil {
+		t.Errorf("download url = %v, want null", *got.DownloadURL)
 	}
-
-	// File rows carry their comparison through unchanged.
-	if got := byPath["cmd/gocov/client.go"].fileCompare; got != regressed {
-		t.Errorf("client.go comparison = %+v, want %+v", got, regressed)
-	}
-	if got := byPath["internal/server/upload.go"]; !got.NewFile || got.Pct != 75 {
-		t.Errorf("upload.go row = %+v", got)
+	if got.Files == nil || len(got.Files.Files) != 0 {
+		t.Errorf("files = %+v, want an empty list", got.Files)
 	}
 }

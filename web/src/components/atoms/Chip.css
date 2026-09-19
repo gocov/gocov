@@ -1,0 +1,10 @@
+/* A status word with a dot. No tinted backgrounds: the dot carries the
+   colour, the label stays readable text. */
+.Chip { display: inline-flex; align-items: center; gap: 6px; font-size: var(--font-sm); color: var(--text); white-space: nowrap; }
+.Chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
+.Chip--good::before { background: var(--good); }
+.Chip--warn::before { background: var(--warn); }
+.Chip--bad::before { background: var(--bad); }
+.Chip--accent::before { background: var(--accent); }
+.Chip--plain { color: var(--muted); }
+.Chip--plain::before { display: none; }

@@ -1,0 +1,8 @@
+.OptionRow {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  padding: var(--space-1) 0;
+}
+.OptionRow__text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.OptionRow__name { font-weight: 500; overflow-wrap: anywhere; }
+.OptionRow__status { color: var(--muted); font-size: var(--font-sm); }
+.OptionRow__action { margin-left: auto; }

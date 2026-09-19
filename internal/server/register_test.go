@@ -51,16 +51,10 @@ func hostedSignIn(t *testing.T, f *fixture, next, wantNext string) *http.Cookie 
 	return cookieNamed(t, cb, sessionCookie)
 }
 
-func postRegister(f *fixture, prefix string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodPost, "/register",
-		strings.NewReader(url.Values{"prefix": {prefix}}.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	for _, c := range cookies {
-		req.AddCookie(c)
-	}
-	rec := httptest.NewRecorder()
-	f.srv.ServeHTTP(rec, req)
-	return rec
+// postRegister claims a workspace the way the app does.
+func postRegister(t *testing.T, f *fixture, prefix string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
+	t.Helper()
+	return postJSON(t, f, "/api/ui/onboarding/register", registerInput{Prefix: prefix}, cookies...)
 }
 
 func TestHostedAdmitsNonMemberAndRoutesToRegistration(t *testing.T) {
@@ -79,9 +73,13 @@ func TestHostedAdmitsNonMemberAndRoutesToRegistration(t *testing.T) {
 		t.Errorf("stored forge workspaces = %v", users[0].ForgeWorkspaces)
 	}
 
-	// The dashboard bounces a membership-less hosted user to onboarding.
-	if rec := get(f, "/", sess); rec.Code != http.StatusFound || rec.Header().Get("Location") != "/onboarding" {
-		t.Errorf("index: %d -> %q, want redirect to /onboarding", rec.Code, rec.Header().Get("Location"))
+	// The dashboard itself is the shell like every other page; the app is
+	// told to route a membership-less hosted user to onboarding.
+	if rec := get(f, "/", sess); rec.Code != http.StatusOK {
+		t.Errorf("index: status = %d, want the shell", rec.Code)
+	}
+	if got := decodeJSON[dashboardDTO](t, get(f, "/api/ui/dashboard", sess)); !got.NeedsOnboarding {
+		t.Errorf("dashboard = %+v, want needs_onboarding for a hosted user with no workspace", got)
 	}
 }
 
@@ -105,36 +103,17 @@ func TestRegistrationWorksInPrivateMode(t *testing.T) {
 	f := newAuthFixture(t, &fakeProvider{identity: memberIdentity()}, nil)
 	sess := signIn(t, f, "/")
 
-	// GET /register preserves the old URL by redirecting to the wizard.
-	if rec := get(f, "/register", sess); rec.Code != http.StatusFound ||
-		rec.Header().Get("Location") != "/onboarding" {
-		t.Errorf("GET /register: status = %d, location = %q; want 302 -> /onboarding",
-			rec.Code, rec.Header().Get("Location"))
-	}
-	// Claiming a forge-vouched workspace creates it and lands on the ready state.
-	rec := postRegister(f, "personal", sess)
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("POST /register: status = %d, body = %s", rec.Code, rec.Body)
+	// Claiming a forge-vouched workspace creates it.
+	rec := postRegister(t, f, "personal", sess)
+	wantStatus(t, rec, "register", http.StatusOK)
+	if res := decodeJSON[registerResultDTO](t, rec); !res.Created || res.Prefix != "personal" {
+		t.Errorf("register result = %+v, want the created workspace", res)
 	}
 	if _, err := f.store.WorkspaceByPrefix(t.Context(), "bitbucket", "personal"); err != nil {
 		t.Fatalf("workspace not registered: %v", err)
 	}
 	// The forge-list check still gates: a workspace the identity does not list.
-	if rec := postRegister(f, "notmine", sess); rec.Code != http.StatusForbidden {
-		t.Errorf("POST /register for an unvouched workspace: status = %d, want 403", rec.Code)
-	}
-}
-
-func TestRegistrationNeedsSignIn(t *testing.T) {
-	// An open instance (no sign-in provider) has no forge identity to
-	// register from, so the registration routes stay 404.
-	f := newAuthFixture(t, nil, nil)
-	if rec := get(f, "/onboarding"); rec.Code != http.StatusNotFound {
-		t.Errorf("GET /onboarding with auth disabled: status = %d, want 404", rec.Code)
-	}
-	if rec := get(f, "/register"); rec.Code != http.StatusNotFound {
-		t.Errorf("GET /register with auth disabled: status = %d, want 404", rec.Code)
-	}
+	wantStatus(t, postRegister(t, f, "notmine", sess), "register an unvouched workspace", http.StatusNotFound)
 }
 
 // TestHostedReauthHonorsPendingInstall locks the callback change behind the
@@ -147,46 +126,11 @@ func TestHostedReauthHonorsPendingInstall(t *testing.T) {
 	hostedSignIn(t, f, next, next) // asserts the callback honours next verbatim
 }
 
-func TestRegisterPageStates(t *testing.T) {
-	f := newHostedFixture(t, &fakeProvider{identity: memberIdentity()})
-	ctx := t.Context()
-	// "personal" is free, and so is "acme": the GitHub workspace of that
-	// name is another forge's tenant and says nothing about Bitbucket's.
-	if err := f.store.CreateWorkspace(ctx,
-		&store.Workspace{Forge: "github", Prefix: "acme", Token: "gh-tok", DefaultBranch: "main"}); err != nil {
-		t.Fatal(err)
-	}
-
-	sess := hostedSignIn(t, f, "/", "/onboarding")
-	rec := get(f, "/onboarding", sess)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("onboarding picker: status = %d", rec.Code)
-	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "personal") || !strings.Contains(body, "Not set up") {
-		t.Errorf("free workspace not offered:\n%s", body)
-	}
-	if strings.Contains(body, "registered under") || strings.Count(body, "Create the workspace") != 2 {
-		t.Errorf("a same-named workspace on another forge must not block the name:\n%s", body)
-	}
-	// "Sign in again" re-runs OAuth to refresh the snapshot. It must not
-	// point at /logout, which is POST-only and 404s on a link's GET.
-	if strings.Contains(body, `href="/logout"`) {
-		t.Error("pick page links the POST-only /logout, which 404s on GET")
-	}
-	if !strings.Contains(body, "/start?next=/onboarding") {
-		t.Errorf("pick page misses the re-auth 'sign in again' link:\n%s", body)
-	}
-}
-
-func TestRegisterCreatesWorkspaceAndShowsTokenOnce(t *testing.T) {
+func TestRegisterCreatesWorkspaceAndSeatsTheFounder(t *testing.T) {
 	f := newHostedFixture(t, &fakeProvider{identity: memberIdentity()})
 	sess := hostedSignIn(t, f, "/", "/onboarding")
 
-	rec := postRegister(f, "personal", sess)
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/onboarding?ws=personal" {
-		t.Fatalf("register: %d -> %q, want redirect to the workspace-ready state", rec.Code, rec.Header().Get("Location"))
-	}
+	wantStatus(t, postRegister(t, f, "personal", sess), "register", http.StatusOK)
 
 	ctx := t.Context()
 	ws, err := f.store.WorkspaceByPrefix(ctx, "bitbucket", "personal")
@@ -196,10 +140,11 @@ func TestRegisterCreatesWorkspaceAndShowsTokenOnce(t *testing.T) {
 	if ws.Forge != "bitbucket" || ws.Token == "" || ws.DefaultBranch != "main" {
 		t.Errorf("workspace = %+v", ws)
 	}
-	// The onboarding page shows the token in the CI snippet (D6).
-	setup := get(f, "/workspaces/bitbucket/personal/setup", sess)
-	if setup.Code != http.StatusOK || !strings.Contains(setup.Body.String(), ws.Token) {
-		t.Errorf("setup page (status %d) does not show the upload token:\n%s", setup.Code, setup.Body)
+	// The setup screen hands the founder the token to paste into CI (D6).
+	reveal := postJSON(t, f, "/api/ui/workspaces/bitbucket/personal/reveal-token", nil, sess)
+	wantStatus(t, reveal, "reveal token", http.StatusOK)
+	if got := decodeJSON[tokenRevealDTO](t, reveal).Token; got != ws.Token {
+		t.Errorf("revealed token = %q, want the workspace's", got)
 	}
 
 	// Registration made the user a member atomically (R2), as the owner...
@@ -211,34 +156,9 @@ func TestRegisterCreatesWorkspaceAndShowsTokenOnce(t *testing.T) {
 	if got := membershipRoles(t, f, users[0].ID); !reflect.DeepEqual(got, map[string]store.Role{"personal": store.RoleOwner}) {
 		t.Errorf("roles after registration = %v, want the founder as owner", got)
 	}
-	// ...so the dashboard opens instead of bouncing back to /register.
-	if rec := get(f, "/", sess); rec.Code != http.StatusOK {
-		t.Errorf("index after registration: status = %d", rec.Code)
-	}
-
-	// The onboarding picker now shows the workspace as joined, without the token.
-	page := get(f, "/onboarding", sess)
-	if !strings.Contains(page.Body.String(), "member") {
-		t.Errorf("onboarding picker misses the member state:\n%s", page.Body)
-	}
-	if strings.Contains(page.Body.String(), ws.Token) {
-		t.Error("onboarding picker leaks the upload token")
-	}
-}
-
-func TestRegisterRejectsForeignPrefix(t *testing.T) {
-	f := newHostedFixture(t, &fakeProvider{identity: memberIdentity()})
-	sess := hostedSignIn(t, f, "/", "/onboarding")
-
-	// "evilcorp" is not in the identity's forge workspace list; the form
-	// value must be rejected server-side regardless of what was posted.
-	for _, prefix := range []string{"evilcorp", ""} {
-		if rec := postRegister(f, prefix, sess); rec.Code != http.StatusForbidden {
-			t.Errorf("register %q: status = %d, want 403", prefix, rec.Code)
-		}
-	}
-	if _, err := f.store.WorkspaceByPrefix(t.Context(), "bitbucket", "evilcorp"); err == nil {
-		t.Error("rejected registration created a workspace")
+	// ...so the dashboard has something to show instead of asking for onboarding.
+	if got := decodeJSON[dashboardDTO](t, get(f, "/api/ui/dashboard", sess)); got.NeedsOnboarding {
+		t.Error("dashboard still asks for onboarding after the claim")
 	}
 }
 
@@ -253,9 +173,7 @@ func TestRegisterSameNameOnAnotherForgeIsItsOwnWorkspace(t *testing.T) {
 	}
 	sess := hostedSignIn(t, f, "/", "/onboarding")
 
-	if rec := postRegister(f, "acme", sess); rec.Code != http.StatusSeeOther {
-		t.Fatalf("claim beside another forge's namesake: status = %d, want 303", rec.Code)
-	}
+	wantStatus(t, postRegister(t, f, "acme", sess), "claim beside another forge's namesake", http.StatusOK)
 	bb, err := f.store.WorkspaceByPrefix(t.Context(), "bitbucket", "acme")
 	if err != nil {
 		t.Fatalf("bitbucket acme not registered: %v", err)
@@ -277,9 +195,10 @@ func TestRegisterAlreadyRegisteredJoins(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec := postRegister(f, "acme", sess)
-	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/" {
-		t.Fatalf("join: %d -> %q, want redirect to /", rec.Code, rec.Header().Get("Location"))
+	rec := postRegister(t, f, "acme", sess)
+	wantStatus(t, rec, "join", http.StatusOK)
+	if res := decodeJSON[registerResultDTO](t, rec); res.Created {
+		t.Errorf("join result = %+v, want created=false", res)
 	}
 	users, _ := f.store.ListUsers(ctx)
 	wss, err := f.store.ListWorkspacesForUser(ctx, users[0].ID)
@@ -291,31 +210,9 @@ func TestRegisterAlreadyRegisteredJoins(t *testing.T) {
 		t.Errorf("roles after join = %v, want member", got)
 	}
 	// Idempotent: joining again keeps the single membership.
-	if rec := postRegister(f, "acme", sess); rec.Code != http.StatusFound {
-		t.Errorf("second join: status = %d", rec.Code)
-	}
+	wantStatus(t, postRegister(t, f, "acme", sess), "second join", http.StatusOK)
 	if wss, _ := f.store.ListWorkspacesForUser(ctx, users[0].ID); len(wss) != 1 {
 		t.Errorf("second join changed memberships: %v", wss)
-	}
-}
-
-func TestRegisterNeedsAnOwnerOnTheForge(t *testing.T) {
-	// Creating a workspace makes a tenant and mints its upload token, both
-	// owner-only from then on — so a forge member who is not an admin of
-	// the workspace cannot be the one to create it. The picker says so
-	// instead of offering the button, and the POST is refused regardless.
-	f := newHostedFixture(t, &fakeProvider{identity: plainMemberIdentity()})
-	sess := hostedSignIn(t, f, "/", "/onboarding")
-
-	body := get(f, "/onboarding", sess).Body.String()
-	if !strings.Contains(body, "Owners only") || strings.Contains(body, "Create the workspace") {
-		t.Errorf("picker must mark an unowned workspace instead of offering to create it:\n%s", body)
-	}
-	if rec := postRegister(f, "personal", sess); rec.Code != http.StatusForbidden {
-		t.Errorf("member creating a workspace: status = %d, want 403", rec.Code)
-	}
-	if _, err := f.store.WorkspaceByPrefix(t.Context(), "bitbucket", "personal"); err == nil {
-		t.Error("refused registration created a workspace")
 	}
 }
 
@@ -331,9 +228,7 @@ func TestJoinTakesTheForgeRole(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if rec := postRegister(f, "acme", sess); rec.Code != http.StatusFound {
-		t.Fatalf("join: status = %d", rec.Code)
-	}
+	wantStatus(t, postRegister(t, f, "acme", sess), "join", http.StatusOK)
 	users, _ := f.store.ListUsers(t.Context())
 	if got := membershipRoles(t, f, users[0].ID); !reflect.DeepEqual(got, map[string]store.Role{"acme": store.RoleOwner}) {
 		t.Errorf("roles after join = %v, want owner", got)
@@ -414,6 +309,130 @@ func membershipRoles(t *testing.T, f *fixture, userID int64) map[string]store.Ro
 	return out
 }
 
+func TestAPIOnboardingAndRegister(t *testing.T) {
+	f := newHostedFixture(t, &fakeProvider{identity: memberIdentity()})
+	sess := hostedSignIn(t, f, "/", "/onboarding")
+
+	rec := get(f, "/api/ui/onboarding", sess)
+	wantStatus(t, rec, "GET onboarding", http.StatusOK)
+	got := decodeJSON[onboardingDTO](t, rec)
+	if got.Forge != "bitbucket" || got.ForgeLabel != "Bitbucket" || got.Account != "Jane Dev" {
+		t.Errorf("onboarding = %+v, want the signed-in Bitbucket account", got)
+	}
+	if got.Mode != "pick" || got.InstallURL != "" || got.MembershipCount != 2 {
+		t.Errorf("mode = %q, install url = %q, memberships = %d; want the picker",
+			got.Mode, got.InstallURL, got.MembershipCount)
+	}
+	// Nothing is registered yet, so both memberships are free to claim.
+	want := []onboardingRowDTO{{Prefix: "acme", State: "available"}, {Prefix: "personal", State: "available"}}
+	if !reflect.DeepEqual(got.Rows, want) {
+		t.Errorf("rows = %+v, want %+v", got.Rows, want)
+	}
+
+	// Claiming a free one creates it, and says so.
+	rec = postJSON(t, f, "/api/ui/onboarding/register", registerInput{Prefix: "personal"}, sess)
+	wantStatus(t, rec, "POST register", http.StatusOK)
+	res := decodeJSON[registerResultDTO](t, rec)
+	if res.Forge != "bitbucket" || res.Prefix != "personal" || !res.Created {
+		t.Errorf("register result = %+v, want the created Bitbucket workspace", res)
+	}
+	ctx := t.Context()
+	ws, err := f.store.WorkspaceByPrefix(ctx, "bitbucket", "personal")
+	if err != nil || ws.Token == "" {
+		t.Fatalf("workspace not registered: %+v, %v", ws, err)
+	}
+	// ...and the row it came from is the viewer's from now on.
+	got = decodeJSON[onboardingDTO](t, get(f, "/api/ui/onboarding", sess))
+	want = []onboardingRowDTO{{Prefix: "acme", State: "available"}, {Prefix: "personal", State: "member"}}
+	if !reflect.DeepEqual(got.Rows, want) {
+		t.Errorf("rows after the claim = %+v, want %+v", got.Rows, want)
+	}
+
+	// One a colleague registered first is a join: no second workspace, and
+	// membership granted now rather than at the next login sync.
+	if err := f.store.CreateWorkspace(ctx,
+		&store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "acme-tok", DefaultBranch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	rec = postJSON(t, f, "/api/ui/onboarding/register", registerInput{Prefix: "acme"}, sess)
+	wantStatus(t, rec, "POST register (join)", http.StatusOK)
+	if res := decodeJSON[registerResultDTO](t, rec); res.Prefix != "acme" || res.Created {
+		t.Errorf("join result = %+v, want created=false", res)
+	}
+	users, _ := f.store.ListUsers(ctx)
+	wss, err := f.store.ListWorkspacesForUser(ctx, users[0].ID)
+	if err != nil || len(wss) != 2 {
+		t.Errorf("memberships after the join = %v, %v, want both workspaces", wss, err)
+	}
+}
+
+func TestAPIRegisterRefusals(t *testing.T) {
+	f := newHostedFixture(t, &fakeProvider{identity: memberIdentity()})
+	sess := hostedSignIn(t, f, "/", "/onboarding")
+
+	// A prefix the forge never vouched for does not exist as far as the app
+	// is concerned — it only ever posts rows it was handed — while an empty
+	// one is the picker failing validation.
+	for _, tc := range []struct {
+		prefix string
+		want   int
+	}{
+		{"evilcorp", http.StatusNotFound},
+		{"", http.StatusUnprocessableEntity},
+		{"   ", http.StatusUnprocessableEntity},
+	} {
+		rec := postJSON(t, f, "/api/ui/onboarding/register", registerInput{Prefix: tc.prefix}, sess)
+		wantStatus(t, rec, "POST register "+tc.prefix, tc.want)
+	}
+	if _, err := f.store.WorkspaceByPrefix(t.Context(), "bitbucket", "evilcorp"); err == nil {
+		t.Error("a refused claim created a workspace")
+	}
+
+	// Creating a workspace mints its upload token, so it takes an owner on
+	// the forge — the picker marks the row, and the POST is refused anyway.
+	plain := newHostedFixture(t, &fakeProvider{identity: plainMemberIdentity()})
+	plainSess := hostedSignIn(t, plain, "/", "/onboarding")
+	if got := decodeJSON[onboardingDTO](t, get(plain, "/api/ui/onboarding", plainSess)); got.Rows[0].State != "unowned" {
+		t.Errorf("rows for a plain member = %+v, want them unowned", got.Rows)
+	}
+	rec := postJSON(t, plain, "/api/ui/onboarding/register", registerInput{Prefix: "personal"}, plainSess)
+	wantStatus(t, rec, "POST register as a plain member", http.StatusForbidden)
+}
+
+func TestAPIOnboardingInstallMode(t *testing.T) {
+	// GitHub with the App configured creates the workspace on GitHub's own
+	// install screen, so the app gets that URL instead of a picker.
+	f, sess := newGitHubAppFixture(t, true, false)
+	rec := get(f.fixture, "/api/ui/onboarding", sess)
+	wantStatus(t, rec, "GET onboarding", http.StatusOK)
+	got := decodeJSON[onboardingDTO](t, rec)
+	if got.Mode != "install" || got.InstallURL != "https://github.com/apps/gocov/installations/new" {
+		t.Errorf("onboarding = %+v, want the install prompt", got)
+	}
+	if len(got.Rows) != 0 || !strings.Contains(rec.Body.String(), `"rows":[]`) {
+		t.Errorf("rows in install mode = %+v, want an empty array:\n%s", got.Rows, rec.Body)
+	}
+}
+
+func TestAPIOnboardingNeedsAnIdentity(t *testing.T) {
+	// Signed out, the middleware answers for the whole API; with no sign-in
+	// provider at all there is no identity to register from, so both
+	// endpoints are gone — in JSON, like every other UI API 404.
+	f := newAuthFixture(t, &fakeProvider{identity: memberIdentity()}, nil)
+	wantStatus(t, get(f, "/api/ui/onboarding"), "signed-out onboarding", http.StatusUnauthorized)
+	wantStatus(t, postJSON(t, f, "/api/ui/onboarding/register", registerInput{Prefix: "acme"}),
+		"signed-out register", http.StatusUnauthorized)
+
+	open := newAuthFixture(t, nil, nil)
+	rec := get(open, "/api/ui/onboarding")
+	wantStatus(t, rec, "open-instance onboarding", http.StatusNotFound)
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want JSON", ct)
+	}
+	wantStatus(t, postJSON(t, open, "/api/ui/onboarding/register", registerInput{Prefix: "acme"}),
+		"open-instance register", http.StatusNotFound)
+}
+
 func TestHostedLoginPageHasNoDenialOrWorkspaceHints(t *testing.T) {
 	f := newHostedFixture(t, &fakeProvider{identity: memberIdentity()})
 	if err := f.store.CreateWorkspace(t.Context(),
@@ -421,17 +440,16 @@ func TestHostedLoginPageHasNoDenialOrWorkspaceHints(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Even with the denial flag forced by URL, a hosted login page must
-	// neither 403 nor disclose which workspaces the instance tracks.
-	rec := get(f, "/login?denied=1")
-	if rec.Code != http.StatusOK {
+	// Even with the denial flag forced by URL, a hosted instance must
+	// neither refuse nor disclose which workspaces it tracks.
+	if rec := get(f, "/login?denied=1"); rec.Code != http.StatusOK {
 		t.Errorf("hosted /login?denied=1: status = %d, want 200", rec.Code)
 	}
-	body := rec.Body.String()
-	if strings.Contains(body, "no access to this instance") || strings.Contains(body, "<code>acme</code>") {
-		t.Errorf("hosted login page shows denial content:\n%s", body)
+	got := decodeJSON[loginInfoDTO](t, get(f, "/api/ui/login?denied=1"))
+	if !got.Hosted {
+		t.Error("hosted instance not reported as hosted")
 	}
-	if !strings.Contains(body, "Sign in to get started") {
-		t.Errorf("hosted login page misses the getting-started copy:\n%s", body)
+	if len(got.TrackedWorkspaces) != 0 {
+		t.Errorf("hosted denial discloses tracked workspaces: %+v", got.TrackedWorkspaces)
 	}
 }

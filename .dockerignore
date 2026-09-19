@@ -1,0 +1,8 @@
+# Build inputs only. .git stays: the Go stage derives the version from it.
+web/node_modules
+# The image builds its own web bundle; a local one must not shadow it.
+internal/webui/dist/*
+!internal/webui/dist/.gitkeep
+site
+.venv
+.wrangler

@@ -41,3 +41,14 @@ updates:
     groups:
       images:
         patterns: ["*"]
+
+  # The web UI's toolchain (web/): React, the router, the query client and
+  # the Vite/Vitest build. None of it runs on the server — it is compiled
+  # into static files — but the build is only as trustworthy as its inputs.
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    groups:
+      web:
+        patterns: ["*"]

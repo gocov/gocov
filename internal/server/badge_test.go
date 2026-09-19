@@ -86,9 +86,10 @@ func TestBadgeAndDashboardShowMergedTotal(t *testing.T) {
 		t.Errorf("badge should show merged 80.0%%, got: %s", svg)
 	}
 
-	// The dashboard coverage bar shows the merged 80.0%. (The badge check
-	// above already proves the last part's 0% is not what surfaces.)
-	if body := get(f, "/").Body.String(); !strings.Contains(body, "80.0%") {
-		t.Errorf("dashboard should show merged 80.0%%: %s", body)
+	// The dashboard reads the same merged total. (The badge check above
+	// already proves the last part's 0% is not what surfaces.)
+	dash := decodeJSON[dashboardDTO](t, get(f, "/api/ui/dashboard"))
+	if len(dash.Repos) != 1 || dash.Repos[0].Coverage == nil || *dash.Repos[0].Coverage != 80 {
+		t.Errorf("dashboard row = %+v, want the merged 80%%", dash.Repos)
 	}
 }

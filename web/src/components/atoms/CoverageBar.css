@@ -1,0 +1,7 @@
+.CoverageBar { display: flex; align-items: center; gap: var(--space-1); min-width: 140px; }
+.CoverageBar__track { flex: 1; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
+.CoverageBar__fill { display: block; height: 100%; border-radius: 2px; }
+.CoverageBar__fill--good { background: var(--good); }
+.CoverageBar__fill--warn { background: var(--warn); }
+.CoverageBar__fill--bad { background: var(--bad); }
+.CoverageBar__pct { min-width: 46px; text-align: right; font-size: var(--font-sm); font-weight: 600; font-variant-numeric: tabular-nums; }

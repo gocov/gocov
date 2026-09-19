@@ -1,0 +1,6 @@
+.State { padding: var(--space-3) 0; color: var(--muted); }
+.State__title { color: var(--text); font-weight: 600; }
+.Skeleton { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-3) 0; }
+.Skeleton__line { height: 12px; border-radius: var(--radius); background: var(--border); animation: skeleton 1.2s ease-in-out infinite alternate; }
+@keyframes skeleton { from { opacity: 0.45; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .Skeleton__line { animation: none; } }

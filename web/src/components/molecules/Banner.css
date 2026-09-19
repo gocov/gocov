@@ -1,0 +1,9 @@
+.Banner {
+  display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface); color: var(--text); font-size: var(--font-sm);
+}
+.Banner__mark { display: flex; color: var(--warn); }
+.Banner__body { flex: 1; min-width: 0; }
+.Banner__action { display: flex; align-items: center; gap: var(--space-1); }

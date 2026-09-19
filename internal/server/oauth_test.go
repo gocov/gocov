@@ -152,16 +152,16 @@ func TestLoginFlow(t *testing.T) {
 		t.Errorf("session cookie flags: %+v", sess)
 	}
 
-	// The session works and the page shows the signed-in user.
+	// The session works, and the app reads the signed-in identity from it.
 	rec := get(f, "/", sess)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("authenticated index: status = %d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "Jane Dev") || !strings.Contains(rec.Body.String(), "Sign out") {
-		t.Error("page must show the user chip and sign-out button")
-	}
 	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
 		t.Errorf("Cache-Control = %q, want no-store on protected pages", cc)
+	}
+	if got := decodeJSON[sessionDTO](t, get(f, "/api/ui/session", sess)); got.User == nil || got.User.DisplayName != "Jane Dev" {
+		t.Errorf("session = %+v, want Jane Dev signed in", got.User)
 	}
 
 	// JIT provisioning: exactly one user row, refreshed on re-login.
@@ -246,13 +246,14 @@ func TestNonMemberIsDenied(t *testing.T) {
 		}
 	}
 
-	// The denial page explains the workspace-membership rule, with 403.
+	// The sign-in page says so in its status too, so a refused sign-in is
+	// not a 200 that merely looks like one.
 	denied := get(f, "/login?denied=1")
 	if denied.Code != http.StatusForbidden {
 		t.Errorf("denial page status = %d, want 403", denied.Code)
 	}
-	if !strings.Contains(denied.Body.String(), "no access to this instance") {
-		t.Error("denial page must explain the membership rule")
+	if !strings.Contains(denied.Body.String(), `id="root"`) {
+		t.Errorf("denial page is not the app shell:\n%s", denied.Body)
 	}
 }
 
@@ -406,16 +407,13 @@ func TestTwoProviders(t *testing.T) {
 	// "acme" in here, so the test stays about provider routing.
 	f := newMultiAuthFixture(t, []auth.Provider{bb, gh}, []string{"acme"})
 
-	// The login page renders one button per provider, in order.
-	login := get(f, "/login")
-	body := login.Body.String()
-	bbIdx := strings.Index(body, `href="/oauth/bitbucket/start`)
-	ghIdx := strings.Index(body, `href="/oauth/github/start`)
-	if bbIdx < 0 || ghIdx < 0 || bbIdx > ghIdx {
-		t.Errorf("login buttons missing or out of order (bb at %d, gh at %d):\n%s", bbIdx, ghIdx, body)
+	// The app is offered one button per provider, in the configured order.
+	info := decodeJSON[loginInfoDTO](t, get(f, "/api/ui/login"))
+	if len(info.Providers) != 2 || info.Providers[0].Name != "bitbucket" || info.Providers[1].Name != "github" {
+		t.Errorf("providers = %+v, want bitbucket then github", info.Providers)
 	}
-	if !strings.Contains(body, "Sign in with GitHub") || !strings.Contains(body, "Sign in with Bitbucket") {
-		t.Errorf("login page misses provider labels:\n%s", body)
+	if info.Providers[0].Label != "Bitbucket" || info.Providers[1].Label != "GitHub" {
+		t.Errorf("provider labels = %+v", info.Providers)
 	}
 
 	// The GitHub flow signs in through the GitHub provider only, with a
@@ -463,24 +461,20 @@ func TestTwoProviders(t *testing.T) {
 func TestLoginPageHidesWorkspacesUntilDenied(t *testing.T) {
 	f := newAuthFixture(t, &fakeProvider{identity: memberIdentity()}, nil)
 
-	// The plain sign-in page is reachable without any session; the
-	// tracked-workspace slugs must not leak to strangers there.
+	// The plain sign-in page is reachable without any session, and the
+	// shell it serves carries nothing about this instance's tenants.
 	rec := get(f, "/login")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	if strings.Contains(rec.Body.String(), "<code>acme</code>") {
-		t.Errorf("unauthenticated login page lists tracked workspaces:\n%s", rec.Body)
+	if strings.Contains(rec.Body.String(), "acme") {
+		t.Errorf("the sign-in shell names a tracked workspace:\n%s", rec.Body)
 	}
-
-	// After a real Bitbucket identity was rejected, the list helps the
-	// denied member ask for access to the right workspace.
-	rec = get(f, "/login?denied=1")
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("denied status = %d", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "<code>acme</code>") {
-		t.Errorf("denied page misses the tracked workspaces:\n%s", rec.Body)
+	// The names the app fills the page with come from the UI API, which
+	// discloses them only after a real identity was turned away
+	// (TestAPILogin), and the page's own status marks that refusal.
+	if rec := get(f, "/login?denied=1"); rec.Code != http.StatusForbidden {
+		t.Fatalf("denied status = %d, want 403", rec.Code)
 	}
 }
 
@@ -504,9 +498,38 @@ func TestTrackedNameOnAnotherForgeAdmitsNobody(t *testing.T) {
 	if users, _ := f.store.ListUsers(t.Context()); len(users) != 0 {
 		t.Errorf("denied login created users: %v", users)
 	}
-	// The denial page names the forge the workspace is tracked on, so a
-	// member of the same-named workspace elsewhere can see the mismatch.
-	if body := get(f, "/login?denied=1").Body.String(); !strings.Contains(body, "<code>acme</code> on Bitbucket") {
-		t.Errorf("denied page does not say which forge tracks acme:\n%s", body)
+	// The denial names the forge the workspace is tracked on, so a member
+	// of the same-named workspace elsewhere can see the mismatch.
+	got := decodeJSON[loginInfoDTO](t, get(f, "/api/ui/login?denied=1"))
+	if len(got.TrackedWorkspaces) != 1 || got.TrackedWorkspaces[0].Name != "acme" ||
+		got.TrackedWorkspaces[0].Forge != "bitbucket" {
+		t.Errorf("tracked workspaces = %+v, want acme on bitbucket", got.TrackedWorkspaces)
+	}
+}
+
+func TestAPILogin(t *testing.T) {
+	f := newAuthFixture(t, &fakeProvider{identity: memberIdentity()}, []string{"acme"})
+
+	// The sign-in page answers signed-out: it is how the app offers a way in.
+	rec := get(f, "/api/ui/login")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login info: status = %d", rec.Code)
+	}
+	got := decodeJSON[loginInfoDTO](t, rec)
+	if len(got.Providers) != 1 || got.Providers[0].Name != "bitbucket" || got.Providers[0].Label != "Bitbucket" {
+		t.Errorf("providers = %+v, want the one configured forge with its label", got.Providers)
+	}
+	if got.Hosted {
+		t.Error("private instance reported as hosted")
+	}
+	// The tracked names say who uses this instance, so the plain sign-in
+	// view must not carry them — only the denial does.
+	if len(got.TrackedWorkspaces) != 0 {
+		t.Errorf("plain login info discloses tracked workspaces: %+v", got.TrackedWorkspaces)
+	}
+
+	denied := decodeJSON[loginInfoDTO](t, get(f, "/api/ui/login?denied=1"))
+	if len(denied.TrackedWorkspaces) != 1 || denied.TrackedWorkspaces[0].Name != "acme" {
+		t.Errorf("denied login info tracked workspaces = %+v, want acme", denied.TrackedWorkspaces)
 	}
 }

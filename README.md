@@ -10,7 +10,7 @@ badge included), or self-host the same product: one Go binary plus Postgres.
 
 ## Coverage on your pull requests in three steps
 
-1. Sign in at [app.gocov.dev](https://app.gocov.dev) and claim your workspace.
+1. Sign in at [app.gocov.dev](https://app.gocov.dev) and pick the workspace gocov should track.
 2. Connect it to your forge — one click; on GitHub it is the same App install.
 3. Add one step after your tests, no secret needed (GitHub Actions shown):
 
@@ -49,7 +49,8 @@ pull request, a gate that can block the merge, and a badge that is one line of m
   XML (coverage.py/pytest-cov, coverlet, gcovr), Clover XML (PHPUnit, Istanbul) and SimpleCov resultsets (Ruby) —
   detected from the uploaded content, no flag needed
 - **Web UI:** repo list, per-file coverage, line-by-line source view with hit counts, coverage trend chart, SVG badge
-  per repo, sign-in with your forge account
+  per repo, sign-in with your forge account — a React single-page app compiled at build time and embedded in the
+  server binary, so running gocov is still one binary and Postgres
 
 ## Self-hosting
 
@@ -60,8 +61,8 @@ docker compose up
 ```
 
 This starts Postgres and the server on http://localhost:8080 (migrations apply automatically). Then
-[enable sign-in](docs/sign-in.md) with your forge, sign in — the onboarding wizard registers your workspace and mints
-its upload token — and set `GOCOV_TOKEN` and `GOCOV_SERVER` in CI.
+[enable sign-in](docs/sign-in.md) with your forge, sign in — the first screen registers your workspace and mints its
+upload token — and set `GOCOV_TOKEN` and `GOCOV_SERVER` in CI.
 
 For a real instance, every release publishes `ghcr.io/gocov/gocov-server` for amd64 and arm64, and
 [deploy/](deploy/README.md) has the production compose file: the pinned image behind Caddy (TLS included), Postgres

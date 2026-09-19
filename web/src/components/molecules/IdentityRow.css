@@ -1,0 +1,5 @@
+.IdentityRow { display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; }
+.IdentityRow__text { display: flex; flex-direction: column; min-width: 0; }
+.IdentityRow__id { font-family: var(--mono); font-size: var(--font-sm); overflow-wrap: anywhere; }
+.IdentityRow__desc { color: var(--muted); font-size: var(--font-sm); }
+.IdentityRow__chip { margin-left: auto; }

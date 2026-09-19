@@ -1,0 +1,37 @@
+/* Three rows down one hairline rail. The marker is the only status signal
+   and it is a dot, never a tinted row. */
+.SetupChecklist__steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.SetupChecklist__step { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: var(--space-2); }
+
+.SetupChecklist__mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 21px; /* the title's line box, so the marker sits on its first line */
+  color: var(--good);
+}
+
+.SetupChecklist__dot { width: 8px; height: 8px; border-radius: 50%; border: 1px solid var(--border); }
+.SetupChecklist__step--current .SetupChecklist__dot { background: var(--accent); border-color: var(--accent); }
+
+.SetupChecklist__title { font-size: var(--font-md); font-weight: 600; }
+.SetupChecklist__step--todo .SetupChecklist__title { color: var(--muted); font-weight: 500; }
+
+.SetupChecklist__body { min-width: 0; }
+
+.SetupChecklist__help { margin: 0; padding-left: var(--space-2); display: flex; flex-direction: column; gap: var(--space-1); }
+
+.SetupChecklist__payoff { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; }
+
+@media (max-width: 720px) {
+  .SetupChecklist__step { gap: var(--space-1); }
+}

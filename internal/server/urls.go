@@ -33,19 +33,15 @@ func badgeURL(repo *store.Repo) string {
 	return "/badge/" + repo.Forge + "/" + repo.Slug + ".svg"
 }
 
-// repoSettingsURL is the repo's settings page, or one of its actions
-// (save, rotate-token, delete): the verb rides before the slug because
-// the slug's slashes need the trailing wildcard.
-func repoSettingsURL(repo *store.Repo, action string) string {
-	if action == "" {
-		return "/repo-settings/" + repo.Forge + "/" + repo.Slug
-	}
-	return "/repo-settings/" + action + "/" + repo.Forge + "/" + repo.Slug
+// workspaceURL builds an in-site link to a workspace page.
+func workspaceURL(ws *store.Workspace, suffix string) string {
+	return workspacePath(ws.Forge, ws.Prefix) + suffix
 }
 
-// workspaceURL builds an in-site link to a workspace page. The prefix is
-// escaped into a single path segment because GitLab namespace paths nest
-// ("grp/sub" → "grp%2Fsub"); the router decodes it back via PathValue.
-func workspaceURL(ws *store.Workspace, suffix string) string {
-	return "/workspaces/" + ws.Forge + "/" + url.PathEscape(ws.Prefix) + suffix
+// workspacePath is workspaceURL for callers holding the forge and prefix
+// but no row. The prefix is escaped into a single path segment because
+// GitLab namespace paths nest ("grp/sub" → "grp%2Fsub"); the router
+// decodes it back via PathValue.
+func workspacePath(forge, prefix string) string {
+	return "/workspaces/" + forge + "/" + url.PathEscape(prefix)
 }

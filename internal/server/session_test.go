@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strings"
 	"testing"
 	"time"
 
@@ -18,8 +17,9 @@ func TestAuthDisabledKeepsUIOpen(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("index: status = %d, want 200 without auth configured", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "GOCOV_OAUTH_BITBUCKET_KEY") {
-		t.Error("open UI must show the enable-sign-in banner")
+	// The app draws the open-instance banner from the session endpoint.
+	if got := decodeJSON[sessionDTO](t, get(f, "/api/ui/session")); got.AuthEnabled {
+		t.Error("open UI reported sign-in as configured")
 	}
 	if rec := get(f, "/login"); rec.Code != http.StatusFound || rec.Header().Get("Location") != "/" {
 		t.Errorf("login with auth disabled: %d -> %q, want redirect to /", rec.Code, rec.Header().Get("Location"))
@@ -41,8 +41,8 @@ func TestAuthEnforcedRedirectsToLogin(t *testing.T) {
 		t.Errorf("next = %q, want original path+query", next)
 	}
 	// The banner belongs to the open state only.
-	if login := get(f, "/login"); strings.Contains(login.Body.String(), "GOCOV_OAUTH_BITBUCKET_KEY") {
-		t.Error("banner shown although sign-in is configured")
+	if got := decodeJSON[sessionDTO](t, get(f, "/api/ui/session")); !got.AuthEnabled {
+		t.Error("sign-in is configured but the app is told the instance is open")
 	}
 }
 
@@ -61,7 +61,7 @@ func TestAuthEnforcedPublicEndpointsStayPublic(t *testing.T) {
 	for path, want := range map[string]int{
 		"/healthz":                          http.StatusOK,
 		"/badge/bitbucket/acme/widgets.svg": http.StatusOK,
-		"/static/style.css":                 http.StatusOK,
+		"/static/favicon.svg":               http.StatusOK,
 		"/login":                            http.StatusOK,
 	} {
 		if rec := get(f, path); rec.Code != want {

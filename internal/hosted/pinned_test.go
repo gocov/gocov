@@ -8,12 +8,14 @@ import (
 
 // pinnedIn are the files whose copy-paste snippets install a specific CLI
 // release. All are read by users following instructions, so a stale
-// version here is a broken pipeline for someone, not a typo.
+// version here is a broken pipeline for someone, not a typo. The web UI's
+// setup snippets are not among them: they are written in the browser from
+// PinnedCLIVersion, which the setup endpoint hands over, so there is one
+// value and nothing to drift.
 var pinnedIn = []string{
 	"../../docs/gitlab-ci.md",
 	"../../docs/ci-other.md",
 	"../../docs/self-hosting.md",
-	"../../internal/server/templates/onboarding.html",
 	"../../deploy/.env.example",
 }
 

@@ -1,0 +1,4 @@
+.WorkspacePicker__rows { display: flex; flex-direction: column; }
+.WorkspacePicker__rows > * + * { border-top: 1px solid var(--border); }
+
+.WorkspacePicker__foot { color: var(--muted); font-size: var(--font-sm); }

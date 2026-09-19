@@ -1,0 +1,6 @@
+.UncoveredRanges {
+  display: inline-flex; flex-wrap: wrap; gap: 6px;
+  font-family: var(--mono); font-size: var(--font-sm); color: var(--bad);
+}
+.UncoveredRanges--none { color: var(--muted); }
+.UncoveredRanges__more { color: var(--muted); }

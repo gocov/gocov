@@ -1,0 +1,16 @@
+.Button {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1);
+  height: var(--control); padding: 0 var(--space-2);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--text);
+  font: inherit; font-size: var(--font-md); font-weight: 500; white-space: nowrap;
+  cursor: pointer; text-decoration: none;
+}
+.Button:hover { background: var(--hover); text-decoration: none; }
+.Button--primary { background: var(--text); border-color: var(--text); color: var(--bg); }
+.Button--primary:hover { background: var(--text); opacity: 0.85; }
+.Button--danger { color: var(--bad); }
+.Button--quiet { border-color: transparent; background: none; color: var(--muted); }
+.Button--quiet:hover { color: var(--text); }
+.Button--sm { height: var(--control-sm); padding: 0 var(--space-1); font-size: var(--font-sm); }
+.Button:disabled, .Button[aria-disabled="true"] { opacity: 0.45; cursor: default; pointer-events: none; }

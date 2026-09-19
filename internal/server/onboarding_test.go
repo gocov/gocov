@@ -1,38 +1,15 @@
 package server
 
 import (
+	"net/http"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/gocov/gocov/internal/hosted"
 	"github.com/gocov/gocov/internal/store"
 )
-
-func TestMaskToken(t *testing.T) {
-	// The onboarding page shows a token it must not re-reveal: only the
-	// last four characters survive, and a token too short to mask that way
-	// is hidden completely rather than partially.
-	for _, tc := range []struct {
-		tok  string
-		want string
-	}{
-		{"", ""},
-		{"abcd", ""},
-		{"abcde", "bcde"},
-		{"gcv_1234567890abcdef", "cdef"},
-	} {
-		got := maskToken(tc.tok)
-		bullets := strings.Repeat("•", 24)
-		if !strings.HasPrefix(got, bullets) {
-			t.Errorf("maskToken(%q) = %q, want it to start with the bullet run", tc.tok, got)
-		}
-		if tail := strings.TrimPrefix(got, bullets); tail != tc.want {
-			t.Errorf("maskToken(%q) revealed %q, want %q", tc.tok, tail, tc.want)
-		}
-		if tc.tok != "" && strings.Contains(got, tc.tok) {
-			t.Errorf("maskToken(%q) = %q leaks the whole token", tc.tok, got)
-		}
-	}
-}
 
 func TestReportsPostedMsg(t *testing.T) {
 	// The message names the identity a build status will appear as, and
@@ -63,4 +40,110 @@ func TestReportsPostedMsg(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAPIWorkspaceSetup(t *testing.T) {
+	f, sess := newWorkspaceFixture(t, true) // an owner of acme, one repo
+	const path = "/api/ui/workspaces/bitbucket/acme/setup"
+
+	rec := get(f, path, sess)
+	wantStatus(t, rec, "GET setup", http.StatusOK)
+	got := decodeJSON[setupInfoDTO](t, rec)
+	if got.Workspace.Forge != "bitbucket" || got.Workspace.Prefix != "acme" || got.Workspace.ForgeLabel != "Bitbucket" {
+		t.Errorf("workspace = %+v", got.Workspace)
+	}
+	if !got.Owner || got.TokenMasked == nil || strings.Contains(*got.TokenMasked, "ws-secret") {
+		t.Errorf("owner = %v, token_masked = %v; want the masked form and never the token",
+			got.Owner, got.TokenMasked)
+	}
+	// A self-hosted base URL is what CI needs spelled out, and it is also
+	// the OIDC audience.
+	if got.BaseURL != "https://gocov.example" || got.ServerImplicit {
+		t.Errorf("base url = %q, server implicit = %v", got.BaseURL, got.ServerImplicit)
+	}
+	if got.CLIVersion != hosted.PinnedCLIVersion {
+		t.Errorf("cli version = %q, want the pinned %q", got.CLIVersion, hosted.PinnedCLIVersion)
+	}
+	// Nothing is connected, so the snippet needs the token and the card
+	// offers no reconnect.
+	if got.Tokenless || got.ConnectionBroken || got.Reporting.State != "off" {
+		t.Errorf("tokenless = %v, broken = %v, reporting = %+v", got.Tokenless, got.ConnectionBroken, got.Reporting)
+	}
+	if got.Status.RepoCount != 1 || got.Status.FirstReport != nil || got.Status.ReportsPosted != "" {
+		t.Errorf("status before any report = %+v", got.Status)
+	}
+	// The poll answers with exactly the embedded status.
+	if st := decodeJSON[setupStatusDTO](t, get(f, path+"/status", sess)); !reflect.DeepEqual(st, got.Status) {
+		t.Errorf("poll = %+v, want the embedded status %+v", st, got.Status)
+	}
+
+	// Connect the workspace and land the first report: uploads can go
+	// tokenless, and the poll flips to the payoff.
+	ctx := t.Context()
+	ws, err := f.store.WorkspaceByPrefix(ctx, "bitbucket", "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.SetWorkspaceBitbucketGrant(ctx, ws.ID, "acme-ci", "rt", false); err != nil {
+		t.Fatal(err)
+	}
+	const sha = "0123456789abcdef0123456789abcdef01234567"
+	if err := f.store.UpsertCommitReport(ctx, &store.CommitReport{
+		RepoID: f.repo.ID, CommitSHA: sha, Branch: "main",
+		TotalPct: 87.5, CoveredStmts: 35, TotalStmts: 40, CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	st := decodeJSON[setupStatusDTO](t, get(f, path+"/status", sess))
+	if st.FirstReport == nil {
+		t.Fatalf("first report missing after an upload landed: %+v", st)
+	}
+	// The full SHA rides across; shortening is the client's business.
+	want := setupFirstReportDTO{
+		Repo:         repoRefDTO{Forge: "bitbucket", Slug: "acme/widgets"},
+		Branch:       "main",
+		SHA:          sha,
+		Coverage:     87.5,
+		CoveredStmts: 35,
+		TotalStmts:   40,
+	}
+	if *st.FirstReport != want {
+		t.Errorf("first report = %+v, want %+v", *st.FirstReport, want)
+	}
+	if !strings.Contains(st.ReportsPosted, "@acme-ci") {
+		t.Errorf("reports posted = %q, want it to name the connected account", st.ReportsPosted)
+	}
+	got = decodeJSON[setupInfoDTO](t, get(f, path, sess))
+	if !got.Tokenless || got.Status.FirstReport == nil || got.Reporting.State != "on" {
+		t.Errorf("setup after connecting = tokenless %v, status %+v, reporting %+v",
+			got.Tokenless, got.Status, got.Reporting)
+	}
+}
+
+func TestAPIWorkspaceSetupAccess(t *testing.T) {
+	// A member reads the setup screen — they need the snippet too — but
+	// the token is not theirs, not even masked.
+	f, sess := newMemberFixture(t, true)
+	const path = "/api/ui/workspaces/bitbucket/acme/setup"
+	rec := get(f, path, sess)
+	wantStatus(t, rec, "member GET setup", http.StatusOK)
+	if got := decodeJSON[setupInfoDTO](t, rec); got.Owner || got.TokenMasked != nil {
+		t.Errorf("member read owner = %v, token_masked = %v; want false/null", got.Owner, got.TokenMasked)
+	}
+
+	// A workspace the viewer is no member of must not even be confirmed.
+	if err := f.store.CreateWorkspace(t.Context(),
+		&store.Workspace{Forge: "bitbucket", Prefix: "beta", Token: "beta-tok", DefaultBranch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{
+		"/api/ui/workspaces/bitbucket/beta/setup",
+		"/api/ui/workspaces/bitbucket/beta/setup/status",
+	} {
+		wantStatus(t, get(f, p, sess), "non-member "+p, http.StatusNotFound)
+	}
+	// Signed out, the app is told to sign in rather than redirected.
+	wantStatus(t, get(f, path), "signed-out setup", http.StatusUnauthorized)
+	wantStatus(t, get(f, path+"/status"), "signed-out status", http.StatusUnauthorized)
 }

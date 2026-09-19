@@ -2,12 +2,24 @@
 # buildx and cross-compiles via GOOS/GOARCH, so a multi-arch build does
 # not run Go under emulation. TARGETOS/TARGETARCH are empty on a plain
 # single-arch build, and empty GOOS/GOARCH means the toolchain default.
+# The web UI is built first and handed to the Go stage, which embeds it
+# (internal/webui). It is plain static output, so it builds once on the
+# build host whatever the target architecture.
+FROM --platform=$BUILDPLATFORM node:24-alpine AS web
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+# vite.config.ts writes to ../internal/webui/dist.
+RUN npm run build
+
 FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
 RUN apk add --no-cache git
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+COPY --from=web /src/internal/webui/dist ./internal/webui/dist
 # VERSION can be passed explicitly; otherwise it is derived from git so
 # `gocov-server version` reports the checked-out tag instead of "dev".
 ARG VERSION=

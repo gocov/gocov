@@ -1,0 +1,55 @@
+.SettingsLayout {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+}
+.SettingsLayout__header { grid-column: 1 / -1; }
+
+.SettingsLayout__nav {
+  position: sticky;
+  top: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.SettingsLayout__group { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.SettingsLayout__groupName {
+  color: var(--muted);
+  font-size: var(--font-sm);
+  font-weight: 500;
+}
+.SettingsLayout__link {
+  color: var(--muted);
+  font-size: var(--font-sm);
+  border-left: 1px solid var(--border);
+  padding-left: var(--space-1);
+}
+.SettingsLayout__link:hover { color: var(--text); }
+.SettingsLayout__link[aria-current] { color: var(--text); border-left-color: var(--accent); }
+
+.SettingsLayout__main { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.SettingsLayout__section { scroll-margin-top: var(--space-2); }
+
+/* On a phone the sidebar lies down and scrolls sideways above the cards. */
+@media (max-width: 720px) {
+  .SettingsLayout { grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
+  .SettingsLayout__nav {
+    position: static;
+    flex-direction: row;
+    gap: var(--space-2);
+    overflow-x: auto;
+    padding-bottom: var(--space-1);
+    border-bottom: 1px solid var(--border);
+  }
+  .SettingsLayout__group { flex-direction: row; align-items: center; gap: var(--space-2); }
+  .SettingsLayout__groupName { display: none; }
+  .SettingsLayout__link {
+    white-space: nowrap;
+    border-left: 0;
+    padding-left: 0;
+    border-bottom: 1px solid transparent;
+  }
+  .SettingsLayout__link[aria-current] { border-bottom-color: var(--accent); }
+}

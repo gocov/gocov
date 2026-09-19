@@ -1,0 +1,11 @@
+.ReposTable { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.ReposTable__search { display: inline-flex; width: 220px; max-width: 100%; }
+.ReposTable__sort { display: inline-flex; width: 210px; max-width: 100%; }
+
+.ReposTable__repo { color: var(--text); }
+.ReposTable__repo:hover { color: var(--accent); }
+
+.ReposTable__gate { display: inline-flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.ReposTable__setGate { font-size: var(--font-sm); color: var(--muted); }
+.ReposTable__setGate:hover { color: var(--accent); }

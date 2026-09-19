@@ -1,0 +1,35 @@
+@import "./tokens.css";
+
+*, *::before, *::after { box-sizing: border-box; }
+html { color-scheme: light dark; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: var(--font-md) / 1.5 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3, p { margin: 0; }
+h1 { font-size: var(--font-lg); font-weight: 600; letter-spacing: -0.01em; }
+h2 { font-size: var(--font-md); font-weight: 600; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; border-radius: var(--radius); }
+table { border-collapse: collapse; width: 100%; }
+code, pre, .mono { font-family: var(--mono); font-size: var(--font-sm); }
+.muted { color: var(--muted); }
+.small { font-size: var(--font-sm); }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* For text only a screen reader should get (an icon-only control's name). */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* Layout primitives — spacing only ever comes from the three steps. */
+.stack { display: flex; flex-direction: column; gap: var(--space-2); }
+.stack-1 { gap: var(--space-1); }
+.stack-3 { gap: var(--space-3); }
+.row { display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; }
+.row-2 { gap: var(--space-2); }
+.spacer { flex: 1; }
+
+@media (max-width: 720px) { .hide-sm { display: none; } }

@@ -1,0 +1,20 @@
+.VerdictCard {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 240px); gap: var(--space-3);
+  align-items: start;
+}
+.VerdictCard__main { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.VerdictCard__state {
+  display: flex; align-items: center; gap: 6px;
+  font-size: var(--font-sm); font-weight: 500;
+}
+.VerdictCard__state--good { color: var(--good); }
+.VerdictCard__state--bad { color: var(--bad); }
+.VerdictCard__state--neutral { color: var(--muted); }
+.VerdictCard__dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.VerdictCard__figure { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; }
+.VerdictCard__reason { color: var(--muted); font-size: var(--font-sm); max-width: 62ch; }
+.VerdictCard__meta { min-width: 0; }
+
+@media (max-width: 720px) {
+  .VerdictCard { grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
+}

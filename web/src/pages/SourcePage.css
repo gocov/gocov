@@ -1,0 +1,7 @@
+/* The directory recedes so the file name is what you read. */
+.SourcePage__dir { color: var(--muted); font-weight: 400; }
+.SourcePage__sep { color: var(--border); }
+.SourcePage__newmiss { color: var(--bad); }
+
+.SourcePage__figure { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.SourcePage__figureLabel { color: var(--muted); font-size: var(--font-sm); }

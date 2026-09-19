@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -70,12 +71,19 @@ func TestTwoTenantIsolation(t *testing.T) {
 	prov.identity = &auth.Identity{ForgeUUID: "{b}", DisplayName: "Ben", Workspaces: []string{"beta"}}
 	ckB := signIn(t, f, "/")
 
-	// Index lists are disjoint.
-	if body := get(f, "/", ckA).Body.String(); !strings.Contains(body, "acme/widgets") || strings.Contains(body, "beta/gizmos") {
-		t.Errorf("tenant A index leaked or missed a repo:\n%s", body)
+	// Dashboard lists are disjoint.
+	slugs := func(ck *http.Cookie) []string {
+		var out []string
+		for _, row := range decodeJSON[dashboardDTO](t, get(f, "/api/ui/dashboard", ck)).Repos {
+			out = append(out, row.Slug)
+		}
+		return out
 	}
-	if body := get(f, "/", ckB).Body.String(); !strings.Contains(body, "beta/gizmos") || strings.Contains(body, "acme/widgets") {
-		t.Errorf("tenant B index leaked or missed a repo:\n%s", body)
+	if got := slugs(ckA); !slices.Equal(got, []string{"acme/widgets"}) {
+		t.Errorf("tenant A dashboard = %v, want only acme/widgets", got)
+	}
+	if got := slugs(ckB); !slices.Equal(got, []string{"beta/gizmos"}) {
+		t.Errorf("tenant B dashboard = %v, want only beta/gizmos", got)
 	}
 
 	// Non-member deep links 404 (D3: 404, not 403 — existence stays hidden).
@@ -84,8 +92,14 @@ func TestTwoTenantIsolation(t *testing.T) {
 		fmt.Sprintf("/uploads/%d", betaUp.ID),
 		fmt.Sprintf("/uploads/%d/files/main.go", betaUp.ID),
 	} {
-		if rec := get(f, path, ckA); rec.Code != http.StatusNotFound {
+		rec := get(f, path, ckA)
+		if rec.Code != http.StatusNotFound {
 			t.Errorf("non-member GET %s = %d, want 404", path, rec.Code)
+		}
+		// The 404 is the bare shell: the app draws its not-found panel
+		// from it, and nothing in the response names the repo it hides.
+		if !strings.Contains(rec.Body.String(), `id="root"`) || strings.Contains(rec.Body.String(), "gizmos") {
+			t.Errorf("non-member GET %s leaked what it hides:\n%s", path, rec.Body)
 		}
 	}
 
@@ -107,11 +121,16 @@ func TestOpenModeIgnoresScoping(t *testing.T) {
 
 	// The dashboard is workspace-scoped, but open mode hides nothing: every
 	// workspace is offered in the switcher and every repo stays reachable.
-	if body := get(f, "/").Body.String(); !strings.Contains(body, `data-n="acme"`) || !strings.Contains(body, `data-n="beta"`) {
-		t.Errorf("open mode must offer every workspace in the switcher:\n%s", body)
+	var prefixes []string
+	for _, g := range decodeJSON[dashboardDTO](t, get(f, "/api/ui/dashboard")).Switcher {
+		prefixes = append(prefixes, g.Prefix)
 	}
-	if body := get(f, "/?ws=bitbucket%2Fbeta").Body.String(); !strings.Contains(body, `href="/repos/bitbucket/beta/gizmos"`) {
-		t.Errorf("open mode must list the selected workspace's repos:\n%s", body)
+	if !slices.Equal(prefixes, []string{"acme", "beta"}) {
+		t.Errorf("open mode switcher = %v, want every workspace", prefixes)
+	}
+	beta := decodeJSON[dashboardDTO](t, get(f, "/api/ui/dashboard?ws=bitbucket%2Fbeta"))
+	if len(beta.Repos) != 1 || beta.Repos[0].Slug != "beta/gizmos" {
+		t.Errorf("open mode ?ws= = %+v, want the selected workspace's repos", beta.Repos)
 	}
 	if rec := get(f, "/repos/bitbucket/beta/gizmos"); rec.Code != http.StatusOK {
 		t.Errorf("open mode repo page = %d, want 200", rec.Code)

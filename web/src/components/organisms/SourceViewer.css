@@ -1,0 +1,83 @@
+.SourceViewer__pos { color: var(--muted); font-size: var(--font-sm); font-variant-numeric: tabular-nums; }
+
+/* The rail and the code are one surface; the code scrolls inside it, both
+   ways, so a long line never widens the page. */
+.SourceViewer__panel {
+  display: grid; grid-template-columns: 22px minmax(0, 1fr);
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.SourceViewer__rail { position: relative; border-right: 1px solid var(--border); }
+.SourceViewer__marker {
+  position: absolute; left: 5px; width: 11px; min-height: 3px; padding: 0;
+  border: 0; border-radius: 2px; background: var(--bad); opacity: 0.5; cursor: pointer;
+}
+.SourceViewer__marker:hover, .SourceViewer__marker--focus { opacity: 1; }
+
+.SourceViewer__code {
+  max-height: 620px; overflow: auto; padding: var(--space-1) 0;
+  font-family: var(--mono); font-size: var(--font-sm); line-height: 1.7;
+}
+
+/* max-content keeps the wash and the bar spanning the widest line, so a
+   sideways scroll never runs out of background. */
+.SourceViewer__line {
+  display: grid; grid-template-columns: 56px 46px minmax(0, max-content);
+  width: max-content; min-width: 100%;
+  scroll-margin-block: var(--space-3);
+}
+.SourceViewer__no {
+  text-align: right; padding-right: 12px; color: var(--muted);
+  white-space: nowrap; user-select: none; font-variant-numeric: tabular-nums;
+}
+.SourceViewer__hits {
+  text-align: right; padding-right: 10px; color: var(--muted);
+  user-select: none; font-variant-numeric: tabular-nums;
+}
+.SourceViewer__text { margin: 0; padding: 0 var(--space-2) 0 10px; white-space: pre; font: inherit; }
+
+/* Coverage is the only thing that colours a line: a 2px bar and a wash. */
+.SourceViewer__line--hit {
+  background: color-mix(in srgb, var(--good) 4%, transparent);
+  box-shadow: inset 2px 0 var(--good);
+}
+.SourceViewer__line--hit .SourceViewer__hits { color: color-mix(in srgb, var(--good) 75%, var(--text)); }
+.SourceViewer__line--miss {
+  background: color-mix(in srgb, var(--bad) 9%, transparent);
+  box-shadow: inset 2px 0 var(--bad);
+}
+.SourceViewer__line--miss .SourceViewer__hits { color: var(--bad); }
+.SourceViewer__line--focus { outline: 2px solid var(--ring); outline-offset: -2px; }
+
+.SourceViewer__new {
+  display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--bad); margin-right: 5px; vertical-align: middle;
+}
+
+.SourceViewer__fold {
+  display: flex; align-items: center; gap: var(--space-1);
+  padding: 2px var(--space-2) 2px 56px;
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.SourceViewer__legend {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  color: var(--muted); font-size: var(--font-sm);
+}
+.SourceViewer__key { display: inline-flex; align-items: center; gap: 6px; }
+.SourceViewer__swatch { width: 12px; height: 12px; border-radius: 2px; flex: none; }
+.SourceViewer__swatch--hit {
+  background: color-mix(in srgb, var(--good) 18%, transparent); box-shadow: inset 2px 0 var(--good);
+}
+.SourceViewer__swatch--miss {
+  background: color-mix(in srgb, var(--bad) 18%, transparent); box-shadow: inset 2px 0 var(--bad);
+}
+.SourceViewer__swatch--none { background: var(--bg); border: 1px solid var(--border); }
+.SourceViewer__swatch--new { width: 7px; height: 7px; border-radius: 50%; background: var(--bad); }
+
+@media (max-width: 720px) {
+  .SourceViewer__line { grid-template-columns: 40px 38px minmax(0, max-content); }
+  .SourceViewer__fold { padding-left: 40px; }
+}

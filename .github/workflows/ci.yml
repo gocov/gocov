@@ -51,6 +51,27 @@ jobs:
           # above); a fork PR, which gets no id-token, falls back to the
           # App-verified tokenless path automatically.
 
+  # The single-page web UI: typecheck, unit tests and a production build.
+  # The Go job above does not depend on it — without a build the server
+  # embeds a placeholder and its tests still pass.
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: Test
+        run: npm test
+      - name: Typecheck and build
+        run: npm run build
+
   docs:
     runs-on: ubuntu-latest
     steps:

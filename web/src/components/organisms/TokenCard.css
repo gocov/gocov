@@ -1,0 +1,6 @@
+/* The token shown once after a rotation: long, and it must stay readable
+   and selectable whole, so it wraps rather than overflowing the notice. */
+.TokenCard__new {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}

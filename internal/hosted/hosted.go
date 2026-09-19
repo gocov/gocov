@@ -11,9 +11,10 @@ const DefaultServer = "https://app.gocov.dev"
 
 // PinnedCLIVersion is the gocov CLI release the copy-paste CI recipes
 // install. Runners that fetch a binary have to name a version, and "latest"
-// in a pipeline is a build that changes under you, so the snippets pin one
-// — in the CI recipe pages under docs/ and in the onboarding page the app
-// renders. They are prose and HTML rather than code, so nothing but a test
-// can keep them honest: bump this constant on release and
-// TestPinnedCLIVersionIsInSync names every file still on the old one.
+// in a pipeline is a build that changes under you, so the snippets pin one.
+// The web UI's setup screen reads this constant straight off the setup
+// endpoint, so it can never be stale; the CI recipe pages under docs/ are
+// prose, and nothing but a test can keep those honest: bump this constant
+// on release and TestPinnedCLIVersionIsInSync names every file still on
+// the old one.
 const PinnedCLIVersion = "v0.25.0" // x-release-please-version

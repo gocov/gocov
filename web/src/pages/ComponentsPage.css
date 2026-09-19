@@ -1,0 +1,32 @@
+/* The styleguide's own scaffolding: a caption above every specimen, and
+   enough air between them that each one is read on its own. */
+.Components { padding-bottom: var(--space-3); }
+
+.Demo { display: flex; flex-direction: column; gap: var(--space-2); }
+.Demo__title {
+  display: flex; align-items: baseline; gap: var(--space-1); flex-wrap: wrap;
+  padding-bottom: var(--space-1);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--font-md); font-weight: 600;
+}
+.Demo__note { color: var(--muted); font-size: var(--font-sm); font-weight: 400; }
+.Demo__specs {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--space-2);
+  align-items: start;
+}
+
+.Spec { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.Spec--wide { grid-column: 1 / -1; }
+.Spec__caption { color: var(--muted); font-size: var(--font-sm); }
+.Spec__stage { min-width: 0; }
+
+.Components__icons {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: var(--space-1);
+}
+.Components__icon { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
+.Components__iconName {
+  font-family: var(--mono); font-size: var(--font-sm); color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.Components__dotted { border-bottom: 1px dotted var(--muted); cursor: help; }

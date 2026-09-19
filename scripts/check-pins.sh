@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 # Every install snippet gocov hands a user pins an exact CLI release: the
-# CI recipe docs (docs/gitlab-ci.md, docs/ci-other.md) and the onboarding
-# wizard (internal/server/templates/onboarding.html) carry the same
-# download URLs and the same `ver=` recipe, copied rather than shared,
-# because some are Markdown and one is a Go template.
+# CI recipe docs (docs/gitlab-ci.md, docs/ci-other.md), the self-hosting
+# guide and the compose .env carry the same download URLs and the same
+# `ver=` recipe, copied rather than shared, because they are separate
+# documents.
 #
 # Copies drift. This script fails CI when they stop agreeing with each
-# other — the "updated the docs, forgot the wizard" mistake, which
+# other — the "updated one doc, forgot the others" mistake, which
 # otherwise ships a stale snippet to exactly the people seeing gocov for
 # the first time.
+#
+# The web UI is not a copy: its setup screen writes the snippet in the
+# browser from hosted.PinnedCLIVersion, which release-please bumps, so
+# there is nothing there to drift.
 #
 # Deliberately *not* checked here: whether that version is the newest
 # release. It cannot be. The release commit bumps these pins, so between a
@@ -29,13 +33,18 @@ cd "$(dirname "$0")/.."
 # CHANGELOG.md is excluded: its older entries name older releases on
 # purpose, and that is history, not drift. pinned_test.go is excluded
 # because its doc comment quotes the download-URL shape with a literal
-# version, and comments are not release-please's to bump.
+# version, and comments are not release-please's to bump. The web UI's
+# tests are excluded because they pass a made-up version on purpose, to
+# prove the snippet takes it from the server rather than hard-coding one;
+# the UI's own sources are still checked, so a literal pin creeping into
+# web/src/lib/snippets.ts fails here.
 pins=$(git grep -InEo \
   -e 'releases/download/v[0-9]+\.[0-9]+\.[0-9]+' \
   -e 'ver=v[0-9]+\.[0-9]+\.[0-9]+' \
   -e 'gocov-server:v[0-9]+\.[0-9]+\.[0-9]+' \
   -e 'GOCOV_VERSION=v[0-9]+\.[0-9]+\.[0-9]+' \
-  -- ':!CHANGELOG.md' ':!scripts/check-pins.sh' ':!internal/hosted/pinned_test.go' || true)
+  -- ':!CHANGELOG.md' ':!scripts/check-pins.sh' ':!internal/hosted/pinned_test.go' \
+     ':(exclude,glob)web/src/**/*.test.ts' ':(exclude,glob)web/src/**/*.test.tsx' || true)
 
 if [ -z "$pins" ]; then
   echo "check-pins: no CLI version pins found at all." >&2

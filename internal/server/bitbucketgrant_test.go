@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 	"testing"
 	"time"
 
@@ -147,7 +146,7 @@ func TestBitbucketConnectFlow(t *testing.T) {
 		t.Errorf("redirect_uri = %q, must equal the sign-in callback exactly", got)
 	}
 	stateCk := cookieNamed(t, start, connectStateCookie)
-	state, prefix, _ := splitConnectState(stateCk.Value)
+	state, prefix := splitConnectState(stateCk.Value)
 	if prefix != "acme" {
 		t.Errorf("cookie prefix = %q", prefix)
 	}
@@ -156,39 +155,12 @@ func TestBitbucketConnectFlow(t *testing.T) {
 	if cb.Code != http.StatusSeeOther {
 		t.Fatalf("callback: status = %d, body = %s", cb.Code, cb.Body)
 	}
-	if loc := cb.Header().Get("Location"); loc != "/workspaces/bitbucket/acme?connected=1" {
-		t.Errorf("callback redirect = %q", loc)
+	if loc := cb.Header().Get("Location"); loc != "/?ws=bitbucket%2Facme" {
+		t.Errorf("callback redirect = %q, want the workspace's dashboard", loc)
 	}
 	ws := f.workspace(t)
 	if ws.BitbucketGrantAccount != "covbot" || ws.BitbucketRefreshToken != "rt-0" || ws.BitbucketGrantBroken {
 		t.Errorf("stored grant = %q/%q/broken=%v", ws.BitbucketGrantAccount, ws.BitbucketRefreshToken, ws.BitbucketGrantBroken)
-	}
-
-	// The settings page renders the connected identity (D8) and the notice.
-	body := get(f.fixture, "/workspaces/bitbucket/acme?connected=1", sess).Body.String()
-	if !strings.Contains(body, "@covbot") || !strings.Contains(body, "Disconnect") {
-		t.Error("settings page must show the connected account and disconnect")
-	}
-	if !strings.Contains(body, "under the connecting account") {
-		t.Error("settings page must state the comment identity caveat (D8)")
-	}
-}
-
-// TestBitbucketConnectFromOnboarding: a connect started from the onboarding
-// Workspace-ready card returns there (not the settings page), so "Continue
-// to CI" is right where the user left off.
-func TestBitbucketConnectFromOnboarding(t *testing.T) {
-	f, sess := newBBConnectFixture(t)
-
-	start := get(f.fixture, "/workspaces/bitbucket/acme/connect?from=onboarding", sess)
-	stateCk := cookieNamed(t, start, connectStateCookie)
-	state, _, from := splitConnectState(stateCk.Value)
-	if from != "onboarding" {
-		t.Fatalf("cookie from = %q, want onboarding", from)
-	}
-	cb := get(f.fixture, "/oauth/bitbucket/callback?code=thecode&state="+url.QueryEscape(state), stateCk, sess)
-	if loc := cb.Header().Get("Location"); loc != "/onboarding?ws=acme" {
-		t.Errorf("callback redirect = %q, want the onboarding ready state", loc)
 	}
 }
 
@@ -205,17 +177,33 @@ func TestBitbucketConnectCallbackRejects(t *testing.T) {
 		rec.Header().Get("Location") != "/login?error=1" {
 		t.Errorf("state mismatch: %d -> %q, want the sign-in flow's failure redirect", rec.Code, rec.Header().Get("Location"))
 	}
-	// No session.
-	if rec := get(f.fixture, "/oauth/bitbucket/callback?code=x&state=s", mk("s|acme")); rec.Code != http.StatusForbidden {
-		t.Errorf("no session: status = %d, want 403", rec.Code)
+	// No session: back to sign-in, aimed at the settings page the Connect
+	// button sits on.
+	if rec := get(f.fixture, "/oauth/bitbucket/callback?code=x&state=s", mk("s|acme")); rec.Code != http.StatusSeeOther ||
+		rec.Header().Get("Location") != "/login?next=%2Fworkspaces%2Fbitbucket%2Facme" {
+		t.Errorf("no session: %d -> %q, want the login redirect back to the settings page",
+			rec.Code, rec.Header().Get("Location"))
 	}
 	// A workspace the user is no member of.
 	if err := f.store.CreateWorkspace(t.Context(),
 		&store.Workspace{Forge: "bitbucket", Prefix: "beta", Token: "beta-tok", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
-	if rec := get(f.fixture, "/oauth/bitbucket/callback?code=x&state=s", mk("s|beta"), sess); rec.Code != http.StatusNotFound {
-		t.Errorf("non-member workspace: status = %d, want 404", rec.Code)
+	if rec := get(f.fixture, "/oauth/bitbucket/callback?code=x&state=s", mk("s|beta"), sess); rec.Code != http.StatusSeeOther ||
+		rec.Header().Get("Location") != "/?error=connect_denied" {
+		t.Errorf("non-member workspace: %d -> %q, want the dashboard's connect_denied notice", rec.Code, rec.Header().Get("Location"))
+	}
+	// A workspace that is not there reads exactly the same (D3).
+	if rec := get(f.fixture, "/oauth/bitbucket/callback?code=x&state=s", mk("s|nowhere"), sess); rec.Code != http.StatusSeeOther ||
+		rec.Header().Get("Location") != "/?error=connect_denied" {
+		t.Errorf("missing workspace: %d -> %q, want the same answer as a non-member", rec.Code, rec.Header().Get("Location"))
+	}
+	// An owner demoted while the consent was open: still a member, so the
+	// settings page says whose move connecting is.
+	demote(t, f.fixture, "acme")
+	if rec := get(f.fixture, "/oauth/bitbucket/callback?code=x&state=s", mk("s|acme"), sess); rec.Code != http.StatusSeeOther ||
+		rec.Header().Get("Location") != "/workspaces/bitbucket/acme?error=connect_owners_only" {
+		t.Errorf("demoted owner: %d -> %q, want the settings page's connect_owners_only notice", rec.Code, rec.Header().Get("Location"))
 	}
 	if len(f.bb.exchanged) != 0 {
 		t.Errorf("rejected callbacks must not exchange codes; exchanged %v", f.bb.exchanged)
@@ -314,7 +302,7 @@ func TestBitbucketConnectIsOwnersOnly(t *testing.T) {
 		t.Errorf("member connect: status = %d, want 403", rec.Code)
 	}
 	f.grant(t, "gocov-bot", "rt", false)
-	if rec := postForm(f.fixture, "/workspaces/bitbucket/acme/disconnect", url.Values{}, sess); rec.Code != http.StatusForbidden {
+	if rec := postJSON(t, f.fixture, "/api/ui/workspaces/bitbucket/acme/disconnect", nil, sess); rec.Code != http.StatusForbidden {
 		t.Errorf("member disconnect: status = %d, want 403", rec.Code)
 	}
 	if ws := f.workspace(t); ws.BitbucketGrantAccount != "gocov-bot" {
@@ -326,45 +314,39 @@ func TestBitbucketDisconnect(t *testing.T) {
 	f, sess := newBBConnectFixture(t)
 	f.grant(t, "covbot", "rt-0", false)
 
-	rec := postForm(f.fixture, "/workspaces/bitbucket/acme/disconnect", url.Values{}, sess)
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("status = %d", rec.Code)
-	}
+	wantStatus(t, postJSON(t, f.fixture, "/api/ui/workspaces/bitbucket/acme/disconnect", nil, sess),
+		"disconnect", http.StatusOK)
 	ws := f.workspace(t)
 	if ws.BitbucketGrantAccount != "" || ws.BitbucketRefreshToken != "" || ws.BitbucketGrantBroken {
 		t.Errorf("after disconnect: %q/%q/%v", ws.BitbucketGrantAccount, ws.BitbucketRefreshToken, ws.BitbucketGrantBroken)
 	}
 }
 
-func TestSettingsPageBitbucketStates(t *testing.T) {
+// The Reporting card, as the settings and setup screens read it: off
+// with the consent link while unconnected, on with the account its posts
+// carry once granted, and broken — still linking the consent, which is
+// the reconnect — when the grant stops working.
+func TestBitbucketReportingStates(t *testing.T) {
 	f, sess := newBBConnectFixture(t)
+	const (
+		path       = "/api/ui/workspaces/bitbucket/acme"
+		connectURL = "/workspaces/bitbucket/acme/connect"
+	)
 
-	body := get(f.fixture, "/workspaces/bitbucket/acme", sess).Body.String()
-	if !strings.Contains(body, "Grant write access") || !strings.Contains(body, "under your own account") {
-		t.Error("unconnected settings must offer to grant write access and state the identity caveat (D8)")
-	}
-
-	f.grant(t, "covbot", "rt-0", true)
-	body = get(f.fixture, "/workspaces/bitbucket/acme", sess).Body.String()
-	if !strings.Contains(body, "Reconnect needed") || !strings.Contains(body, "Grant write access again") {
-		t.Error("broken grant must surface the reconnect state")
-	}
-}
-
-func TestSetupPageRecommendsConnect(t *testing.T) {
-	f, sess := newBBConnectFixture(t)
-
-	body := get(f.fixture, "/onboarding?ws=acme", sess).Body.String()
-	if !strings.Contains(body, "/workspaces/bitbucket/acme/connect") {
-		t.Error("ready state must offer the connect grant while not connected")
+	got := decodeJSON[workspaceSettingsDTO](t, get(f.fixture, path, sess))
+	if !got.Reporting.Available || got.Reporting.State != "off" || got.Reporting.ConnectURL != connectURL {
+		t.Errorf("unconnected reporting = %+v, want the consent link", got.Reporting)
 	}
 
 	f.grant(t, "covbot", "rt-0", false)
-	body = get(f.fixture, "/onboarding?ws=acme", sess).Body.String()
-	if strings.Contains(body, "/workspaces/bitbucket/acme/connect") {
-		t.Error("ready state must drop the connect grant once connected")
+	got = decodeJSON[workspaceSettingsDTO](t, get(f.fixture, path, sess))
+	if got.Reporting.State != "on" || got.Reporting.Account != "covbot" {
+		t.Errorf("connected reporting = %+v, want it posting as covbot", got.Reporting)
 	}
-	if !strings.Contains(body, "@covbot") {
-		t.Error("connected workspace must show the posting account")
+
+	f.grant(t, "covbot", "rt-0", true)
+	got = decodeJSON[workspaceSettingsDTO](t, get(f.fixture, path, sess))
+	if got.Reporting.State != "broken" || got.Reporting.ConnectURL != connectURL {
+		t.Errorf("broken reporting = %+v, want the reconnect link", got.Reporting)
 	}
 }
