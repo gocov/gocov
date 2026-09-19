@@ -88,7 +88,6 @@ const dashboard: Dashboard = {
   attention: [
     { kind: "failing", forge: "github", slug: "acme/api", name: "api", coverage: 41, min_coverage: 60, stale_days: null },
     { kind: "stale", forge: "github", slug: "acme/web", name: "web", coverage: 82.5, min_coverage: null, stale_days: 30 },
-    { kind: "no_gate", forge: "github", slug: "acme/tools", name: "tools", coverage: 66, min_coverage: null, stale_days: null },
   ],
 };
 
@@ -119,9 +118,9 @@ test("a populated workspace shows its rollup, its notices and its repositories",
   expect(screen.getByText("gocov[bot]")).toBeInTheDocument();
 
   expect(screen.getByRole("heading", { name: "Needs attention" })).toBeInTheDocument();
-  expect(screen.getByText("3 things")).toBeInTheDocument();
+  expect(screen.getByText("2 things")).toBeInTheDocument();
   expect(screen.getByText("Coverage 41.0%, below the 60% minimum.")).toBeInTheDocument();
-  expect(screen.getAllByRole("listitem")).toHaveLength(3);
+  expect(screen.getAllByRole("listitem")).toHaveLength(2);
 
   expect(screen.getByRole("heading", { name: "Repositories" })).toBeInTheDocument();
   expect(screen.getAllByRole("row")).toHaveLength(5); // header + 4

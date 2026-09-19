@@ -50,15 +50,6 @@ test("a stale repo counts the days since its last upload", () => {
   expect(copy.to).toBe("/repos/github/acme/api");
 });
 
-test("a gate-less repo is pointed at its settings", () => {
-  const copy = attentionCopy(item({ kind: "no_gate", min_coverage: null }));
-  expect(copy.tone).toBe("neutral");
-  expect(copy.before + copy.name + copy.after).toBe("api has no coverage gate");
-  expect(copy.message).toBe("Uploads are recorded, but nothing blocks a drop.");
-  expect(copy.action).toBe("Set a gate");
-  expect(copy.to).toBe("/repo-settings/github/acme/api");
-});
-
 test("each filter keeps the rows it names", () => {
   const failing = repo({ gate: "fail" });
   const stale = repo({ stale: true });

@@ -43,8 +43,10 @@ func TestAPIDashboardNeedsAttention(t *testing.T) {
 	for _, item := range got.Attention {
 		byCause[item.Kind] = item
 	}
-	if len(byCause) != 3 {
-		t.Fatalf("attention = %+v, want one notice per cause", got.Attention)
+	// android has no gate, and that is a choice, not an event: it stays out
+	// of the list (the table's row and the No gate filter carry it).
+	if len(got.Attention) != 2 || len(byCause) != 2 {
+		t.Fatalf("attention = %+v, want exactly the failing and the stale notice", got.Attention)
 	}
 	if item := byCause["failing"]; item.Name != "importer" || item.MinCoverage == nil || *item.MinCoverage != 60 {
 		t.Errorf("failing notice = %+v, want importer against its 60%% minimum", item)
@@ -52,13 +54,10 @@ func TestAPIDashboardNeedsAttention(t *testing.T) {
 	if item := byCause["stale"]; item.Name != "mobile" || item.StaleDays == nil || *item.StaleDays != 20 {
 		t.Errorf("stale notice = %+v, want mobile at 20 days", item)
 	}
-	if item := byCause["no_gate"]; item.Name != "android" || item.Slug != "acme/android" {
-		t.Errorf("no-gate notice = %+v, want android", item)
-	}
 	// Most severe first, so the list reads top-down.
-	if got.Attention[0].Kind != "failing" || got.Attention[2].Kind != "no_gate" {
-		t.Errorf("attention order = %q, want failing first and no_gate last",
-			[]string{got.Attention[0].Kind, got.Attention[1].Kind, got.Attention[2].Kind})
+	if got.Attention[0].Kind != "failing" || got.Attention[1].Kind != "stale" {
+		t.Errorf("attention order = %q, want failing before stale",
+			[]string{got.Attention[0].Kind, got.Attention[1].Kind})
 	}
 	if got.Stats.StaleCount != 1 {
 		t.Errorf("stale count = %d, want 1", got.Stats.StaleCount)

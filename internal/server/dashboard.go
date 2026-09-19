@@ -77,7 +77,7 @@ type dashStats struct {
 // it, the repo it is about and the numbers behind it. The app writes the
 // sentence.
 type attnItem struct {
-	cause       string // failing / stale / no_gate
+	cause       string // failing / stale
 	name        string // repo name as the table shows it
 	repo        *store.Repo
 	coverage    *float64
@@ -137,7 +137,7 @@ type dashStatsDTO struct {
 // attentionDTO is one needs-attention notice as data: which condition
 // raised it and the numbers behind it. The app writes the sentence.
 type attentionDTO struct {
-	Kind        string   `json:"kind"` // failing / stale / no_gate
+	Kind        string   `json:"kind"` // failing / stale
 	Forge       string   `json:"forge"`
 	Slug        string   `json:"slug"`
 	Name        string   `json:"name"`
@@ -449,8 +449,10 @@ func (s *Server) fillCurrent(r *http.Request, dv *dashboardView) {
 }
 
 // collectAttention appends the needs-attention entries a repo warrants: a
-// failing gate, a stale feed, or a missing gate. Only repos that have uploaded
-// raise stale/no-gate notices — a brand-new repo is not a problem.
+// failing gate or a stale feed — things that happened. A repo without a gate
+// is a standing choice, not an event: listing it made the section permanent,
+// and a notice that is always there stops being read. The table still offers
+// "Set a gate" on its row and counts it under the No gate filter.
 func (s *Server) collectAttention(dv *dashboardView, repo *store.Repo, row *dashRepo, latest *store.CommitReport, stale bool) {
 	if row.Gate == "fail" {
 		dv.Attention = append(dv.Attention, attnItem{
@@ -463,11 +465,6 @@ func (s *Server) collectAttention(dv *dashboardView, repo *store.Repo, row *dash
 		dv.Attention = append(dv.Attention, attnItem{
 			cause: "stale", name: row.Name, repo: repo,
 			coverage: &latest.TotalPct, staleDays: &days,
-		})
-	}
-	if !repo.Gate.Configured() && latest != nil {
-		dv.Attention = append(dv.Attention, attnItem{
-			cause: "no_gate", name: row.Name, repo: repo, coverage: &latest.TotalPct,
 		})
 	}
 }
@@ -515,14 +512,10 @@ func (s *Server) fillReporting(st *dashStats, g *wsGroup) {
 }
 
 func attnRank(cause string) int {
-	switch cause {
-	case "failing":
+	if cause == "failing" {
 		return 0
-	case "stale":
-		return 1
-	default:
-		return 2
 	}
+	return 1
 }
 
 // sparkSeries is a repo's recent branch coverage, oldest first: the

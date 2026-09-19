@@ -7,7 +7,7 @@ import type { AttentionItem, DashRepo } from "./api/types";
 import { pct, plural } from "./format";
 import { routes } from "./urls";
 
-export type AttentionTone = "bad" | "warn" | "neutral";
+export type AttentionTone = "bad" | "warn";
 
 /** One needs-attention notice as sentences: the name is set in monospace, so it stays its own part. */
 export interface AttentionCopy {
@@ -26,43 +26,17 @@ export interface AttentionCopy {
 /** A notice ready to list: its sentences plus a stable key. */
 export interface AttentionRow extends AttentionCopy {
   key: string;
-  /**
-   * A grouped notice names several repositories, each a link to where it is
-   * fixed; it then has no single action (`action` and `to` are empty).
-   */
-  links?: { name: string; to: string }[];
 }
 
 /**
- * The notices as the dashboard lists them. Failing and stale repositories each
- * get their line — those are events. A missing gate is a standing condition,
- * and with several repositories it buried the one line that mattered: two or
- * more collapse into a single notice naming them, each name a link to that
- * repository's settings. (Not to the workspace gate: that only seeds
- * repositories registered later — core.registerRepo copies it once — so it
- * would not change anything for the ones listed here.)
+ * The notices as the dashboard lists them: things that happened — a gate
+ * failed, uploads stopped. A repository without a gate is deliberately not
+ * one of them (the server does not send it): it is a standing choice, and a
+ * section that is always there stops being read. The table's row says "Set a
+ * gate" and the No gate filter counts it.
  */
 export function attentionRows(items: AttentionItem[]): AttentionRow[] {
-  const ungated = items.filter((item) => item.kind === "no_gate");
-  const group = ungated.length >= 2;
-  const rows: AttentionRow[] = items
-    .filter((item) => !(group && item.kind === "no_gate"))
-    .map((item) => ({ ...attentionCopy(item), key: `${item.kind}:${item.forge}/${item.slug}` }));
-  if (group) {
-    rows.push({
-      key: "no_gate:*",
-      tone: "neutral",
-      status: "No gate",
-      before: `${ungated.length} repositories have no coverage gate`,
-      name: "",
-      after: "",
-      message: "Uploads are recorded, but nothing blocks a drop. Set one on:",
-      action: "",
-      to: "",
-      links: ungated.map((item) => ({ name: item.name, to: routes.repoSettings(item.forge, item.slug) })),
-    });
-  }
-  return rows;
+  return items.map((item) => ({ ...attentionCopy(item), key: `${item.kind}:${item.forge}/${item.slug}` }));
 }
 
 /** Go's %.4g for a threshold: 60 reads "60", 82.55 stays "82.55". */
@@ -97,17 +71,6 @@ export function attentionCopy(item: AttentionItem): AttentionCopy {
         message: "Its last pipeline run did not reach the upload step; the coverage shown is stale.",
         action: "Open repo",
         to: routes.repo(item.forge, item.slug),
-      };
-    case "no_gate":
-      return {
-        tone: "neutral",
-        status: "No gate",
-        before: "",
-        name: item.name,
-        after: " has no coverage gate",
-        message: "Uploads are recorded, but nothing blocks a drop.",
-        action: "Set a gate",
-        to: routes.repoSettings(item.forge, item.slug),
       };
   }
 }

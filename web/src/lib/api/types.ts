@@ -89,7 +89,8 @@ export interface DashStats {
 }
 
 export interface AttentionItem {
-  kind: "failing" | "stale" | "no_gate";
+  /** Events only. A repository without a gate is not one: see the table's Gate column. */
+  kind: "failing" | "stale";
   forge: Forge;
   slug: string;
   name: string;

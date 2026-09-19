@@ -76,8 +76,9 @@ points at the two things worth doing next, [setting a gate](coverage-gate.md) an
 ## What you have now
 
 The dashboard lists every repo that has uploaded, with its coverage, its trend and whether its gate is passing, and
-anything worth looking at collected under **Needs attention** — a failing gate, a repo that has stopped uploading,
-repositories with no gate set. **Add a repository** opens the same snippet again for the next repo in the workspace.
+anything that went wrong collected under **Needs attention** — a failing gate, a repo that has stopped uploading. The
+section is only there when something did. A repo without a gate says **Set a gate** in its row. **Add a repository**
+opens the same snippet again for the next repo in the workspace.
 
 ![The dashboard: workspace coverage, how many gates are passing, and one row per repository with its coverage, delta, 30-day trend and gate](assets/dashboard.png)
 

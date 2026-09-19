@@ -1,4 +1,3 @@
-import { Link } from "react-router";
 import { LinkButton, Mono } from "@/components/atoms";
 import { Card } from "@/components/molecules";
 import type { AttentionRow } from "@/lib/dashboard";
@@ -24,26 +23,14 @@ export function AttentionList({ rows }: { rows: AttentionRow[] }) {
                 <span className="AttentionList__text">
                   <span className="AttentionList__title">
                     {copy.before}
-                    {copy.name !== "" && <Mono>{copy.name}</Mono>}
+                    <Mono>{copy.name}</Mono>
                     {copy.after}
                   </span>
-                  <span className="AttentionList__message">
-                    {copy.message}
-                    {copy.links?.map((link, i) => (
-                      <span key={link.to}>
-                        {i === 0 ? " " : ", "}
-                        <Link to={link.to}>
-                          <Mono>{link.name}</Mono>
-                        </Link>
-                      </span>
-                    ))}
-                  </span>
+                  <span className="AttentionList__message">{copy.message}</span>
                 </span>
-                {copy.action !== "" && (
-                  <LinkButton size="sm" to={copy.to}>
-                    {copy.action}
-                  </LinkButton>
-                )}
+                <LinkButton size="sm" to={copy.to}>
+                  {copy.action}
+                </LinkButton>
               </li>
             );
           })}
