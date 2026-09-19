@@ -161,22 +161,20 @@ func TestGitHubSetupConnectsWorkspace(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/workspaces/github/acme?connected=1" {
-		t.Errorf("redirect = %q", loc)
+	// A connected workspace's home is its dashboard, where the setup
+	// checklist reads the connection it just gained.
+	if loc := rec.Header().Get("Location"); loc != "/?ws=github%2Facme" {
+		t.Errorf("redirect = %q, want the workspace's dashboard", loc)
 	}
 	ws := f.reloadWorkspace(t, "acme")
 	if ws.GitHubInstallationID != 42 {
 		t.Errorf("installation id = %d, want 42", ws.GitHubInstallationID)
 	}
 
-	// The settings page renders the connected state and the notice.
-	page := get(f.fixture, "/workspaces/github/acme?connected=1", sess)
-	body := page.Body.String()
-	if !strings.Contains(body, "connected") || !strings.Contains(body, "gocov[bot]") {
-		t.Error("settings page must show the connected GitHub App state")
-	}
-	if !strings.Contains(body, "Disconnect") {
-		t.Error("settings page must offer disconnect while connected")
+	// The settings screen reads the connection as on, posting as gocov[bot].
+	got := decodeJSON[workspaceSettingsDTO](t, get(f.fixture, "/api/ui/workspaces/github/acme", sess))
+	if got.Reporting.State != "on" {
+		t.Errorf("reporting = %+v, want the App connected", got.Reporting)
 	}
 }
 
@@ -211,9 +209,7 @@ func TestGitHubSetupRejectsForeignInstallation(t *testing.T) {
 	}
 	f.app.accounts[7] = "evilcorp"
 
-	if rec := get(f.fixture, "/github/setup?installation_id=7", sess); rec.Code != http.StatusForbidden {
-		t.Fatalf("existing foreign workspace: status = %d, want 403", rec.Code)
-	}
+	wantConnectOutcome(t, get(f.fixture, "/github/setup?installation_id=7", sess), "not_your_workspace", "evilcorp")
 	if ws := f.reloadWorkspace(t, "evilcorp"); ws.GitHubInstallationID != 0 {
 		t.Error("foreign installation must not connect anything")
 	}
@@ -221,20 +217,13 @@ func TestGitHubSetupRejectsForeignInstallation(t *testing.T) {
 	// Same story for the claim path: the account is unregistered, but
 	// the user's forge list does not vouch for it.
 	f.app.accounts[8] = "strangers"
-	rec := get(f.fixture, "/github/setup?installation_id=8", sess)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("foreign claim: status = %d, want 403", rec.Code)
-	}
-	// The dead end offers two ways forward: a link to the org's OAuth-app
-	// policy (the usual cause — a restricted org gocov can't see), and a
-	// one-click re-auth back to this same install for the stale-snapshot case.
-	if !strings.Contains(rec.Body.String(), "Sign in again") ||
-		!strings.Contains(rec.Body.String(), "/oauth/github/start?next=") ||
-		!strings.Contains(rec.Body.String(), "installation_id%3D8") {
-		t.Errorf("claim-denied page missing the re-auth self-heal link:\n%s", rec.Body)
-	}
-	if !strings.Contains(rec.Body.String(), "github.com/organizations/strangers/settings/oauth_application_policy") {
-		t.Errorf("claim-denied page missing the org OAuth-policy link:\n%s", rec.Body)
+	// The dead end carries what the app needs to offer both ways forward:
+	// the org's OAuth-app policy page (the usual cause — a restricted org
+	// gocov can't see) and a re-auth back to this same install for the
+	// stale-snapshot case.
+	q := wantConnectOutcome(t, get(f.fixture, "/github/setup?installation_id=8", sess), "not_your_workspace", "strangers")
+	if q.Get("installation_id") != "8" {
+		t.Errorf("denial query = %v, want the installation to come back to", q)
 	}
 	if _, err := f.store.WorkspaceByPrefix(t.Context(), "github", "strangers"); err == nil {
 		t.Error("foreign claim must not register a workspace")
@@ -244,20 +233,12 @@ func TestGitHubSetupRejectsForeignInstallation(t *testing.T) {
 func TestGitHubSetupBadRequests(t *testing.T) {
 	f, sess := newGitHubAppFixture(t, false, true)
 
-	if rec := get(f.fixture, "/github/setup", sess); rec.Code != http.StatusBadRequest {
-		t.Errorf("no installation_id: status = %d, want 400", rec.Code)
-	}
-	if rec := get(f.fixture, "/github/setup?installation_id=abc", sess); rec.Code != http.StatusBadRequest {
-		t.Errorf("bad installation_id: status = %d, want 400", rec.Code)
-	}
+	wantConnectOutcome(t, get(f.fixture, "/github/setup", sess), "no_installation", "")
+	wantConnectOutcome(t, get(f.fixture, "/github/setup?installation_id=abc", sess), "no_installation", "")
 	// GitHub cannot confirm the installation (unknown id).
-	if rec := get(f.fixture, "/github/setup?installation_id=99", sess); rec.Code != http.StatusBadGateway {
-		t.Errorf("unknown installation: status = %d, want 502", rec.Code)
-	}
-	// An install request by a non-admin member: informational page.
-	if rec := get(f.fixture, "/github/setup?setup_action=request", sess); rec.Code != http.StatusOK {
-		t.Errorf("setup_action=request: status = %d, want 200", rec.Code)
-	}
+	wantConnectOutcome(t, get(f.fixture, "/github/setup?installation_id=99", sess), "install_unconfirmed", "")
+	// An install request by a non-admin member: nothing to link yet.
+	wantConnectOutcome(t, get(f.fixture, "/github/setup?setup_action=request", sess), "install_requested", "")
 }
 
 func TestGitHubSetupWithoutApp404s(t *testing.T) {
@@ -280,16 +261,16 @@ func TestGitHubSetupClaimsWorkspaceHosted(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/onboarding?ws=janedev" {
-		t.Errorf("redirect = %q, want the workspace-ready state (activation moment)", loc)
+	if loc := rec.Header().Get("Location"); loc != "/?ws=github%2Fjanedev" {
+		t.Errorf("redirect = %q, want the new workspace's dashboard (activation moment)", loc)
 	}
 	ws := f.reloadWorkspace(t, "janedev")
 	if ws.GitHubInstallationID != 7 || ws.Forge != "github" {
 		t.Errorf("claimed workspace: installation = %d, forge = %q", ws.GitHubInstallationID, ws.Forge)
 	}
 	// The registering user must be a member (RegisterWorkspace semantics).
-	if rec := get(f.fixture, "/workspaces/github/janedev", sess); rec.Code != http.StatusOK {
-		t.Errorf("claimer cannot open the settings page: status = %d", rec.Code)
+	if rec := get(f.fixture, "/api/ui/workspaces/github/janedev", sess); rec.Code != http.StatusOK {
+		t.Errorf("claimer cannot read the workspace: status = %d", rec.Code)
 	}
 }
 
@@ -305,8 +286,8 @@ func TestGitHubSetupClaimPrivateMode(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/onboarding?ws=janedev" {
-		t.Errorf("redirect = %q, want the workspace-ready state", loc)
+	if loc := rec.Header().Get("Location"); loc != "/?ws=github%2Fjanedev" {
+		t.Errorf("redirect = %q, want the new workspace's dashboard", loc)
 	}
 	ws, err := f.store.WorkspaceByPrefix(t.Context(), "github", "janedev")
 	if err != nil {
@@ -348,9 +329,7 @@ func TestGitHubSetupClaimDeniedNonMember(t *testing.T) {
 	f, sess := newGitHubAppFixture(t, false, true)
 	f.app.accounts[7] = "stranger" // not in the identity's Workspaces
 
-	if rec := get(f.fixture, "/github/setup?installation_id=7", sess); rec.Code != http.StatusForbidden {
-		t.Errorf("status = %d, want 403", rec.Code)
-	}
+	wantConnectOutcome(t, get(f.fixture, "/github/setup?installation_id=7", sess), "not_your_workspace", "stranger")
 	if _, err := f.store.WorkspaceByPrefix(t.Context(), "github", "stranger"); err == nil {
 		t.Error("an unvouched account must not be registered")
 	}
@@ -363,17 +342,14 @@ func TestGitHubSetupIsOwnersOnly(t *testing.T) {
 	f, sess := newGitHubAppFixture(t, false, true)
 	demote(t, f.fixture, "acme")
 
-	rec := get(f.fixture, "/github/setup?installation_id=42", sess)
-	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "Owners only") {
-		t.Fatalf("member linking an installation: status = %d, body = %s", rec.Code, rec.Body)
-	}
-	if !strings.Contains(rec.Body.String(), "Sign in again") {
-		t.Error("the denial must offer a re-auth to refresh the role")
+	q := wantConnectOutcome(t, get(f.fixture, "/github/setup?installation_id=42", sess), "owners_only", "acme")
+	if q.Get("installation_id") != "42" {
+		t.Errorf("denial query = %v, want the installation to come back to after a re-auth", q)
 	}
 	if ws := f.reloadWorkspace(t, "acme"); ws.GitHubInstallationID != 0 {
 		t.Errorf("installation linked by a member: %d", ws.GitHubInstallationID)
 	}
-	if rec := postForm(f.fixture, "/workspaces/github/acme/disconnect", url.Values{}, sess); rec.Code != http.StatusForbidden {
+	if rec := postJSON(t, f.fixture, "/api/ui/workspaces/github/acme/disconnect", nil, sess); rec.Code != http.StatusForbidden {
 		t.Errorf("member disconnect: status = %d, want 403", rec.Code)
 	}
 }
@@ -389,10 +365,7 @@ func TestGitHubSetupClaimNeedsAnOwnerOnTheForge(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec := get(f.fixture, "/github/setup?installation_id=7", sess)
-	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "Owners only") {
-		t.Fatalf("member claiming via install: status = %d, body = %s", rec.Code, rec.Body)
-	}
+	wantConnectOutcome(t, get(f.fixture, "/github/setup?installation_id=7", sess), "owners_only", "janedev")
 	if _, err := f.store.WorkspaceByPrefix(t.Context(), "github", "janedev"); err == nil {
 		t.Error("a member's install must not register the workspace")
 	}
@@ -402,10 +375,8 @@ func TestGitHubDisconnect(t *testing.T) {
 	f, sess := newGitHubAppFixture(t, false, true)
 	f.connectWorkspace(t, 42)
 
-	rec := postForm(f.fixture, "/workspaces/github/acme/disconnect", url.Values{}, sess)
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("status = %d", rec.Code)
-	}
+	rec := postJSON(t, f.fixture, "/api/ui/workspaces/github/acme/disconnect", nil, sess)
+	wantStatus(t, rec, "disconnect", http.StatusOK)
 	if ws := f.reloadWorkspace(t, "acme"); ws.GitHubInstallationID != 0 || ws.GitHubAppBroken {
 		t.Errorf("after disconnect: id = %d, broken = %v", ws.GitHubInstallationID, ws.GitHubAppBroken)
 	}
@@ -529,39 +500,50 @@ func TestUploadWorkspaceTokenUsesInstallation(t *testing.T) {
 	}
 }
 
-func TestSettingsPageBrokenState(t *testing.T) {
+// The Reporting card, as the settings and setup screens read it: off with
+// the install link while unconnected, on once linked, and broken — still
+// with the install link, which is the reconnect — when GitHub stops
+// answering for the installation.
+func TestGitHubReportingStates(t *testing.T) {
 	f, sess := newGitHubAppFixture(t, false, true)
+
+	got := decodeJSON[workspaceSettingsDTO](t, get(f.fixture, "/api/ui/workspaces/github/acme", sess))
+	if !got.Reporting.Available || got.Reporting.State != "off" || got.Reporting.ConnectURL != f.app.installURL {
+		t.Errorf("unconnected reporting = %+v, want the install link", got.Reporting)
+	}
+
 	f.connectWorkspace(t, 42)
+	got = decodeJSON[workspaceSettingsDTO](t, get(f.fixture, "/api/ui/workspaces/github/acme", sess))
+	if got.Reporting.State != "on" {
+		t.Errorf("connected reporting = %+v", got.Reporting)
+	}
+
 	ws := f.reloadWorkspace(t, "acme")
 	ws.GitHubAppBroken = true
 	if err := f.store.UpdateWorkspace(t.Context(), ws); err != nil {
 		t.Fatal(err)
 	}
-
-	body := get(f.fixture, "/workspaces/github/acme", sess).Body.String()
-	if !strings.Contains(body, "Reconnect needed") {
-		t.Error("settings page must surface the broken connection")
-	}
-	if !strings.Contains(body, f.app.installURL) {
-		t.Error("broken state must link the reinstall page")
+	got = decodeJSON[workspaceSettingsDTO](t, get(f.fixture, "/api/ui/workspaces/github/acme", sess))
+	if got.Reporting.State != "broken" || got.Reporting.ConnectURL != f.app.installURL {
+		t.Errorf("broken reporting = %+v, want the reinstall link", got.Reporting)
 	}
 }
 
-func TestSetupPageRecommendsApp(t *testing.T) {
-	f, sess := newGitHubAppFixture(t, true, true)
-
-	// The reporting capability lives in the Workspace step's ready state.
-	body := get(f.fixture, "/onboarding?ws=acme", sess).Body.String()
-	if !strings.Contains(body, "Grant write access") || !strings.Contains(body, f.app.installURL) {
-		t.Error("ready state must offer the App grant while not connected")
+// wantConnectOutcome asserts an install that did not end in a connected
+// workspace sends the browser to onboarding, naming what happened and the
+// account it was about, and returns the query for further checks.
+func wantConnectOutcome(t *testing.T, rec *httptest.ResponseRecorder, outcome, ws string) url.Values {
+	t.Helper()
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("connect outcome %q: status = %d, body = %s", outcome, rec.Code, rec.Body)
 	}
-
-	f.connectWorkspace(t, 42)
-	body = get(f.fixture, "/onboarding?ws=acme", sess).Body.String()
-	if strings.Contains(body, "Grant write access") {
-		t.Error("ready state must drop the grant once connected")
+	loc, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil || loc.Path != "/onboarding" {
+		t.Fatalf("connect outcome %q redirected to %q", outcome, rec.Header().Get("Location"))
 	}
-	if !strings.Contains(body, "gocov[bot]") {
-		t.Error("connected workspace must show the gocov[bot] identity")
+	q := loc.Query()
+	if q.Get("connect") != outcome || q.Get("ws") != ws {
+		t.Errorf("connect outcome = %q/%q, want %q/%q", q.Get("connect"), q.Get("ws"), outcome, ws)
 	}
+	return q
 }

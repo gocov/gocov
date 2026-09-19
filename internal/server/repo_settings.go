@@ -29,7 +29,7 @@ func (s *Server) memberRepo(w http.ResponseWriter, r *http.Request) (*store.Repo
 	}
 	repo, err := s.store.RepoBySlug(r.Context(), r.PathValue("forge"), r.PathValue("slug"))
 	if errors.Is(err, store.ErrNotFound) {
-		http.NotFound(w, r)
+		tenantNotFound(w, r)
 		return nil, nil, ""
 	}
 	if err != nil {
@@ -43,7 +43,7 @@ func (s *Server) memberRepo(w http.ResponseWriter, r *http.Request) (*store.Repo
 	}
 	ws := owningWorkspace(repo, memberOf)
 	if ws == nil {
-		http.NotFound(w, r)
+		tenantNotFound(w, r)
 		return nil, nil, ""
 	}
 	role, _, err := s.seat(r.Context(), u, ws)
@@ -62,35 +62,10 @@ func (s *Server) ownerRepo(w http.ResponseWriter, r *http.Request) (*store.Repo,
 		return nil, nil
 	}
 	if role != store.RoleOwner {
-		ownersOnly(w)
+		ownersOnly(w, r)
 		return nil, nil
 	}
 	return repo, ws
-}
-
-// repoSettingsData assembles the template payload. The upload token lives on
-// the repo row in the clear, so exposing it to owners (Reveal) leaks nothing
-// the DB does not already hold; MaskedToken is the default rendering. A
-// member's page carries neither.
-func (s *Server) repoSettingsData(repo *store.Repo, ws *store.Workspace, owner bool, newToken, notice, errMsg string) map[string]any {
-	token, masked := "", ""
-	if owner {
-		token, masked = repo.Token, maskSecret(repo.Token)
-	}
-	return map[string]any{
-		"Repo":              repo,
-		"Workspace":         ws,
-		"Owner":             owner,
-		"Token":             token,
-		"MaskedToken":       masked,
-		"NewToken":          newToken,
-		"Notice":            notice,
-		"Error":             errMsg,
-		"GateActive":        gateActiveCount(repo.Gate),
-		"IgnorePaths":       strings.Join(repo.IgnorePaths, "\n"),
-		"BadgeMarkdown":     s.badgeMarkdown(repo),
-		"ShowPublicReports": s.publicReportsSwitch(repo),
-	}
 }
 
 // badgeMarkdown is the copy-paste snippet the repo page and repo settings
@@ -111,62 +86,119 @@ func (s *Server) publicReportsSwitch(repo *store.Repo) bool {
 	return s.publicReports && repo.Visibility == store.VisibilityPublic
 }
 
-// handleRepoSettings implements GET /repo-settings/{forge}/{slug...}.
-func (s *Server) handleRepoSettings(w http.ResponseWriter, r *http.Request) {
+// repoSettingsDTO is the repo settings page for the app. Like the
+// workspace's, the upload token rides only as its masked form and only
+// for owners.
+type repoSettingsDTO struct {
+	Repo      repoSettingsHeadDTO `json:"repo"`
+	Workspace workspaceRefDTO     `json:"workspace"`
+	Owner     bool                `json:"owner"`
+	// ShowPublicReports is whether the switch is meaningful at all: a repo
+	// the forge reports public, on an instance that allows public reports.
+	ShowPublicReports bool    `json:"show_public_reports"`
+	TokenMasked       *string `json:"token_masked"`
+}
+
+type repoSettingsHeadDTO struct {
+	repoRefDTO
+	DefaultBranch string  `json:"default_branch"`
+	Gate          gateDTO `json:"gate"`
+	// IgnorePaths is one pattern per line, as the textarea holds them.
+	IgnorePaths   string `json:"ignore_paths"`
+	PublicReports bool   `json:"public_reports"`
+	BadgeURL      string `json:"badge_url"`
+	BadgeMarkdown string `json:"badge_markdown"`
+}
+
+type workspaceRefDTO struct {
+	Forge  string `json:"forge"`
+	Prefix string `json:"prefix"`
+}
+
+// repoSettingsInput is what the app posts to the save endpoint.
+type repoSettingsInput struct {
+	DefaultBranch string  `json:"default_branch"`
+	Gate          gateDTO `json:"gate"`
+	IgnorePaths   string  `json:"ignore_paths"`
+	PublicReports bool    `json:"public_reports"`
+}
+
+func (s *Server) newRepoSettingsDTO(repo *store.Repo, ws *store.Workspace, owner bool) repoSettingsDTO {
+	dto := repoSettingsDTO{
+		Repo: repoSettingsHeadDTO{
+			repoRefDTO:    newRepoRefDTO(repo),
+			DefaultBranch: repo.DefaultBranch,
+			Gate:          newGateDTO(repo.Gate),
+			IgnorePaths:   strings.Join(repo.IgnorePaths, "\n"),
+			PublicReports: !repo.PublicReportsDisabled,
+			BadgeURL:      badgeURL(repo),
+			BadgeMarkdown: s.badgeMarkdown(repo),
+		},
+		Workspace:         workspaceRefDTO{Forge: ws.Forge, Prefix: ws.Prefix},
+		Owner:             owner,
+		ShowPublicReports: s.publicReportsSwitch(repo),
+	}
+	if owner {
+		dto.TokenMasked = new(maskSecret(repo.Token))
+	}
+	return dto
+}
+
+// handleAPIRepoSettings implements GET /api/ui/repo-settings/{forge}/{slug...}.
+func (s *Server) handleAPIRepoSettings(w http.ResponseWriter, r *http.Request) {
 	repo, ws, role := s.memberRepo(w, r)
 	if repo == nil {
 		return
 	}
-	notice := ""
-	if r.FormValue("saved") == "1" {
-		notice = "Saved."
-	}
-	s.render(w, r, "repo-settings.html", s.repoSettingsData(repo, ws, role == store.RoleOwner, "", notice, ""))
+	s.writeJSON(w, s.newRepoSettingsDTO(repo, ws, role == store.RoleOwner))
 }
 
-// handleRepoSettingsSave implements POST /repo-settings/save/{forge}/{slug...}: the base
-// branch, coverage gates and ignore patterns for this repository.
-func (s *Server) handleRepoSettingsSave(w http.ResponseWriter, r *http.Request) {
+// handleAPIRepoSettingsSave implements
+// POST /api/ui/repo-settings/save/{forge}/{slug...}.
+func (s *Server) handleAPIRepoSettingsSave(w http.ResponseWriter, r *http.Request) {
 	repo, ws := s.ownerRepo(w, r)
 	if repo == nil {
 		return
 	}
-	branch := strings.TrimSpace(r.FormValue("default_branch"))
+	var in repoSettingsInput
+	if !readJSON(w, r, &in) {
+		return
+	}
+	branch := strings.TrimSpace(in.DefaultBranch)
 	if branch == "" {
-		s.repoSettingsError(w, r, repo, ws, "Base branch cannot be empty.")
+		invalid(w, "Base branch cannot be empty.")
 		return
 	}
-	gate, errLabel := parseGateForm(r)
+	gate, errLabel := validGate(in.Gate.gate())
 	if errLabel != "" {
-		s.repoSettingsError(w, r, repo, ws, errLabel)
+		invalid(w, errLabel)
 		return
 	}
-	ignorePaths := ignore.Parse(r.FormValue("ignore_paths"))
+	ignorePaths := ignore.Parse(in.IgnorePaths)
 	if err := ignore.Validate(ignorePaths); err != nil {
-		s.repoSettingsError(w, r, repo, ws, "Ignored files not saved: "+err.Error()+".")
+		invalid(w, "Ignored files not saved: "+err.Error()+".")
 		return
 	}
 	repo.DefaultBranch = branch
 	repo.Gate = gate
 	repo.IgnorePaths = ignorePaths
-	// The "Public reports" switch only renders (and may only change) where
-	// it is meaningful; a private repo's save must not flip the stored
-	// value just because the form had no checkbox to send.
+	// The switch may only move where it is meaningful; a private repo's
+	// save must not flip the stored value.
 	if s.publicReportsSwitch(repo) {
-		repo.PublicReportsDisabled = r.FormValue("public_reports") == ""
+		repo.PublicReportsDisabled = !in.PublicReports
 	}
 	if err := s.store.UpdateRepo(r.Context(), repo); err != nil {
 		s.internalError(w, "updating repo", err)
 		return
 	}
-	http.Redirect(w, r, repoSettingsURL(repo, "")+"?saved=1", http.StatusSeeOther)
+	s.writeJSON(w, s.newRepoSettingsDTO(repo, ws, true))
 }
 
-// handleRepoRotateToken implements POST /repo-settings/rotate-token/{forge}/{slug...}.
-// The new token is shown once; the old one is dead by the time the page
-// renders (single UPDATE, no grace period).
-func (s *Server) handleRepoRotateToken(w http.ResponseWriter, r *http.Request) {
-	repo, ws := s.ownerRepo(w, r)
+// handleAPIRepoRotateToken implements
+// POST /api/ui/repo-settings/rotate-token/{forge}/{slug...}. The new token
+// is in the response; the old one is dead by then.
+func (s *Server) handleAPIRepoRotateToken(w http.ResponseWriter, r *http.Request) {
+	repo, _ := s.ownerRepo(w, r)
 	if repo == nil {
 		return
 	}
@@ -181,15 +213,24 @@ func (s *Server) handleRepoRotateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("repo token rotated", "slug", repo.Slug, "user", currentUser(r).DisplayName)
-	s.render(w, r, "repo-settings.html", s.repoSettingsData(repo, ws, true, token,
-		"Token rotated — the previous token no longer works. Update your CI variable.", ""))
+	s.writeJSON(w, tokenRevealDTO{Token: token})
 }
 
-// handleRepoDelete implements POST /repo-settings/delete/{forge}/{slug...}: it removes the
-// repo and cascades its uploads and reports (the store does the cascade).
-// Uploads with the token start failing at once; nothing is changed on the forge.
-func (s *Server) handleRepoDelete(w http.ResponseWriter, r *http.Request) {
-	repo, ws := s.ownerRepo(w, r)
+// handleAPIRepoRevealToken implements
+// POST /api/ui/repo-settings/reveal-token/{forge}/{slug...}.
+func (s *Server) handleAPIRepoRevealToken(w http.ResponseWriter, r *http.Request) {
+	repo, _ := s.ownerRepo(w, r)
+	if repo == nil {
+		return
+	}
+	s.writeJSON(w, tokenRevealDTO{Token: repo.Token})
+}
+
+// handleAPIRepoDelete implements
+// POST /api/ui/repo-settings/delete/{forge}/{slug...}: the repo and its
+// uploads and reports go (the store cascades).
+func (s *Server) handleAPIRepoDelete(w http.ResponseWriter, r *http.Request) {
+	repo, _ := s.ownerRepo(w, r)
 	if repo == nil {
 		return
 	}
@@ -198,12 +239,5 @@ func (s *Server) handleRepoDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("repo deleted", "slug", repo.Slug, "user", currentUser(r).DisplayName)
-	http.Redirect(w, r, workspaceURL(ws, ""), http.StatusSeeOther)
-}
-
-// repoSettingsError re-renders the settings page with a validation message.
-// Only an owner's save can fail validation, so the page is an owner's.
-func (s *Server) repoSettingsError(w http.ResponseWriter, r *http.Request, repo *store.Repo, ws *store.Workspace, msg string) {
-	w.WriteHeader(http.StatusBadRequest)
-	s.render(w, r, "repo-settings.html", s.repoSettingsData(repo, ws, true, "", "", msg))
+	w.WriteHeader(http.StatusNoContent)
 }

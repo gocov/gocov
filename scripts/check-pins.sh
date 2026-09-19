@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 # Every install snippet gocov hands a user pins an exact CLI release: the
-# CI recipe docs (docs/gitlab-ci.md, docs/ci-other.md) and the onboarding
-# wizard (internal/server/templates/onboarding.html) carry the same
-# download URLs and the same `ver=` recipe, copied rather than shared,
-# because some are Markdown and one is a Go template.
+# CI recipe docs (docs/gitlab-ci.md, docs/ci-other.md), the self-hosting
+# guide and the compose .env carry the same download URLs and the same
+# `ver=` recipe, copied rather than shared, because they are separate
+# documents.
 #
 # Copies drift. This script fails CI when they stop agreeing with each
-# other — the "updated the docs, forgot the wizard" mistake, which
+# other — the "updated one doc, forgot the others" mistake, which
 # otherwise ships a stale snippet to exactly the people seeing gocov for
 # the first time.
+#
+# The web UI is not a copy: its setup screen writes the snippet in the
+# browser from hosted.PinnedCLIVersion, which release-please bumps, so
+# there is nothing there to drift.
 #
 # Deliberately *not* checked here: whether that version is the newest
 # release. It cannot be. The release commit bumps these pins, so between a

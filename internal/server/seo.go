@@ -1,15 +1,52 @@
-// The crawler surface of public report pages: robots.txt keeps the login
-// flow, the settings pages and raw profile downloads out of search
-// indexes, and sitemap.xml lists every effectively public repo page.
-// Both are sessionless (see publicPath).
+// The crawler surface of public report pages: the head tags each page
+// route injects into the app shell (spa.go), robots.txt, which keeps the
+// login flow, the settings pages and raw profile downloads out of search
+// indexes, and sitemap.xml, which lists every effectively public repo
+// page. The latter two are sessionless (see publicPath).
 
 package server
 
 import (
 	"encoding/xml"
+	"html/template"
 	"net/http"
 	"strings"
+
+	"github.com/gocov/gocov/internal/store"
 )
+
+// noindexHead keeps a page out of search indexes while its links still
+// count: the upload and source views, which are per-commit detail under
+// an indexable repo page.
+const noindexHead = `<meta name="robots" content="noindex, follow">`
+
+// repoPageHead is the repo page's crawler surface: the title a result
+// lists, the description under it and the canonical URL, so the branch
+// and page query parameters do not split one page into many. Handlers
+// build it only after the access decision passed — the slug is the one
+// thing a refused visitor must not read back (D3).
+func (s *Server) repoPageHead(repo *store.Repo) appHead {
+	slug := template.HTMLEscapeString(repo.Slug)
+	return appHead{
+		Title: repo.Slug + " code coverage — gocov",
+		Extra: `<meta name="description" content="Code coverage for ` + slug +
+			`, tracked by gocov: current total, coverage trend and where coverage is missing.">` +
+			"\n" + `<link rel="canonical" href="` +
+			template.HTMLEscapeString(strings.TrimSuffix(s.baseURL, "/")+repoURL(repo)) + `">`,
+	}
+}
+
+// uploadPageHead titles one upload's report and keeps it out of indexes.
+func uploadPageHead(repo *store.Repo, upload *store.Upload) appHead {
+	return appHead{Title: repo.Slug + " @ " + shortSHA(upload.CommitSHA) + " — gocov", Extra: noindexHead}
+}
+
+// sourcePageHead titles one file's source view and keeps it out of
+// indexes. The path comes straight off the URL, so it is escaped like
+// every other dynamic value the head carries.
+func sourcePageHead(path string) appHead {
+	return appHead{Title: path + " — gocov", Extra: noindexHead}
+}
 
 // handleRobots implements GET /robots.txt. The disallow list names the
 // pages that exist but should never rank: the login and OAuth flows, the
@@ -23,6 +60,7 @@ func (s *Server) handleRobots(w http.ResponseWriter, r *http.Request) {
 	sb.WriteString("Disallow: /repo-settings/\n")
 	sb.WriteString("Disallow: /workspaces/\n")
 	sb.WriteString("Disallow: /uploads/*/profile\n")
+	sb.WriteString("Disallow: /api/\n")
 	if s.publicReports {
 		sb.WriteString("\nSitemap: " + strings.TrimSuffix(s.baseURL, "/") + "/sitemap.xml\n")
 	}

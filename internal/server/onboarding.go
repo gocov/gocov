@@ -1,7 +1,6 @@
 package server
 
 import (
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -10,262 +9,35 @@ import (
 	"github.com/gocov/gocov/internal/store"
 )
 
-// The onboarding wizard (unified guided flow). A fixed three-stage rail —
-// Workspace, Wire up CI, First upload — carries every forge. The per-forge
-// difference lives entirely in the Workspace step (how the workspace is
-// created and who reporting posts as), never in the shape of the flow.
+// Onboarding: where a signed-in account with nowhere to put coverage
+// picks a workspace, and what the setup screen on the dashboard reads
+// while it waits for the first report. There is no wizard — the work
+// happens in the user's repo and CI, so the app pins a setup checklist
+// to the workspace's dashboard instead of walking a rail of pages.
 //
-// Sign-in already happened before onboarding is reachable, so there is no
-// separate "connect account" step: for GitHub the workspace is created by
-// installing the app (org, repos and bot identity in one approval); for
-// Bitbucket/GitLab it is picked from the sign-in membership snapshot.
-//
-// The Workspace step (rail 0) lives at /onboarding and has three faces —
-// install, pick and ready (with the reporting capability card). Wire up CI
-// (rail 1) and First upload (rail 2) live at /workspaces/{forge}/{prefix}/setup.
-// Register and the GitHub App install redirect to /onboarding?ws={prefix}
-// (the ready state); "Continue to CI" leads to the setup page.
+// Sign-in already happened before onboarding is reachable, so there is
+// no separate "connect account" step: for GitHub the workspace is
+// created by installing the app (org, repos and bot identity in one
+// approval); for Bitbucket/GitLab it is picked from the sign-in
+// membership snapshot. Either way the account lands on that workspace's
+// dashboard, which is where the checklist lives.
 
-// railStep is one entry in the wizard's step rail.
-type railStep struct {
-	Num     int
-	Label   string
-	Subline string // the per-forge / per-step fill
-	State   string // "done" | "active" | "todo"
-	Href    string // set only for revisitable done steps
+// workspaceHomeURL is a workspace's home: the dashboard scoped to it,
+// where the setup checklist and the first report appear. Everything that
+// creates or connects a workspace — the claim, the GitHub App install,
+// a finished grant — ends here. The value carries a slash between forge
+// and prefix, and GitLab prefixes carry more, so it rides escaped.
+func workspaceHomeURL(ws *store.Workspace) string {
+	return "/?ws=" + url.QueryEscape(wsKey{ws.Forge, ws.Prefix}.String())
 }
 
-// onboardingRail builds the three-stage rail for the given active step.
-// Labels are identical across forges; only the Workspace subline differs.
-// ws is nil on the Workspace step itself, before one is chosen.
-func onboardingRail(active int, forge string, ws *store.Workspace, hasRepos bool) []railStep {
-	labels := [3]string{"Workspace", "Wire up CI", "First upload"}
-	sub := [3]string{"Chosen here", "The upload step", "Push a commit"}
-	if forge == "github" {
-		// On GitHub the org (and so the workspace) is chosen on GitHub's
-		// own install screen, not here.
-		sub[0] = "Chosen on GitHub"
-	}
-	steps := make([]railStep, 3)
-	for i := range steps {
-		state := "todo"
-		switch {
-		case i < active:
-			state = "done"
-		case i == active:
-			state = "active"
-		}
-		steps[i] = railStep{Num: i + 1, Label: labels[i], Subline: sub[i], State: state}
-	}
-	// The last step completes on its own once the first upload lands.
-	if hasRepos {
-		steps[2].State = "done"
-	}
-	if steps[0].State == "done" {
-		steps[0].Href = "/onboarding"
-	}
-	if steps[1].State == "done" && ws != nil {
-		steps[1].Href = workspaceURL(ws, "/setup")
-	}
-	return steps
-}
-
-// handleOnboarding implements GET /onboarding: the Workspace step (rail 0).
-// Hosted-mode and signed-in only, like registration, which it replaces as
-// the zero-membership landing.
-//
-// With ?ws={prefix} it shows the "workspace ready" face for a freshly
-// created/selected workspace on the user's forge, including the reporting
-// capability card.
-// Otherwise it shows the install prompt (GitHub) or the membership picker
-// (Bitbucket/GitLab).
-func (s *Server) handleOnboarding(w http.ResponseWriter, r *http.Request) {
-	u := s.registerUser(w, r)
-	if u == nil {
-		return
-	}
-
-	if prefix := r.FormValue("ws"); prefix != "" {
-		ws, role := s.userWorkspace(r, u, prefix)
-		if ws == nil {
-			http.Redirect(w, r, "/onboarding", http.StatusFound)
-			return
-		}
-		data := map[string]any{
-			"Active":     0,
-			"WSState":    "ready",
-			"Forge":      ws.Forge,
-			"ForgeLabel": providerLabel(ws.Forge),
-			"Account":    u.DisplayName,
-			"Workspace":  ws,
-			"Owner":      role == store.RoleOwner,
-			"Rail":       onboardingRail(0, ws.Forge, ws, false),
-		}
-		s.addGitHubAppData(r, ws, data)
-		s.addGrantData(ws, data)
-		s.reportingState(ws, data)
-		if role != store.RoleOwner {
-			// Connecting is an owner's move; a member sees the state
-			// without the grant button.
-			delete(data, "GrantURL")
-		}
-		s.render(w, r, "onboarding.html", data)
-		return
-	}
-
-	// GitHub with an App configured creates the workspace by installing the
-	// app; the token forges pick from the sign-in snapshot.
-	ghApp := s.forges.GitHubApp != nil && u.Forge == "github"
-	data := map[string]any{
-		"Active":          0,
-		"Forge":           u.Forge,
-		"ForgeLabel":      providerLabel(u.Forge),
-		"Account":         u.DisplayName,
-		"MembershipCount": len(u.ForgeWorkspaces),
-		"Rail":            onboardingRail(0, u.Forge, nil, false),
-	}
-	if ghApp {
-		data["WSState"] = "install"
-		data["GitHubInstallURL"] = s.forges.InstallURL(r.Context())
-	} else {
-		data["WSState"] = "pick"
-		rows, err := s.registerRows(r, u)
-		if err != nil {
-			s.internalError(w, "resolving registrable workspaces", err)
-			return
-		}
-		data["Rows"] = rows
-	}
-	s.render(w, r, "onboarding.html", data)
-}
-
-// userWorkspace returns the workspace on the user's forge with this prefix
-// that the user belongs to, and their role in it, or nil — the membership
-// gate for the ready state.
-func (s *Server) userWorkspace(r *http.Request, u *store.User, prefix string) (*store.Workspace, store.Role) {
-	ws, err := s.store.WorkspaceByPrefix(r.Context(), u.Forge, prefix)
-	if err != nil {
-		return nil, ""
-	}
-	role, member, err := s.seat(r.Context(), u, ws)
-	if err != nil || !member {
-		return nil, ""
-	}
-	return ws, role
-}
-
-// reportingState fills the reporting capability card's connect state:
-// whether reporting is on, the account it posts as, and the one-click grant
-// URL. There is no manual-token path — reporting is connect-only.
-func (s *Server) reportingState(ws *store.Workspace, data map[string]any) {
-	switch ws.Forge {
-	case "github":
-		data["ReportingConnected"] = ws.GitHubInstallationID != 0
-		// GitHubInstallURL is set by addGitHubAppData when an App exists.
-		if u, ok := data["GitHubInstallURL"].(string); ok {
-			data["GrantURL"] = u
-		}
-	case "bitbucket":
-		data["ReportingConnected"] = ws.BitbucketGrantAccount != ""
-		data["GrantAccount"] = ws.BitbucketGrantAccount
-		data["GrantURL"] = workspaceURL(ws, "/connect") + "?from=onboarding"
-	case "gitlab":
-		data["ReportingConnected"] = ws.GitLabGrantAccount != ""
-		data["GrantAccount"] = ws.GitLabGrantAccount
-		data["GrantURL"] = workspaceURL(ws, "/connect") + "?from=onboarding"
-	}
-}
-
-// onboardingReadyURL is the redirect target after a workspace is created
-// (register claim or GitHub App install): the ready state that shows the
-// reporting card before CI. Only the prefix rides along — the forge is the
-// signed-in user's, and the ready state is theirs alone.
-func onboardingReadyURL(ws *store.Workspace) string {
-	return "/onboarding?ws=" + url.QueryEscape(ws.Prefix)
-}
-
-// The connect flow (Bitbucket/GitLab grant) returns to wherever it started:
-// the onboarding Workspace-ready card, or the settings page. The origin
-// rides in the connect state cookie's third field so the callback can route
-// back. connectFrom reads it off the start request.
-func connectFrom(r *http.Request) string {
-	if r.FormValue("from") == "onboarding" {
-		return "onboarding"
-	}
-	return ""
-}
-
-// splitConnectState parses the connect state cookie value (state|prefix|from).
-func splitConnectState(v string) (state, prefix, from string) {
-	parts := strings.SplitN(v, "|", 3)
-	if len(parts) > 0 {
-		state = parts[0]
-	}
-	if len(parts) > 1 {
-		prefix = parts[1]
-	}
-	if len(parts) > 2 {
-		from = parts[2]
-	}
-	return state, prefix, from
-}
-
-// connectDest is where a completed connect lands: the onboarding
-// Workspace-ready state when it started there, else the settings page.
-func connectDest(ws *store.Workspace, from string) string {
-	if from == "onboarding" {
-		return onboardingReadyURL(ws)
-	}
-	return workspaceURL(ws, "?connected=1")
-}
-
-// setupViewData assembles the steps 2-3 payload (CI snippet, token and the
-// first-upload state) shared by the setup page and its htmx poll partial.
-// The token rides only on an owner's page.
-func (s *Server) setupViewData(r *http.Request, ws *store.Workspace, owner bool) (map[string]any, error) {
-	repos, err := s.workspaceRepos(r, ws)
-	if err != nil {
-		return nil, err
-	}
-	baseURL := strings.TrimSuffix(s.baseURL, "/")
-	data := map[string]any{
-		"Workspace":  ws,
-		"ForgeLabel": providerLabel(ws.Forge),
-		"BaseURL":    baseURL,
-		// When this instance is the public hosted service the CLI already
-		// defaults to it, so onboarding drops GOCOV_SERVER (D: ServerImplicit).
-		"ServerImplicit": baseURL == hosted.DefaultServer,
-		// The GitLab CI/CD Catalog component lives on gitlab.com, and a
-		// self-managed instance cannot include it from there: the wizard
-		// offers the component only when this server trusts gitlab.com's
-		// OIDC issuer, i.e. when its GitLab is gitlab.com.
-		"GitLabCatalog": s.gitlabIssuers[gitLabDotComIssuer],
-		"Repos":         repos,
-		"Owner":         owner,
-		"Token":         "",
-		"TokenMasked":   "",
-		// Tokenless: the CI snippet leads with an OIDC identity token
-		// instead of GOCOV_TOKEN. The server only accepts those for a
-		// workspace it can verify through its forge connection, which is
-		// exactly what the previous step's Connect established.
-		"Tokenless": oidcReady(ws),
-		// A connection that exists but no longer works: the wizard names
-		// the reconnect as what brings tokenless uploads back.
-		"ConnectionBroken": connectionBroken(ws),
-	}
-	if owner {
-		data["Token"] = ws.Token
-		data["TokenMasked"] = maskToken(ws.Token)
-	}
-	s.addGitHubAppData(r, ws, data)
-	s.addGrantData(ws, data)
-	if len(repos) > 0 {
-		if fr := s.firstReport(r, repos); fr != nil {
-			data["FirstReport"] = fr
-		}
-		data["ReportsPosted"] = reportsPostedMsg(ws)
-	}
-	return data, nil
+// splitConnectState parses the connect state cookie value (state|prefix).
+func splitConnectState(v string) (state, prefix string) {
+	state, prefix, _ = strings.Cut(v, "|")
+	// A cookie written before the cutover carried a third field naming
+	// where the connect started; there is only one destination now.
+	prefix, _, _ = strings.Cut(prefix, "|")
+	return state, prefix
 }
 
 // oidcReady reports whether uploads from the workspace's repos can
@@ -299,40 +71,18 @@ func connectionBroken(ws *store.Workspace) bool {
 	return false
 }
 
-// firstReportView is the compact first-upload summary shown on the last
-// step. Statements and files are deliberately left for later (the done card
-// renders them as dashed placeholders); lines and coverage are enough.
-type firstReportView struct {
-	Repo        *store.Repo
-	Branch      string
-	CommitShort string
-	Pct         string
-	Covered     int64
-	Total       int64
-}
-
-// firstReport returns the newest report among the workspace's repos, or nil
-// when none has coverage yet.
-func (s *Server) firstReport(r *http.Request, repos []*store.Repo) *firstReportView {
+// latestReport returns the newest report among the workspace's repos with
+// the repo it belongs to, or nils when none has coverage yet. The page
+// and the app's poll both start from it.
+func (s *Server) latestReport(r *http.Request, repos []*store.Repo) (*store.Repo, *store.CommitReport) {
 	for _, repo := range repos {
 		rep, err := s.store.LatestCommitReport(r.Context(), repo.ID, repo.DefaultBranch)
 		if err != nil || rep == nil {
 			continue
 		}
-		commit := rep.CommitSHA
-		if len(commit) > 7 {
-			commit = commit[:7]
-		}
-		return &firstReportView{
-			Repo:        repo,
-			Branch:      rep.Branch,
-			CommitShort: commit,
-			Pct:         fmt.Sprintf("%.1f", rep.TotalPct),
-			Covered:     rep.CoveredStmts,
-			Total:       rep.TotalStmts,
-		}
+		return repo, rep
 	}
-	return nil
+	return nil, nil
 }
 
 // reportsPostedMsg infers, from the workspace's connect state, whether the
@@ -356,12 +106,197 @@ func reportsPostedMsg(ws *store.Workspace) string {
 	return ""
 }
 
-// maskToken renders the upload token as bullets plus its last four
-// characters; the reveal control swaps in the full value client-side.
-func maskToken(tok string) string {
-	bullets := strings.Repeat("•", 24)
-	if len(tok) <= 4 {
-		return bullets
+// The onboarding endpoints of the UI API (/api/ui/) — the app's side of
+// the two screens above. The picker and its claim answer where the page
+// would refuse with a 404, since the app has no page to fall back to; the
+// setup screen is a members-only read like the page it replaces, and it
+// carries no token, only its masked form and only for an owner.
+
+// onboardingDTO is the workspace picker: who is signed in, and how a
+// workspace is chosen on their forge.
+type onboardingDTO struct {
+	Forge      string `json:"forge"`
+	ForgeLabel string `json:"forge_label"`
+	Account    string `json:"account"`
+	// Mode is "install" where the page shows the GitHub App prompt and
+	// "pick" where it lists the memberships read at sign-in.
+	Mode string `json:"mode"`
+	// InstallURL is set in install mode only; it points at GitHub.
+	InstallURL string             `json:"install_url"`
+	Rows       []onboardingRowDTO `json:"rows"`
+	// MembershipCount is how many workspaces the forge reported at login,
+	// whether or not they can be claimed.
+	MembershipCount int `json:"membership_count"`
+}
+
+// onboardingRowDTO is one claimable workspace and the control it earns,
+// as registerRows resolved it.
+type onboardingRowDTO struct {
+	Prefix string `json:"prefix"`
+	State  string `json:"state"`
+}
+
+// handleAPIOnboarding implements GET /api/ui/onboarding: the Workspace
+// step as data. The ready state (?ws=) has no API twin — the app routes
+// a fresh workspace to its dashboard instead.
+func (s *Server) handleAPIOnboarding(w http.ResponseWriter, r *http.Request) {
+	u := s.registerUser(w, r)
+	if u == nil {
+		return
 	}
-	return bullets + tok[len(tok)-4:]
+	dto := onboardingDTO{
+		Forge:           u.Forge,
+		ForgeLabel:      providerLabel(u.Forge),
+		Account:         u.DisplayName,
+		Mode:            "pick",
+		Rows:            []onboardingRowDTO{},
+		MembershipCount: len(u.ForgeWorkspaces),
+	}
+	// GitHub with an App configured creates the workspace by installing the
+	// app; the token forges pick from the sign-in snapshot.
+	if s.forges.GitHubApp != nil && u.Forge == "github" {
+		dto.Mode = "install"
+		dto.InstallURL = s.forges.InstallURL(r.Context())
+		s.writeJSON(w, dto)
+		return
+	}
+	rows, err := s.registerRows(r, u)
+	if err != nil {
+		s.internalError(w, "resolving registrable workspaces", err)
+		return
+	}
+	for _, row := range rows {
+		dto.Rows = append(dto.Rows, onboardingRowDTO{Prefix: row.Prefix, State: row.State})
+	}
+	s.writeJSON(w, dto)
+}
+
+// setupInfoDTO is what the app needs to write a CI snippet for the
+// workspace: the snippet itself is assembled client-side, so this is
+// every input it varies on, plus the first-report state it waits on.
+type setupInfoDTO struct {
+	Workspace setupWorkspaceDTO `json:"workspace"`
+	Owner     bool              `json:"owner"`
+	// Tokenless: the snippet leads with an OIDC identity token instead of
+	// GOCOV_TOKEN, which only a working forge connection allows.
+	Tokenless bool `json:"tokenless"`
+	// ConnectionBroken names the reconnect as what brings tokenless back.
+	ConnectionBroken bool `json:"connection_broken"`
+	// BaseURL is the OIDC audience and GOCOV_SERVER; ServerImplicit drops
+	// the latter from the snippet on the hosted service, where the CLI
+	// already defaults to it.
+	BaseURL        string `json:"base_url"`
+	ServerImplicit bool   `json:"server_implicit"`
+	// GitLabCatalog: the CI/CD Catalog component lives on gitlab.com, so
+	// only an instance whose GitLab is gitlab.com can offer it.
+	GitLabCatalog bool   `json:"gitlab_catalog"`
+	CLIVersion    string `json:"cli_version"`
+	// TokenMasked is an owner's; the value itself comes from reveal-token.
+	TokenMasked *string        `json:"token_masked"`
+	Reporting   reportingDTO   `json:"reporting"`
+	Status      setupStatusDTO `json:"status"`
+}
+
+// setupWorkspaceDTO names the workspace the snippet is for.
+type setupWorkspaceDTO struct {
+	workspaceRefDTO
+	ForgeLabel string `json:"forge_label"`
+}
+
+// setupStatusDTO is the part the app polls: whether anything has been
+// registered under the workspace yet, and the first report once one lands.
+type setupStatusDTO struct {
+	RepoCount   int                  `json:"repo_count"`
+	FirstReport *setupFirstReportDTO `json:"first_report"`
+	// ReportsPosted is the sentence naming the identity a build status
+	// appeared as, "" when nothing was posted back.
+	ReportsPosted string `json:"reports_posted"`
+}
+
+// setupFirstReportDTO is the payoff: the number that just arrived, and
+// the commit it came from (in full — the app shortens it).
+type setupFirstReportDTO struct {
+	Repo         repoRefDTO `json:"repo"`
+	Branch       string     `json:"branch"`
+	SHA          string     `json:"sha"`
+	Coverage     float64    `json:"coverage"`
+	CoveredStmts int64      `json:"covered_stmts"`
+	TotalStmts   int64      `json:"total_stmts"`
+}
+
+// newSetupStatusDTO assembles the polled half of the setup screen, the
+// same reading setupViewData takes.
+func (s *Server) newSetupStatusDTO(r *http.Request, ws *store.Workspace) (setupStatusDTO, error) {
+	repos, err := s.workspaceRepos(r, ws)
+	if err != nil {
+		return setupStatusDTO{}, err
+	}
+	dto := setupStatusDTO{RepoCount: len(repos)}
+	if len(repos) == 0 {
+		return dto, nil
+	}
+	dto.ReportsPosted = reportsPostedMsg(ws)
+	if repo, rep := s.latestReport(r, repos); rep != nil {
+		dto.FirstReport = &setupFirstReportDTO{
+			Repo:         newRepoRefDTO(repo),
+			Branch:       rep.Branch,
+			SHA:          rep.CommitSHA,
+			Coverage:     rep.TotalPct,
+			CoveredStmts: rep.CoveredStmts,
+			TotalStmts:   rep.TotalStmts,
+		}
+	}
+	return dto, nil
+}
+
+// handleAPIWorkspaceSetup implements
+// GET /api/ui/workspaces/{forge}/{prefix}/setup: members read it, as on
+// the page; the masked token is an owner's alone.
+func (s *Server) handleAPIWorkspaceSetup(w http.ResponseWriter, r *http.Request) {
+	ws, role := s.memberWorkspace(w, r)
+	if ws == nil {
+		return
+	}
+	status, err := s.newSetupStatusDTO(r, ws)
+	if err != nil {
+		s.internalError(w, "listing workspace repos", err)
+		return
+	}
+	owner := role == store.RoleOwner
+	baseURL := strings.TrimSuffix(s.baseURL, "/")
+	dto := setupInfoDTO{
+		Workspace: setupWorkspaceDTO{
+			workspaceRefDTO: workspaceRefDTO{Forge: ws.Forge, Prefix: ws.Prefix},
+			ForgeLabel:      providerLabel(ws.Forge),
+		},
+		Owner:            owner,
+		Tokenless:        oidcReady(ws),
+		ConnectionBroken: connectionBroken(ws),
+		BaseURL:          baseURL,
+		ServerImplicit:   baseURL == hosted.DefaultServer,
+		GitLabCatalog:    s.gitlabIssuers[gitLabDotComIssuer],
+		CLIVersion:       hosted.PinnedCLIVersion,
+		Reporting:        s.newReportingDTO(r, ws),
+		Status:           status,
+	}
+	if owner {
+		dto.TokenMasked = new(maskSecret(ws.Token))
+	}
+	s.writeJSON(w, dto)
+}
+
+// handleAPIWorkspaceSetupStatus implements
+// GET /api/ui/workspaces/{forge}/{prefix}/setup/status, the app's poll
+// while it waits for the first report.
+func (s *Server) handleAPIWorkspaceSetupStatus(w http.ResponseWriter, r *http.Request) {
+	ws, _ := s.memberWorkspace(w, r)
+	if ws == nil {
+		return
+	}
+	status, err := s.newSetupStatusDTO(r, ws)
+	if err != nil {
+		s.internalError(w, "listing workspace repos", err)
+		return
+	}
+	s.writeJSON(w, status)
 }

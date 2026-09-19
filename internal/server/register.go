@@ -2,19 +2,21 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/store"
 )
 
 // Workspace registration (M3/R2): a hosted-mode user claims a workspace
-// the forge says they belong to. The page renders from the forge
+// the forge says they belong to. The picker is drawn from the forge
 // workspace snapshot stored at login (D3) — never from a live forge call,
 // because OAuth tokens are discarded at login.
 
-// registerRow is one forge workspace on the registration page.
+// registerRow is one forge workspace on the onboarding picker.
 type registerRow struct {
 	Prefix string
 	// State drives the row's control:
@@ -39,8 +41,9 @@ func (s *Server) registerUser(w http.ResponseWriter, r *http.Request) *store.Use
 		// With no provider the UI is open and there is no identity to
 		// register from; 404 rather than a login loop. When sign-in is on,
 		// requireAuth has already redirected an anonymous visitor to /login
-		// before this runs, so u is non-nil past here.
-		http.NotFound(w, r)
+		// (or answered the UI API with a 401) before this runs, so u is
+		// non-nil past here.
+		tenantNotFound(w, r)
 		return nil
 	}
 	return u
@@ -83,62 +86,88 @@ func (s *Server) registerRows(r *http.Request, u *store.User) ([]registerRow, er
 	return rows, nil
 }
 
-// handleRegisterPage implements GET /register. The onboarding wizard's
-// Workspace step is now the claim surface (it shows the same picker), so
-// this route only preserves the old URL by redirecting there. The signed-in
-// gate is unchanged; it works in both hosted and private mode once a
-// sign-in provider is configured.
-func (s *Server) handleRegisterPage(w http.ResponseWriter, r *http.Request) {
-	if s.registerUser(w, r) == nil {
-		return
-	}
-	http.Redirect(w, r, "/onboarding", http.StatusFound)
-}
+// The two refusals a claim can meet, carried in the API's JSON error.
+const (
+	notListedMsg = "workspace is not in your forge account (sign in again if it is new)"
+	notOwnerMsg  = "creating a workspace takes an admin or owner of it on the forge; ask one to register it, " +
+		"or sign in again if you have just become one"
+)
 
-// handleRegister implements POST /register: it creates the workspace and
-// its first membership atomically, then shows the upload token — the only
-// time it is ever rendered (D5: afterwards rotate-only).
-func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
-	u := s.registerUser(w, r)
-	if u == nil {
-		return
-	}
-	prefix := r.FormValue("prefix")
+// errNotListed is claimOrJoin's answer when the prefix is not one the
+// forge reported at login.
+var errNotListed = errors.New("workspace is not in the user's forge account")
 
+// claimOrJoin is the decision both registration surfaces make: check the
+// prefix against the login snapshot, then either create the workspace or
+// grant membership in the one already there. created says which happened.
+func (s *Server) claimOrJoin(r *http.Request, u *store.User, prefix string) (ws *store.Workspace, created bool, err error) {
 	// D2, enforced server-side: only workspaces the forge reported at
-	// login are claimable, no matter what the form posts.
-	inForgeList := slices.Contains(u.ForgeWorkspaces, prefix)
-	if prefix == "" || !inForgeList {
-		http.Error(w, "workspace is not in your forge account (sign in again if it is new)", http.StatusForbidden)
-		return
+	// login are claimable, no matter what the request posts.
+	if prefix == "" || !slices.Contains(u.ForgeWorkspaces, prefix) {
+		return nil, false, errNotListed
 	}
-
-	created, existing, err := s.claimWorkspace(r, u, prefix)
-	if errors.Is(err, errNotOwner) {
-		http.Error(w, "creating a workspace takes an admin or owner of it on the forge; ask one to register it, "+
-			"or sign in again if you have just become one", http.StatusForbidden)
-		return
-	}
+	fresh, existing, err := s.claimWorkspace(r, u, prefix)
 	if err != nil {
-		s.internalError(w, "registering workspace", err)
-		return
+		return nil, false, err
 	}
-	if created != nil {
-		s.log.Info("workspace registered", "prefix", created.Prefix, "forge", created.Forge, "user", u.DisplayName)
-		// Land on the wizard's "workspace ready" state (D6): the reporting
-		// capability card, then Continue to the CI step.
-		http.Redirect(w, r, onboardingReadyURL(created), http.StatusSeeOther)
-		return
+	if fresh != nil {
+		s.log.Info("workspace registered", "prefix", fresh.Prefix, "forge", fresh.Forge, "user", u.DisplayName)
+		return fresh, true, nil
 	}
-
 	// Someone else registered it first — a non-event by construction (D2):
 	// the forge says the user belongs, so membership is theirs; grant it
 	// now instead of making them wait for the next login sync.
 	if err := s.joinWorkspace(r, u, existing); err != nil {
-		s.internalError(w, "adding membership", err)
+		return nil, false, fmt.Errorf("adding membership: %w", err)
+	}
+	return existing, false, nil
+}
+
+// registerInput is the app's claim: one prefix off the picker.
+type registerInput struct {
+	Prefix string `json:"prefix"`
+}
+
+// registerResultDTO names the workspace the claim settled on, and whether
+// this request was the one that created it — what the app routes on.
+type registerResultDTO struct {
+	Forge   string `json:"forge"`
+	Prefix  string `json:"prefix"`
+	Created bool   `json:"created"`
+}
+
+// handleAPIRegister implements POST /api/ui/onboarding/register: the
+// picker's Create and Join, answering with the workspace instead of a
+// redirect. The form's refusals in the app's terms — a prefix the forge
+// never vouched for is not found, since the app only ever posts rows it
+// was handed, and creating one still takes an owner there.
+func (s *Server) handleAPIRegister(w http.ResponseWriter, r *http.Request) {
+	u := s.registerUser(w, r)
+	if u == nil {
 		return
 	}
-	http.Redirect(w, r, "/", http.StatusFound)
+	var in registerInput
+	if !readJSON(w, r, &in) {
+		return
+	}
+	prefix := strings.TrimSpace(in.Prefix)
+	if prefix == "" {
+		invalid(w, "Pick a workspace to register.")
+		return
+	}
+	ws, created, err := s.claimOrJoin(r, u, prefix)
+	switch {
+	case errors.Is(err, errNotListed):
+		httpError(w, http.StatusNotFound, "%s", notListedMsg)
+		return
+	case errors.Is(err, errNotOwner):
+		httpError(w, http.StatusForbidden, "%s", notOwnerMsg)
+		return
+	case err != nil:
+		s.internalError(w, "registering workspace", err)
+		return
+	}
+	s.writeJSON(w, registerResultDTO{Forge: ws.Forge, Prefix: ws.Prefix, Created: created})
 }
 
 // errNotOwner is claimWorkspace's answer when the forge snapshot lists the

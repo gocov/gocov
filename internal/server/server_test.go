@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -160,83 +159,126 @@ func TestHealthz(t *testing.T) {
 	})
 }
 
-func TestPages(t *testing.T) {
+// Every page route answers with the app shell: Go settles the access
+// question and the status, React draws the body. The shell is the same
+// document on all of them — only the head and the status differ. (/login
+// is the exception this fixture cannot show: with no sign-in configured
+// it redirects to the dashboard, which oauth_test.go covers.)
+func TestPageRoutesServeTheShell(t *testing.T) {
 	f := newFixture(t, nil)
-	rec := doUpload(t, f, "secret-token", map[string]string{"commit": "abc123def456789", "branch": "main"}, testProfile)
-	var resp uploadResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
+	doUpload(t, f, "secret-token", map[string]string{"commit": "abc123def456789", "branch": "main"}, testProfile)
+
+	for _, path := range []string{
+		"/",
+		"/onboarding",
+		"/_components",
+		"/workspaces/bitbucket/acme",
+		"/workspaces/bitbucket/acme/setup",
+		"/repo-settings/bitbucket/acme/widgets",
+		"/repos/bitbucket/acme/widgets",
+		"/uploads/1",
+		"/uploads/1/files/example.com/m/a.go",
+	} {
+		rec := get(f, path)
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s: status = %d, want 200", path, rec.Code)
+			continue
+		}
+		if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+			t.Errorf("%s: content-type = %q, want text/html", path, ct)
+		}
+		if !strings.Contains(rec.Body.String(), `id="root"`) {
+			t.Errorf("%s did not serve the app shell:\n%s", path, rec.Body)
+		}
 	}
 
-	get := func(path string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodGet, path, nil)
-		rec := httptest.NewRecorder()
-		f.srv.ServeHTTP(rec, req)
-		return rec
+	// A report that does not exist is a 404 — still the shell, so the app
+	// draws its not-found panel.
+	for _, path := range []string{"/repos/bitbucket/no/such", "/uploads/999"} {
+		rec := get(f, path)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s: status = %d, want 404", path, rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), `id="root"`) {
+			t.Errorf("%s: 404 did not serve the shell:\n%s", path, rec.Body)
+		}
 	}
+}
 
-	// Index lists the repo with its coverage.
-	idx := get("/")
-	if idx.Code != http.StatusOK || !strings.Contains(idx.Body.String(), "acme/widgets") {
-		t.Errorf("index: code=%d body=%s", idx.Code, idx.Body)
+// The shell is servable from a binary built without the web bundle, so
+// every status code, redirect and head injection is testable with the Go
+// toolchain alone.
+func TestShellFallbackWithoutTheWebBuild(t *testing.T) {
+	shell := string(injectHead([]byte(fallbackShell), appHead{}))
+	for _, want := range []string{"<!doctype html>", shellTitle, `<div id="root"></div>`, "not built into this binary"} {
+		if !strings.Contains(shell, want) {
+			t.Errorf("the built-in shell misses %q:\n%s", want, shell)
+		}
 	}
-	if !strings.Contains(idx.Body.String(), "80.0%") {
-		t.Errorf("index does not show coverage")
+	// Whichever shell the binary carries, head injection has an anchor to
+	// replace and the app has a root to mount on.
+	built := string(appShell())
+	if !strings.Contains(built, shellTitle) || !strings.Contains(built, `id="root"`) {
+		t.Errorf("the served shell broke its contract:\n%s", built)
 	}
+}
 
-	// Repo page lists the upload.
-	repoPage := get("/repos/bitbucket/acme/widgets")
-	if repoPage.Code != http.StatusOK || !strings.Contains(repoPage.Body.String(), "abc123def456") {
-		t.Errorf("repo page: code=%d", repoPage.Code)
+// Head injection replaces exactly the one title tag, and escapes every
+// dynamic value on the way in: a slug is attacker-chosen (anyone can name
+// a repo), so it must never be able to close a tag.
+func TestShellHeadInjectionEscapes(t *testing.T) {
+	const shell = "<head>" + shellTitle + "</head><body><div id=\"root\"></div></body>"
+	got := string(injectHead([]byte(shell), appHead{
+		Title: `acme/<script>alert(1)</script> code coverage — gocov`,
+		Extra: `<link rel="canonical" href="https://gocov.example/repos/github/acme/x">`,
+	}))
+	if strings.Contains(got, "<script>") {
+		t.Errorf("a slug broke out of the title tag:\n%s", got)
 	}
-
-	// Upload page shows per-file rows.
-	upPage := get("/uploads/1")
-	body := upPage.Body.String()
-	if upPage.Code != http.StatusOK ||
-		!strings.Contains(body, "example.com/m/a.go") ||
-		!strings.Contains(body, "example.com/m/b.go") {
-		t.Errorf("upload page: code=%d body=%s", upPage.Code, body)
+	if !strings.Contains(got, "&lt;script&gt;") {
+		t.Errorf("the title was not escaped:\n%s", got)
 	}
-
-	if rec := get("/repos/bitbucket/no/such"); rec.Code != http.StatusNotFound {
-		t.Errorf("missing repo page: code=%d, want 404", rec.Code)
+	if !strings.Contains(got, `<link rel="canonical"`) {
+		t.Errorf("the extra head tags were dropped:\n%s", got)
 	}
-	if rec := get("/uploads/999"); rec.Code != http.StatusNotFound {
-		t.Errorf("missing upload page: code=%d, want 404", rec.Code)
+	if strings.Contains(got, shellTitle) {
+		t.Errorf("the anchor tag survived the replacement:\n%s", got)
+	}
+	// Nothing to inject leaves the shell byte for byte as it was.
+	if got := string(injectHead([]byte(shell), appHead{})); got != shell {
+		t.Errorf("an empty head rewrote the shell:\n%s", got)
 	}
 }
 
 func TestStaticAssetsServed(t *testing.T) {
 	f := newFixture(t, nil)
-	for _, path := range []string{"/static/style.css", "/static/htmx.min.js", "/static/app.js", "/static/favicon.svg"} {
-		rec := get(f, path)
-		if rec.Code != http.StatusOK || rec.Body.Len() == 0 {
-			t.Errorf("%s: code=%d len=%d", path, rec.Code, rec.Body.Len())
-		}
-		if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "max-age") {
-			t.Errorf("%s: no cache header (%q)", path, cc)
-		}
+	rec := get(f, "/static/favicon.svg")
+	if rec.Code != http.StatusOK || rec.Body.Len() == 0 {
+		t.Errorf("favicon: code=%d len=%d", rec.Code, rec.Body.Len())
+	}
+	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "max-age") {
+		t.Errorf("favicon: no cache header (%q)", cc)
 	}
 }
 
 func TestNotFoundPage(t *testing.T) {
 	f := newFixture(t, nil)
 
-	t.Run("catch-all renders styled page for browser GET", func(t *testing.T) {
+	t.Run("catch-all serves the shell for a browser GET", func(t *testing.T) {
 		rec := getAccept(f, "/does/not/exist", "text/html")
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("status = %d, want 404", rec.Code)
 		}
-		body := rec.Body.String()
-		if !strings.Contains(body, "404 · not found") {
-			t.Errorf("body missing 404 badge:\n%s", body)
-		}
-		if !strings.Contains(body, "/does/not/exist") {
-			t.Errorf("body missing requested path:\n%s", body)
+		if !strings.Contains(rec.Body.String(), `id="root"`) {
+			t.Errorf("body is not the shell:\n%s", rec.Body)
 		}
 		if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 			t.Errorf("content-type = %q, want text/html", ct)
+		}
+		// The requested path is never echoed back: a 404 must read the same
+		// for a mistyped URL and for a repo the viewer may not see (D3).
+		if strings.Contains(rec.Body.String(), "/does/not/exist") {
+			t.Errorf("the 404 echoes the requested path:\n%s", rec.Body)
 		}
 	})
 
@@ -245,28 +287,8 @@ func TestNotFoundPage(t *testing.T) {
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("status = %d, want 404", rec.Code)
 		}
-		if strings.Contains(rec.Body.String(), "404 · not found") {
-			t.Error("plain 404 should not carry the styled page")
-		}
-	})
-
-	t.Run("missing repo renders styled page", func(t *testing.T) {
-		rec := get(f, "/repos/bitbucket/acme/ghost")
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("status = %d, want 404", rec.Code)
-		}
-		if !strings.Contains(rec.Body.String(), "404 · not found") {
-			t.Errorf("missing repo did not render styled 404:\n%s", rec.Body.String())
-		}
-	})
-
-	t.Run("missing upload renders styled page", func(t *testing.T) {
-		rec := get(f, "/uploads/9999")
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("status = %d, want 404", rec.Code)
-		}
-		if !strings.Contains(rec.Body.String(), "404 · not found") {
-			t.Errorf("missing upload did not render styled 404:\n%s", rec.Body.String())
+		if strings.Contains(rec.Body.String(), `id="root"`) {
+			t.Error("a plain 404 should not carry the shell")
 		}
 	})
 }

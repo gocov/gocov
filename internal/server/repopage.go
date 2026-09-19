@@ -8,19 +8,20 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"fmt"
 	"maps"
 	"net/http"
 	"slices"
 	"strconv"
-	"strings"
+	"time"
 
 	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/store"
 )
 
-// handleRepo implements GET /repos/{forge}/{workspace}/{repo} — stats,
-// badge embed, branch filter and the upload list.
+// handleRepo implements GET /repos/{forge}/{workspace}/{repo}. The page
+// answer is the access decision plus the head tags a crawler reads; the
+// numbers behind it come from the UI API's twin of this route, so the
+// page itself loads only the repo row the decision needs.
 func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	repo, err := s.store.RepoBySlug(r.Context(), r.PathValue("forge"), r.PathValue("slug"))
 	if errors.Is(err, store.ErrNotFound) {
@@ -31,9 +32,58 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "loading repo", err)
 		return
 	}
+	if _, ok := s.authorizeReport(w, r, repo); !ok {
+		return
+	}
+	// Only past the access decision may the response name the repo.
+	s.serveApp(w, r, http.StatusOK, s.repoPageHead(repo))
+}
+
+// repoPageData is one repo's page as read from the store: the standing of
+// the selected branch, the trend behind it, the files of its latest
+// report and a page of uploads. The UI API copies it into its DTO.
+type repoPageData struct {
+	Repo *store.Repo
+	// Member is authorizeReport's verdict: the viewer is inside the
+	// workspace (or the instance is open), rather than admitted through
+	// the public-report branch.
+	Member bool
+	// Branch is the ?branch filter, empty for "all branches";
+	// TrendBranch is the branch the verdict, trend and files describe.
+	Branch      string
+	TrendBranch string
+	Branches    []string
+	Latest      *store.CommitReport
+	// Base is the report Latest is measured against, nil when the branch
+	// has no earlier passing report.
+	Base         *store.CommitReport
+	Verdict      *repoVerdictView
+	LastUpload   *store.Upload
+	LastProv     *provView
+	FilesView    *filesViewData
+	TrendReports []*store.CommitReport
+	Settings     bool
+	Uploads      []*store.Upload
+	Page         int
+	HasOlder     bool
+}
+
+// buildRepoPage assembles the repo page. A false second result means the
+// answer — a not-found, a refusal or an internal error — is already
+// written.
+func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPageData, bool) {
+	repo, err := s.store.RepoBySlug(r.Context(), r.PathValue("forge"), r.PathValue("slug"))
+	if errors.Is(err, store.ErrNotFound) {
+		s.reportNotFound(w, r)
+		return nil, false
+	}
+	if err != nil {
+		s.internalError(w, "loading repo", err)
+		return nil, false
+	}
 	member, ok := s.authorizeReport(w, r, repo)
 	if !ok {
-		return
+		return nil, false
 	}
 
 	branch := r.FormValue("branch")
@@ -47,7 +97,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	recent, err := s.store.ListUploads(r.Context(), repo.ID, recentUploads)
 	if err != nil {
 		s.internalError(w, "listing uploads", err)
-		return
+		return nil, false
 	}
 	seen := map[string]bool{}
 	for _, u := range recent {
@@ -65,11 +115,11 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 			fetched = recent
 		} else if fetched, err = s.store.ListUploads(r.Context(), repo.ID, limit); err != nil {
 			s.internalError(w, "listing uploads", err)
-			return
+			return nil, false
 		}
 	} else if fetched, err = s.store.ListBranchUploads(r.Context(), repo.ID, branch, limit); err != nil {
 		s.internalError(w, "listing branch uploads", err)
-		return
+		return nil, false
 	}
 	start := min(page*uploadsPageSize, len(fetched))
 	end := min(start+uploadsPageSize, len(fetched))
@@ -82,7 +132,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	trendReports, err := s.store.ListBranchCommitReports(r.Context(), repo.ID, trendBranch, trendReportLimit)
 	if err != nil {
 		s.internalError(w, "listing reports for trend", err)
-		return
+		return nil, false
 	}
 
 	// The verdict, stats and files view all describe the
@@ -94,25 +144,31 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		latest = l
 	} else if !errors.Is(err, store.ErrNotFound) {
 		s.internalError(w, "loading latest report", err)
-		return
+		return nil, false
 	}
 
-	var (
-		verdict   *repoVerdictView
-		lastProv  *provView
-		uncovered int64
-		filesView *filesViewData
-	)
+	d := &repoPageData{
+		Repo:         repo,
+		Member:       member,
+		Branch:       branch,
+		TrendBranch:  trendBranch,
+		Branches:     branches,
+		Latest:       latest,
+		TrendReports: trendReports,
+		Uploads:      uploads,
+		Page:         page,
+		HasOlder:     hasOlder,
+	}
 	if latest != nil {
 		_, base := s.branchBaseReport(r.Context(), repo.ID, trendBranch)
-		verdict = s.repoVerdict(latest, repo, base)
-		uncovered = latest.TotalStmts - latest.CoveredStmts
+		d.Base = base
+		d.Verdict = s.repoVerdict(latest, repo, base)
 		if lu, err := s.store.Upload(r.Context(), latest.UploadID); err == nil {
 			p := s.uploadProvenance(r.Context(), lu)
-			lastProv = &p
+			d.LastUpload, d.LastProv = lu, &p
 			baseUpload, baseFiles := s.baselineUpload(r.Context(), repo, lu)
-			if fv, err := s.buildFilesViewData(r.Context(), lu, baseUpload, baseFiles, "Files on "+trendBranch); err == nil {
-				filesView = &fv
+			if fv, err := s.buildFilesViewData(r.Context(), lu, baseUpload, baseFiles); err == nil {
+				d.FilesView = &fv
 			} else {
 				s.log.Warn("loading files for repo page", "upload", lu.ID, "err", err)
 			}
@@ -123,30 +179,164 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	// admitted through the public branch — anonymous or a signed-in
 	// non-member — gets neither the button nor the workspace lookup
 	// behind it.
-	settings := member && s.forges.WorkspaceFor(r.Context(), repo.Slug, repo.Forge) != nil
+	d.Settings = member && s.forges.WorkspaceFor(r.Context(), repo.Slug, repo.Forge) != nil
+	return d, true
+}
 
-	s.render(w, r, "repo.html", map[string]any{
-		"Repo":          repo,
-		"Latest":        latest,
-		"Verdict":       verdict,
-		"Uncovered":     uncovered,
-		"LastUpload":    lastProv,
-		"FilesView":     filesView,
-		"Settings":      settings,
-		"PublicView":    s.publicView(r),
-		"BadgeMarkdown": s.badgeMarkdown(repo),
-		"GateSummary":   gateSummary(repo.Gate),
-		"Branches":      branches,
-		"Branch":        branch,
-		"TrendBranch":   trendBranch,
-		"Trend":         newTrendView(trendBranch, trendReports, repo.Gate.MinCoverage),
-		"Uploads":       uploads,
-		"Page":          page,
-		"PrevPage":      page - 1,
-		"NextPage":      page + 1,
-		"HasOlder":      hasOlder,
-		"BaseURL":       strings.TrimSuffix(s.baseURL, "/"),
-	})
+// repoPageDTO is the repo page for the app. The trend arrives as raw
+// points and the files as a flat list: the chart's geometry and the
+// directory tree are the client's to build.
+type repoPageDTO struct {
+	Repo        repoHeadDTO     `json:"repo"`
+	PublicView  bool            `json:"public_view"`
+	Branches    []string        `json:"branches"`
+	Branch      string          `json:"branch"`
+	TrendBranch string          `json:"trend_branch"`
+	Summary     *repoSummaryDTO `json:"summary"`
+	Trend       []trendPointDTO `json:"trend"`
+	Files       *filesViewDTO   `json:"files"`
+	Uploads     []uploadRowDTO  `json:"uploads"`
+	Page        int             `json:"page"`
+	HasOlder    bool            `json:"has_older"`
+}
+
+type repoHeadDTO struct {
+	repoRefDTO
+	DefaultBranch string  `json:"default_branch"`
+	Gate          gateDTO `json:"gate"`
+	BadgeURL      string  `json:"badge_url"`
+	BadgeMarkdown string  `json:"badge_markdown"`
+	// CanSettings is the settings button: members of a tracked workspace.
+	CanSettings bool `json:"can_settings"`
+}
+
+// repoSummaryDTO is the branch's current standing; nil until the branch
+// has a report.
+type repoSummaryDTO struct {
+	Verdict      verdictDTO     `json:"verdict"`
+	Commit       repoCommitDTO  `json:"commit"`
+	CoveredStmts int64          `json:"covered_stmts"`
+	TotalStmts   int64          `json:"total_stmts"`
+	LastUpload   *lastUploadDTO `json:"last_upload"`
+}
+
+type repoCommitDTO struct {
+	UploadID  int64     `json:"upload_id"`
+	SHA       string    `json:"sha"`
+	At        time.Time `json:"at"`
+	Branch    string    `json:"branch"`
+	PRID      string    `json:"pr_id"`
+	IsDefault bool      `json:"is_default"`
+}
+
+type lastUploadDTO struct {
+	At      time.Time `json:"at"`
+	CILabel string    `json:"ci_label"`
+}
+
+// trendPointDTO is one point of the coverage trend, oldest first.
+type trendPointDTO struct {
+	UploadID   int64     `json:"upload_id"`
+	SHA        string    `json:"sha"`
+	Coverage   float64   `json:"coverage"`
+	At         time.Time `json:"at"`
+	GateFailed bool      `json:"gate_failed"`
+}
+
+// uploadRowDTO is one row of the upload history.
+type uploadRowDTO struct {
+	ID         int64     `json:"id"`
+	SHA        string    `json:"sha"`
+	Branch     string    `json:"branch"`
+	PRID       string    `json:"pr_id"`
+	Coverage   float64   `json:"coverage"`
+	GateFailed bool      `json:"gate_failed"`
+	At         time.Time `json:"at"`
+}
+
+// handleAPIRepo implements GET /api/ui/repos/{forge}/{slug...}, the repo
+// page's data. Like the page it may be read anonymously on a public repo.
+func (s *Server) handleAPIRepo(w http.ResponseWriter, r *http.Request) {
+	d, ok := s.buildRepoPage(w, r)
+	if !ok {
+		return
+	}
+	dto := repoPageDTO{
+		Repo: repoHeadDTO{
+			repoRefDTO:    newRepoRefDTO(d.Repo),
+			DefaultBranch: d.Repo.DefaultBranch,
+			Gate:          newGateDTO(d.Repo.Gate),
+			BadgeURL:      badgeURL(d.Repo),
+			BadgeMarkdown: s.badgeMarkdown(d.Repo),
+			CanSettings:   d.Settings,
+		},
+		PublicView:  s.publicView(r),
+		Branches:    d.Branches,
+		Branch:      d.Branch,
+		TrendBranch: d.TrendBranch,
+		Trend:       []trendPointDTO{},
+		Files:       newFilesViewDTO(d.FilesView),
+		Uploads:     make([]uploadRowDTO, 0, len(d.Uploads)),
+		Page:        d.Page,
+		HasOlder:    d.HasOlder,
+	}
+	if dto.Branches == nil {
+		dto.Branches = []string{}
+	}
+	// The trend reads oldest first and skips PR reports, the same series
+	// the chart plots.
+	for _, report := range slices.Backward(d.TrendReports) {
+		if report.PRID != "" {
+			continue
+		}
+		dto.Trend = append(dto.Trend, trendPointDTO{
+			UploadID:   report.UploadID,
+			SHA:        report.CommitSHA,
+			Coverage:   report.TotalPct,
+			At:         report.CreatedAt,
+			GateFailed: report.GateFailed,
+		})
+	}
+	for _, u := range d.Uploads {
+		dto.Uploads = append(dto.Uploads, uploadRowDTO{
+			ID:         u.ID,
+			SHA:        u.CommitSHA,
+			Branch:     u.Branch,
+			PRID:       u.PRID,
+			Coverage:   u.TotalPct,
+			GateFailed: u.GateFailed,
+			At:         u.CreatedAt,
+		})
+	}
+	if d.Latest != nil {
+		summary := &repoSummaryDTO{
+			Verdict: verdictDTO{
+				State:    d.Verdict.State,
+				Coverage: d.Latest.TotalPct,
+				Reason:   d.Verdict.Reason,
+			},
+			Commit: repoCommitDTO{
+				UploadID:  d.Latest.UploadID,
+				SHA:       d.Latest.CommitSHA,
+				At:        d.Latest.CreatedAt,
+				Branch:    d.Latest.Branch,
+				PRID:      d.Latest.PRID,
+				IsDefault: d.Latest.Branch == d.Repo.DefaultBranch,
+			},
+			CoveredStmts: d.Latest.CoveredStmts,
+			TotalStmts:   d.Latest.TotalStmts,
+		}
+		if d.Base != nil {
+			delta := d.Latest.TotalPct - d.Base.TotalPct
+			summary.Verdict.Delta = &delta
+			summary.Verdict.Base = &baseRefDTO{UploadID: d.Base.UploadID, SHA: d.Base.CommitSHA, Coverage: d.Base.TotalPct}
+		}
+		if d.LastUpload != nil {
+			summary.LastUpload = &lastUploadDTO{At: d.LastUpload.CreatedAt, CILabel: d.LastProv.CILabel}
+		}
+		dto.Summary = summary
+	}
+	s.writeJSON(w, dto)
 }
 
 const (
@@ -154,6 +344,9 @@ const (
 	// recentUploads bounds the newest-uploads fetch that fills the branch
 	// selector, and doubles as the first pages' history without a second query.
 	recentUploads = 100
+	// trendReportLimit bounds the branch history behind the coverage trend
+	// and the dashboard's sparklines.
+	trendReportLimit = 60
 )
 
 // reportBaseline pairs a branch's newest merged report (reports come newest
@@ -183,60 +376,20 @@ func (s *Server) branchBaseReport(ctx context.Context, repoID int64, branch stri
 	return reportBaseline(reports)
 }
 
-// gateSummary renders the repo's gate rules for the stats card.
-func gateSummary(g store.Gate) string {
-	var parts []string
-	if g.MinCoverage != nil {
-		parts = append(parts, fmt.Sprintf("total ≥ %.4g%%", *g.MinCoverage))
-	}
-	if g.MinDiffCoverage != nil {
-		parts = append(parts, fmt.Sprintf("diff ≥ %.4g%%", *g.MinDiffCoverage))
-	}
-	if g.MaxCoverageDrop != nil {
-		parts = append(parts, fmt.Sprintf("drop ≤ %.4g%%", *g.MaxCoverageDrop))
-	}
-	return strings.Join(parts, ", ")
-}
-
 // repoVerdictView is the coverage verdict at the top of the repo page: the
-// default branch's current standing against its gate, stated once. It mirrors
-// the upload page's verdict but reads a merged commit report.
+// branch's current standing against its gate, stated once. It mirrors the
+// upload page's verdict but reads a merged commit report.
 type repoVerdictView struct {
-	State      string // "pass", "fail" or "neutral" (no gate configured)
-	Pct        float64
-	CovClass   string
-	Delta      *deltaView // total coverage vs the branch baseline
-	Reason     string     // prose walk-through of the gate rules and their outcome
-	CommitID   int64      // upload id of the latest commit, for the detail link
-	CommitSHA  string
-	CommitAgo  string
-	Branch     string
-	IsDefault  bool
-	PRID       string
-	BaseID     int64
-	BaseSHA    string
-	BasePctStr string
+	State  string // "pass", "fail" or "neutral" (no gate configured)
+	Reason string // prose walk-through of the gate rules and their outcome
 }
 
-// repoVerdict assembles the verdict card from the branch's newest merged
+// repoVerdict assembles the verdict from the branch's newest merged
 // report and the report it is compared against (nil when there is none).
 func (s *Server) repoVerdict(latest *store.CommitReport, repo *store.Repo, base *store.CommitReport) *repoVerdictView {
-	v := &repoVerdictView{
-		Pct:       latest.TotalPct,
-		CovClass:  covClass(latest.TotalPct),
-		CommitID:  latest.UploadID,
-		CommitSHA: latest.CommitSHA,
-		CommitAgo: timeAgo(latest.CreatedAt),
-		Branch:    latest.Branch,
-		IsDefault: latest.Branch == repo.DefaultBranch,
-		PRID:      latest.PRID,
-	}
+	v := &repoVerdictView{State: "pass"}
 	var baseTotal float64
 	if base != nil {
-		v.Delta = newDeltaView(latest.TotalPct - base.TotalPct)
-		v.BaseID = base.UploadID
-		v.BaseSHA = base.CommitSHA
-		v.BasePctStr = fmt.Sprintf("%.1f%%", base.TotalPct)
 		baseTotal = base.TotalPct
 	}
 	switch {
@@ -244,8 +397,6 @@ func (s *Server) repoVerdict(latest *store.CommitReport, repo *store.Repo, base 
 		v.State = "neutral"
 	case latest.GateFailed:
 		v.State = "fail"
-	default:
-		v.State = "pass"
 	}
 	v.Reason = core.GateReason(latest.TotalPct, latest.DiffCoverage, repo.Gate, baseTotal, base != nil, "The latest commit")
 	return v

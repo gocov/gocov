@@ -306,7 +306,7 @@ func main() {
 	if cfg.Auth {
 		auths = []auth.Provider{
 			devAuth{forge: "bitbucket", workspaces: []string{"acme", "personal", "bb-connected", "bb-broken"}},
-			devAuth{forge: "github", workspaces: []string{"gh-new", "gh-connected", "gh-broken"}},
+			devAuth{forge: "github", workspaces: []string{"gh-new", "gh-broken", "gh-connected"}},
 			devAuth{forge: "gitlab", workspaces: []string{"gl-group/platform", "gl-connected", "gl-broken", "gl-personal"}},
 		}
 		hosted = true

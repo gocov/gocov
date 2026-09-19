@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 	"testing"
 	"time"
 
@@ -154,7 +153,7 @@ func TestGitLabConnectFlow(t *testing.T) {
 		t.Errorf("redirect_uri = %q, must equal the sign-in callback exactly", got)
 	}
 	stateCk := cookieNamed(t, start, glConnectStateCookie)
-	state, prefix, _ := splitConnectState(stateCk.Value)
+	state, prefix := splitConnectState(stateCk.Value)
 	if prefix != "grp/sub" {
 		t.Errorf("cookie prefix = %q", prefix)
 	}
@@ -163,22 +162,13 @@ func TestGitLabConnectFlow(t *testing.T) {
 	if cb.Code != http.StatusSeeOther {
 		t.Fatalf("callback: status = %d, body = %s", cb.Code, cb.Body)
 	}
-	// The nested prefix must come back %2F-encoded in the redirect.
-	if loc := cb.Header().Get("Location"); loc != "/workspaces/gitlab/grp%2Fsub?connected=1" {
-		t.Errorf("callback redirect = %q", loc)
+	// The nested prefix must come back escaped in the redirect's ?ws=.
+	if loc := cb.Header().Get("Location"); loc != "/?ws=gitlab%2Fgrp%2Fsub" {
+		t.Errorf("callback redirect = %q, want the workspace's dashboard", loc)
 	}
 	ws := f.workspace(t)
 	if ws.GitLabGrantAccount != "covbot" || ws.GitLabRefreshToken != "rt-0" || ws.GitLabGrantBroken {
 		t.Errorf("stored grant = %q/%q/broken=%v", ws.GitLabGrantAccount, ws.GitLabRefreshToken, ws.GitLabGrantBroken)
-	}
-
-	// The settings page renders the connected identity and the notice.
-	body := get(f.fixture, "/workspaces/gitlab/grp%2Fsub?connected=1", sess).Body.String()
-	if !strings.Contains(body, "@covbot") || !strings.Contains(body, "Disconnect") {
-		t.Error("settings page must show the connected account and disconnect")
-	}
-	if !strings.Contains(body, "post as @covbot") {
-		t.Error("connected notice must state the posting identity")
 	}
 }
 
@@ -194,9 +184,12 @@ func TestGitLabConnectCallbackRejects(t *testing.T) {
 		rec.Header().Get("Location") != "/login?error=1" {
 		t.Errorf("state mismatch: %d -> %q, want the sign-in flow's failure redirect", rec.Code, rec.Header().Get("Location"))
 	}
-	// No session.
-	if rec := get(f.fixture, "/oauth/gitlab/callback?code=x&state=s", mk("s|grp/sub")); rec.Code != http.StatusForbidden {
-		t.Errorf("no session: status = %d, want 403", rec.Code)
+	// No session: back to sign-in, aimed at the settings page the Connect
+	// button sits on.
+	if rec := get(f.fixture, "/oauth/gitlab/callback?code=x&state=s", mk("s|grp/sub")); rec.Code != http.StatusSeeOther ||
+		rec.Header().Get("Location") != "/login?next=%2Fworkspaces%2Fgitlab%2Fgrp%252Fsub" {
+		t.Errorf("no session: %d -> %q, want the login redirect back to the settings page",
+			rec.Code, rec.Header().Get("Location"))
 	}
 	// A workspace the user is no member of.
 	if err := f.store.CreateWorkspace(t.Context(),
@@ -308,45 +301,39 @@ func TestGitLabDisconnect(t *testing.T) {
 	f, sess := newGLConnectFixture(t)
 	f.grant(t, "covbot", "rt-0", false)
 
-	rec := postForm(f.fixture, "/workspaces/gitlab/grp%2Fsub/disconnect", url.Values{}, sess)
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("status = %d", rec.Code)
-	}
+	wantStatus(t, postJSON(t, f.fixture, "/api/ui/workspaces/gitlab/grp%2Fsub/disconnect", nil, sess),
+		"disconnect", http.StatusOK)
 	ws := f.workspace(t)
 	if ws.GitLabGrantAccount != "" || ws.GitLabRefreshToken != "" || ws.GitLabGrantBroken {
 		t.Errorf("after disconnect: %q/%q/%v", ws.GitLabGrantAccount, ws.GitLabRefreshToken, ws.GitLabGrantBroken)
 	}
 }
 
-func TestSettingsPageGitLabStates(t *testing.T) {
+// The Reporting card, as the settings and setup screens read it: off
+// with the consent link while unconnected, on with the account its posts
+// carry once granted, and broken — still linking the consent, which is
+// the reconnect — when the grant stops working.
+func TestGitLabReportingStates(t *testing.T) {
 	f, sess := newGLConnectFixture(t)
+	const (
+		path       = "/api/ui/workspaces/gitlab/grp%2Fsub"
+		connectURL = "/workspaces/gitlab/grp%2Fsub/connect"
+	)
 
-	body := get(f.fixture, "/workspaces/gitlab/grp%2Fsub", sess).Body.String()
-	if !strings.Contains(body, "Grant write access") || !strings.Contains(body, "under your own account") {
-		t.Error("unconnected settings must offer to grant write access and state the identity caveat")
-	}
-
-	f.grant(t, "covbot", "rt-0", true)
-	body = get(f.fixture, "/workspaces/gitlab/grp%2Fsub", sess).Body.String()
-	if !strings.Contains(body, "Reconnect needed") || !strings.Contains(body, "Grant write access again") {
-		t.Error("broken grant must surface the reconnect state")
-	}
-}
-
-func TestGitLabSetupPageRecommendsConnect(t *testing.T) {
-	f, sess := newGLConnectFixture(t)
-
-	body := get(f.fixture, "/onboarding?ws=grp%2Fsub", sess).Body.String()
-	if !strings.Contains(body, "/workspaces/gitlab/grp%2Fsub/connect") {
-		t.Error("ready state must offer the connect with the encoded prefix link")
+	got := decodeJSON[workspaceSettingsDTO](t, get(f.fixture, path, sess))
+	if !got.Reporting.Available || got.Reporting.State != "off" || got.Reporting.ConnectURL != connectURL {
+		t.Errorf("unconnected reporting = %+v, want the consent link", got.Reporting)
 	}
 
 	f.grant(t, "covbot", "rt-0", false)
-	body = get(f.fixture, "/onboarding?ws=grp%2Fsub", sess).Body.String()
-	if strings.Contains(body, "/workspaces/gitlab/grp%2Fsub/connect") {
-		t.Error("connected workspace must not offer the connect link")
+	got = decodeJSON[workspaceSettingsDTO](t, get(f.fixture, path, sess))
+	if got.Reporting.State != "on" || got.Reporting.Account != "covbot" {
+		t.Errorf("connected reporting = %+v, want it posting as covbot", got.Reporting)
 	}
-	if !strings.Contains(body, "@covbot") {
-		t.Error("connected workspace must show the posting identity")
+
+	f.grant(t, "covbot", "rt-0", true)
+	got = decodeJSON[workspaceSettingsDTO](t, get(f.fixture, path, sess))
+	if got.Reporting.State != "broken" || got.Reporting.ConnectURL != connectURL {
+		t.Errorf("broken reporting = %+v, want the reconnect link", got.Reporting)
 	}
 }

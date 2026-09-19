@@ -12,11 +12,11 @@ import (
 	"errors"
 	"fmt"
 	"iter"
-	"maps"
 	"net/http"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/diffcov"
@@ -24,54 +24,198 @@ import (
 	"github.com/gocov/gocov/internal/store"
 )
 
-// handleUploadPage implements GET /uploads/{id} — the coverage verdict for
-// one upload, the files it moved (before → after against the branch
-// baseline) and the upload's provenance.
+// handleUploadPage implements GET /uploads/{id}. Like the repo page it
+// answers with the access decision and the head tags; the report itself
+// is the UI API's to assemble.
 func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
 	upload, repo, ok := s.reportUpload(w, r)
 	if !ok {
 		return
+	}
+	s.serveApp(w, r, http.StatusOK, uploadPageHead(repo, upload))
+}
+
+// uploadPageData is one upload as read from the store: its verdict
+// against the repo's gate, the files it moved against the baseline, and
+// where it came from. The UI API copies it into its DTO.
+type uploadPageData struct {
+	Upload *store.Upload
+	Repo   *store.Repo
+	// Base is the upload this one is compared against, nil when there is
+	// nothing earlier to compare with.
+	Base      *store.Upload
+	FilesView filesViewData
+	Verdict   verdictView
+	Prov      provView
+}
+
+// buildUploadPage assembles the upload page. A false second result means
+// the answer is already written.
+func (s *Server) buildUploadPage(w http.ResponseWriter, r *http.Request) (*uploadPageData, bool) {
+	upload, repo, ok := s.reportUpload(w, r)
+	if !ok {
+		return nil, false
 	}
 
 	// The baseline is the newest earlier gate-passing upload on the same
 	// branch; its per-file coverage feeds the before → after column, and its
 	// total feeds the headline delta — the same baseline the source view uses.
 	base, baseFiles := s.baselineUpload(r.Context(), repo, upload)
-	fv, err := s.buildFilesViewData(r.Context(), upload, base, baseFiles, "")
+	fv, err := s.buildFilesViewData(r.Context(), upload, base, baseFiles)
 	if err != nil {
 		s.internalError(w, "loading upload files", err)
-		return
+		return nil, false
 	}
-
-	s.render(w, r, "upload.html", map[string]any{
-		"Upload":      upload,
-		"Repo":        repo,
-		"FilesView":   fv,
-		"Verdict":     s.uploadVerdict(upload, repo, base, fv.TotalFiles),
-		"Prov":        s.uploadProvenance(r.Context(), upload),
-		"CanDownload": upload.RawBlobKey != "",
-		"Download":    fmt.Sprintf("/uploads/%d/profile", upload.ID),
-		"PublicView":  s.publicView(r),
-	})
+	return &uploadPageData{
+		Upload:    upload,
+		Repo:      repo,
+		Base:      base,
+		FilesView: fv,
+		Verdict:   s.uploadVerdict(upload, repo, base),
+		Prov:      s.uploadProvenance(r.Context(), upload),
+	}, true
 }
 
-// filesViewData is the model behind the "filesview" partial — the files
-// card with its Tree/List switch and filter tabs — shared by the upload page
-// and the repo page.
+// uploadProfileURL is the raw-profile download route for an upload.
+func uploadProfileURL(u *store.Upload) string {
+	return fmt.Sprintf("/uploads/%d/profile", u.ID)
+}
+
+// uploadPageDTO is the upload page for the app.
+type uploadPageDTO struct {
+	Repo         repoRefDTO    `json:"repo"`
+	PublicView   bool          `json:"public_view"`
+	Upload       uploadHeadDTO `json:"upload"`
+	Verdict      verdictDTO    `json:"verdict"`
+	CoveredStmts int64         `json:"covered_stmts"`
+	TotalStmts   int64         `json:"total_stmts"`
+	FileCount    int           `json:"file_count"`
+	Format       string        `json:"format"`
+	Diff         *diffCovDTO   `json:"diff"`
+	Files        *filesViewDTO `json:"files"`
+	Provenance   provenanceDTO `json:"provenance"`
+	// DownloadURL is the raw profile's route, null when the upload kept no
+	// profile to hand back.
+	DownloadURL *string `json:"download_url"`
+}
+
+type uploadHeadDTO struct {
+	ID            int64     `json:"id"`
+	SHA           string    `json:"sha"`
+	Branch        string    `json:"branch"`
+	PRID          string    `json:"pr_id"`
+	At            time.Time `json:"at"`
+	CommitMessage string    `json:"commit_message"`
+	CommitAuthor  string    `json:"commit_author"`
+	Tokenless     bool      `json:"tokenless"`
+}
+
+// diffCovDTO is the PR diff's coverage; absent for uploads whose diff
+// could not be fetched (or that are not PR builds at all).
+type diffCovDTO struct {
+	Coverage       float64 `json:"coverage"`
+	CoveredLines   int64   `json:"covered_lines"`
+	TotalLines     int64   `json:"total_lines"`
+	ChangedFiles   int     `json:"changed_files"`
+	UnmatchedFiles int     `json:"unmatched_files"`
+}
+
+// provenanceDTO is the Upload card: how this upload arrived. Every field
+// degrades to empty, as it does on the page.
+type provenanceDTO struct {
+	ReceivedAt   time.Time `json:"received_at"`
+	ProfileName  string    `json:"profile_name"`
+	ProfileSize  string    `json:"profile_size"`
+	Format       string    `json:"format"`
+	CILabel      string    `json:"ci_label"`
+	CIRunURL     string    `json:"ci_run_url"`
+	Uploader     string    `json:"uploader"`
+	UploaderKind string    `json:"uploader_kind"`
+	Part         string    `json:"part"`
+	PartsNote    string    `json:"parts_note"`
+	Processed    string    `json:"processed"`
+	Ignored      string    `json:"ignored"`
+}
+
+// handleAPIUpload implements GET /api/ui/uploads/{id}.
+func (s *Server) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
+	d, ok := s.buildUploadPage(w, r)
+	if !ok {
+		return
+	}
+	u := d.Upload
+	dto := uploadPageDTO{
+		Repo:       newRepoRefDTO(d.Repo),
+		PublicView: s.publicView(r),
+		Upload: uploadHeadDTO{
+			ID:            u.ID,
+			SHA:           u.CommitSHA,
+			Branch:        u.Branch,
+			PRID:          u.PRID,
+			At:            u.CreatedAt,
+			CommitMessage: u.Meta.CommitMessage,
+			CommitAuthor:  u.Meta.CommitAuthor,
+			Tokenless:     u.Meta.Tokenless,
+		},
+		Verdict: verdictDTO{
+			State:    d.Verdict.State,
+			Coverage: u.TotalPct,
+			Reason:   d.Verdict.Reason,
+		},
+		CoveredStmts: u.CoveredStmts,
+		TotalStmts:   u.TotalStmts,
+		FileCount:    d.FilesView.TotalFiles,
+		Format:       u.Format,
+		Files:        newFilesViewDTO(&d.FilesView),
+		Provenance: provenanceDTO{
+			ReceivedAt:   u.CreatedAt,
+			ProfileName:  d.Prov.ProfileName,
+			ProfileSize:  d.Prov.ProfileSize,
+			Format:       d.Prov.Format,
+			CILabel:      d.Prov.CILabel,
+			CIRunURL:     d.Prov.CIRunURL,
+			Uploader:     d.Prov.Uploader,
+			UploaderKind: d.Prov.UploaderKind,
+			Part:         d.Prov.Part,
+			PartsNote:    d.Prov.PartsNote,
+			Processed:    d.Prov.Processed,
+			Ignored:      d.Prov.Ignored,
+		},
+	}
+	if d.Base != nil {
+		delta := u.TotalPct - d.Base.TotalPct
+		dto.Verdict.Delta = &delta
+		dto.Verdict.Base = &baseRefDTO{UploadID: d.Base.ID, SHA: d.Base.CommitSHA, Coverage: d.Base.TotalPct}
+	}
+	if dc := u.DiffCoverage; dc != nil {
+		dto.Diff = &diffCovDTO{
+			Coverage:       dc.Percent(),
+			CoveredLines:   dc.CoveredLines,
+			TotalLines:     dc.TotalLines,
+			ChangedFiles:   len(dc.Files),
+			UnmatchedFiles: len(dc.UnmatchedFiles),
+		}
+	}
+	if u.RawBlobKey != "" {
+		dto.DownloadURL = new(uploadProfileURL(u))
+	}
+	s.writeJSON(w, dto)
+}
+
+// filesViewData is the model behind the files card, shared by the upload
+// page and the repo page. The directory tree the card draws is the
+// client's to build from these rows.
 type filesViewData struct {
 	UploadID   int64
 	Files      []uploadFileRow
-	TreeRows   []treeRow
-	Counts     fileCounts
 	HasBase    bool
 	TotalFiles int
-	Heading    string
 }
 
-// buildFilesViewData loads an upload's files and builds the flat list and
-// the directory tree with their filter counts and baseline comparisons. An
-// upload without per-file data yields an empty view, not an error.
-func (s *Server) buildFilesViewData(ctx context.Context, upload *store.Upload, base *store.Upload, baseFiles map[string]*store.UploadFile, heading string) (filesViewData, error) {
+// buildFilesViewData loads an upload's files and pairs each with its
+// coverage at the baseline. An upload without per-file data yields an
+// empty view, not an error.
+func (s *Server) buildFilesViewData(ctx context.Context, upload *store.Upload, base *store.Upload, baseFiles map[string]*store.UploadFile) (filesViewData, error) {
 	files, err := s.store.UploadFiles(ctx, upload.ID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return filesViewData{}, err
@@ -89,17 +233,14 @@ func (s *Server) buildFilesViewData(ctx context.Context, upload *store.Upload, b
 
 	rows := make([]uploadFileRow, 0, len(files))
 	for _, f := range files {
-		dir, name := splitPath(f.Path)
-		row := uploadFileRow{UploadFile: f, Dir: dir, Base: name, Uncovered: uncoveredRanges(f.Blocks)}
+		row := uploadFileRow{UploadFile: f, Uncovered: uncoveredRanges(f.Blocks)}
 		if base != nil {
 			if bf, ok := baseFiles[f.Path]; ok {
 				row.HasBefore = true
-				row.BeforeCovered = bf.CoveredStmts
-				row.BeforeTotal = bf.TotalStmts
-				row.BeforeStr = fmt.Sprintf("%.1f%%", bf.Pct)
+				row.BeforePct = bf.Pct
 				row.DeltaVal = f.Pct - bf.Pct
-				row.Delta = newDeltaView(row.DeltaVal)
-				if row.Delta.Class != "flat" {
+				// A move too small to show as a percentage is not a change.
+				if row.DeltaVal >= deltaEpsilon || row.DeltaVal <= -deltaEpsilon {
 					row.IsCoverageChanged = true
 				}
 				if nm := newlyUncovered(f.Blocks, bf.Blocks); nm != "" {
@@ -114,20 +255,6 @@ func (s *Server) buildFilesViewData(ctx context.Context, upload *store.Upload, b
 		row.IsSourceChanged = isSourceChanged(f.Path, upload.PathPrefix, diffFiles)
 		row.Changed = row.IsCoverageChanged || row.IsSourceChanged
 		rows = append(rows, row)
-	}
-
-	var counts fileCounts
-	counts.Total = len(files)
-	for _, row := range rows {
-		if row.Changed {
-			counts.Changed++
-		}
-		if row.IsSourceChanged {
-			counts.Source++
-		}
-		if row.IsCoverageChanged {
-			counts.Coverage++
-		}
 	}
 
 	if base != nil {
@@ -150,95 +277,31 @@ func (s *Server) buildFilesViewData(ctx context.Context, upload *store.Upload, b
 	return filesViewData{
 		UploadID:   upload.ID,
 		Files:      rows,
-		TreeRows:   buildFileTree(rows, base != nil),
-		Counts:     counts,
 		HasBase:    base != nil,
 		TotalFiles: len(files),
-		Heading:    cmp.Or(heading, "Files"),
 	}, nil
 }
 
-// fileCompare is what a files-card row says about its coverage history: the
-// same path's coverage at the branch baseline, the resulting delta, the
-// lines this upload newly left uncovered, and the flags the filter tabs and
-// the tree's auto-expand key on. Files and the directories rolled up from
-// them share it, so the tree carries a row's comparison as one value. The
-// baseline fields are empty when there is no baseline to compare against.
-type fileCompare struct {
-	Uncovered         string     // all-time uncovered ranges, shown when there is no baseline
-	HasBefore         bool       // the path existed at the baseline
-	BeforeCovered     int64      // baseline covered statements
-	BeforeTotal       int64      // baseline total statements
-	BeforeStr         string     // baseline coverage, preformatted
-	Delta             *deltaView // after − before
-	DeltaVal          float64    // after − before, for ordering
-	NewFile           bool       // absent from the baseline upload
-	NewlyMiss         string     // ranges covered at the baseline but uncovered now
-	Changed           bool       // coverage moved, source changed, file is new, or regressed
-	IsSourceChanged   bool       // changed in git diff (diff coverage)
-	IsCoverageChanged bool       // coverage percentage changed or newly uncovered lines
-}
+// deltaEpsilon is the smallest coverage move the UI shows as one: below
+// it a file reads as unchanged rather than as a rounded-away "+0.0%".
+const deltaEpsilon = 0.05
 
-// uploadFileRow decorates a stored file with its coverage history for the
-// upload detail table.
+// uploadFileRow is one file of an upload with what it says about its
+// coverage history: the same path's coverage at the branch baseline, the
+// resulting delta, the lines this upload newly left uncovered, and the
+// flags the files card filters on. The baseline fields are empty when
+// there is no baseline to compare against.
 type uploadFileRow struct {
 	*store.UploadFile
-	fileCompare
-	Dir, Base string // path split for display (directory prefix, file name)
-}
-
-// fileCounts records the totals for the view filter tabs.
-type fileCounts struct {
-	Total    int
-	Changed  int
-	Source   int
-	Coverage int
-}
-
-// treeRow represents a row in the hierarchical directory tree view.
-type treeRow struct {
-	fileCompare
-	IsDir        bool
-	Path         string
-	Name         string
-	Depth        int
-	Open         bool // directory rendered expanded
-	Hidden       bool // tucked under a collapsed ancestor
-	ParentPath   string
-	CoveredStmts int64
-	TotalStmts   int64
-	Pct          float64
-}
-
-// dirBuilderNode is a directory while the tree is assembled: its files and
-// subdirectories, and the coverage rolled up from them.
-type dirBuilderNode struct {
-	fileCompare
-	name       string
-	fullPath   string
-	parentPath string
-	subdirs    map[string]*dirBuilderNode
-	files      []*uploadFileRow
-
-	coveredStmts int64
-	totalStmts   int64
-}
-
-// add rolls a file's or a subdirectory's coverage into the directory: the
-// statement counts sum, the baseline sums over the paths that had one, and a
-// change anywhere below flags the directory so the tree opens on the way to
-// it.
-func (n *dirBuilderNode) add(covered, total int64, c fileCompare) {
-	n.coveredStmts += covered
-	n.totalStmts += total
-	if c.HasBefore {
-		n.HasBefore = true
-		n.BeforeCovered += c.BeforeCovered
-		n.BeforeTotal += c.BeforeTotal
-	}
-	n.Changed = n.Changed || c.Changed
-	n.IsSourceChanged = n.IsSourceChanged || c.IsSourceChanged
-	n.IsCoverageChanged = n.IsCoverageChanged || c.IsCoverageChanged
+	Uncovered         string  // all-time uncovered ranges, shown when there is no baseline
+	HasBefore         bool    // the path existed at the baseline
+	BeforePct         float64 // baseline coverage
+	DeltaVal          float64 // after − before, for ordering
+	NewFile           bool    // absent from the baseline upload
+	NewlyMiss         string  // ranges covered at the baseline but uncovered now
+	Changed           bool    // coverage moved, source changed, file is new, or regressed
+	IsSourceChanged   bool    // changed in git diff (diff coverage)
+	IsCoverageChanged bool    // coverage percentage changed or newly uncovered lines
 }
 
 // isSourceChanged reports whether a profile path is one of the diff's files,
@@ -265,170 +328,19 @@ func isSourceChanged(fPath, pathPrefix string, diffFiles map[string]bool) bool {
 	return false
 }
 
-func buildFileTree(rows []uploadFileRow, hasBase bool) []treeRow {
-	root := &dirBuilderNode{
-		subdirs: make(map[string]*dirBuilderNode),
-	}
-
-	for i := range rows {
-		row := &rows[i]
-		parts := strings.Split(row.Path, "/")
-		if len(parts) == 1 {
-			root.files = append(root.files, row)
-			continue
-		}
-		curr := root
-		var pathAcc string
-		for _, p := range parts[:len(parts)-1] {
-			if pathAcc == "" {
-				pathAcc = p
-			} else {
-				pathAcc += "/" + p
-			}
-			child, ok := curr.subdirs[p]
-			if !ok {
-				child = &dirBuilderNode{
-					name:       p,
-					fullPath:   pathAcc,
-					parentPath: curr.fullPath,
-					subdirs:    make(map[string]*dirBuilderNode),
-				}
-				curr.subdirs[p] = child
-			}
-			curr = child
-		}
-		curr.files = append(curr.files, row)
-	}
-
-	compactDir(root)
-	calcDirStats(root)
-
-	var result []treeRow
-	anyChanged := slices.ContainsFunc(rows, func(r uploadFileRow) bool { return r.Changed })
-	flattenTree(root, 0, &result, hasBase, anyChanged, false)
-	return result
-}
-
-func compactDir(n *dirBuilderNode) {
-	for _, sub := range n.subdirs {
-		compactDir(sub)
-	}
-	if n.fullPath != "" && len(n.files) == 0 && len(n.subdirs) == 1 {
-		var child *dirBuilderNode
-		for _, c := range n.subdirs {
-			child = c
-		}
-		n.name = n.name + "/" + child.name
-		n.fullPath = child.fullPath
-		n.files = child.files
-		n.subdirs = child.subdirs
-		for _, grand := range n.subdirs {
-			grand.parentPath = n.fullPath
-		}
-	}
-}
-
-func calcDirStats(n *dirBuilderNode) {
-	for _, f := range n.files {
-		n.add(f.CoveredStmts, f.TotalStmts, f.fileCompare)
-	}
-	for _, sub := range n.subdirs {
-		calcDirStats(sub)
-		n.add(sub.coveredStmts, sub.totalStmts, sub.fileCompare)
-	}
-}
-
-// flattenTree emits the tree in display order. Directories start collapsed
-// except the ones on the way to a changed file, so a large repo opens as a
-// short list of top-level folders with the commit's changes already in view;
-// when nothing changed (or there is no baseline to change against) the
-// top level is open instead. hidden is inherited from a collapsed ancestor.
-func flattenTree(n *dirBuilderNode, depth int, out *[]treeRow, hasBase, anyChanged, hidden bool) {
-	if n.fullPath != "" {
-		open := n.Changed || (!anyChanged && depth == 0)
-		var pct float64
-		if n.totalStmts > 0 {
-			pct = float64(n.coveredStmts) / float64(n.totalStmts) * 100
-		}
-		// A directory has a baseline only where its files had statements
-		// there; the delta is the rollup's, not any one file's.
-		c := n.fileCompare
-		c.HasBefore = c.HasBefore && c.BeforeTotal > 0
-		if hasBase && c.HasBefore {
-			beforePct := float64(c.BeforeCovered) / float64(c.BeforeTotal) * 100
-			c.DeltaVal = pct - beforePct
-			c.Delta = newDeltaView(c.DeltaVal)
-			c.BeforeStr = fmt.Sprintf("%.1f%%", beforePct)
-		}
-		*out = append(*out, treeRow{
-			fileCompare:  c,
-			IsDir:        true,
-			Path:         n.fullPath,
-			Name:         n.name,
-			Depth:        depth,
-			Open:         open,
-			Hidden:       hidden,
-			ParentPath:   n.parentPath,
-			CoveredStmts: n.coveredStmts,
-			TotalStmts:   n.totalStmts,
-			Pct:          pct,
-		})
-		depth++
-		hidden = hidden || !open
-	}
-
-	for _, name := range slices.Sorted(maps.Keys(n.subdirs)) {
-		flattenTree(n.subdirs[name], depth, out, hasBase, anyChanged, hidden)
-	}
-
-	slices.SortFunc(n.files, func(a, b *uploadFileRow) int { return strings.Compare(a.Base, b.Base) })
-	for _, f := range n.files {
-		*out = append(*out, treeRow{
-			fileCompare:  f.fileCompare,
-			Path:         f.Path,
-			Name:         f.Base,
-			Depth:        depth,
-			Hidden:       hidden,
-			ParentPath:   n.fullPath,
-			CoveredStmts: f.CoveredStmts,
-			TotalStmts:   f.TotalStmts,
-			Pct:          f.Pct,
-		})
-	}
-}
-
-// verdictView is the coverage verdict rendered at the top of the upload page.
+// verdictView is the coverage verdict at the top of the upload page.
 type verdictView struct {
-	State      string // "pass", "fail" or "neutral" (no gate configured)
-	Pct        float64
-	CovClass   string
-	Delta      *deltaView // total coverage vs the baseline
-	Statements string     // "1,240 of 1,473"
-	FileCount  int
-	Format     string
-	BaseID     int64
-	BaseSHA    string
-	BasePctStr string
-	Reason     string // prose walk-through of the gate rules and their outcome
+	State  string // "pass", "fail" or "neutral" (no gate configured)
+	Reason string // prose walk-through of the gate rules and their outcome
 }
 
-// uploadVerdict assembles the verdict card. The headline pass/fail follows the
+// uploadVerdict assembles the verdict. The headline pass/fail follows the
 // upload's stored gate result; the reason narrates each configured rule
 // against the values this upload measured, so a reader sees why it stands.
-func (s *Server) uploadVerdict(u *store.Upload, repo *store.Repo, base *store.Upload, fileCount int) verdictView {
-	v := verdictView{
-		Pct:        u.TotalPct,
-		CovClass:   covClass(u.TotalPct),
-		Statements: fmt.Sprintf("%s of %s", humanInt(u.CoveredStmts), humanInt(u.TotalStmts)),
-		FileCount:  fileCount,
-		Format:     u.Format,
-	}
+func (s *Server) uploadVerdict(u *store.Upload, repo *store.Repo, base *store.Upload) verdictView {
+	v := verdictView{State: "pass"}
 	var baseTotal float64
 	if base != nil {
-		v.BaseID = base.ID
-		v.BaseSHA = base.CommitSHA
-		v.BasePctStr = fmt.Sprintf("%.1f%%", base.TotalPct)
-		v.Delta = newDeltaView(u.TotalPct - base.TotalPct)
 		baseTotal = base.TotalPct
 	}
 	switch {
@@ -436,8 +348,6 @@ func (s *Server) uploadVerdict(u *store.Upload, repo *store.Repo, base *store.Up
 		v.State = "neutral"
 	case u.GateFailed:
 		v.State = "fail"
-	default:
-		v.State = "pass"
 	}
 	v.Reason = core.GateReason(u.TotalPct, u.DiffCoverage, repo.Gate, baseTotal, base != nil, "This upload")
 	return v
@@ -447,8 +357,6 @@ func (s *Server) uploadVerdict(u *store.Upload, repo *store.Repo, base *store.Up
 // upload arrived. Every field degrades to empty for uploads made before the
 // metadata was captured or through the raw API.
 type provView struct {
-	Received     string
-	Ago          string
 	ProfileName  string
 	ProfileSize  string
 	Format       string
@@ -460,9 +368,6 @@ type provView struct {
 	PartsNote    string // "single profile, no merge" or "merged from N parts"
 	Processed    string // server processing time, "" when not recorded
 	Ignored      string // "3 files ignored", "" when no pattern matched
-	// Tokenless marks an upload authenticated by workflow-run verification
-	// instead of a token — rendered as "unverified contributor upload".
-	Tokenless bool
 }
 
 var ciLabels = map[string]string{
@@ -478,15 +383,12 @@ var uploaderKindLabels = map[string]string{"cli": "CLI", "action": "Action"}
 func (s *Server) uploadProvenance(ctx context.Context, u *store.Upload) provView {
 	m := u.Meta
 	p := provView{
-		Received:     u.CreatedAt.UTC().Format("2 Jan 2006, 15:04 UTC"),
-		Ago:          timeAgo(u.CreatedAt),
 		ProfileName:  cmp.Or(m.ProfileName, profileFilename(u.Format)),
 		Format:       u.Format,
 		CILabel:      ciLabels[m.CIProvider],
 		CIRunURL:     m.CIRunURL,
 		Uploader:     m.Uploader,
 		UploaderKind: uploaderKindLabels[m.UploaderKind],
-		Tokenless:    m.Tokenless,
 	}
 	if m.ProfileBytes > 0 {
 		p.ProfileSize = humanBytes(m.ProfileBytes)
@@ -629,15 +531,6 @@ func newlyUncovered(cur, base []profile.Block) string {
 		}
 	}
 	return strings.Join(parts, ", ")
-}
-
-// splitPath separates a file path into its directory prefix (with trailing
-// slash) and file name, so the table can dim the directory.
-func splitPath(p string) (dir, base string) {
-	if dir, base, ok := strings.CutLast(p, "/"); ok {
-		return dir + "/", base
-	}
-	return "", p
 }
 
 // handleUploadProfile implements GET /uploads/{id}/profile — the raw coverage

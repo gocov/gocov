@@ -794,9 +794,9 @@ func TestUploadIgnorePatterns(t *testing.T) {
 	if resp.IgnoredFiles != 1 || resp.TotalPct != 75 {
 		t.Errorf("request pattern: %+v, want 1 ignored and 75%%", resp)
 	}
-	page := get(f, fmt.Sprintf("/uploads/%d", resp.ID))
-	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "1 file ignored") {
-		t.Errorf("upload page (%d) does not mention the ignored file", page.Code)
+	got := decodeJSON[uploadPageDTO](t, get(f, fmt.Sprintf("/api/ui/uploads/%d", resp.ID)))
+	if got.Provenance.Ignored != "1 file ignored" {
+		t.Errorf("upload provenance ignored = %q, want it to name the ignored file", got.Provenance.Ignored)
 	}
 
 	// Patterns that leave nothing to measure are refused, not landed as 0%.
