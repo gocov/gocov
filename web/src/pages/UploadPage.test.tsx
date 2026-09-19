@@ -7,7 +7,6 @@ const now = new Date().toISOString();
 
 const upload = (over: Partial<UploadPageData> = {}): UploadPageData => ({
   repo: { forge: "github", slug: "acme/api" },
-  public_view: false,
   upload: {
     id: 412,
     sha: "a1b2c3d4e5f67890",

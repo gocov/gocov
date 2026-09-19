@@ -16,7 +16,6 @@ const repo = (over: Partial<RepoPageData> = {}): RepoPageData => ({
     badge_markdown: "![coverage](https://app.gocov.dev/badge/github/acme/api)",
     can_settings: true,
   },
-  public_view: false,
   branches: ["main", "fix/upload"],
   branch: "",
   trend_branch: "main",
@@ -117,13 +116,10 @@ test("a repo with no reports yet shows neither summary nor trend", async () => {
   expect(screen.getByText(/default branch/)).toHaveTextContent("default branch main");
 });
 
-test("an anonymous reader of a public repo is invited to track their own", async () => {
-  show(repo({ public_view: true, repo: { ...repo().repo, can_settings: false } }));
+test("a reader with no settings access reads the report without the settings link", async () => {
+  show(repo({ repo: { ...repo().repo, can_settings: false } }));
 
-  expect(await screen.findByRole("link", { name: /Track your repo/ })).toHaveAttribute(
-    "href",
-    "https://gocov.dev?ref=report-cta",
-  );
+  await screen.findByRole("heading", { level: 1, name: "acme/api" });
   expect(screen.queryByRole("link", { name: "Settings" })).not.toBeInTheDocument();
 });
 

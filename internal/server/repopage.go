@@ -186,7 +186,6 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 // directory tree are the client's to build.
 type repoPageDTO struct {
 	Repo        repoHeadDTO     `json:"repo"`
-	PublicView  bool            `json:"public_view"`
 	Branches    []string        `json:"branches"`
 	Branch      string          `json:"branch"`
 	TrendBranch string          `json:"trend_branch"`
@@ -268,7 +267,6 @@ func (s *Server) handleAPIRepo(w http.ResponseWriter, r *http.Request) {
 			BadgeMarkdown: s.badgeMarkdown(d.Repo),
 			CanSettings:   d.Settings,
 		},
-		PublicView:  s.publicView(r),
 		Branches:    d.Branches,
 		Branch:      d.Branch,
 		TrendBranch: d.TrendBranch,

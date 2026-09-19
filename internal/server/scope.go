@@ -203,15 +203,6 @@ func (s *Server) reportNotFound(w http.ResponseWriter, r *http.Request) {
 	s.serveApp(w, r, http.StatusNotFound, appHead{})
 }
 
-// publicView reports whether this render is the anonymous read-only view
-// of a public repo's page — the only state the layout shows the sign-up
-// band in. Report handlers call it after authorizeReport let the request
-// through, so signed-out with auth enabled implies an effectively public
-// repo.
-func (s *Server) publicView(r *http.Request) bool {
-	return s.authEnabled() && currentUser(r) == nil
-}
-
 // allowedWorkspaceSet is the D3 authorization rule: the operator's explicit
 // GOCOV_ALLOWED_WORKSPACES list when set (plain names, forge ""), otherwise
 // the workspaces this instance tracks — registered workspace prefixes plus
