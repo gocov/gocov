@@ -34,11 +34,11 @@ details and the exact list of what it enables.
 
 ## 3. Add the upload step to CI
 
-A workspace with no coverage yet pins a **Set up coverage** card at the top of its dashboard, and its middle row is
-the only thing setup asks of you: one file in your repository. Pick your language — Go, JS / TS, Java / Kotlin,
+A workspace with no coverage yet pins a **Set up coverage** card at the top of its dashboard, and the card holds the
+only thing setup asks of you: one file in your repository. Pick your language — Go, JS / TS, Java / Kotlin,
 Python, PHP or Ruby — and the snippet rewrites itself for that test tool; **Copy snippet** is the one button.
 
-![The Set up coverage card on a new workspace's dashboard: the workspace is ready, the CI row shows a language picker and the snippet to copy, and the last row waits for the first report](assets/onboarding.png)
+![The Set up coverage card on a new workspace's dashboard: the header marks the workspace ready, the card itself is a language picker and the snippet to copy, and the line along the bottom says the next pipeline run registers the repository](assets/onboarding.png)
 
 One step after your tests. For GitHub Actions, grant the job `id-token: write` and it needs no secret at all:
 
@@ -68,8 +68,8 @@ rotate it any time in workspace settings, under *Uploads*. Set it as a workspace
 (secured) and pass it to the upload step; a pasted token always takes precedence over the identity token. Every recipe
 above shows both forms.
 
-The first upload registers the repo, and the card's last row waits for it. If nothing has arrived after about twenty
-seconds it lists what to check on your forge and links the recipe — then you can close the tab: gocov keeps listening
+The first upload registers the repo, and the line along the bottom of the card waits for it. If nothing has arrived
+after about twenty seconds it lists what to check on your forge and links the recipe — then you can close the tab: gocov keeps listening
 and the card is still there when you come back. When the report lands, the card shows the coverage that arrived and
 points at the two things worth doing next, [setting a gate](coverage-gate.md) and turning reporting on.
 
