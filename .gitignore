@@ -20,3 +20,13 @@ deploy/certs/
 !/internal/webui/dist/.gitkeep
 /web/node_modules/
 /web/tsconfig.tsbuildinfo
+# /design-sync working state: staged converter, its build output, and the
+# declaration tree + type entry it reads. Everything else under
+# web/.design-sync/ (config, notes, conventions, previews) is committed.
+/web/.ds-sync/
+/web/ds-bundle/
+/web/dist/
+/web/index.d.ts
+/web/.design-sync/.cache/
+/web/.design-sync/learnings/
+/web/.design-sync/node_modules

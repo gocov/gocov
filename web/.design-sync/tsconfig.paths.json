@@ -1,0 +1,18 @@
+{
+  // Path aliases for the converter's esbuild resolver only — not a real
+  // tsconfig. It reads `compilerOptions.paths` verbatim (no `extends`), and
+  // its resolver tries the bare path before `/index`, so a bare directory
+  // import like `@/components/atoms` would resolve to the directory itself
+  // and fail. The explicit barrel entries below come first and settle those;
+  // the wildcard handles every file import.
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/components/atoms": ["../src/components/atoms/index.ts"],
+      "@/components/molecules": ["../src/components/molecules/index.ts"],
+      "@/components/organisms": ["../src/components/organisms/index.ts"],
+      "@/components/templates": ["../src/components/templates/index.ts"],
+      "@/*": ["../src/*"]
+    }
+  }
+}
