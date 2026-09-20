@@ -1,0 +1,19 @@
+{
+  // Declaration-only build for the /design-sync converter: it reads the
+  // emitted .d.ts tree to derive each card's `<Name>Props` contract, which is
+  // the API the claude.ai/design agent codes against. Nothing else consumes
+  // this output — see .design-sync/NOTES.md.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationMap": false,
+    "outDir": "../dist",
+    "rootDir": "../src",
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  },
+  "include": ["../src/**/*.ts", "../src/**/*.tsx"],
+  "exclude": ["../src/**/*.test.ts", "../src/**/*.test.tsx", "../src/test/**"]
+}

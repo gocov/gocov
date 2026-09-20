@@ -1,0 +1,75 @@
+import { ReportingCard } from "gocov-web";
+
+const noop = () => {};
+
+export function GitHubConnected() {
+  return (
+    <ReportingCard
+      forge="github"
+      forgeLabel="GitHub"
+      reporting={{
+        available: true,
+        state: "on",
+        account: "",
+        connect_url: "https://github.com/apps/gocov/installations/new",
+      }}
+      owner
+      repoCount={8}
+      onDisconnect={noop}
+    />
+  );
+}
+
+export function GitLabNotConnected() {
+  return (
+    <ReportingCard
+      forge="gitlab"
+      forgeLabel="GitLab"
+      reporting={{
+        available: true,
+        state: "off",
+        account: "",
+        connect_url: "/workspace-settings/gitlab/acme/connect",
+      }}
+      owner
+      repoCount={3}
+      onDisconnect={noop}
+    />
+  );
+}
+
+export function BitbucketBroken() {
+  return (
+    <ReportingCard
+      forge="bitbucket"
+      forgeLabel="Bitbucket"
+      reporting={{
+        available: true,
+        state: "broken",
+        account: "omer",
+        connect_url: "/workspace-settings/bitbucket/acme/connect",
+      }}
+      owner
+      repoCount={5}
+      onDisconnect={noop}
+    />
+  );
+}
+
+export function MemberView() {
+  return (
+    <ReportingCard
+      forge="github"
+      forgeLabel="GitHub"
+      reporting={{
+        available: true,
+        state: "on",
+        account: "",
+        connect_url: "https://github.com/apps/gocov/installations/new",
+      }}
+      owner={false}
+      repoCount={8}
+      onDisconnect={noop}
+    />
+  );
+}

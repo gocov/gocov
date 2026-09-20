@@ -1,0 +1,40 @@
+{
+  "projectId": "7d9f96ae-2b80-49d2-a744-1b8a43407404",
+  "shape": "package",
+  "pkg": "gocov-web",
+  "globalName": "GocovUI",
+  "srcDir": "src",
+  "tsconfig": ".design-sync/tsconfig.paths.json",
+  "buildCmd": "npx tsc -p .design-sync/tsconfig.dts.json",
+  "readmeHeader": ".design-sync/conventions.md",
+  "provider": { "component": "PreviewProviders" },
+  "libOverrides": {
+    "dts.mjs": "strictNullChecks so `| null` survives in prop types — this DS uses null as a real state"
+  },
+  "overrides": {
+    "Tooltip": { "cardMode": "column" },
+    "ConfirmDialog": { "cardMode": "single", "primaryStory": "DangerOpen" },
+    "SetupChecklist": { "cardMode": "column", "viewport": "900x1000" },
+    "AppShell": { "cardMode": "column" },
+    "VerdictCard": { "cardMode": "column" },
+    "ProvenanceCard": { "cardMode": "column" },
+    "SettingsLayout": { "cardMode": "column" },
+    "StatRow": { "cardMode": "column" },
+    "FilesTable": { "cardMode": "column" },
+    "ReposTable": { "cardMode": "column" },
+    "UploadsTable": { "cardMode": "column" },
+    "SnippetPanel": { "cardMode": "column" },
+    "SourceViewer": { "cardMode": "column" },
+    "SegmentedControl": { "cardMode": "column" },
+    "Card": { "cardMode": "column" },
+    "WorkspaceSwitcher": { "cardMode": "column", "viewport": "900x900" }
+  },
+  "componentSrcMap": {
+    "LinkButton": "src/components/atoms/Button.tsx",
+    "ErrorState": "src/components/molecules/QueryBoundary.tsx",
+    "NotFoundState": "src/components/molecules/QueryBoundary.tsx",
+    "Skeleton": "src/components/molecules/QueryBoundary.tsx",
+    "KeyValue": "src/components/molecules/KeyValueList.tsx",
+    "StatTile": "src/components/molecules/StatRow.tsx"
+  }
+}

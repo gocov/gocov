@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
-import { Button, CoverageFigure, Icon, Mono, Notice } from "@/components/atoms";
+import { Button, Chip, CoverageFigure, Mono, Notice, Spinner } from "@/components/atoms";
 import { Card } from "@/components/molecules";
 import { track } from "@/lib/analytics";
 import type { SetupInfo, SetupStatus } from "@/lib/api/types";
@@ -12,27 +12,6 @@ import "./SetupChecklist.css";
 
 /** How long a pipeline may plausibly take before silence is worth explaining. */
 const HELP_AFTER_MS = 20_000;
-
-type StepState = "done" | "current" | "todo";
-
-/** State is never colour alone: every marker carries its word for a reader. */
-const stateWords: Record<StepState, string> = { done: "Done", current: "In progress", todo: "Not started" };
-
-function Step({ state, title, children }: { state: StepState; title: ReactNode; children?: ReactNode }) {
-  return (
-    <li className={`SetupChecklist__step SetupChecklist__step--${state}`}>
-      <span className="SetupChecklist__mark">
-        {state === "done" ? <Icon name="check" /> : <span className="SetupChecklist__dot" />}
-      </span>
-      <div className="SetupChecklist__body stack stack-1">
-        <h3 className="SetupChecklist__title">
-          {title} <span className="sr-only">— {stateWords[state]}</span>
-        </h3>
-        {children}
-      </div>
-    </li>
-  );
-}
 
 /** The only timer in here: how long we have been listening, to the second. */
 function useElapsed(since: number | null): number {
@@ -71,10 +50,13 @@ interface Props {
 }
 
 /**
- * Setup as the dashboard's own state rather than a wizard: three rows, the
- * snippet in the middle one, and a last row that waits. Nothing here is a
- * dead end — the card is on a page that already works, so leaving it is
- * free and coming back costs nothing.
+ * Setup as the dashboard's own state rather than a wizard, and as a card
+ * rather than a checklist: setup asks exactly one thing of someone, so the
+ * body holds that one thing. What the server already knows — the workspace
+ * is there and you are in it — is a chip in the header, and the wait for
+ * CI is the footer's line, because neither is a step anyone can take.
+ * Nothing here is a dead end — the card is on a page that already works,
+ * so leaving it is free and coming back costs nothing.
  *
  * It replaced a three-step wizard for a reason worth keeping in mind before
  * reshaping it. The work of setup happens in the user's repository and CI,
@@ -144,66 +126,63 @@ export function SetupChecklist({ info, status, listeningSince, onReveal, onCopie
 
   return (
     <Card className="SetupChecklist">
-      <Card.Header title="Set up coverage" />
+      <Card.Header title="Set up coverage" actions={<Chip tone="good">Workspace {prefix} ready</Chip>} />
       <Card.Body>
-        <ol className="SetupChecklist__steps">
-          <Step state="done" title={<>Workspace {prefix} ready</>} />
-
-          <Step state={copied ? "done" : "current"} title={<>Add gocov to a repository&rsquo;s CI</>}>
-            {showSnippet ? (
-              <SnippetPanel info={info} onReveal={onReveal} onCopied={onCopied} />
-            ) : (
-              <div className="row">
-                <span className="muted small">
-                  Snippet copied &mdash; it goes in <Mono>{snippetFilename(forge)}</Mono>.
-                </span>
-                <Button size="sm" variant="quiet" onClick={() => setShown(true)}>
-                  Show snippet
-                </Button>
-              </div>
-            )}
-            {copied && shown && (
-              <div className="row">
-                <Button size="sm" variant="quiet" onClick={() => setShown(false)}>
-                  Hide snippet
-                </Button>
-              </div>
-            )}
-          </Step>
-
-          <Step state={copied ? "current" : "todo"} title="First report">
-            {copied ? (
+        <div className="stack">
+          {showSnippet ? (
+            <SnippetPanel info={info} onReveal={onReveal} onCopied={onCopied} />
+          ) : (
+            <div className="row">
+              <span className="muted small">
+                Snippet copied &mdash; it goes in <Mono>{snippetFilename(forge)}</Mono>.
+              </span>
+              <Button size="sm" variant="quiet" onClick={() => setShown(true)}>
+                Show snippet
+              </Button>
+            </div>
+          )}
+          {copied && shown && (
+            <div className="row">
+              <Button size="sm" variant="quiet" onClick={() => setShown(false)}>
+                Hide snippet
+              </Button>
+            </div>
+          )}
+          {/* The answer to the footer's silence, and it needs room the footer
+              has not got: the three things to check live in the body. */}
+          {needHelp && (
+            <Notice>
               <div className="stack stack-1">
-                <Notice busy>Listening for the first upload from {prefix}&hellip;</Notice>
-                {needHelp && (
-                  <Notice>
-                    <div className="stack stack-1">
-                      <p>Nothing yet &mdash; that is normal while a pipeline runs. If it has finished, check:</p>
-                      <ul className="SetupChecklist__help">
-                        {checklist(forge, info.tokenless).map((item) => (
-                          <li key={item}>{item}</li>
-                        ))}
-                      </ul>
-                      <p>
-                        <a href={server.docs(docsRecipe(forge))} target="_blank" rel="noopener">
-                          The {forgeLabel} recipe in the docs
-                        </a>
-                      </p>
-                      <p className="muted">
-                        You can leave this page. gocov keeps listening, and this card will be here when you come back.
-                      </p>
-                    </div>
-                  </Notice>
-                )}
+                <p>Nothing yet &mdash; that is normal while a pipeline runs. If it has finished, check:</p>
+                <ul className="SetupChecklist__help">
+                  {checklist(forge, info.tokenless).map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+                <p>
+                  <a href={server.docs(docsRecipe(forge))} target="_blank" rel="noopener">
+                    The {forgeLabel} recipe in the docs
+                  </a>
+                </p>
               </div>
-            ) : (
-              <p className="muted small">
-                The next pipeline run that reaches the upload step registers the repository. Nothing else to configure.
-              </p>
-            )}
-          </Step>
-        </ol>
+            </Notice>
+          )}
+        </div>
       </Card.Body>
+      <Card.Footer>
+        {copied ? (
+          <>
+            <span className="row" role="status">
+              <Spinner label={null} />
+              Listening for the first upload from {prefix}&hellip;
+            </span>
+            <span className="spacer" />
+            <span>You can leave this page &mdash; gocov keeps listening, and the card will be here.</span>
+          </>
+        ) : (
+          <span>The next pipeline run that reaches the upload step registers the repository.</span>
+        )}
+      </Card.Footer>
     </Card>
   );
 }
