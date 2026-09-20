@@ -167,6 +167,26 @@ source and the reason previews here are ports rather than inventions. Organisms 
 — their compositions come from `src/components/organisms/<Name>.test.tsx` fixtures and from
 the real pages under `src/pages/`.
 
+## Typography
+
+The DS self-hosts **IBM Plex Sans** (400/500/600) and **IBM Plex Mono** (400/500) from
+`src/styles/fonts/`, declared in `src/styles/fonts.css` and pulled in by `tokens.css`. Two
+subsets per weight, `latin` and `latin-ext`, each with its own `unicode-range`: `latin` alone
+would drop Turkish and other Central/Eastern European names (`ş` U+015F, `ğ` U+011F,
+`İ` U+0130 all live in `latin-ext`; only `ı` U+0131 is in `latin`), and a name would fall back
+to the system font mid-word. Files come from `@fontsource/ibm-plex-{sans,mono}` — re-fetch
+from the same packages to update, and keep `fonts.css` and `fonts/` in step (every face must
+have its file and every file a face).
+
+**Measured, against the old system stack:** IBM Plex Sans is ~3% NARROWER at 14px and IBM Plex
+Mono ~0.3% narrower. So the font swap cannot have made any layout overflow — if a card looks
+cramped, that is the grid cell, not the typeface. Do not reason from "IBM Plex is wider"; it
+is not.
+
+**The cost:** the converter inlines every woff2 as a data URI, so `_ds_bundle.css` went from
+40 KB to **274 KB**, and every rendered design loads all of it (the `unicode-range` split only
+helps the real app, which serves the files separately). Worth knowing before adding weights.
+
 ## Known render warns
 
 **None.** The first campaign closed with `package-validate.mjs` printing no warn lines at all:

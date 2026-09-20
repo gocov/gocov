@@ -25,7 +25,9 @@
     "UploadsTable": { "cardMode": "column" },
     "SnippetPanel": { "cardMode": "column" },
     "SourceViewer": { "cardMode": "column" },
-    "SegmentedControl": { "cardMode": "column" }
+    "SegmentedControl": { "cardMode": "column" },
+    "Card": { "cardMode": "column" },
+    "WorkspaceSwitcher": { "cardMode": "column", "viewport": "900x900" }
   },
   "componentSrcMap": {
     "LinkButton": "src/components/atoms/Button.tsx",
