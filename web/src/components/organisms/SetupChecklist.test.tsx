@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { SetupInfo, SetupStatus } from "@/lib/api/types";
 import { renderPage } from "@/test/render";
@@ -54,25 +54,19 @@ const show = (over: { info?: Partial<SetupInfo>; status?: SetupStatus; listening
     />,
   );
 
-const steps = () => within(screen.getByRole("list")).getAllByRole("listitem");
-
-test("before the snippet is copied, CI is the current step and the report is waiting", () => {
+test("before the snippet is copied, the card is the snippet and a line about what happens next", () => {
   show();
 
-  const [workspace, ci, first] = steps();
-  expect(workspace).toHaveTextContent("Workspace acme ready");
-  expect(workspace).toHaveTextContent("Done");
-  expect(ci).toHaveTextContent("Add gocov to a repository’s CI");
-  expect(ci).toHaveTextContent("In progress");
-  expect(ci).toHaveTextContent(".github/workflows/ci.yml");
-  expect(first).toHaveTextContent("First report");
-  expect(first).toHaveTextContent("Not started");
+  // The workspace is the server's state, not a step: it sits in the header.
+  expect(screen.getByText("Workspace acme ready")).toBeInTheDocument();
+  expect(screen.getByText(".github/workflows/ci.yml")).toBeInTheDocument();
+  expect(screen.getByText(/The next pipeline run that reaches the upload step/)).toBeInTheDocument();
 
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Done" })).not.toBeInTheDocument();
 });
 
-test("copying the snippet reports it and, once listening, collapses the row", async () => {
+test("copying the snippet reports it and, once listening, collapses the card", async () => {
   const user = userEvent.setup();
   const { rerender } = show();
 
@@ -91,14 +85,12 @@ test("copying the snippet reports it and, once listening, collapses the row", as
     />,
   );
 
-  const [, ci, first] = steps();
-  expect(ci).toHaveTextContent("Done");
-  expect(ci).toHaveTextContent("Snippet copied");
+  expect(screen.getByText(/Snippet copied/)).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Copy snippet" })).not.toBeInTheDocument();
-  expect(first).toHaveTextContent("In progress");
-  expect(first).toHaveTextContent("Listening for the first upload from acme…");
-  // The wait announces itself rather than just spinning.
-  expect(screen.getAllByRole("status").length).toBeGreaterThan(0);
+  expect(screen.queryByText(/The next pipeline run that reaches the upload step/)).not.toBeInTheDocument();
+  // The wait is the card's own footer, and it announces itself.
+  expect(screen.getByRole("status")).toHaveTextContent("Listening for the first upload from acme…");
+  expect(screen.getByText("Workspace acme ready")).toBeInTheDocument();
 });
 
 test("the snippet comes back on demand after it has been copied", async () => {
