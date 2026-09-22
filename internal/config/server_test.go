@@ -54,7 +54,7 @@ func TestLoadServerEmptyValueFallsBackToDefault(t *testing.T) {
 	}
 }
 
-// The required,notEmpty tag pair has to reject both spellings of "no
+// The required tag has to reject both spellings of "no
 // database": the variable missing, and the variable passed through empty.
 func TestLoadServerRequiresDatabaseURL(t *testing.T) {
 	for _, tc := range []struct {

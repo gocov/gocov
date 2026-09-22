@@ -3,7 +3,7 @@ module github.com/gocov/gocov
 go 1.27.1
 
 require (
-	github.com/caarlos0/env/v11 v11.4.1
+	github.com/bykclk/env v0.0.0-20260922141159-370b99bd07bf
 	github.com/jackc/pgx/v5 v5.11.0
 )
 

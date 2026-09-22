@@ -17,13 +17,13 @@ const (
 
 // Server is gocov-server's configuration.
 type Server struct {
-	// required,notEmpty: the two together reject both an unset variable
-	// and one passed through as "", which compose files and CI runners do
-	// routinely. required alone would let the empty string past.
-	DatabaseURL string `env:"DATABASE_URL,required,notEmpty"`
-	Addr        string `env:"GOCOV_ADDR" envDefault:":8080"`
-	BaseURL     string `env:"GOCOV_BASE_URL" envDefault:"http://localhost:8080"`
-	Mode        string `env:"GOCOV_MODE" envDefault:"private"`
+	// required rejects both an unset variable and one passed through as
+	// "", which compose files and CI runners do routinely: the env package
+	// treats a blank value as unset.
+	DatabaseURL string `env:"DATABASE_URL,required"`
+	Addr        string `env:"GOCOV_ADDR" default:":8080"`
+	BaseURL     string `env:"GOCOV_BASE_URL" default:"http://localhost:8080"`
+	Mode        string `env:"GOCOV_MODE" default:"private"`
 
 	// SecretKey is the at-rest cipher key for stored grant refresh
 	// tokens; see Validate for why its shape is not negotiable.
@@ -31,13 +31,13 @@ type Server struct {
 
 	// AllowedWorkspaces optionally narrows which workspace/org members
 	// may sign in. Empty means "members of any tracked workspace".
-	AllowedWorkspaces []string `env:"GOCOV_ALLOWED_WORKSPACES" envSeparator:","`
+	AllowedWorkspaces []string `env:"GOCOV_ALLOWED_WORKSPACES"`
 
 	// PublicReports is the instance-level switch for anonymous read-only
 	// report pages on public repos: "on" (default) or "off". An operator
 	// running gocov inside a private network turns the whole feature off
 	// in one move; per-repo control stays in repo settings.
-	PublicReports string `env:"GOCOV_PUBLIC_REPORTS" envDefault:"on"`
+	PublicReports string `env:"GOCOV_PUBLIC_REPORTS" default:"on"`
 
 	// OIDCIssuers sets the trusted GitLab OIDC issuer(s) for tokenless
 	// uploads. Unset means gitlab.com; set replaces that default with the
@@ -48,11 +48,11 @@ type Server struct {
 	// entry is the instance's issuer URL (its base URL, https), whose CI ID
 	// tokens name repos by project_path exactly as gitlab.com's do. GitHub
 	// Actions and Bitbucket Pipelines are always trusted, independently.
-	OIDCIssuers []string `env:"GOCOV_OIDC_ISSUERS" envSeparator:","`
+	OIDCIssuers []string `env:"GOCOV_OIDC_ISSUERS"`
 
-	Bitbucket OAuthApp `envPrefix:"GOCOV_OAUTH_BITBUCKET_"`
-	GitHub    OAuthApp `envPrefix:"GOCOV_OAUTH_GITHUB_"`
-	GitLab    OAuthApp `envPrefix:"GOCOV_OAUTH_GITLAB_"`
+	Bitbucket OAuthApp `env:",prefix=GOCOV_OAUTH_BITBUCKET_"`
+	GitHub    OAuthApp `env:",prefix=GOCOV_OAUTH_GITHUB_"`
+	GitLab    OAuthApp `env:",prefix=GOCOV_OAUTH_GITLAB_"`
 
 	// GitHubAppPrivateKey holds either the PEM itself or a path to a PEM
 	// file; the caller reads the file when it is a path.
@@ -65,7 +65,7 @@ type Server struct {
 	// default) keeps the pages free of third-party scripts, which is the
 	// promise docs/self-hosting.md makes to operators; gocov's own hosted
 	// instance sets it.
-	PostHog PostHog `envPrefix:"GOCOV_POSTHOG_"`
+	PostHog PostHog `env:",prefix=GOCOV_POSTHOG_"`
 }
 
 // PostHog is the browser-analytics pair: the project API key that turns
@@ -76,7 +76,7 @@ type PostHog struct {
 	// snippet from and sends events to. The EU cloud is the default so
 	// that switching analytics on never moves visitor data out of the EU
 	// by accident; a self-hosted PostHog goes here too.
-	Host string `env:"HOST" envDefault:"https://eu.i.posthog.com"`
+	Host string `env:"HOST" default:"https://eu.i.posthog.com"`
 }
 
 // Configured reports whether the analytics snippet is on. The host has a
@@ -107,34 +107,15 @@ func LoadServerFrom(environ map[string]string) (Server, error) {
 	return cfg, cfg.validate()
 }
 
-// normalize trims the values where surrounding whitespace is a paste
-// artefact rather than part of the setting.
+// normalize applies the cleanups the env package does not do itself. It
+// already trims every value and drops blank list entries, so what is
+// left is case and trailing slashes, which are settings-specific.
 func (c *Server) normalize() {
-	c.SecretKey = strings.TrimSpace(c.SecretKey)
-	c.Mode = strings.TrimSpace(c.Mode)
-	c.PublicReports = strings.ToLower(strings.TrimSpace(c.PublicReports))
-	c.PostHog.Key = strings.TrimSpace(c.PostHog.Key)
-	c.PostHog.Host = strings.TrimRight(strings.TrimSpace(c.PostHog.Host), "/")
-	c.AllowedWorkspaces = cleanList(c.AllowedWorkspaces, strings.TrimSpace)
-	c.OIDCIssuers = cleanList(c.OIDCIssuers, func(iss string) string {
-		return strings.TrimRight(strings.TrimSpace(iss), "/")
-	})
-}
-
-// cleanList applies clean to each entry of a comma-split list and drops
-// the entries it leaves empty (a trailing comma, a blank between two).
-// An empty result is nil, so "unset" and "set to nothing" compare equal.
-func cleanList(entries []string, clean func(string) string) []string {
-	out := entries[:0]
-	for _, e := range entries {
-		if e = clean(e); e != "" {
-			out = append(out, e)
-		}
+	c.PublicReports = strings.ToLower(c.PublicReports)
+	c.PostHog.Host = strings.TrimRight(c.PostHog.Host, "/")
+	for i, iss := range c.OIDCIssuers {
+		c.OIDCIssuers[i] = strings.TrimRight(iss, "/")
 	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
 }
 
 // secretKeyPattern is the required shape of GOCOV_SECRET_KEY: exactly 64
