@@ -8,7 +8,7 @@ type Preview struct {
 	Auth bool `env:"GOCOV_PREVIEW_AUTH"`
 	// Port is overridable so several sessions can run their own preview
 	// side by side; the default matches .claude/launch.json.
-	Port string `env:"PORT" envDefault:"8099"`
+	Port string `env:"PORT" default:"8099"`
 	// PostHogKey renders the analytics snippet against the EU cloud, for
 	// eyeballing the wiring; a bogus key exercises everything but ingest.
 	PostHogKey string `env:"GOCOV_PREVIEW_POSTHOG_KEY"`

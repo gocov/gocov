@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	env "github.com/caarlos0/env/v11"
+	"github.com/bykclk/env"
 )
 
 // configurationDoc is the user-facing variable table that mirrors the
@@ -51,12 +51,9 @@ var docRow = regexp.MustCompile("^\\|\\s*`([A-Z][A-Z0-9_]*)`\\s*\\|")
 // test parses, and GOCOV_UPLOADER_KIND is set by the gocov-action rather
 // than by users. Preview is a dev harness and deliberately undocumented.
 func TestConfigurationDocIsInSync(t *testing.T) {
-	fields, err := env.GetFieldParams(&Server{})
-	if err != nil {
-		t.Fatalf("GetFieldParams: %v", err)
-	}
+	fields := env.Vars[Server]()
 	if len(fields) == 0 {
-		t.Fatal("GetFieldParams returned nothing; the struct tags are not being read")
+		t.Fatal("Vars returned nothing; the struct tags are not being read")
 	}
 
 	doc, err := os.ReadFile(configurationDoc)
@@ -84,9 +81,9 @@ func TestConfigurationDocIsInSync(t *testing.T) {
 		// Compare the default column exactly rather than searching the
 		// row — a substring test would let ":8080" narrowed to ":80"
 		// through, since the stale cell still contains the new value.
-		if got := column(row, defaultColumn); field.HasDefaultValue && got != field.DefaultValue {
+		if got := column(row, defaultColumn); field.Default != "" && got != field.Default {
 			t.Errorf("%s defaults to %q in code, but %s documents %q:\n%s",
-				field.Key, field.DefaultValue, configurationDoc, got, row)
+				field.Key, field.Default, configurationDoc, got, row)
 		}
 		// One-directional on purpose. "Required in code but not in the
 		// docs" is checked; the reverse is not, because the word shows up
@@ -94,7 +91,7 @@ func TestConfigurationDocIsInSync(t *testing.T) {
 		// secret is "required for a Marketplace listing; optional
 		// otherwise"), and a symmetric check would need a marker
 		// convention the table does not have.
-		if desc := column(row, descriptionColumn); (field.Required || field.NotEmpty) &&
+		if desc := column(row, descriptionColumn); field.Required &&
 			!strings.Contains(strings.ToLower(desc), "required") {
 			t.Errorf("%s is required in code, but its row in %s does not say so:\n%s",
 				field.Key, configurationDoc, row)

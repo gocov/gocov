@@ -17,15 +17,13 @@
 // split by whether it is fatal (validate) or survivable (Warnings).
 package config
 
-import (
-	env "github.com/caarlos0/env/v11"
-)
+import "github.com/bykclk/env"
 
 // parse fills T from environ, or from the process environment when
 // environ is nil. Every Load function in this package goes through here,
 // so that nil-means-the-process rule is stated once.
 func parse[T any](environ map[string]string) (T, error) {
-	return env.ParseAsWithOptions[T](env.Options{Environment: environ})
+	return env.Parse[T](env.Map(environ))
 }
 
 // OAuthApp is one forge's OAuth credentials. The two halves are read

@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-gocov is a self-hostable coverage-tracking service (Coveralls/Codecov alternative): a single Go binary + Postgres, AGPL-3.0. Direct dependencies are pgx and caarlos0/env (tag-based env parsing, itself dependency-free); everything else is stdlib.
+gocov is a self-hostable coverage-tracking service (Coveralls/Codecov alternative): a single Go binary + Postgres, AGPL-3.0. Direct dependencies are pgx and bykclk/env (tag-based env parsing, itself dependency-free); everything else is stdlib.
 
 Package-specific conventions live in `.claude/rules/` and load when you touch the matching paths (`core`, `server`, `forge`, `config`, `store`, `docs`, `web`). Slash commands: `/release`, `/verify-release`, `/check-pins`, `/docs-check`.
 
