@@ -107,34 +107,15 @@ func LoadServerFrom(environ map[string]string) (Server, error) {
 	return cfg, cfg.validate()
 }
 
-// normalize trims the values where surrounding whitespace is a paste
-// artefact rather than part of the setting.
+// normalize applies the cleanups the env package does not do itself. It
+// already trims every value and drops blank list entries, so what is
+// left is case and trailing slashes, which are settings-specific.
 func (c *Server) normalize() {
-	c.SecretKey = strings.TrimSpace(c.SecretKey)
-	c.Mode = strings.TrimSpace(c.Mode)
-	c.PublicReports = strings.ToLower(strings.TrimSpace(c.PublicReports))
-	c.PostHog.Key = strings.TrimSpace(c.PostHog.Key)
-	c.PostHog.Host = strings.TrimRight(strings.TrimSpace(c.PostHog.Host), "/")
-	c.AllowedWorkspaces = cleanList(c.AllowedWorkspaces, strings.TrimSpace)
-	c.OIDCIssuers = cleanList(c.OIDCIssuers, func(iss string) string {
-		return strings.TrimRight(strings.TrimSpace(iss), "/")
-	})
-}
-
-// cleanList applies clean to each entry of a comma-split list and drops
-// the entries it leaves empty (a trailing comma, a blank between two).
-// An empty result is nil, so "unset" and "set to nothing" compare equal.
-func cleanList(entries []string, clean func(string) string) []string {
-	out := entries[:0]
-	for _, e := range entries {
-		if e = clean(e); e != "" {
-			out = append(out, e)
-		}
+	c.PublicReports = strings.ToLower(c.PublicReports)
+	c.PostHog.Host = strings.TrimRight(c.PostHog.Host, "/")
+	for i, iss := range c.OIDCIssuers {
+		c.OIDCIssuers[i] = strings.TrimRight(iss, "/")
 	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
 }
 
 // secretKeyPattern is the required shape of GOCOV_SECRET_KEY: exactly 64
