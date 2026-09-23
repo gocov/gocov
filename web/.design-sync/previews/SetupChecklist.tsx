@@ -32,7 +32,11 @@ const arrived = {
 const reveal = async () => "gocov_live_9f2c41d8a7b3";
 const noop = () => {};
 
-/** Step two is current: the snippet is on screen and Copy is the one move. */
+/**
+ * Not copied yet: the body is the snippet and Copy is the one move. What the
+ * server already knows is the header's chip, and the footer says what happens
+ * next rather than asking for anything.
+ */
 export function CopyTheSnippet() {
   return (
     <SetupChecklist
@@ -46,7 +50,11 @@ export function CopyTheSnippet() {
   );
 }
 
-/** Copied: the CI row collapses and the last row starts waiting. */
+/**
+ * Copied: the snippet folds to a single line and the footer starts listening.
+ * The shortest the card ever gets, and the shape it holds for as long as CI
+ * takes.
+ */
 export function Listening() {
   return (
     <SetupChecklist
@@ -61,8 +69,10 @@ export function Listening() {
 }
 
 /**
- * The same row after twenty seconds of silence. The timer itself cannot be
- * previewed, but backdating the copy renders the state it lands in.
+ * The same collapsed card after twenty seconds of silence, on the token recipe
+ * rather than OIDC: the body gains the three things to check for that forge and
+ * auth mode. The timer itself cannot be previewed, but backdating the copy
+ * renders the state it lands in.
  */
 export function NothingYet() {
   return (
@@ -77,7 +87,7 @@ export function NothingYet() {
   );
 }
 
-/** The payoff: the first report replaces the whole checklist. */
+/** The payoff: the first report replaces the whole card. */
 export function CoverageIsFlowing() {
   return (
     <SetupChecklist
