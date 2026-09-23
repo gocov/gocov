@@ -113,15 +113,22 @@ Repo-specific gotchas for `/design-sync`. Read this before re-syncing.
   After a clean validate, page through `_screenshots/<group>__<Name>.png` (the full-card
   renders, not the contact sheets) and give `cardMode: "column"` to anything whose story is a
   full-width composition.
-- Thirteen components carry `cfg.overrides`. `Tooltip` is `column` because a cell was wider
+- Sixteen components carry `cfg.overrides`. `Tooltip` is `column` because a cell was wider
   than its grid cell; `ConfirmDialog` is `single` because an open native `<dialog>` positions
-  outside its cell; `SetupChecklist` is `column` plus a `900x1000` viewport because its
-  canonical state — header, three steps and the whole embedded `SnippetPanel` — runs about
-  30px past the default and every available lever makes it taller, not shorter. The other ten
-  (`AppShell`, `SettingsLayout`, `VerdictCard`, `ProvenanceCard`, `StatRow`, `FilesTable`,
-  `ReposTable`, `UploadsTable`, `SnippetPanel`, `SourceViewer`, `SegmentedControl`) are
+  outside its cell; `WorkspaceSwitcher` is `column` plus a `900x900` viewport because its
+  open menu runs past the default. The other twelve (`AppShell`, `SettingsLayout`,
+  `VerdictCard`, `ProvenanceCard`, `StatRow`, `FilesTable`, `ReposTable`, `UploadsTable`,
+  `SnippetPanel`, `SourceViewer`, `SegmentedControl`, `Card`) plus `SetupChecklist` are
   `column` for the squish above — tables losing columns, snippets truncated mid-flag, source
   lines cut mid-token.
+- **A viewport override is a measurement, so re-measure it when the component changes.**
+  `SetupChecklist` carried `900x1000` while its canonical state was header + three steps +
+  the whole embedded `SnippetPanel`, which ran ~30px past the default. The September 2026
+  rebuild (state chip in `Card.Header`, snippet alone in the body, the wait in `Card.Footer`)
+  made every story shorter, and the override came off. Measure rather than guess: serve
+  `ds-bundle/` and read `document.body.scrollHeight` at the capture's own 900px width, one
+  `?story=<label>` at a time. That put the tallest story, `CopyTheSnippet`, at 601px — about
+  100px inside the default 700 — against 374/325/182 for the other three.
 - Changing `cfg.overrides` needs a full `package-build.mjs` (a scoped `preview-rebuild` after
   one fails `[CONFIG_STALE]`), but it is presentation-only: grades carry forward.
 
@@ -136,7 +143,13 @@ Repo-specific gotchas for `/design-sync`. Read this before re-syncing.
   trigger, and it stays open because the close handler listens for `mousedown`, which
   `.click()` never fires.
 - `SetupChecklist`'s 20-second help state renders too — the pinned capture clock means the
-  component's one-second interval never advances past `listeningSince`.
+  component's one-second interval never advances past `listeningSince`. Since the rebuild its
+  four exports carry four genuinely different card shapes off one prop: `listeningSince` null
+  is the snippet body (`CopyTheSnippet`), a fresh timestamp is the collapsed "Snippet copied"
+  line plus the footer's `Spinner` (`Listening`), a backdated one adds the help `Notice`
+  (`NothingYet`, which also flips `tokenless` to cover the token recipe), and a `first_report`
+  replaces the card (`CoverageIsFlowing`). The collapsed shape needs no new export — it is what
+  two of those already render.
 - `FilesTable`, `ReposTable` and `UploadsTable` bring their own `Card` + `Card.Body flush`, so
   the "wrap your table" rule above does not apply to them.
 - `AttentionList` takes `AttentionRow[]`, but `attentionRows()` / `attentionCopy()` in
@@ -154,8 +167,10 @@ card instead. Its 401 branch renders `null`, which is indistinguishable from a b
 
 Anything reachable only by clicking is out too, since no prop opens it: `TokenCard`'s rotate
 confirmation and its `Rotating…` / new-token / failed states, `ReportingCard`'s disconnect
-confirmation, `DangerCard`'s confirm dialog, `ReposTable`'s filter/search/sort, and
-`SourceViewer`'s rail jump and expanded fold. `SnippetPanel`'s six-language axis is also not
+confirmation, `DangerCard`'s confirm dialog, `ReposTable`'s filter/search/sort,
+`SourceViewer`'s rail jump and expanded fold, and `SetupChecklist`'s snippet re-shown after a
+copy (the "Show snippet" / "Hide snippet" pair is local `shown` state, and no prop opens it —
+the collapsed line and the full panel are each covered by a cell of their own). `SnippetPanel`'s six-language axis is also not
 previewable per cell: the picker seeds from a `localStorage` key shared by every cell on the
 card, so all cells show Go and the variation is carried by the `info`-driven axes instead.
 
@@ -191,8 +206,14 @@ helps the real app, which serves the files separately). Worth knowing before add
 
 **None.** The first campaign closed with `package-validate.mjs` printing no warn lines at all:
 69/69 previews render cleanly, zero `bad`, zero `thin`, zero `variantsIdentical`, zero
-`[GRID_OVERFLOW]`, zero page errors, and no floor cards. Any warn on a future run is therefore
-new — look at it rather than assuming it was always there.
+`[GRID_OVERFLOW]`, zero page errors, and no floor cards. The SetupChecklist re-sync
+(September 2026) closed the same way. Any warn on a future run is therefore new — look at it
+rather than assuming it was always there.
+
+One exception that is not a warn about the previews: `! [RENDER_SKIPPED]` on a closing
+no-change re-sync. `resync.mjs` skips the render check when the anchor is healthy and nothing
+render-affecting moved, because it would be re-rendering byte-identical inputs; the driver
+says so on stderr just above. Pass `--render-sample 0` if you want the full pass anyway.
 
 ## Sequencing lesson from the first campaign
 
@@ -210,6 +231,26 @@ need a full `package-build.mjs`: a scoped `preview-rebuild` after changing one f
   changes, that page is updated with it, but the preview under `.design-sync/previews/` is
   not — a re-sync re-grades changed components, so look at those sheets rather than assuming
   a port is still current.
+- **A rebuilt component whose props did not move comes back `unchanged`, with its old grade.**
+  Grades key off `sourceKeys` — the preview, preview-affecting config, committed forks — not
+  off the implementation, and the per-component `.jsx` in the bundle is only a re-export stub,
+  so its `sourceHashes` entry does not move either. The SetupChecklist rebuild therefore
+  landed as `changed: []`, `pendingGrade: []`, `renderChurned: []`, `canary: null` while
+  `upload.components` still said `["SetupChecklist"]`: correct bytes, stale verdicts (the
+  recorded notes still said "all three steps … render whole"). That is the trust model working
+  as designed, not a bug — but when you know a component was rebuilt, open
+  `_screenshots/<group>__<Name>.png` yourself. Editing the preview (or its `cfg.overrides`
+  entry) is what moves the key and forces the honest re-grade.
+- **`--node-modules` is `web/node_modules`, not `.ds-sync/node_modules`.** The converter
+  vendors React out of it (`_vendor/react.js`), so the `.ds-sync` one — esbuild, playwright,
+  ts-morph, and the target of the `.design-sync/node_modules` symlink the dts fork needs —
+  fails the build stage immediately with "react not found under --node-modules". Two different
+  trees, both plausible; the error names the flag, so read it rather than re-running.
+- The previous run's `ds-bundle/_ds_sync.json` survives on disk and doubles as the `--remote`
+  anchor when the last campaign ended with a clean upload — copy it out of `ds-bundle/` before
+  the next run, because `package-build.mjs` wipes `--out`. Confirm it against the project's own
+  `_ds_sync.json` (`DesignSync get_file`) on `bundleSha12`, `styleSha`, `auxSha` and
+  `scriptsSha` before trusting it; a mismatch means fetch the real one.
 - `web/dist/` and `web/index.d.ts` are build inputs that are **not** in git. A fresh clone
   must run `cfg.buildCmd` before the converter, or component discovery silently degrades.
 - `.design-sync/tsconfig.paths.json` duplicates the alias list from `web/tsconfig.json`. If

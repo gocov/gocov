@@ -14,7 +14,7 @@
   "overrides": {
     "Tooltip": { "cardMode": "column" },
     "ConfirmDialog": { "cardMode": "single", "primaryStory": "DangerOpen" },
-    "SetupChecklist": { "cardMode": "column", "viewport": "900x1000" },
+    "SetupChecklist": { "cardMode": "column" },
     "AppShell": { "cardMode": "column" },
     "VerdictCard": { "cardMode": "column" },
     "ProvenanceCard": { "cardMode": "column" },
