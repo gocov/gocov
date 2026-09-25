@@ -449,12 +449,6 @@ type Store interface {
 	UpsertCommitReport(ctx context.Context, cr *CommitReport) error
 	// CommitReport returns the merged report for a commit, or ErrNotFound.
 	CommitReport(ctx context.Context, repoID int64, commitSHA string) (*CommitReport, error)
-	// LatestDefaultBranchReports returns each repo's newest merged report
-	// of its default branch's own history, for many repos in one read.
-	// Repos without one are absent from the map. PR-build reports never
-	// count: a PR can only reach the default branch's name from a fork (a
-	// fork's "main"), and it must not stand in for the repo's own branch.
-	LatestDefaultBranchReports(ctx context.Context, repoIDs []int64) (map[int64]*CommitReport, error)
 	// LatestPassedCommitReport returns the most recent gate-passing merged
 	// report on a branch, skipping excludeCommit (the commit being uploaded,
 	// whose own in-progress report must not serve as its baseline). Used as
@@ -464,9 +458,10 @@ type Store interface {
 	LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*CommitReport, error)
 	// ListBranchCommitReports returns merged reports on a branch newest
 	// first; limit <= 0 means all. Feeds the coverage trend. On the repo's
-	// default branch PR-build reports are left out, as in
-	// LatestDefaultBranchReports; on any other branch a PR's builds are
-	// the branch's own history and stay.
+	// default branch PR-build reports are left out — a PR can only reach
+	// the default branch's name from a fork (a fork's "main"), and it must
+	// not stand in for the repo's own branch; on any other branch a PR's
+	// builds are the branch's own history and stay.
 	ListBranchCommitReports(ctx context.Context, repoID int64, branch string, limit int) ([]*CommitReport, error)
 	// DefaultBranchReports is ListBranchCommitReports on each repo's own
 	// default branch, for many repos in one read: up to limit reports per

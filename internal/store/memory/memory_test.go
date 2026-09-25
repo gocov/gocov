@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"testing"
@@ -183,9 +184,9 @@ func TestListWorkspaceRepos(t *testing.T) {
 	}
 }
 
-// LatestDefaultBranchReports reads each repo's newest report on its own
+// DefaultBranchReports at limit 1 reads each repo's newest report on its own
 // default branch; a repo without one is simply absent.
-func TestLatestDefaultBranchReports(t *testing.T) {
+func TestDefaultBranchReportsLatest(t *testing.T) {
 	st := New()
 	ctx := context.Background()
 	a := &store.Repo{Forge: "github", Slug: "acme/a", Token: "ta", DefaultBranch: "main"}
@@ -209,12 +210,12 @@ func TestLatestDefaultBranchReports(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, err := st.LatestDefaultBranchReports(ctx, []int64{a.ID, b.ID, c.ID, 999})
+	got, err := latestReports(ctx, st, []int64{a.ID, b.ID, c.ID, 999})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 2 || got[a.ID] == nil || got[a.ID].CommitSHA != "a2" || got[b.ID] == nil || got[b.ID].CommitSHA != "b1" {
-		t.Errorf("LatestDefaultBranchReports = %v, want a2 for acme/a and b1 for acme/b only", got)
+		t.Errorf("latest default-branch reports = %v, want a2 for acme/a and b1 for acme/b only", got)
 	}
 }
 
@@ -236,7 +237,7 @@ func TestDefaultBranchHistoryExcludesPRBuilds(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	latest, _ := s.LatestDefaultBranchReports(ctx, []int64{repo.ID})
+	latest, _ := latestReports(ctx, s, []int64{repo.ID})
 	if got := latest[repo.ID]; got == nil || got.CommitSHA != "c1" {
 		t.Errorf("latest default-branch report = %+v, want c1", got)
 	}
@@ -303,4 +304,21 @@ func TestDefaultBranchReports(t *testing.T) {
 			t.Errorf("%s carries diff coverage; it is not loaded", cr.CommitSHA)
 		}
 	}
+}
+
+// latestReports is DefaultBranchReports at limit 1, keyed to the one
+// report each repo has: the read the badge and the dashboard previews make.
+func latestReports(ctx context.Context, st store.Store, repoIDs []int64) (map[int64]*store.CommitReport, error) {
+	reports, err := st.DefaultBranchReports(ctx, repoIDs, 1)
+	if err != nil {
+		return nil, err
+	}
+	latest := map[int64]*store.CommitReport{}
+	for id, rs := range reports {
+		if len(rs) != 1 {
+			return nil, fmt.Errorf("repo %d: %d reports at limit 1", id, len(rs))
+		}
+		latest[id] = rs[0]
+	}
+	return latest, nil
 }

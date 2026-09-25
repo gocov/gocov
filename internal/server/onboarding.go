@@ -62,7 +62,7 @@ func (s *Server) latestReport(r *http.Request, repos []*store.Repo) (*store.Repo
 	for i, repo := range repos {
 		ids[i] = repo.ID
 	}
-	latest, err := s.store.LatestDefaultBranchReports(r.Context(), ids)
+	latest, err := s.latestReports(r.Context(), ids)
 	if err != nil {
 		return nil, nil
 	}

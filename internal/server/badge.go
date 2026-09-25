@@ -50,7 +50,7 @@ func (s *Server) handleBadge(w http.ResponseWriter, r *http.Request) {
 	// The default branch's own history: a PR whose head branch shares its
 	// name (a fork's "main") must not take over the badge.
 	value, color := "unknown", badgeGray
-	reports, err := s.store.LatestDefaultBranchReports(r.Context(), []int64{repo.ID})
+	reports, err := s.latestReports(r.Context(), []int64{repo.ID})
 	if err != nil {
 		s.internalError(w, "loading latest report for badge", err)
 		return

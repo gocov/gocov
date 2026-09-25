@@ -583,7 +583,7 @@ func TestCommitReportLifecycle(t *testing.T) {
 	if err := st.UpsertCommitReport(ctx, &store.CommitReport{RepoID: repo.ID, CommitSHA: "c3", Branch: "main", TotalPct: 10, GateFailed: true, PartCount: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if latest, err := st.LatestDefaultBranchReports(ctx, []int64{repo.ID}); err != nil || latest[repo.ID] == nil || latest[repo.ID].CommitSHA != "c3" {
+	if latest, err := latestReports(ctx, st, []int64{repo.ID}); err != nil || latest[repo.ID] == nil || latest[repo.ID].CommitSHA != "c3" {
 		t.Errorf("latest report = %v, %v (want c3, the newest)", latest, err)
 	}
 	// Excluding c2 and skipping the failed c3 leaves c1 as the baseline.
@@ -749,7 +749,7 @@ func TestCommitReportBackfill(t *testing.T) {
 	if cr2.ID <= cr1.ID {
 		t.Errorf("backfill ids out of order: c1=%d c2=%d", cr1.ID, cr2.ID)
 	}
-	if latest, err := st.LatestDefaultBranchReports(ctx, []int64{repo.ID}); err != nil || latest[repo.ID] == nil || latest[repo.ID].CommitSHA != "c2" {
+	if latest, err := latestReports(ctx, st, []int64{repo.ID}); err != nil || latest[repo.ID] == nil || latest[repo.ID].CommitSHA != "c2" {
 		t.Errorf("latest report = %v, %v (want c2)", latest, err)
 	}
 }
@@ -1418,7 +1418,7 @@ func TestTokenlessClaims(t *testing.T) {
 }
 
 // The default branch's history leaves PR-build reports out — in
-// LatestDefaultBranchReports (the badge, the dashboard) and
+// the latest default-branch report (the badge, the dashboard) and
 // ListBranchCommitReports (the trend, the repo page) — and
 // LatestPassedCommitReport does the same for the delta/gate baseline: a
 // fork PR whose head branch is named like the default branch must feed
@@ -1440,7 +1440,7 @@ func TestCommitReportsExcludePRBuilds(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	latestMain, err := st.LatestDefaultBranchReports(ctx, []int64{repo.ID})
+	latestMain, err := latestReports(ctx, st, []int64{repo.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1628,13 +1628,17 @@ func TestUploadFileReadsOneFile(t *testing.T) {
 }
 
 // ListWorkspaceRepos is Workspace.Owns as a query: the forge must match,
-// nested projects count, and LIKE metacharacters in a prefix are literal.
+// nested projects count, and a prefix is compared byte for byte — no
+// pattern characters, no case folding, and no neighbour whose name only
+// starts the same ("acme-x", "acme0"). Deleting the workspace takes the
+// same repos with it.
 func TestListWorkspaceRepos(t *testing.T) {
 	st := newTestStore(t)
 	ctx := t.Context()
 	for _, r := range []struct{ forge, slug string }{
 		{"gitlab", "acme/api"}, {"gitlab", "acme/team/web"}, {"gitlab", "acmeco/api"},
 		{"github", "acme/api"}, {"gitlab", "a_b/x"}, {"gitlab", "axb/x"},
+		{"gitlab", "acme-x/api"}, {"gitlab", "acme0/api"}, {"gitlab", "Acme/api"}, {"gitlab", "émile/x"},
 	} {
 		if err := st.CreateRepo(ctx, &store.Repo{Forge: r.forge, Slug: r.slug, Token: r.forge + r.slug, DefaultBranch: "main"}); err != nil {
 			t.Fatal(err)
@@ -1648,6 +1652,9 @@ func TestListWorkspaceRepos(t *testing.T) {
 		{"gitlab", "acme/team", []string{"acme/team/web"}},
 		{"github", "acme", []string{"acme/api"}},
 		{"gitlab", "a_b", []string{"a_b/x"}},
+		{"gitlab", "Acme", []string{"Acme/api"}},
+		{"gitlab", "émile", []string{"émile/x"}},
+		{"gitlab", "acme-", nil},
 		{"gitlab", "nobody", nil},
 	} {
 		repos, err := st.ListWorkspaceRepos(ctx, tc.forge, tc.prefix)
@@ -1662,11 +1669,34 @@ func TestListWorkspaceRepos(t *testing.T) {
 			t.Errorf("ListWorkspaceRepos(%s, %s) = %v, want %v", tc.forge, tc.prefix, got, tc.want)
 		}
 	}
+
+	ws := &store.Workspace{Forge: "gitlab", Prefix: "acme", Token: "ws-acme", DefaultBranch: "main"}
+	if err := st.CreateWorkspace(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteWorkspace(ctx, ws.ID); err != nil {
+		t.Fatal(err)
+	}
+	all, err := st.ListRepos(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var left []string
+	for _, r := range all {
+		left = append(left, r.Forge+":"+r.Slug)
+	}
+	slices.Sort(left)
+	want := []string{"github:acme/api", "gitlab:Acme/api", "gitlab:a_b/x", "gitlab:acme-x/api", "gitlab:acme0/api",
+		"gitlab:acmeco/api", "gitlab:axb/x", "gitlab:émile/x"}
+	slices.Sort(want)
+	if !slices.Equal(left, want) {
+		t.Errorf("repos after deleting gitlab:acme = %v, want %v", left, want)
+	}
 }
 
-// LatestDefaultBranchReports reads each repo's newest report on its own
+// DefaultBranchReports at limit 1 reads each repo's newest report on its own
 // default branch; a repo without one is simply absent.
-func TestLatestDefaultBranchReports(t *testing.T) {
+func TestDefaultBranchReportsLatest(t *testing.T) {
 	st := newTestStore(t)
 	ctx := t.Context()
 	a := &store.Repo{Forge: "github", Slug: "acme/a", Token: "ta", DefaultBranch: "main"}
@@ -1690,12 +1720,12 @@ func TestLatestDefaultBranchReports(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, err := st.LatestDefaultBranchReports(ctx, []int64{a.ID, b.ID, c.ID, 999})
+	got, err := latestReports(ctx, st, []int64{a.ID, b.ID, c.ID, 999})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 2 || got[a.ID] == nil || got[a.ID].CommitSHA != "a2" || got[b.ID] == nil || got[b.ID].CommitSHA != "b1" {
-		t.Errorf("LatestDefaultBranchReports = %v, want a2 for acme/a and b1 for acme/b only", got)
+		t.Errorf("latest default-branch reports = %v, want a2 for acme/a and b1 for acme/b only", got)
 	}
 }
 
@@ -1792,4 +1822,21 @@ func TestJudgedGateRoundTrip(t *testing.T) {
 			}
 		}
 	}
+}
+
+// latestReports is DefaultBranchReports at limit 1, keyed to the one
+// report each repo has: the read the badge and the dashboard previews make.
+func latestReports(ctx context.Context, st store.Store, repoIDs []int64) (map[int64]*store.CommitReport, error) {
+	reports, err := st.DefaultBranchReports(ctx, repoIDs, 1)
+	if err != nil {
+		return nil, err
+	}
+	latest := map[int64]*store.CommitReport{}
+	for id, rs := range reports {
+		if len(rs) != 1 {
+			return nil, fmt.Errorf("repo %d: %d reports at limit 1", id, len(rs))
+		}
+		latest[id] = rs[0]
+	}
+	return latest, nil
 }
