@@ -1026,13 +1026,6 @@ func (s *Store) CommitReport(ctx context.Context, repoID int64, commitSHA string
 		repoID, commitSHA))
 }
 
-func (s *Store) LatestCommitReport(ctx context.Context, repoID int64, branch string) (*store.CommitReport, error) {
-	return s.scanCommitReport(s.pool.QueryRow(ctx,
-		`SELECT `+commitReportCols+` FROM commit_reports
-		 WHERE repo_id = $1 AND branch = $2 ORDER BY id DESC LIMIT 1`,
-		repoID, branch))
-}
-
 func (s *Store) LatestDefaultBranchReports(ctx context.Context, repoIDs []int64) (map[int64]*store.CommitReport, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT DISTINCT ON (repo_id) `+commitReportCols+` FROM commit_reports

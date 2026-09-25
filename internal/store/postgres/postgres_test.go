@@ -583,7 +583,7 @@ func TestCommitReportLifecycle(t *testing.T) {
 	if err := st.UpsertCommitReport(ctx, &store.CommitReport{RepoID: repo.ID, CommitSHA: "c3", Branch: "main", TotalPct: 10, GateFailed: true, PartCount: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if latest, err := st.LatestCommitReport(ctx, repo.ID, "main"); err != nil || latest.CommitSHA != "c3" {
+	if latest, err := st.LatestDefaultBranchReports(ctx, []int64{repo.ID}); err != nil || latest[repo.ID] == nil || latest[repo.ID].CommitSHA != "c3" {
 		t.Errorf("latest report = %v, %v (want c3, the newest)", latest, err)
 	}
 	// Excluding c2 and skipping the failed c3 leaves c1 as the baseline.
@@ -749,7 +749,7 @@ func TestCommitReportBackfill(t *testing.T) {
 	if cr2.ID <= cr1.ID {
 		t.Errorf("backfill ids out of order: c1=%d c2=%d", cr1.ID, cr2.ID)
 	}
-	if latest, err := st.LatestCommitReport(ctx, repo.ID, "main"); err != nil || latest.CommitSHA != "c2" {
+	if latest, err := st.LatestDefaultBranchReports(ctx, []int64{repo.ID}); err != nil || latest[repo.ID] == nil || latest[repo.ID].CommitSHA != "c2" {
 		t.Errorf("latest report = %v, %v (want c2)", latest, err)
 	}
 }
@@ -1470,14 +1470,6 @@ func TestCommitReportsExcludePRBuilds(t *testing.T) {
 	}
 	if base.CommitSHA != "c1" {
 		t.Errorf("baseline = %s, want c1 (PR report must not be the baseline)", base.CommitSHA)
-	}
-	// The newest overall still sees the PR report.
-	latest, err := st.LatestCommitReport(ctx, repo.ID, "main")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if latest.CommitSHA != "c2" {
-		t.Errorf("latest report = %s, want c2", latest.CommitSHA)
 	}
 }
 
