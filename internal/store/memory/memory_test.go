@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 
@@ -92,5 +93,27 @@ func TestNamesAreScopedPerForge(t *testing.T) {
 	}
 	if _, err := s.RepoByID(ctx, bbRepo.ID); err != nil {
 		t.Errorf("the bitbucket namesake was cascaded away: %v", err)
+	}
+}
+
+// Mirrors postgres: a grant write aimed at another forge's workspace finds
+// nothing to update.
+func TestWorkspaceGrantStaysOnItsForge(t *testing.T) {
+	ctx := context.Background()
+	s := New()
+	w := &store.Workspace{Forge: "gitlab", Prefix: "acme"}
+	if err := s.CreateWorkspace(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetWorkspaceGrant(ctx, w.ID, "gitlab", store.Grant{Account: "covbot"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, forge := range []string{"bitbucket", "github"} {
+		if err := s.SetWorkspaceGrant(ctx, w.ID, forge, store.Grant{Account: "other"}); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("SetWorkspaceGrant(%s) on a gitlab workspace = %v, want ErrNotFound", forge, err)
+		}
+	}
+	if got, _ := s.WorkspaceByPrefix(ctx, "gitlab", "acme"); got.Grant.Account != "covbot" {
+		t.Errorf("grant = %+v, want covbot untouched", got.Grant)
 	}
 }

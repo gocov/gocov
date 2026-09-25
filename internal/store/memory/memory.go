@@ -297,39 +297,23 @@ func (s *Store) UpdateWorkspace(_ context.Context, w *store.Workspace) error {
 		cp.CreatedAt = existing.CreatedAt
 	}
 	// Mirror postgres: the grant columns belong exclusively to their
-	// SetWorkspace*Grant methods — the tokens rotate on every use, and a
-	// full-row write from an earlier read would resurrect a dead one.
-	cp.BitbucketGrantAccount = existing.BitbucketGrantAccount
-	cp.BitbucketRefreshToken = existing.BitbucketRefreshToken
-	cp.BitbucketGrantBroken = existing.BitbucketGrantBroken
-	cp.GitLabGrantAccount = existing.GitLabGrantAccount
-	cp.GitLabRefreshToken = existing.GitLabRefreshToken
-	cp.GitLabGrantBroken = existing.GitLabGrantBroken
+	// SetWorkspaceGrant — the tokens rotate on every use, and a full-row
+	// write from an earlier read would resurrect a dead one.
+	cp.Grant = existing.Grant
 	s.workspaces[w.ID] = cp
 	return nil
 }
 
-func (s *Store) SetWorkspaceBitbucketGrant(_ context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
-	return s.setWorkspaceGrant(workspaceID, func(w *store.Workspace) {
-		w.BitbucketGrantAccount, w.BitbucketRefreshToken, w.BitbucketGrantBroken = account, refreshToken, broken
-	})
-}
-
-func (s *Store) SetWorkspaceGitLabGrant(_ context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
-	return s.setWorkspaceGrant(workspaceID, func(w *store.Workspace) {
-		w.GitLabGrantAccount, w.GitLabRefreshToken, w.GitLabGrantBroken = account, refreshToken, broken
-	})
-}
-
-// setWorkspaceGrant applies set to the stored workspace under the lock.
-func (s *Store) setWorkspaceGrant(workspaceID int64, set func(*store.Workspace)) error {
+func (s *Store) SetWorkspaceGrant(_ context.Context, workspaceID int64, forge string, g store.Grant) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	w, ok := s.workspaces[workspaceID]
-	if !ok {
+	// Mirror postgres: only Bitbucket and GitLab have grant columns, and
+	// only on a workspace of that forge.
+	if !ok || w.Forge != forge || (forge != "bitbucket" && forge != "gitlab") {
 		return store.ErrNotFound
 	}
-	set(w)
+	w.Grant = g
 	return nil
 }
 

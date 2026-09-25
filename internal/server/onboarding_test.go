@@ -21,9 +21,9 @@ func TestReportsPostedMsg(t *testing.T) {
 	}{
 		{"github app installed", &store.Workspace{Forge: "github", GitHubInstallationID: 42}, "gocov[bot]"},
 		{"github not installed", &store.Workspace{Forge: "github"}, ""},
-		{"bitbucket granted", &store.Workspace{Forge: "bitbucket", BitbucketGrantAccount: "acme"}, "@acme"},
+		{"bitbucket granted", &store.Workspace{Forge: "bitbucket", Grant: store.Grant{Account: "acme"}}, "@acme"},
 		{"bitbucket no grant", &store.Workspace{Forge: "bitbucket"}, ""},
-		{"gitlab granted", &store.Workspace{Forge: "gitlab", GitLabGrantAccount: "acme"}, "@acme"},
+		{"gitlab granted", &store.Workspace{Forge: "gitlab", Grant: store.Grant{Account: "acme"}}, "@acme"},
 		{"gitlab no grant", &store.Workspace{Forge: "gitlab"}, ""},
 		{"unknown forge", &store.Workspace{Forge: "gitea", GitHubInstallationID: 42}, ""},
 	} {
@@ -84,7 +84,7 @@ func TestAPIWorkspaceSetup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.store.SetWorkspaceBitbucketGrant(ctx, ws.ID, "acme-ci", "rt", false); err != nil {
+	if err := f.store.SetWorkspaceGrant(ctx, ws.ID, "bitbucket", store.Grant{Account: "acme-ci", RefreshToken: "rt"}); err != nil {
 		t.Fatal(err)
 	}
 	const sha = "0123456789abcdef0123456789abcdef01234567"

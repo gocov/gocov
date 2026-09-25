@@ -103,7 +103,7 @@ func (f *bbConnectFixture) workspace(t *testing.T) *store.Workspace {
 func (f *bbConnectFixture) grant(t *testing.T, account, refresh string, broken bool) {
 	t.Helper()
 	ws := f.workspace(t)
-	if err := f.store.SetWorkspaceBitbucketGrant(t.Context(), ws.ID, account, refresh, broken); err != nil {
+	if err := f.store.SetWorkspaceGrant(t.Context(), ws.ID, "bitbucket", store.Grant{Account: account, RefreshToken: refresh, Broken: broken}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -159,8 +159,8 @@ func TestBitbucketConnectFlow(t *testing.T) {
 		t.Errorf("callback redirect = %q, want the workspace's dashboard", loc)
 	}
 	ws := f.workspace(t)
-	if ws.BitbucketGrantAccount != "covbot" || ws.BitbucketRefreshToken != "rt-0" || ws.BitbucketGrantBroken {
-		t.Errorf("stored grant = %q/%q/broken=%v", ws.BitbucketGrantAccount, ws.BitbucketRefreshToken, ws.BitbucketGrantBroken)
+	if ws.Grant.Account != "covbot" || ws.Grant.RefreshToken != "rt-0" || ws.Grant.Broken {
+		t.Errorf("stored grant = %q/%q/broken=%v", ws.Grant.Account, ws.Grant.RefreshToken, ws.Grant.Broken)
 	}
 }
 
@@ -242,8 +242,8 @@ func TestUploadUsesGrantAndPersistsRotation(t *testing.T) {
 	if got := f.bb.refreshCalls; len(got) != 1 || got[0] != "rt-0" {
 		t.Errorf("refresh calls = %v, want exactly the stored token", got)
 	}
-	if ws := f.workspace(t); ws.BitbucketRefreshToken != "rt-1" {
-		t.Errorf("stored refresh = %q, want the rotated rt-1", ws.BitbucketRefreshToken)
+	if ws := f.workspace(t); ws.Grant.RefreshToken != "rt-1" {
+		t.Errorf("stored refresh = %q, want the rotated rt-1", ws.Grant.RefreshToken)
 	}
 }
 
@@ -272,10 +272,10 @@ func TestUploadGrantRevokedDegrades(t *testing.T) {
 		t.Errorf("status/insights = %q/%q, want skipped/skipped", resp.BuildStatus, resp.CodeInsights)
 	}
 	ws := f.workspace(t)
-	if !ws.BitbucketGrantBroken {
+	if !ws.Grant.Broken {
 		t.Error("revoked refresh must flag the grant broken")
 	}
-	if ws.BitbucketGrantAccount != "covbot" {
+	if ws.Grant.Account != "covbot" {
 		t.Error("the account name is kept — it says who to replace")
 	}
 }
@@ -288,7 +288,7 @@ func TestUploadGrantHealsBrokenFlag(t *testing.T) {
 	if resp := f.upload(t); resp.BuildStatus != "posted" {
 		t.Fatalf("build status = %q", resp.BuildStatus)
 	}
-	if ws := f.workspace(t); ws.BitbucketGrantBroken {
+	if ws := f.workspace(t); ws.Grant.Broken {
 		t.Error("a working refresh must clear the broken flag")
 	}
 }
@@ -305,7 +305,7 @@ func TestBitbucketConnectIsOwnersOnly(t *testing.T) {
 	if rec := postJSON(t, f.fixture, "/api/ui/workspace-settings/disconnect/bitbucket/acme", nil, sess); rec.Code != http.StatusForbidden {
 		t.Errorf("member disconnect: status = %d, want 403", rec.Code)
 	}
-	if ws := f.workspace(t); ws.BitbucketGrantAccount != "gocov-bot" {
+	if ws := f.workspace(t); ws.Grant.Account != "gocov-bot" {
 		t.Errorf("member disconnect dropped the grant: %+v", ws)
 	}
 }
@@ -317,8 +317,8 @@ func TestBitbucketDisconnect(t *testing.T) {
 	wantStatus(t, postJSON(t, f.fixture, "/api/ui/workspace-settings/disconnect/bitbucket/acme", nil, sess),
 		"disconnect", http.StatusOK)
 	ws := f.workspace(t)
-	if ws.BitbucketGrantAccount != "" || ws.BitbucketRefreshToken != "" || ws.BitbucketGrantBroken {
-		t.Errorf("after disconnect: %q/%q/%v", ws.BitbucketGrantAccount, ws.BitbucketRefreshToken, ws.BitbucketGrantBroken)
+	if ws.Grant.Account != "" || ws.Grant.RefreshToken != "" || ws.Grant.Broken {
+		t.Errorf("after disconnect: %q/%q/%v", ws.Grant.Account, ws.Grant.RefreshToken, ws.Grant.Broken)
 	}
 }
 

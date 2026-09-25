@@ -65,28 +65,28 @@ type Workspace struct {
 	// lazily on the first failing mint, cleared on reconnect or when a
 	// mint succeeds again; the settings page renders it as "reconnect".
 	GitHubAppBroken bool
-	// BitbucketGrantAccount is the username of the Bitbucket account
-	// that granted the workspace connect (One-Click Connect D6); posts
-	// visibly carry this identity (D8). Empty when not connected.
-	BitbucketGrantAccount string
-	// BitbucketRefreshToken is the grant's rotating refresh token,
-	// encrypted at rest by the postgres store (AES-GCM under
-	// GOCOV_SECRET_KEY). Empty when not connected — or when decryption
-	// failed, in which case BitbucketGrantBroken is set on the loaded
-	// struct so the UI asks for a reconnect instead of erroring.
-	BitbucketRefreshToken string
-	// BitbucketGrantBroken mirrors GitHubAppBroken for the Bitbucket
-	// grant: set lazily when a refresh comes back invalid_grant.
-	BitbucketGrantBroken bool
-	// GitLabGrantAccount, GitLabRefreshToken and GitLabGrantBroken
-	// mirror the Bitbucket grant fields for GitLab Connect: the granting
-	// account's username (notes post as it), the rotating refresh token
-	// (encrypted at rest; empty with the broken flag set when
-	// undecryptable) and the lazily-set revocation flag.
-	GitLabGrantAccount string
-	GitLabRefreshToken string
-	GitLabGrantBroken  bool
-	CreatedAt          time.Time
+	// Grant is the workspace's Bitbucket or GitLab connect grant (One-Click
+	// Connect D6), whichever forge the workspace is on; zero on GitHub,
+	// which connects through the app installation above, and when not
+	// connected.
+	Grant     Grant
+	CreatedAt time.Time
+}
+
+// Grant is a Bitbucket or GitLab workspace-connect grant as stored.
+type Grant struct {
+	// Account is the username of the account that granted the connect;
+	// posts visibly carry this identity (D8). Empty when not connected.
+	Account string
+	// RefreshToken is the grant's rotating refresh token, encrypted at
+	// rest by the postgres store (AES-GCM under GOCOV_SECRET_KEY). Empty
+	// when not connected — or when decryption failed, in which case
+	// Broken is set on the loaded struct so the UI asks for a reconnect
+	// instead of erroring.
+	RefreshToken string
+	// Broken mirrors Workspace.GitHubAppBroken: set lazily when a refresh
+	// comes back invalid_grant.
+	Broken bool
 }
 
 // Repo visibility values, as the forge last reported them. The empty
@@ -352,14 +352,12 @@ type Store interface {
 	// member — an owner — atomically: self-service registration (M3) must
 	// never leave a workspace nobody can see or administer.
 	RegisterWorkspace(ctx context.Context, w *Workspace, userID int64) error
-	// SetWorkspaceBitbucketGrant updates only the Bitbucket grant fields.
-	// Bitbucket rotates refresh tokens on every use, so the swap must be
-	// a single narrow UPDATE that cannot clobber (or be clobbered by) a
-	// concurrent full-row settings save.
-	SetWorkspaceBitbucketGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error
-	// SetWorkspaceGitLabGrant is SetWorkspaceBitbucketGrant's GitLab
-	// twin, with the same rotation-safety contract.
-	SetWorkspaceGitLabGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error
+	// SetWorkspaceGrant updates only the workspace's grant. Bitbucket and
+	// GitLab rotate refresh tokens on every use, so the swap must be a
+	// single narrow UPDATE that cannot clobber (or be clobbered by) a
+	// concurrent full-row settings save. forge must be the workspace's
+	// own; ErrNotFound otherwise, as for an unknown id.
+	SetWorkspaceGrant(ctx context.Context, workspaceID int64, forge string, g Grant) error
 	// WithGrantLock serializes refreshes of one workspace's Bitbucket or
 	// GitLab grant across every server instance sharing the store, not
 	// just within one process. Both forges rotate the refresh token on
@@ -486,6 +484,5 @@ type CommitTx interface {
 // pool under enough simultaneous cold-cache uploads of one workspace.
 type GrantTx interface {
 	WorkspaceByPrefix(ctx context.Context, forge, prefix string) (*Workspace, error)
-	SetWorkspaceBitbucketGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error
-	SetWorkspaceGitLabGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error
+	SetWorkspaceGrant(ctx context.Context, workspaceID int64, forge string, g Grant) error
 }

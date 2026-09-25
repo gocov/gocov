@@ -59,7 +59,7 @@ func connectedWorkspace(t *testing.T, st *storemem.Store, prefix string) *store.
 	if err := st.CreateWorkspace(ctx, ws); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetWorkspaceBitbucketGrant(ctx, ws.ID, "covbot", "rt-0", false); err != nil {
+	if err := st.SetWorkspaceGrant(ctx, ws.ID, "bitbucket", store.Grant{Account: "covbot", RefreshToken: "rt-0"}); err != nil {
 		t.Fatal(err)
 	}
 	fresh, err := st.WorkspaceByPrefix(ctx, "bitbucket", prefix)
@@ -137,8 +137,8 @@ func TestRotatedRefreshTokenIsPersisted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fresh.BitbucketRefreshToken != "rt-next" {
-		t.Errorf("stored refresh token = %q, want the rotated %q", fresh.BitbucketRefreshToken, "rt-next")
+	if fresh.Grant.RefreshToken != "rt-next" {
+		t.Errorf("stored refresh token = %q, want the rotated %q", fresh.Grant.RefreshToken, "rt-next")
 	}
 }
 
@@ -155,12 +155,12 @@ func TestRevokedGrantIsMarkedBroken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !fresh.BitbucketGrantBroken {
+	if !fresh.Grant.Broken {
 		t.Error("the grant was not marked broken, so settings will not ask for a reconnect")
 	}
 	// The account is kept: it says who has to reconnect.
-	if fresh.BitbucketGrantAccount != "covbot" {
-		t.Errorf("account = %q, want it kept", fresh.BitbucketGrantAccount)
+	if fresh.Grant.Account != "covbot" {
+		t.Errorf("account = %q, want it kept", fresh.Grant.Account)
 	}
 }
 

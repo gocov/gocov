@@ -322,11 +322,19 @@ func (s *Store) CreateWorkspace(ctx context.Context, w *store.Workspace) error {
 }
 
 func (s *Store) createWorkspace(ctx context.Context, db querier, w *store.Workspace) error {
-	sealed, err := s.sealToken(w.BitbucketRefreshToken)
+	// The grant lands in its forge's columns; the other forge's stay empty.
+	var bb, gl store.Grant
+	switch w.Forge {
+	case "bitbucket":
+		bb = w.Grant
+	case "gitlab":
+		gl = w.Grant
+	}
+	sealed, err := s.sealToken(bb.RefreshToken)
 	if err != nil {
 		return err
 	}
-	sealedGL, err := s.sealToken(w.GitLabRefreshToken)
+	sealedGL, err := s.sealToken(gl.RefreshToken)
 	if err != nil {
 		return err
 	}
@@ -341,8 +349,8 @@ func (s *Store) createWorkspace(ctx context.Context, db querier, w *store.Worksp
 		w.Forge, w.Prefix, w.Token, w.DefaultBranch,
 		w.Gate.MinCoverage, w.Gate.MinDiffCoverage, w.Gate.MaxCoverageDrop, w.ReportRetentionDays,
 		w.GitHubInstallationID, w.GitHubAppBroken,
-		w.BitbucketGrantAccount, sealed, w.BitbucketGrantBroken,
-		w.GitLabGrantAccount, sealedGL, w.GitLabGrantBroken,
+		bb.Account, sealed, bb.Broken,
+		gl.Account, sealedGL, gl.Broken,
 	).Scan(&w.ID, &w.CreatedAt)
 }
 
@@ -365,8 +373,8 @@ func (s *Store) RegisterWorkspace(ctx context.Context, w *store.Workspace, userI
 }
 
 // UpdateWorkspace replaces the stored row with w's fields — except the
-// Bitbucket and GitLab grant columns, which only their SetWorkspace*Grant
-// methods touch: the refresh tokens rotate on every use, so a full-row
+// Bitbucket and GitLab grant columns, which only SetWorkspaceGrant
+// touches: the refresh tokens rotate on every use, so a full-row
 // write from an earlier read would resurrect an already-invalidated
 // token.
 func (s *Store) UpdateWorkspace(ctx context.Context, w *store.Workspace) error {
@@ -380,33 +388,34 @@ func (s *Store) UpdateWorkspace(ctx context.Context, w *store.Workspace) error {
 		w.ReportRetentionDays, w.GitHubInstallationID, w.GitHubAppBroken))
 }
 
-func (s *Store) SetWorkspaceBitbucketGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
-	return s.setWorkspaceGrant(ctx, s.pool, setBitbucketGrantSQL, workspaceID, account, refreshToken, broken)
+func (s *Store) SetWorkspaceGrant(ctx context.Context, workspaceID int64, forge string, g store.Grant) error {
+	return s.setWorkspaceGrant(ctx, s.pool, workspaceID, forge, g)
 }
 
-func (s *Store) SetWorkspaceGitLabGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
-	return s.setWorkspaceGrant(ctx, s.pool, setGitLabGrantSQL, workspaceID, account, refreshToken, broken)
-}
-
-// The two grant columns sets differ only by forge; setWorkspaceGrant is
-// the write behind both, with the statement chosen by the caller.
-const (
-	setBitbucketGrantSQL = `
+// setGrantSQL is the narrow grant write per forge: each forge's grant
+// has its own columns, and the forge guard keeps a grant from landing on
+// another forge's workspace.
+var setGrantSQL = map[string]string{
+	"bitbucket": `
 		UPDATE workspaces SET bitbucket_grant_account = $2,
 			bitbucket_refresh_token = $3, bitbucket_grant_broken = $4
-		WHERE id = $1`
-	setGitLabGrantSQL = `
+		WHERE id = $1 AND forge = 'bitbucket'`,
+	"gitlab": `
 		UPDATE workspaces SET gitlab_grant_account = $2,
 			gitlab_refresh_token = $3, gitlab_grant_broken = $4
-		WHERE id = $1`
-)
+		WHERE id = $1 AND forge = 'gitlab'`,
+}
 
-func (s *Store) setWorkspaceGrant(ctx context.Context, q querier, sql string, workspaceID int64, account, refreshToken string, broken bool) error {
-	sealed, err := s.sealToken(refreshToken)
+func (s *Store) setWorkspaceGrant(ctx context.Context, q querier, workspaceID int64, forge string, g store.Grant) error {
+	sql, ok := setGrantSQL[forge]
+	if !ok {
+		return store.ErrNotFound
+	}
+	sealed, err := s.sealToken(g.RefreshToken)
 	if err != nil {
 		return err
 	}
-	return affected(q.Exec(ctx, sql, workspaceID, account, sealed, broken))
+	return affected(q.Exec(ctx, sql, workspaceID, g.Account, sealed, g.Broken))
 }
 
 func (s *Store) DeleteWorkspace(ctx context.Context, id int64) error {
@@ -499,12 +508,8 @@ func (g *grantTx) WorkspaceByPrefix(ctx context.Context, forge, prefix string) (
 	return g.s.workspaceByPrefix(ctx, g.tx, forge, prefix)
 }
 
-func (g *grantTx) SetWorkspaceBitbucketGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
-	return g.s.setWorkspaceGrant(ctx, g.tx, setBitbucketGrantSQL, workspaceID, account, refreshToken, broken)
-}
-
-func (g *grantTx) SetWorkspaceGitLabGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
-	return g.s.setWorkspaceGrant(ctx, g.tx, setGitLabGrantSQL, workspaceID, account, refreshToken, broken)
+func (g *grantTx) SetWorkspaceGrant(ctx context.Context, workspaceID int64, forge string, grant store.Grant) error {
+	return g.s.setWorkspaceGrant(ctx, g.tx, workspaceID, forge, grant)
 }
 
 func (s *Store) WorkspaceByToken(ctx context.Context, token string) (*store.Workspace, error) {
@@ -522,29 +527,33 @@ func (s *Store) ListWorkspaces(ctx context.Context) ([]*store.Workspace, error) 
 
 func (s *Store) scanWorkspace(row rowScanner) (*store.Workspace, error) {
 	var w store.Workspace
+	var bb, gl store.Grant
 	var sealedRefresh, sealedGLRefresh string
 	err := row.Scan(&w.ID, &w.Forge, &w.Prefix, &w.Token, &w.DefaultBranch,
 		&w.Gate.MinCoverage, &w.Gate.MinDiffCoverage, &w.Gate.MaxCoverageDrop, &w.ReportRetentionDays,
 		&w.GitHubInstallationID, &w.GitHubAppBroken,
-		&w.BitbucketGrantAccount, &sealedRefresh, &w.BitbucketGrantBroken,
-		&w.GitLabGrantAccount, &sealedGLRefresh, &w.GitLabGrantBroken, &w.CreatedAt)
+		&bb.Account, &sealedRefresh, &bb.Broken,
+		&gl.Account, &sealedGLRefresh, &gl.Broken, &w.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	if token, ok := s.openToken(sealedRefresh); ok {
-		w.BitbucketRefreshToken = token
+	// Only the workspace's own forge's columns carry its grant.
+	var sealed string
+	switch w.Forge {
+	case "bitbucket":
+		w.Grant, sealed = bb, sealedRefresh
+	case "gitlab":
+		w.Grant, sealed = gl, sealedGLRefresh
+	}
+	if token, ok := s.openToken(sealed); ok {
+		w.Grant.RefreshToken = token
 	} else {
 		// Undecryptable (key rotated away, or missing): surface as a
 		// broken connection instead of failing every workspace read.
-		w.BitbucketGrantBroken = true
-	}
-	if token, ok := s.openToken(sealedGLRefresh); ok {
-		w.GitLabRefreshToken = token
-	} else {
-		w.GitLabGrantBroken = true
+		w.Grant.Broken = true
 	}
 	return &w, nil
 }

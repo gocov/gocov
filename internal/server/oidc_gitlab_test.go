@@ -42,7 +42,7 @@ func newGitLabOIDCFixture(t *testing.T, issuer string, extraIssuers []string) (*
 	if err := st.CreateWorkspace(ctx, ws); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetWorkspaceGitLabGrant(ctx, ws.ID, "covbot", "rt-0", false); err != nil {
+	if err := st.SetWorkspaceGrant(ctx, ws.ID, "gitlab", store.Grant{Account: "covbot", RefreshToken: "rt-0"}); err != nil {
 		t.Fatal(err)
 	}
 	blobs := blobmem.New()

@@ -35,7 +35,7 @@ func TestWorkspaceTokenUpload(t *testing.T) {
 		// A one-click Bitbucket connection is what makes the forge askable
 		// for a repo-less auto-create; without it no forge client is built.
 		if connected {
-			if err := st.SetWorkspaceBitbucketGrant(ctx, ws.ID, "covbot", "rt-0", false); err != nil {
+			if err := st.SetWorkspaceGrant(ctx, ws.ID, "bitbucket", store.Grant{Account: "covbot", RefreshToken: "rt-0"}); err != nil {
 				t.Fatal(err)
 			}
 			cfg.BitbucketConnect = &fakeBBConnect{grantForge: ff}

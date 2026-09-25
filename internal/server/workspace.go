@@ -131,10 +131,8 @@ func forgeConnection(ws *store.Workspace) (connected, broken bool, account strin
 	switch ws.Forge {
 	case "github":
 		return ws.GitHubInstallationID != 0, ws.GitHubAppBroken, ""
-	case "bitbucket":
-		return ws.BitbucketGrantAccount != "", ws.BitbucketGrantBroken, ws.BitbucketGrantAccount
-	case "gitlab":
-		return ws.GitLabGrantAccount != "", ws.GitLabGrantBroken, ws.GitLabGrantAccount
+	case "bitbucket", "gitlab":
+		return ws.Grant.Account != "", ws.Grant.Broken, ws.Grant.Account
 	}
 	return false, false, ""
 }
