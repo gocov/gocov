@@ -402,3 +402,30 @@ func TestAPISourceViewUnavailable(t *testing.T) {
 		t.Error("no reason given for the missing source")
 	}
 }
+
+// The view compares the file with the same file at the baseline upload:
+// a delta for the file, and the lines that ran there but miss now.
+func TestAPISourceViewComparesWithTheBaselineFile(t *testing.T) {
+	f, _ := sourceFixture(t) // c1: a.go lines 1-5 ran, 6/8 statements
+	rec := doUpload(t, f, "secret-token", map[string]string{
+		"commit": "c2", "branch": "main", "path_prefix": "example.com",
+	}, "mode: set\nexample.com/m/a.go:1.1,5.2 6 0\nexample.com/m/a.go:7.1,9.2 2 0\nexample.com/m/b.go:1.1,3.2 2 1\n")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("upload failed: %d %s", rec.Code, rec.Body)
+	}
+
+	got := decodeJSON[sourcePageDTO](t, get(f, "/api/ui/uploads/2/files/example.com/m/a.go"))
+	if got.Delta == nil || *got.Delta != -75 {
+		t.Errorf("delta = %v, want -75 against c1's 75%%", got.Delta)
+	}
+	for _, l := range got.Lines {
+		if want := l.No <= 5; l.NewMiss != want {
+			t.Errorf("line %d new_miss = %v, want %v", l.No, l.NewMiss, want)
+		}
+	}
+
+	// The baseline's own view has nothing earlier to compare against.
+	if got := decodeJSON[sourcePageDTO](t, get(f, "/api/ui/uploads/1/files/example.com/m/a.go")); got.Delta != nil {
+		t.Errorf("first upload delta = %v, want none", *got.Delta)
+	}
+}

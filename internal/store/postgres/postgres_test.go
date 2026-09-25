@@ -1579,3 +1579,36 @@ func TestPartFilesReadsEveryPartAtOnce(t *testing.T) {
 		t.Errorf("PartFiles = %v, want %v", got, want)
 	}
 }
+
+func TestUploadFileReadsOneFile(t *testing.T) {
+	st := newTestStore(t)
+	ctx := t.Context()
+	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	u := &store.Upload{RepoID: repo.ID, CommitSHA: "c1", Branch: "main", Format: "go"}
+	blocks := []profile.Block{{StartLine: 1, EndLine: 2, NumStmts: 3, Count: 1}}
+	files := []*store.UploadFile{
+		{Path: "a.go", Pct: 50, CoveredStmts: 1, TotalStmts: 2, Blocks: blocks},
+		{Path: "b.go", Pct: 100, CoveredStmts: 3, TotalStmts: 3, Blocks: blocks},
+	}
+	if err := st.CreateUpload(ctx, u, files); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.UploadFile(ctx, u.ID, "b.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.UploadID != u.ID || got.Path != "b.go" || got.Pct != 100 || got.CoveredStmts != 3 || !reflect.DeepEqual(got.Blocks, blocks) {
+		t.Errorf("UploadFile(b.go) = %+v", got)
+	}
+	for _, tc := range []struct {
+		id   int64
+		path string
+	}{{u.ID, "c.go"}, {u.ID + 1, "a.go"}} {
+		if _, err := st.UploadFile(ctx, tc.id, tc.path); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("UploadFile(%d, %s) = %v, want ErrNotFound", tc.id, tc.path, err)
+		}
+	}
+}

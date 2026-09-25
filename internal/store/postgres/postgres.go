@@ -843,6 +843,19 @@ func uploadFiles(ctx context.Context, q querier, uploadID int64) ([]*store.Uploa
 		FROM upload_files WHERE upload_id = $1 ORDER BY path`, uploadID)
 }
 
+func (s *Store) UploadFile(ctx context.Context, uploadID int64, path string) (*store.UploadFile, error) {
+	files, err := queryUploadFiles(ctx, s.pool, `
+		SELECT upload_id, path, pct, covered_stmts, total_stmts, blocks
+		FROM upload_files WHERE upload_id = $1 AND path = $2`, uploadID, path)
+	if err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		return nil, store.ErrNotFound
+	}
+	return files[0], nil
+}
+
 // queryUploadFiles runs a query over upload_files' columns and decodes
 // every row's blocks.
 func queryUploadFiles(ctx context.Context, q querier, sql string, args ...any) ([]*store.UploadFile, error) {

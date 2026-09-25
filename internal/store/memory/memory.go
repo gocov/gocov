@@ -595,6 +595,17 @@ func (s *Store) UploadFiles(_ context.Context, uploadID int64) ([]*store.UploadF
 	return out, nil
 }
 
+func (s *Store) UploadFile(_ context.Context, uploadID int64, path string) (*store.UploadFile, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, f := range s.files[uploadID] {
+		if f.Path == path {
+			return new(*f), nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
 // PartFiles is the CommitTx read of every given upload's files at once.
 // Uploads without files contribute nothing.
 func (s *Store) PartFiles(_ context.Context, uploadIDs []int64) ([]*store.UploadFile, error) {

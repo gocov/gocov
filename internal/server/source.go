@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -66,17 +65,15 @@ func (s *Server) buildSourcePage(w http.ResponseWriter, r *http.Request) (*sourc
 	path := r.PathValue("path")
 	// Access was settled before this per-file lookup, so a signed-out
 	// probe cannot tell a missing file from a missing upload.
-	files, err := s.store.UploadFiles(r.Context(), upload.ID)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		s.internalError(w, "loading upload files", err)
-		return nil, false
-	}
-	i := slices.IndexFunc(files, func(f *store.UploadFile) bool { return f.Path == path })
-	if i < 0 {
+	file, err := s.store.UploadFile(r.Context(), upload.ID, path)
+	if errors.Is(err, store.ErrNotFound) {
 		httpError(w, http.StatusNotFound, "not found")
 		return nil, false
 	}
-	file := files[i]
+	if err != nil {
+		s.internalError(w, "loading upload file", err)
+		return nil, false
+	}
 
 	source, unavailable := s.fetchSource(r, repo, upload, file)
 	d := &sourcePageData{Repo: repo, Upload: upload, File: file, Unavailable: unavailable}
@@ -377,12 +374,19 @@ func (s *Server) baselineUpload(ctx context.Context, repo *store.Repo, u *store.
 	return base, byPath
 }
 
-// baseFileFor returns the same file at the most recent prior baseline upload
-// on the upload's branch. A file absent from that upload is genuinely new, so
-// there is no baseline to compare against.
+// baseFileFor returns the same file at the baseline upload
+// (core.UploadBaseline), reading only that one file. A file absent from
+// that upload is genuinely new, so there is no baseline to compare against.
 func (s *Server) baseFileFor(ctx context.Context, repo *store.Repo, u *store.Upload, path string) *store.UploadFile {
-	_, byPath := s.baselineUpload(ctx, repo, u)
-	return byPath[path]
+	base := core.UploadBaseline(ctx, s.store, repo, u)
+	if base == nil {
+		return nil
+	}
+	f, err := s.store.UploadFile(ctx, base.ID, path)
+	if err != nil {
+		return nil
+	}
+	return f
 }
 
 // markNewlyUncovered flags each line that is uncovered now but was covered

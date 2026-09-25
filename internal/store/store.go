@@ -408,6 +408,10 @@ type Store interface {
 	// ListBranchUploads is ListUploads restricted to one branch.
 	ListBranchUploads(ctx context.Context, repoID int64, branch string, limit int) ([]*Upload, error)
 	UploadFiles(ctx context.Context, uploadID int64) ([]*UploadFile, error)
+	// UploadFile returns one file of an upload by its profile path, or
+	// ErrNotFound — the source view's read, which needs a single file of
+	// uploads that may carry thousands.
+	UploadFile(ctx context.Context, uploadID int64, path string) (*UploadFile, error)
 	// LatestUploadsPerPart returns the most recent upload for each distinct
 	// part of a commit — the set the merged report is computed from. A
 	// re-uploaded part supersedes its earlier uploads here.
