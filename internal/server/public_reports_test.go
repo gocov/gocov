@@ -448,6 +448,7 @@ func waitForVisibility(t *testing.T, st *storemem.Store, slug, want string) {
 func TestAPIReportEndpointsFollowPublicReports(t *testing.T) {
 	paths := []string{
 		"/api/ui/repos/bitbucket/acme/widgets",
+		"/api/ui/repo-uploads/bitbucket/acme/widgets",
 		"/api/ui/uploads/1",
 		"/api/ui/uploads/1/files/a.go",
 	}

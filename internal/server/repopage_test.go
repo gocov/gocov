@@ -10,11 +10,9 @@ import (
 	"github.com/gocov/gocov/internal/store"
 )
 
-// The unfiltered history reuses the branch-selector fetch instead of
-// querying again. On the first page whose window needs one row more than
-// that fetch holds, reusing it would report no older pages with pages
-// still to come.
-func TestAPIRepoPaginationPastRecentFetch(t *testing.T) {
+// Paging past the branch selector's recent fetch still finds the older
+// uploads: the history reads its own window, one row beyond the page.
+func TestAPIRepoUploadsPaginationPastRecentFetch(t *testing.T) {
 	f := newFixture(t, nil)
 
 	page := 0
@@ -34,8 +32,8 @@ func TestAPIRepoPaginationPastRecentFetch(t *testing.T) {
 		}
 	}
 
-	got := decodeJSON[repoPageDTO](t, get(f, fmt.Sprintf("/api/ui/repos/bitbucket/acme/widgets?page=%d", page)))
-	if got.Page != page || !got.HasOlder {
+	got := decodeJSON[repoUploadsDTO](t, get(f, fmt.Sprintf("/api/ui/repo-uploads/bitbucket/acme/widgets?page=%d", page)))
+	if got.Page != page || !got.HasOlder || len(got.Uploads) != uploadsPageSize {
 		t.Errorf("page %d reported older=%v, want older uploads still to come", got.Page, got.HasOlder)
 	}
 }
@@ -128,16 +126,9 @@ func TestAPIRepoPage(t *testing.T) {
 	if row.Uncovered == "" || !row.CoverageChanged {
 		t.Errorf("file row lost its uncovered ranges or its change flag: %+v", row)
 	}
-	// Uploads are the unfiltered history, newest first.
-	if len(got.Uploads) != 3 || got.Uploads[0].SHA != "f1" {
-		t.Errorf("uploads = %+v", got.Uploads)
-	}
-	if got.Page != 0 || got.HasOlder {
-		t.Errorf("paging = page %d, older %v", got.Page, got.HasOlder)
-	}
 	// The branch filter moves the summary, trend and files with it.
 	feat := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets?branch=feat"))
-	if feat.Branch != "feat" || feat.TrendBranch != "feat" || len(feat.Uploads) != 1 {
+	if feat.Branch != "feat" || feat.TrendBranch != "feat" {
 		t.Errorf("branch-filtered page = %+v", feat)
 	}
 	if len(feat.Trend) != 1 {
@@ -152,11 +143,46 @@ func TestAPIRepoPageWithoutReports(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	for _, want := range []string{`"summary":null`, `"files":null`, `"trend":[]`, `"uploads":[]`, `"branches":[]`} {
+	for _, want := range []string{`"summary":null`, `"files":null`, `"trend":[]`, `"branches":[]`} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("empty repo page missing %s:\n%s", want, rec.Body)
 		}
 	}
+	rec = get(f, "/api/ui/repo-uploads/bitbucket/acme/widgets")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"uploads":[]`) {
+		t.Errorf("empty history = %d %s, want an empty list", rec.Code, rec.Body)
+	}
+}
+
+// The history is the unfiltered uploads newest first, or one branch's.
+func TestAPIRepoUploads(t *testing.T) {
+	f := newFixture(t, nil)
+	for _, u := range []struct{ commit, branch string }{{"c1", "main"}, {"f1", "feat"}, {"c2", "main"}} {
+		doUpload(t, f, "secret-token", map[string]string{"commit": u.commit, "branch": u.branch}, testProfile)
+	}
+
+	all := decodeJSON[repoUploadsDTO](t, get(f, "/api/ui/repo-uploads/bitbucket/acme/widgets"))
+	if shas := uploadSHAs(all.Uploads); !slices.Equal(shas, []string{"c2", "f1", "c1"}) {
+		t.Errorf("history = %v, want every upload newest first", shas)
+	}
+	if all.Page != 0 || all.HasOlder {
+		t.Errorf("paging = page %d, older %v", all.Page, all.HasOlder)
+	}
+	feat := decodeJSON[repoUploadsDTO](t, get(f, "/api/ui/repo-uploads/bitbucket/acme/widgets?branch=feat"))
+	if shas := uploadSHAs(feat.Uploads); !slices.Equal(shas, []string{"f1"}) {
+		t.Errorf("feat history = %v, want its one upload", shas)
+	}
+	if rec := get(f, "/api/ui/repo-uploads/bitbucket/acme/nope"); rec.Code != http.StatusNotFound {
+		t.Errorf("unknown repo = %d, want 404", rec.Code)
+	}
+}
+
+func uploadSHAs(rows []uploadRowDTO) []string {
+	shas := make([]string, len(rows))
+	for i, u := range rows {
+		shas[i] = u.SHA
+	}
+	return shas
 }
 
 // On an open instance every viewer is a member, so the settings button

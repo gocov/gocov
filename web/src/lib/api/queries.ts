@@ -1,7 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { apiGet, apiPost } from "./client";
 import type {
-  Dashboard, LoginInfo, OnboardingInfo, RepoPage, RepoSettings, Session, SetupInfo, SetupStatus, SourcePage, TokenReveal, UploadPage,
+  Dashboard, LoginInfo, OnboardingInfo, RepoPage, RepoSettings, RepoUploads, Session, SetupInfo, SetupStatus, SourcePage, TokenReveal, UploadPage,
   WorkspaceSettings,
 } from "./types";
 
@@ -27,10 +27,17 @@ export const loginQuery = (denied: boolean) =>
 export const dashboardQuery = (ws: string) =>
   queryOptions({ queryKey: ["dashboard", ws], queryFn: () => apiGet<Dashboard>("/dashboard" + qs({ ws })) });
 
-export const repoQuery = (forge: string, slug: string, branch: string, page: number) =>
+export const repoQuery = (forge: string, slug: string, branch: string) =>
   queryOptions({
-    queryKey: ["repo", forge, slug, branch, page],
-    queryFn: () => apiGet<RepoPage>(`/repos/${encodeURIComponent(forge)}/${segs(slug)}` + qs({ branch, page })),
+    queryKey: ["repo", forge, slug, branch],
+    queryFn: () => apiGet<RepoPage>(`/repos/${encodeURIComponent(forge)}/${segs(slug)}` + qs({ branch })),
+  });
+
+/** The repo page's upload history pages on its own, so turning a page leaves the rest of the report alone. */
+export const repoUploadsQuery = (forge: string, slug: string, branch: string, page: number) =>
+  queryOptions({
+    queryKey: ["repo-uploads", forge, slug, branch, page],
+    queryFn: () => apiGet<RepoUploads>(`/repo-uploads/${encodeURIComponent(forge)}/${segs(slug)}` + qs({ branch, page })),
   });
 
 export const uploadQuery = (id: string) =>

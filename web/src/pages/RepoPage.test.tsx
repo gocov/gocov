@@ -1,6 +1,6 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { RepoPage as RepoPageData } from "@/lib/api/types";
+import type { RepoPage as RepoPageData, RepoUploads } from "@/lib/api/types";
 import { mockApi, renderPage } from "@/test/render";
 import RepoPage from "./RepoPage";
 
@@ -55,6 +55,10 @@ const repo = (over: Partial<RepoPageData> = {}): RepoPageData => ({
       },
     ],
   },
+  ...over,
+});
+
+const history = (over: Partial<RepoUploads> = {}): RepoUploads => ({
   uploads: [
     { id: 412, sha: "a1b2c3d4e5f67890", branch: "main", pr_id: "", coverage: 82.3, gate: "pass", at: now },
   ],
@@ -63,8 +67,8 @@ const repo = (over: Partial<RepoPageData> = {}): RepoPageData => ({
   ...over,
 });
 
-const show = (data: RepoPageData, path = "/repos/github/acme/api") => {
-  const fetchMock = mockApi({ "GET /repos/github/acme/api": data });
+const show = (data: RepoPageData, path = "/repos/github/acme/api", uploads = history()) => {
+  const fetchMock = mockApi({ "GET /repos/github/acme/api": data, "GET /repo-uploads/github/acme/api": uploads });
   renderPage(<RepoPage />, { route: "repos/:forge/*", path });
   return fetchMock;
 };
@@ -101,7 +105,7 @@ test("the trend, the files and the uploads all name the branch they describe", a
 });
 
 test("a repo with no reports yet shows neither summary nor trend", async () => {
-  show(repo({ summary: null, trend: [], files: null, uploads: [], has_older: false }));
+  show(repo({ summary: null, trend: [], files: null }), undefined, history({ uploads: [], has_older: false }));
 
   expect(await screen.findByText("No uploads yet.")).toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "Coverage over time" })).not.toBeInTheDocument();
@@ -120,10 +124,24 @@ test("a reader with no settings access reads the report without the settings lin
 test("choosing a branch asks the API for that branch and starts again at page one", async () => {
   const fetchMock = show(repo({ branch: "" }), "/repos/github/acme/api?page=2");
   await screen.findByRole("heading", { level: 1, name: "acme/api" });
-  expect(urls(fetchMock).some((url) => url.includes("page=2"))).toBe(true);
+  expect(urls(fetchMock).some((url) => url.includes("/repo-uploads/") && url.includes("page=2"))).toBe(true);
 
   await userEvent.selectOptions(screen.getByRole("combobox", { name: "Branch" }), "fix/upload");
-  expect(urls(fetchMock).some((url) => url.includes("branch=fix%2Fupload") && !url.includes("page="))).toBe(true);
+  expect(urls(fetchMock).some((url) => url.includes("/repos/") && url.includes("branch=fix%2Fupload"))).toBe(true);
+  expect(
+    urls(fetchMock).some((url) => url.includes("/repo-uploads/") && url.includes("branch=fix%2Fupload") && !url.includes("page=")),
+  ).toBe(true);
+});
+
+test("turning a page reads only the history", async () => {
+  const fetchMock = show(repo());
+  await userEvent.click(await screen.findByRole("link", { name: "Older" }));
+  await vi.waitFor(() => expect(urls(fetchMock).some((url) => url.includes("page=1"))).toBe(true));
+
+  const reads = urls(fetchMock);
+  expect(reads.filter((url) => url.includes("/api/ui/repos/"))).toHaveLength(1);
+  expect(reads.filter((url) => url.includes("/api/ui/repo-uploads/"))).toHaveLength(2);
+  expect(reads.every((url) => !url.includes("/repos/") || !url.includes("page="))).toBe(true);
 });
 
 test("paging keeps the branch in the link", async () => {

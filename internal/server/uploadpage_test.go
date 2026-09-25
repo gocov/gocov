@@ -420,7 +420,8 @@ func TestVerdictsKeepTheGateTheyWereJudgedBy(t *testing.T) {
 				t.Errorf("gate now %+v, %s verdict = %q / %q; want fail, below the minimum of 90%%", later, name, v.State, v.Reason)
 			}
 		}
-		if got := repo.Uploads[0].Gate; got != "fail" {
+		history := decodeJSON[repoUploadsDTO](t, get(f, "/api/ui/repo-uploads/bitbucket/acme/widgets"))
+		if got := history.Uploads[0].Gate; got != "fail" {
 			t.Errorf("gate now %+v, history row gate = %q, want fail", later, got)
 		}
 		dash := decodeJSON[dashboardDTO](t, get(f, "/api/ui/dashboard"))
@@ -434,7 +435,7 @@ func TestVerdictsKeepTheGateTheyWereJudgedBy(t *testing.T) {
 
 	// An upload judged with no gate set is not "passed".
 	doUpload(t, f, "secret-token", map[string]string{"commit": "c2", "branch": "main"}, testProfile)
-	if got := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets")).Uploads[0].Gate; got != "none" {
+	if got := decodeJSON[repoUploadsDTO](t, get(f, "/api/ui/repo-uploads/bitbucket/acme/widgets")).Uploads[0].Gate; got != "none" {
 		t.Errorf("ungated upload's row gate = %q, want none", got)
 	}
 }

@@ -151,7 +151,7 @@ export interface FilesView {
   files: FileRow[];
 }
 
-// ---- GET /api/ui/repos/{forge}/{slug...}?branch=&page= ----------------------
+// ---- GET /api/ui/repos/{forge}/{slug...}?branch= ----------------------------
 
 export interface RepoPage {
   repo: RepoRef & {
@@ -168,9 +168,6 @@ export interface RepoPage {
   summary: RepoSummary | null;
   trend: TrendPoint[];
   files: FilesView | null;
-  uploads: UploadRow[];
-  page: number;
-  has_older: boolean;
 }
 
 export interface RepoSummary {
@@ -187,6 +184,15 @@ export interface TrendPoint {
   coverage: number;
   at: string;
   gate_failed: boolean;
+}
+
+// ---- GET /api/ui/repo-uploads/{forge}/{slug...}?branch=&page= ---------------
+
+/** One page of the repo page's upload history, newest first. */
+export interface RepoUploads {
+  uploads: UploadRow[];
+  page: number;
+  has_older: boolean;
 }
 
 export interface UploadRow {
