@@ -356,6 +356,7 @@ jobs:
   # Deploying is a separate, reusable workflow so a rollback is the same
   # job dispatched by hand with an older tag. Its job carries
   # environment: production, so the run waits here for approval.
+  # contents: write is for its docs job, which moves docs-live to the tag.
   deploy:
     needs: image
     uses: ./.github/workflows/deploy.yml
@@ -364,4 +365,4 @@ jobs:
     secrets: inherit
     permissions:
       id-token: write
-      contents: read
+      contents: write

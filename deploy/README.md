@@ -85,6 +85,12 @@ that the running container reports the released image, then smoke-tests
 to `gocov/smoke` with the release's own CLI binary. Migrations apply
 automatically on start, as always.
 
+The docs site follows the app: once the smoke tests pass, the workflow's
+`docs` job force-moves the `docs-live` branch to the tag, and Cloudflare
+Workers Builds (production branch `docs-live`) publishes docs.gocov.dev
+from it. Docs merged to `main` therefore go live with the next approved
+deploy, and a rollback rolls the docs back too.
+
 **Rolling means two tasks for a moment.** The new task must be healthy
 before the old one is stopped, so for ~30 seconds both serve traffic and
 share the database. Everything that must not run twice takes a Postgres
@@ -309,6 +315,11 @@ Elastic IP, `gocov-web` security group, `gocov-ec2` role and the
   (audience `sts.amazonaws.com`) and the role `gocov-deploy`, trusted only
   for `repo:gocov/gocov:environment:production`, with the inline policy
   from step 4.
+- **`docs-live` branch**: created by the first deploy's `docs` job and
+  moved only by it; no branch protection that stops `github-actions`
+  force-pushing it. In Cloudflare, the `gocov-docs` Worker's Workers
+  Builds production branch is `docs-live`, with builds of other branches
+  off.
 - **Smoke repo `gocov/smoke`**: a public repo with a trivial Go module
   and one test, tracked in the gocov workspace on app.gocov.dev, so the
   workspace's `GOCOV_TOKEN` secret (already used by ci.yml) accepts its
