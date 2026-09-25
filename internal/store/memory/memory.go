@@ -712,26 +712,6 @@ func (s *Store) commitReportLocked(repoID int64, commitSHA string) *store.Commit
 	return find(s.reports, func(cr *store.CommitReport) bool { return cr.RepoID == repoID && cr.CommitSHA == commitSHA })
 }
 
-func (s *Store) LatestDefaultBranchReports(ctx context.Context, repoIDs []int64) (map[int64]*store.CommitReport, error) {
-	out := map[int64]*store.CommitReport{}
-	for _, id := range repoIDs {
-		s.mu.Lock()
-		repo, ok := s.repos[id]
-		branch := ""
-		if ok {
-			branch = repo.DefaultBranch
-		}
-		s.mu.Unlock()
-		if !ok {
-			continue
-		}
-		if cr, err := s.latestCommitReport(id, branch, "", false, true); err == nil {
-			out[id] = cr
-		}
-	}
-	return out, nil
-}
-
 func (s *Store) LatestPassedCommitReport(_ context.Context, repoID int64, branch, excludeCommit string) (*store.CommitReport, error) {
 	return s.latestCommitReport(repoID, branch, excludeCommit, true, true)
 }

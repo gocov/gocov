@@ -241,8 +241,9 @@ func (s *Store) ListRepos(ctx context.Context) ([]*store.Repo, error) {
 }
 
 func (s *Store) ListWorkspaceRepos(ctx context.Context, forge, prefix string) ([]*store.Repo, error) {
+	lo, hi := prefixRange(prefix)
 	rows, err := s.pool.Query(ctx, `SELECT `+repoCols+` FROM repos
-		WHERE forge = $1 AND slug LIKE $2 ESCAPE '\' ORDER BY forge, slug`, forge, likePrefix(prefix)+`/%`)
+		WHERE forge = $1 AND `+underPrefix+` ORDER BY forge, slug`, forge, lo, hi)
 	if err != nil {
 		return nil, err
 	}
@@ -447,8 +448,9 @@ func (s *Store) DeleteWorkspace(ctx context.Context, id int64) error {
 		}
 		return err
 	}
+	lo, hi := prefixRange(prefix)
 	if _, err := tx.Exec(ctx,
-		`DELETE FROM repos WHERE forge = $1 AND slug LIKE $2 ESCAPE '\'`, forge, likePrefix(prefix)+`/%`); err != nil {
+		`DELETE FROM repos WHERE forge = $1 AND `+underPrefix, forge, lo, hi); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM workspaces WHERE id = $1`, id); err != nil {
@@ -457,10 +459,17 @@ func (s *Store) DeleteWorkspace(ctx context.Context, id int64) error {
 	return tx.Commit(ctx)
 }
 
-// likePrefix escapes the LIKE metacharacters in a literal prefix so it can
-// be used as the fixed head of a `<prefix>/%` pattern (ESCAPE '\').
-func likePrefix(s string) string {
-	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+// underPrefix matches the slugs below a workspace prefix, given the bounds
+// prefixRange returns as $2 and $3: a byte-wise range, which
+// repos_forge_slug_c_idx serves where a LIKE pattern would scan the table.
+const underPrefix = `slug COLLATE "C" >= $2 AND slug COLLATE "C" < $3`
+
+// prefixRange bounds the slugs that start with prefix + "/": in byte
+// order they sort from prefix + "/" up to, not including, prefix + "0",
+// '0' being the byte after '/'. No character needs escaping, unlike in a
+// LIKE pattern.
+func prefixRange(prefix string) (lo, hi string) {
+	return prefix + "/", prefix + "0"
 }
 
 func (s *Store) WorkspaceByPrefix(ctx context.Context, forge, prefix string) (*store.Workspace, error) {
@@ -1036,26 +1045,6 @@ func (s *Store) CommitReport(ctx context.Context, repoID int64, commitSHA string
 	return s.scanCommitReport(s.pool.QueryRow(ctx,
 		`SELECT `+commitReportCols+` FROM commit_reports WHERE repo_id = $1 AND commit_sha = $2`,
 		repoID, commitSHA))
-}
-
-func (s *Store) LatestDefaultBranchReports(ctx context.Context, repoIDs []int64) (map[int64]*store.CommitReport, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT DISTINCT ON (repo_id) `+commitReportCols+` FROM commit_reports
-		WHERE (repo_id, branch) IN (SELECT id, default_branch FROM repos WHERE id = ANY($1))
-		  AND pr_id = ''
-		ORDER BY repo_id, id DESC`, repoIDs)
-	if err != nil {
-		return nil, err
-	}
-	reports, err := collect(rows, s.scanCommitReport)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[int64]*store.CommitReport, len(reports))
-	for _, cr := range reports {
-		out[cr.RepoID] = cr
-	}
-	return out, nil
 }
 
 func (s *Store) LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*store.CommitReport, error) {

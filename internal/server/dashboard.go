@@ -183,7 +183,7 @@ func (s *Server) buildDashboard(r *http.Request, dto *dashboardDTO, selected str
 			ids = append(ids, repo.ID)
 		}
 	}
-	latest, err := s.store.LatestDefaultBranchReports(ctx, ids)
+	latest, err := s.latestReports(ctx, ids)
 	if err != nil {
 		// The previews are decoration; the page still works without them.
 		s.log.Warn("loading dashboard previews", "err", err)
@@ -226,6 +226,21 @@ func (s *Server) visibleRepos(ctx context.Context, scope repoScope) ([]*store.Re
 		return cmp.Or(cmp.Compare(a.Forge, b.Forge), cmp.Compare(a.Slug, b.Slug))
 	})
 	return out, nil
+}
+
+// latestReports returns each repo's newest report on its default branch's
+// own history, keyed by repo id; repos without one are absent. Like every
+// DefaultBranchReports read it leaves DiffCoverage unloaded.
+func (s *Server) latestReports(ctx context.Context, repoIDs []int64) (map[int64]*store.CommitReport, error) {
+	reports, err := s.store.DefaultBranchReports(ctx, repoIDs, 1)
+	if err != nil {
+		return nil, err
+	}
+	latest := make(map[int64]*store.CommitReport, len(reports))
+	for id, rs := range reports {
+		latest[id] = rs[0]
+	}
+	return latest, nil
 }
 
 // viewerWorkspaces lists the workspaces the switcher may offer: the signed-in
