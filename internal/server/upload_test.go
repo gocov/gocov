@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -873,5 +874,42 @@ diff --git a/m/untested.go b/m/untested.go
 	}
 	if len(u.DiffCoverage.UnmatchedFiles) != 0 {
 		t.Errorf("unmatched = %v, want none: ignored files must not be flagged as untested", u.DiffCoverage.UnmatchedFiles)
+	}
+}
+
+// Clover and SimpleCov reports flag only changed source files as untested,
+// and download under their conventional names.
+func TestCloverAndSimpleCovSourcesAndDownloads(t *testing.T) {
+	for _, tc := range []struct {
+		format, profile, untested, filename string
+	}{
+		{"clover", `<?xml version="1.0"?><coverage generated="1" clover="3"><project>
+<file name="src/A.php"><line num="1" type="stmt" count="1"/><line num="2" type="stmt" count="0"/></file>
+</project></coverage>`, "src/Untested.php", "clover.xml"},
+		{"simplecov", `{"RSpec":{"coverage":{"lib/a.rb":{"lines":[1,null,0]}},"timestamp":1}}`,
+			"lib/untested.rb", "resultset.json"},
+	} {
+		t.Run(tc.format, func(t *testing.T) {
+			f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+			f.forge.DiffText = "diff --git a/" + tc.untested + " b/" + tc.untested + "\n--- /dev/null\n+++ b/" + tc.untested +
+				"\n@@ -0,0 +1,1 @@\n+x\ndiff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1,2 @@\n x\n+docs\n"
+			rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "feat", "pr_id": "1"}, tc.profile)
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("upload: %d %s", rec.Code, rec.Body)
+			}
+			u, err := f.store.Upload(t.Context(), 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if u.Format != tc.format {
+				t.Fatalf("detected format %q, want %q", u.Format, tc.format)
+			}
+			if u.DiffCoverage == nil || !slices.Equal(u.DiffCoverage.UnmatchedFiles, []string{tc.untested}) {
+				t.Errorf("unmatched = %+v, want only %s (README.md is not source)", u.DiffCoverage, tc.untested)
+			}
+			if cd := get(f, "/uploads/1/profile").Header().Get("Content-Disposition"); !strings.Contains(cd, "-"+tc.filename) {
+				t.Errorf("content-disposition = %q, want the %s name", cd, tc.filename)
+			}
+		})
 	}
 }
