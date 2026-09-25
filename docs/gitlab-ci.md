@@ -92,8 +92,8 @@ coverage:
   image: golang:1.27
   script:
     - go test ./... -covermode=atomic -coverprofile=coverage.out
-    - curl -fsSLO https://github.com/gocov/gocov/releases/download/v0.25.0/gocov-linux-amd64
-    - curl -fsSL https://github.com/gocov/gocov/releases/download/v0.25.0/checksums.txt
+    - curl -fsSLO https://github.com/gocov/gocov/releases/download/v0.26.0/gocov-linux-amd64
+    - curl -fsSL https://github.com/gocov/gocov/releases/download/v0.26.0/checksums.txt
       | grep ' gocov-linux-amd64$' | sha256sum -c -
     - chmod +x gocov-linux-amd64
     - ./gocov-linux-amd64 upload coverage.out

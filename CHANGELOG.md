@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.26.0](https://github.com/gocov/gocov/compare/v0.25.0...v0.26.0) (2026-09-25)
+
+
+### Features
+
+* give clover and simplecov their source extensions and file names ([#163](https://github.com/gocov/gocov/issues/163)) ([7cba000](https://github.com/gocov/gocov/commit/7cba00074f0cfba3eff5333e4d06784dcbc47004))
+* rebuild the web UI as a single-page app, with a redesigned onboarding ([#146](https://github.com/gocov/gocov/issues/146)) ([2b770e8](https://github.com/gocov/gocov/commit/2b770e8f951ae72e1f246810b3f8476114967fb7))
+* set the web UI in IBM Plex, and keep the design-sync inputs ([#151](https://github.com/gocov/gocov/issues/151)) ([65498c4](https://github.com/gocov/gocov/commit/65498c48f2ceb4e085998d2cc1f27b185088ed11))
+* the repo page's upload history pages through its own endpoint ([#176](https://github.com/gocov/gocov/issues/176)) ([2cca661](https://github.com/gocov/gocov/commit/2cca661d2ce656417a99af6b8ebef58598d04c3f))
+
+
+### Bug Fixes
+
+* a fork PR named like the default branch is not its history ([#167](https://github.com/gocov/gocov/issues/167)) ([2f7950d](https://github.com/gocov/gocov/commit/2f7950db77eb7ae80e0447929eec659b1ccec663))
+* bound coverage overlay work by block count, not declared line spans ([#141](https://github.com/gocov/gocov/issues/141)) ([54568fe](https://github.com/gocov/gocov/commit/54568fe3d7a4b076ed17f91a83f69fc29a741adc))
+* explain the gate verdict against the baseline the gate judged ([#157](https://github.com/gocov/gocov/issues/157)) ([50385d1](https://github.com/gocov/gocov/commit/50385d1c9eb2abd9f654dbd6405bb779d7636851))
+* keep the gate each upload was judged against ([#172](https://github.com/gocov/gocov/issues/172)) ([4de7a46](https://github.com/gocov/gocov/commit/4de7a46d53db7d1c425aab0d0fc92a12a5cb2a9d))
+* keep upload and source pages out of search indexes ([#143](https://github.com/gocov/gocov/issues/143)) ([becfb62](https://github.com/gocov/gocov/commit/becfb62a27efe35c8f64a43dda077db7b828940e))
+* OIDC uploads need a working forge connection on every forge ([#174](https://github.com/gocov/gocov/issues/174)) ([2b21600](https://github.com/gocov/gocov/commit/2b21600bf15e509bf7aebd29b50670b598e3f22b))
+* one line rule for every view of a file's coverage ([#173](https://github.com/gocov/gocov/issues/173)) ([64553e9](https://github.com/gocov/gocov/commit/64553e95f3dc5376bed518d39cfaec3a2237f0ff))
+* one rule for PR builds in a branch's history and its baseline ([#178](https://github.com/gocov/gocov/issues/178)) ([ab2099f](https://github.com/gocov/gocov/commit/ab2099f61856e5d6f3dfbac56382de8e9c3b4538))
+* record the CI-wiring step again ([#145](https://github.com/gocov/gocov/issues/145)) ([c6db132](https://github.com/gocov/gocov/commit/c6db1329e970c798f2af733fcfeac5f7896caa9e))
+* the CLI prints the server's upload warnings ([#179](https://github.com/gocov/gocov/issues/179)) ([2335d85](https://github.com/gocov/gocov/commit/2335d85d1aa7d75a53ee65d04dd0ed3a0e49c0c5))
+
+
+### Performance Improvements
+
+* latest reports through the lateral read; workspace repos by index ([#177](https://github.com/gocov/gocov/issues/177)) ([7f3cf7f](https://github.com/gocov/gocov/commit/7f3cf7fa633457f389bc69aacbb09b03c54790d0))
+* pair diff paths through an index, not a scan per file ([#169](https://github.com/gocov/gocov/issues/169)) ([5779a19](https://github.com/gocov/gocov/commit/5779a1945c71ce093584e018b03845b4087ab48c))
+* parallel repo-page reads, cached app shell, leaner settings check ([#175](https://github.com/gocov/gocov/issues/175)) ([0afdb65](https://github.com/gocov/gocov/commit/0afdb65e1d9be9ff0f7eb5d890225ab17e3fdcec))
+* push forge surfaces and fetch the PR diff concurrently ([#156](https://github.com/gocov/gocov/issues/156)) ([62c41de](https://github.com/gocov/gocov/commit/62c41de82bee99c55cb23b0cbf10b910f403e3d3))
+* read one file, not two whole uploads, for the source view ([#160](https://github.com/gocov/gocov/issues/160)) ([d961334](https://github.com/gocov/gocov/commit/d961334f42f431416ae4a8d61dc7dc4059a6f0d5))
+* read only the viewer's repos and all dashboard previews at once ([#164](https://github.com/gocov/gocov/issues/164)) ([6147f2e](https://github.com/gocov/gocov/commit/6147f2e0f63f488d03eca4705baac5f92d38893b))
+* read the dashboard's rows in one query, index uploads by repo ([#168](https://github.com/gocov/gocov/issues/168)) ([cae7f6a](https://github.com/gocov/gocov/commit/cae7f6a1478b81e9605777ad2204e1427afe5dad))
+* report pages read what they need, side by side ([#180](https://github.com/gocov/gocov/issues/180)) ([88b522b](https://github.com/gocov/gocov/commit/88b522ba49d2dfe9c48d410b48adb157ffbaa530))
+* skip file reads for single-part commits, batch them for many ([#159](https://github.com/gocov/gocov/issues/159)) ([829f018](https://github.com/gocov/gocov/commit/829f018f4a56150676b45f2b2d100cb682177bc4))
+
 ## [0.25.0](https://github.com/gocov/gocov/compare/v0.24.0...v0.25.0) (2026-09-08)
 
 
