@@ -125,20 +125,12 @@ func (p *Provider) exchange(ctx context.Context, code, redirectURI string) (stri
 		"code":          {code},
 		"redirect_uri":  {redirectURI},
 	}
-	// A bad code still comes back 200, with the error in the body.
-	var tok struct {
-		AccessToken string `json:"access_token"`
-		Error       string `json:"error"`
-	}
+	// A bad code still comes back 200, with the error in the body;
+	// ExchangeToken turns that into an error like any other refusal.
 	c := &rest.Client{Name: "github", HTTPClient: p.client()}
-	if err := c.PostForm(ctx, p.authBase()+"/access_token", form, &tok); err != nil {
+	tok, err := c.ExchangeToken(ctx, p.authBase()+"/access_token", form)
+	if err != nil {
 		return "", fmt.Errorf("token exchange: %w", err)
-	}
-	if tok.Error != "" {
-		return "", fmt.Errorf("github: token exchange: %s", tok.Error)
-	}
-	if tok.AccessToken == "" {
-		return "", fmt.Errorf("github: token exchange returned no access token")
 	}
 	return tok.AccessToken, nil
 }

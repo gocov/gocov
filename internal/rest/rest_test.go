@@ -131,6 +131,42 @@ func TestPostFormIsATokenEndpointCall(t *testing.T) {
 	}
 }
 
+// ExchangeToken reads a refusal the same way in each form an endpoint
+// sends it — an error status, or GitHub's 200 carrying an "error" field —
+// and refuses an answer with no token in it.
+func TestExchangeToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.FormValue("code") {
+		case "good":
+			_, _ = w.Write([]byte(`{"access_token":"tok","refresh_token":"ref","expires_in":7200}`))
+		case "refused":
+			http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
+		case "refused-ok":
+			_, _ = w.Write([]byte(`{"error":"bad_verification_code","error_description":"expired"}`))
+		default:
+			_, _ = w.Write([]byte(`{"token_type":"bearer"}`))
+		}
+	}))
+	defer srv.Close()
+	c := &Client{Name: "test", BaseURL: srv.URL, HTTPClient: srv.Client()}
+	exchange := func(code string) (*Token, error) {
+		return c.ExchangeToken(t.Context(), "/token", neturl.Values{"code": {code}})
+	}
+
+	tok, err := exchange("good")
+	if err != nil || tok.AccessToken != "tok" || tok.RefreshToken != "ref" || tok.TTL() != 2*time.Hour {
+		t.Fatalf("good exchange = %+v, %v", tok, err)
+	}
+	for code, want := range map[string]string{"refused": "invalid_grant", "refused-ok": "bad_verification_code"} {
+		if _, err := exchange(code); OAuthErrorCode(err) != want {
+			t.Errorf("%s: OAuthErrorCode(%v) = %q, want %q", code, err, OAuthErrorCode(err), want)
+		}
+	}
+	if _, err := exchange("empty"); err == nil || !strings.Contains(err.Error(), "no access token") {
+		t.Errorf("tokenless answer = %v, want an error", err)
+	}
+}
+
 func TestBodyAndTokenShapes(t *testing.T) {
 	err := &Error{Status: http.StatusBadRequest, Body: `{"message":"Cannot transition status"}`, msg: "x"}
 	if Body(err) != err.Body {

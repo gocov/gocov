@@ -123,17 +123,13 @@ func (a *Application) ForgeClient(accessToken string) forge.Forge {
 func (a *Application) token(ctx context.Context, form url.Values) (*Grant, error) {
 	form.Set("client_id", a.Key)
 	form.Set("client_secret", a.Secret)
-	var tok rest.Token
 	api := &rest.Client{Name: "gitlab", BaseURL: a.authBase(), HTTPClient: a.client()}
-	err := api.PostForm(ctx, "/token", form, &tok)
+	tok, err := api.ExchangeToken(ctx, "/token", form)
 	if rest.OAuthErrorCode(err) == "invalid_grant" {
 		return nil, fmt.Errorf("%w: %w", forge.ErrCredentialsRevoked, err)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("token grant: %w", err)
-	}
-	if tok.AccessToken == "" {
-		return nil, fmt.Errorf("gitlab: token grant returned no access token")
 	}
 	return &Grant{
 		AccessToken:  tok.AccessToken,

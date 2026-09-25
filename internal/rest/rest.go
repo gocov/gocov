@@ -170,6 +170,34 @@ func (c *Client) PostForm(ctx context.Context, url string, form neturl.Values, o
 	return c.decode(resp, url, out)
 }
 
+// ExchangeToken runs one grant against an OAuth token endpoint (PostForm)
+// and returns the token it hands out. Every refusal comes back as an
+// *Error whose OAuthErrorCode is the endpoint's own code — including the
+// one GitHub answers a bad code with, a 200 carrying an "error" field — so
+// a caller maps a dead grant the same way whichever form it arrived in. An
+// answer without an access token is an error too.
+func (c *Client) ExchangeToken(ctx context.Context, url string, form neturl.Values) (*Token, error) {
+	var tok struct {
+		Token
+		Error string `json:"error"`
+	}
+	if err := c.PostForm(ctx, url, form, &tok); err != nil {
+		return nil, err
+	}
+	if tok.Error != "" {
+		body, _ := json.Marshal(map[string]string{"error": tok.Error})
+		return nil, &Error{
+			Status: http.StatusOK,
+			Body:   string(body),
+			msg:    fmt.Sprintf("%s: %s answered with error %s", c.Name, url, tok.Error),
+		}
+	}
+	if tok.AccessToken == "" {
+		return nil, fmt.Errorf("%s: %s returned no access token", c.Name, url)
+	}
+	return &tok.Token, nil
+}
+
 // GetPage decodes one page of a listing into out and returns the next
 // page's URL from the Link header — "" on the last page.
 func (c *Client) GetPage(ctx context.Context, url string, out any) (next string, err error) {
