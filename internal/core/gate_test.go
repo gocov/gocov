@@ -15,7 +15,7 @@ func TestEvaluateGate(t *testing.T) {
 		name     string
 		gate     store.Gate
 		totalPct float64
-		drop     *float64
+		dropBase *float64
 		diff     *diffcov.Result
 		want     []string // substrings of the expected failures, nil for a pass
 	}{
@@ -40,18 +40,18 @@ func TestEvaluateGate(t *testing.T) {
 		},
 		{
 			name: "drop within tolerance",
-			gate: store.Gate{MaxCoverageDrop: pct(1)}, totalPct: 79, drop: pct(-0.5),
+			gate: store.Gate{MaxCoverageDrop: pct(1)}, totalPct: 79, dropBase: pct(79.5),
 		},
 		{
 			name: "drop beyond tolerance",
-			gate: store.Gate{MaxCoverageDrop: pct(1)}, totalPct: 79, drop: pct(-2),
+			gate: store.Gate{MaxCoverageDrop: pct(1)}, totalPct: 79, dropBase: pct(81),
 			want: []string{"coverage dropped"},
 		},
 		{
 			// No baseline to compare against: the rule cannot fail an
 			// upload it knows nothing about.
 			name: "drop rule fails open without a baseline",
-			gate: store.Gate{MaxCoverageDrop: pct(1)}, totalPct: 10, drop: nil,
+			gate: store.Gate{MaxCoverageDrop: pct(1)}, totalPct: 10, dropBase: nil,
 		},
 		{
 			name: "diff coverage below the minimum",
@@ -72,13 +72,13 @@ func TestEvaluateGate(t *testing.T) {
 		{
 			name:     "every rule can fail at once",
 			gate:     store.Gate{MinCoverage: pct(90), MaxCoverageDrop: pct(1), MinDiffCoverage: pct(90)},
-			totalPct: 50, drop: pct(-5),
+			totalPct: 50, dropBase: pct(55),
 			diff: &diffcov.Result{TotalLines: 10, CoveredLines: 1},
 			want: []string{"below the minimum", "coverage dropped", "diff coverage"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := EvaluateGate(tc.gate, tc.totalPct, tc.drop, tc.diff)
+			got := EvaluateGate(tc.gate, tc.totalPct, tc.dropBase, tc.diff)
 			if got.Configured != tc.gate.Configured() {
 				t.Errorf("Configured = %v, want %v", got.Configured, tc.gate.Configured())
 			}

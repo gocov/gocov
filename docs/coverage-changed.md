@@ -21,6 +21,11 @@ failure into the new reference point, and a PR cannot walk coverage down one tol
 **max drop** rule goes further and always measures against the default branch's latest passing report, whatever branch
 the upload is on.
 
+The gate verdict's explanation follows the gate, not the delta: on a feature branch it reports the drop against the
+default branch, so the two can point different ways — the delta down against the branch's last build, the verdict
+passing because coverage still holds against the default branch. Uploads judged before gocov recorded that comparison
+leave the drop out of the explanation.
+
 So a delta can move without your coverage moving — because the baseline it points at changed.
 
 ## A part did not run

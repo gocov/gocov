@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -116,7 +117,7 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 	// selector moves them together with the trend and history.
 	// trendReports come newest first, so they carry the latest report and,
 	// within the last 50, the baseline it is measured against.
-	latest, base := reportBaseline(trendReports[:min(baselineLookback, len(trendReports))])
+	latest, base := core.ReportBaseline(trendReports[:min(baselineLookback, len(trendReports))])
 
 	d := &repoPageData{
 		Repo:         repo,
@@ -131,11 +132,7 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 	}
 	if latest != nil {
 		d.Base = base
-		var baseTotal *float64
-		if base != nil {
-			baseTotal = &base.TotalPct
-		}
-		d.Verdict = new(gateVerdict("The latest commit", latest.TotalPct, latest.DiffCoverage, latest.GateFailed, repo.Gate, baseTotal))
+		d.Verdict = new(gateVerdict("The latest commit", latest.TotalPct, latest.DiffCoverage, latest.GateFailed, repo.Gate, latest.GateBasePct))
 		if lu, err := s.store.Upload(r.Context(), latest.UploadID); err == nil {
 			d.LastUpload = lu
 			baseUpload, baseFiles := s.baselineUpload(r.Context(), repo, lu)
@@ -317,19 +314,3 @@ const (
 	// branch whose last 50 reports all failed shows no delta.
 	baselineLookback = 50
 )
-
-// reportBaseline pairs a branch's newest merged report (reports come newest
-// first) with the report it should be compared against — the most recent
-// gate-passing report before it, the same baseline rule the upload API uses,
-// so the UI never shows a delta measured against a report that failed the
-// gate. base is nil when the branch has no earlier passing report (a single
-// report, or a run of failures fills the window).
-func reportBaseline(reports []*store.CommitReport) (current, base *store.CommitReport) {
-	if len(reports) == 0 {
-		return nil, nil
-	}
-	if i := slices.IndexFunc(reports[1:], func(cr *store.CommitReport) bool { return !cr.GateFailed }); i >= 0 {
-		base = reports[1+i]
-	}
-	return reports[0], base
-}

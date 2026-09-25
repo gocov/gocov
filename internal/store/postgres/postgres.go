@@ -731,11 +731,11 @@ func (s *Store) CreateUpload(ctx context.Context, u *store.Upload, files []*stor
 	}
 	err = tx.QueryRow(ctx, `
 		INSERT INTO uploads (repo_id, commit_sha, branch, pr_id, format,
-			total_pct, covered_stmts, total_stmts, raw_blob_key, diff_coverage, gate_failed, path_prefix, part, meta)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+			total_pct, covered_stmts, total_stmts, raw_blob_key, diff_coverage, gate_failed, gate_base_pct, path_prefix, part, meta)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		RETURNING id, created_at`,
 		u.RepoID, u.CommitSHA, u.Branch, u.PRID, u.Format,
-		u.TotalPct, u.CoveredStmts, u.TotalStmts, u.RawBlobKey, diffCov, u.GateFailed, u.PathPrefix, u.Part, meta,
+		u.TotalPct, u.CoveredStmts, u.TotalStmts, u.RawBlobKey, diffCov, u.GateFailed, u.GateBasePct, u.PathPrefix, u.Part, meta,
 	).Scan(&u.ID, &u.CreatedAt)
 	if err != nil {
 		return err
@@ -763,7 +763,7 @@ func (s *Store) CreateUpload(ctx context.Context, u *store.Upload, files []*stor
 }
 
 const uploadCols = `id, repo_id, commit_sha, branch, pr_id, format,
-	total_pct, covered_stmts, total_stmts, raw_blob_key, diff_coverage, gate_failed, path_prefix, part, created_at, meta`
+	total_pct, covered_stmts, total_stmts, raw_blob_key, diff_coverage, gate_failed, gate_base_pct, path_prefix, part, created_at, meta`
 
 // marshalUploadMeta encodes upload provenance for storage, returning nil
 // (SQL NULL) when nothing was captured so empty uploads stay compact.
@@ -804,7 +804,7 @@ func (s *Store) scanUpload(row rowScanner) (*store.Upload, error) {
 	var u store.Upload
 	var diffCov, meta []byte
 	err := row.Scan(&u.ID, &u.RepoID, &u.CommitSHA, &u.Branch, &u.PRID, &u.Format,
-		&u.TotalPct, &u.CoveredStmts, &u.TotalStmts, &u.RawBlobKey, &diffCov, &u.GateFailed, &u.PathPrefix, &u.Part, &u.CreatedAt, &meta)
+		&u.TotalPct, &u.CoveredStmts, &u.TotalStmts, &u.RawBlobKey, &diffCov, &u.GateFailed, &u.GateBasePct, &u.PathPrefix, &u.Part, &u.CreatedAt, &meta)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -943,7 +943,7 @@ func advisoryKey(namespace string, id int64, name string) int64 {
 }
 
 const commitReportCols = `id, repo_id, commit_sha, branch, pr_id, total_pct,
-	covered_stmts, total_stmts, gate_failed, diff_coverage, part_count, upload_id, created_at, updated_at`
+	covered_stmts, total_stmts, gate_failed, gate_base_pct, diff_coverage, part_count, upload_id, created_at, updated_at`
 
 func (s *Store) UpsertCommitReport(ctx context.Context, cr *store.CommitReport) error {
 	return s.upsertCommitReport(ctx, s.pool, cr)
@@ -961,8 +961,8 @@ func (s *Store) upsertCommitReport(ctx context.Context, q querier, cr *store.Com
 	// derived fields and updated_at move.
 	return q.QueryRow(ctx, `
 		INSERT INTO commit_reports (repo_id, commit_sha, branch, pr_id, total_pct,
-			covered_stmts, total_stmts, gate_failed, diff_coverage, part_count, upload_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			covered_stmts, total_stmts, gate_failed, gate_base_pct, diff_coverage, part_count, upload_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT (repo_id, commit_sha) DO UPDATE SET
 			branch = EXCLUDED.branch,
 			pr_id = EXCLUDED.pr_id,
@@ -970,13 +970,14 @@ func (s *Store) upsertCommitReport(ctx context.Context, q querier, cr *store.Com
 			covered_stmts = EXCLUDED.covered_stmts,
 			total_stmts = EXCLUDED.total_stmts,
 			gate_failed = EXCLUDED.gate_failed,
+			gate_base_pct = EXCLUDED.gate_base_pct,
 			diff_coverage = EXCLUDED.diff_coverage,
 			part_count = EXCLUDED.part_count,
 			upload_id = EXCLUDED.upload_id,
 			updated_at = now()
 		RETURNING id, created_at, updated_at`,
 		cr.RepoID, cr.CommitSHA, cr.Branch, cr.PRID, cr.TotalPct,
-		cr.CoveredStmts, cr.TotalStmts, cr.GateFailed, diffCov, cr.PartCount, cr.UploadID,
+		cr.CoveredStmts, cr.TotalStmts, cr.GateFailed, cr.GateBasePct, diffCov, cr.PartCount, cr.UploadID,
 	).Scan(&cr.ID, &cr.CreatedAt, &cr.UpdatedAt)
 }
 
@@ -1092,7 +1093,7 @@ func (s *Store) scanCommitReport(row rowScanner) (*store.CommitReport, error) {
 	var diffCov []byte
 	var uploadID *int64
 	err := row.Scan(&cr.ID, &cr.RepoID, &cr.CommitSHA, &cr.Branch, &cr.PRID, &cr.TotalPct,
-		&cr.CoveredStmts, &cr.TotalStmts, &cr.GateFailed, &diffCov, &cr.PartCount, &uploadID, &cr.CreatedAt, &cr.UpdatedAt)
+		&cr.CoveredStmts, &cr.TotalStmts, &cr.GateFailed, &cr.GateBasePct, &diffCov, &cr.PartCount, &uploadID, &cr.CreatedAt, &cr.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}

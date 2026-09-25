@@ -1461,3 +1461,39 @@ func TestCommitReportsExcludePRBuilds(t *testing.T) {
 		t.Errorf("latest report = %s, want c2", latest.CommitSHA)
 	}
 }
+
+func TestGateBasePctRoundTrip(t *testing.T) {
+	st := newTestStore(t)
+	ctx := t.Context()
+	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+
+	withBase := &store.Upload{RepoID: repo.ID, CommitSHA: "c1", Branch: "feat", Format: "go", GateBasePct: new(72.5)}
+	without := &store.Upload{RepoID: repo.ID, CommitSHA: "c2", Branch: "feat", Format: "go"}
+	for _, u := range []*store.Upload{withBase, without} {
+		if err := st.CreateUpload(ctx, u, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := st.Upload(ctx, withBase.ID); err != nil || got.GateBasePct == nil || *got.GateBasePct != 72.5 {
+		t.Errorf("upload GateBasePct = %v (err %v), want 72.5", got.GateBasePct, err)
+	}
+	if got, err := st.Upload(ctx, without.ID); err != nil || got.GateBasePct != nil {
+		t.Errorf("upload GateBasePct = %v (err %v), want nil", got.GateBasePct, err)
+	}
+
+	// The recompute's latest judgement wins, including a base appearing.
+	cr := &store.CommitReport{RepoID: repo.ID, CommitSHA: "c1", Branch: "feat", PartCount: 1}
+	if err := st.UpsertCommitReport(ctx, cr); err != nil {
+		t.Fatal(err)
+	}
+	cr.GateBasePct = new(72.5)
+	if err := st.UpsertCommitReport(ctx, cr); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := st.CommitReport(ctx, repo.ID, "c1"); err != nil || got.GateBasePct == nil || *got.GateBasePct != 72.5 {
+		t.Errorf("report GateBasePct = %v (err %v), want 72.5", got.GateBasePct, err)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 )
@@ -390,7 +391,7 @@ func (s *Server) fillCurrent(r *http.Request, dv *dashboardView) {
 				row.Gate = "fail"
 			}
 		}
-		if _, base := reportBaseline(reports); base != nil {
+		if _, base := core.ReportBaseline(reports); base != nil {
 			row.HasDelta = true
 			row.DropVal = latest.TotalPct - base.TotalPct
 		}
