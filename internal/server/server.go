@@ -56,13 +56,13 @@ type Config struct {
 	// workspace-connect grant (One-Click Connect P2), implemented by
 	// forge/bitbucket.Consumer. Nil disables the feature; requires
 	// GOCOV_SECRET_KEY at the store for the at-rest token encryption.
-	BitbucketConnect BitbucketConnect
+	BitbucketConnect GrantConnect
 	// GitLabConnect is the OAuth application powering the GitLab
 	// workspace-connect grant, implemented by forge/gitlab.Application.
 	// Nil disables the feature; requires GOCOV_SECRET_KEY at the store
 	// for the at-rest token encryption, and the application must carry
 	// the "api" scope on top of sign-in's read scopes.
-	GitLabConnect GitLabConnect
+	GitLabConnect GrantConnect
 	// GitHubWebhookSecret enables the GitHub App / Marketplace webhook
 	// (POST /github/webhook) and is the HMAC secret its signatures are
 	// verified against. Empty leaves the route unregistered.
@@ -91,9 +91,8 @@ type Config struct {
 // internal/core, which owns the connections and their upkeep; the aliases
 // keep this package's Config the one place a caller has to look.
 type (
-	GitHubApp        = core.GitHubApp
-	BitbucketConnect = core.BitbucketConnect
-	GitLabConnect    = core.GitLabConnect
+	GitHubApp    = core.GitHubApp
+	GrantConnect = core.GrantConnect
 )
 
 // Server is the gocov HTTP server.
@@ -176,6 +175,10 @@ func New(cfg Config) *Server {
 		})
 	}
 
+	forges := core.NewForges(cfg.Store, log, cfg.BaseURL, cfg.GitHubApp, map[string]GrantConnect{
+		"bitbucket": cfg.BitbucketConnect,
+		"gitlab":    cfg.GitLabConnect,
+	})
 	s := &Server{
 		store:         cfg.Store,
 		blobs:         cfg.Blobs,
@@ -183,7 +186,7 @@ func New(cfg Config) *Server {
 		log:           log,
 		mux:           http.NewServeMux(),
 		health:        cfg.Health,
-		forges:        core.NewForges(cfg.Store, log, cfg.BaseURL, cfg.GitHubApp, cfg.BitbucketConnect, cfg.GitLabConnect),
+		forges:        forges,
 		webhookSecret: cfg.GitHubWebhookSecret,
 		tokenless:     newTokenlessLimiter(),
 		oidc:          oidcVerifier,

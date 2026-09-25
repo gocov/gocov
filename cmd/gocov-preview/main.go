@@ -17,10 +17,8 @@ import (
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
 	"github.com/gocov/gocov/internal/config"
 	"github.com/gocov/gocov/internal/forge"
-	"github.com/gocov/gocov/internal/forge/bitbucket"
 	forgefake "github.com/gocov/gocov/internal/forge/fake"
 	"github.com/gocov/gocov/internal/forge/github"
-	"github.com/gocov/gocov/internal/forge/gitlab"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/server"
 	"github.com/gocov/gocov/internal/store"
@@ -66,37 +64,21 @@ func (devGitHubApp) InstallURL(context.Context) (string, error) {
 }
 func (devGitHubApp) VerifyRunClaim(context.Context, int64, github.RunClaim) error { return nil }
 
-// devGLConnect stubs server.GitLabConnect the same way devBBConnect
-// stubs Bitbucket: the consent bounce goes straight back to the local
-// callback, so the whole connect loop is previewable without GitLab.
-type devGLConnect struct{ fg forge.Forge }
+// devGrantConnect stubs a forge's workspace-connect grant (Bitbucket's
+// and GitLab's alike): the consent bounce goes straight back to the local
+// callback, so the whole connect loop is previewable without the forge.
+type devGrantConnect struct{ fg forge.Forge }
 
-func (devGLConnect) AuthorizeURL(state, redirectURI string) string {
+func (devGrantConnect) AuthorizeURL(state, redirectURI string) string {
 	return redirectURI + "?state=" + url.QueryEscape(state) + "&code=dev"
 }
-func (devGLConnect) Exchange(context.Context, string, string) (*gitlab.Grant, error) {
-	return &gitlab.Grant{Account: "gocov-bot", AccessToken: "at", RefreshToken: "rt", TTL: 2 * time.Hour}, nil
+func (devGrantConnect) Exchange(context.Context, string, string) (*forge.Grant, error) {
+	return &forge.Grant{Account: "gocov-bot", AccessToken: "at", RefreshToken: "rt", TTL: 2 * time.Hour}, nil
 }
-func (devGLConnect) Refresh(context.Context, string, string) (*gitlab.Grant, error) {
-	return &gitlab.Grant{AccessToken: "at", RefreshToken: "rt", TTL: 2 * time.Hour}, nil
+func (devGrantConnect) Refresh(context.Context, string, string) (*forge.Grant, error) {
+	return &forge.Grant{AccessToken: "at", RefreshToken: "rt", TTL: 2 * time.Hour}, nil
 }
-func (d devGLConnect) ForgeClient(string) forge.Forge { return d.fg }
-
-// devBBConnect stubs server.BitbucketConnect: the consent bounce goes
-// straight back to the local callback, so the whole connect loop is
-// previewable without Bitbucket.
-type devBBConnect struct{ fg forge.Forge }
-
-func (devBBConnect) AuthorizeURL(state, redirectURI string) string {
-	return redirectURI + "?state=" + url.QueryEscape(state) + "&code=dev"
-}
-func (devBBConnect) Exchange(context.Context, string, string) (*bitbucket.Grant, error) {
-	return &bitbucket.Grant{Account: "gocov-bot", AccessToken: "at", RefreshToken: "rt", TTL: 2 * time.Hour}, nil
-}
-func (devBBConnect) Refresh(context.Context, string) (*bitbucket.Grant, error) {
-	return &bitbucket.Grant{AccessToken: "at", RefreshToken: "rt", TTL: 2 * time.Hour}, nil
-}
-func (d devBBConnect) ForgeClient(string) forge.Forge { return d.fg }
+func (d devGrantConnect) ForgeClient(string) forge.Forge { return d.fg }
 
 func main() {
 	ctx := context.Background()
@@ -319,8 +301,8 @@ func main() {
 		Hosted:           hosted,
 		PublicReports:    true,
 		GitHubApp:        devGitHubApp{fg: forgefake.New()},
-		BitbucketConnect: devBBConnect{fg: forgefake.New()},
-		GitLabConnect:    devGLConnect{fg: forgefake.New()},
+		BitbucketConnect: devGrantConnect{fg: forgefake.New()},
+		GitLabConnect:    devGrantConnect{fg: forgefake.New()},
 		PostHog:          server.PostHog{Key: cfg.PostHogKey, Host: "https://eu.i.posthog.com"},
 	})
 	log.Println("preview on :" + cfg.Port)

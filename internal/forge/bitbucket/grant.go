@@ -88,8 +88,9 @@ func (c *Consumer) Exchange(ctx context.Context, code, redirectURI string) (*Gra
 // Bitbucket rotates, a NEW refresh token that must replace the stored
 // one. An invalid_grant answer means the grant is gone (revoked, the
 // account left, or the token aged out unused) and maps to
-// ErrCredentialsRevoked.
-func (c *Consumer) Refresh(ctx context.Context, refreshToken string) (*Grant, error) {
+// ErrCredentialsRevoked. Bitbucket's token endpoint takes no redirect URI
+// on a refresh, so the one core.GrantConnect passes is ignored.
+func (c *Consumer) Refresh(ctx context.Context, refreshToken, _ string) (*Grant, error) {
 	return c.token(ctx, url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {refreshToken},
