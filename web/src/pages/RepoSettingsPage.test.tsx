@@ -130,7 +130,7 @@ test("the public-reports card is absent where the switch means nothing", async (
 
 test("rotating the repository token shows it once", async () => {
   const user = userEvent.setup();
-  mockApi({
+  const fetchMock = mockApi({
     "GET /repo-settings/github/acme/api": settings(),
     "POST /repo-settings/rotate-token/github/acme/api": { token: "gocov_live_0000cafebabe" },
   });
@@ -143,6 +143,9 @@ test("rotating the repository token shows it once", async () => {
 
   expect(await screen.findByText("gocov_live_0000cafebabe")).toBeInTheDocument();
   expect(screen.getByText(/Save it now — it is shown only this once\./)).toBeInTheDocument();
+  // The cached masked token is the old one's now, so the settings are read again.
+  const reads = () => fetchMock.mock.calls.filter(([url, init]) => init?.method === "GET" && String(url).includes("/repo-settings/github/")).length;
+  await vi.waitFor(() => expect(reads()).toBe(2));
 });
 
 test("removing the repository confirms, posts, and lands on the dashboard", async () => {

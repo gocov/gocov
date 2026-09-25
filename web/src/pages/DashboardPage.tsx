@@ -7,7 +7,7 @@ import { AttentionList } from "@/components/organisms/AttentionList";
 import { ReposTable } from "@/components/organisms/ReposTable";
 import { SetupChecklist } from "@/components/organisms/SetupChecklist";
 import { WorkspaceSwitcher } from "@/components/organisms/WorkspaceSwitcher";
-import { dashboardQuery, postToken, setupQuery, setupStatusQuery, workspaceSettingsPath } from "@/lib/api/queries";
+import { dashboardQuery, revealWorkspaceToken, setupQuery, setupStatusQuery } from "@/lib/api/queries";
 import type { Dashboard, DashStats, WorkspaceGroup } from "@/lib/api/types";
 import { pct, plural } from "@/lib/format";
 import { useUrlNotice } from "@/lib/notice";
@@ -92,7 +92,7 @@ function SetupSection({ ws, hasReports }: { ws: WorkspaceGroup; hasReports: bool
       info={info}
       status={live}
       listeningSince={listeningSince}
-      onReveal={() => postToken(workspaceSettingsPath(ws.forge, ws.prefix, "reveal-token"))}
+      onReveal={() => revealWorkspaceToken(ws.forge, ws.prefix)}
       onCopied={() => {
         if (listeningSince !== null) return;
         const now = Date.now();

@@ -1,15 +1,15 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams } from "react-router";
+import { useQuery } from "@tanstack/react-query";
+import { useParams } from "react-router";
 import { DangerCard } from "@/components/organisms/DangerCard";
 import { GatesCard } from "@/components/organisms/GatesCard";
 import { TokenCard } from "@/components/organisms/TokenCard";
 import { SettingsLayout, type SettingsNavItem } from "@/components/templates/SettingsLayout";
 import { Checkbox, Chip, InlineCode, Mono, Notice, TextInput, Textarea } from "@/components/atoms";
 import { Breadcrumbs, Card, CopyField, FormField, PageHeader, QueryBoundary, SaveFooter } from "@/components/molecules";
-import { apiPost, errorMessage } from "@/lib/api/client";
-import { postToken, repoSettingsPath, repoSettingsQuery } from "@/lib/api/queries";
-import type { RepoSettings, RepoSettingsInput } from "@/lib/api/types";
-import { useSectionSave } from "@/lib/sectionSave";
+import { errorMessage } from "@/lib/api/client";
+import { repoSettingsPath, repoSettingsQuery } from "@/lib/api/queries";
+import type { RepoSettings } from "@/lib/api/types";
+import { useSettingsDoc } from "@/lib/sectionSave";
 import { ignorePatterns, patternLabel, repoInput } from "@/lib/settings";
 import { usePageTitle } from "@/lib/title";
 import { routes } from "@/lib/urls";
@@ -28,28 +28,14 @@ export default function RepoSettingsPage() {
 }
 
 function RepoSettingsView({ forge, slug, settings }: { forge: string; slug: string; settings: RepoSettings }) {
-  const client = useQueryClient();
-  const navigate = useNavigate();
-  const key = repoSettingsQuery(forge, slug).queryKey;
-
   const { repo, workspace, owner } = settings;
 
   // Every editable card edits one document; each Save posts all of it.
-  const { form, update, section, error } = useSectionSave({
-    seed: () => repoInput(settings),
-    post: (input: RepoSettingsInput) => apiPost<RepoSettings>(repoSettingsPath(forge, slug, "save"), input),
-    onSaved: (next) => {
-      client.setQueryData(key, next);
-      return repoInput(next);
-    },
-  });
-
-  const remove = useMutation({
-    mutationFn: () => apiPost<void>(repoSettingsPath(forge, slug, "delete")),
-    onSuccess: async () => {
-      await client.invalidateQueries({ queryKey: ["dashboard"] });
-      void navigate(routes.dashboard());
-    },
+  const { form, update, section, error, remove, revealToken, rotateToken } = useSettingsDoc({
+    doc: settings,
+    queryKey: repoSettingsQuery(forge, slug).queryKey,
+    path: (action) => repoSettingsPath(forge, slug, action),
+    toInput: repoInput,
   });
 
   const saveFooter = (id: string, hint: string, ownerOnly: string) => (
@@ -228,14 +214,8 @@ function RepoSettingsView({ forge, slug, settings }: { forge: string; slug: stri
           serverUrl={null}
           tokenMasked={settings.token_masked}
           owner={owner}
-          onReveal={() => postToken(repoSettingsPath(forge, slug, "reveal-token"))}
-          onRotate={() =>
-            postToken(repoSettingsPath(forge, slug, "rotate-token")).then((token) => {
-              // The cached masked form is the old token's now.
-              void client.invalidateQueries({ queryKey: key });
-              return token;
-            })
-          }
+          onReveal={revealToken}
+          onRotate={rotateToken}
         />
       </SettingsLayout.Section>
 
@@ -266,7 +246,7 @@ function RepoSettingsView({ forge, slug, settings }: { forge: string; slug: stri
           ownerOnlyHint="Only a workspace owner can remove it."
           owner={owner}
           confirmText={`Remove ${slug} and all of its coverage data? This cannot be undone.`}
-          onConfirm={() => remove.mutateAsync()}
+          onConfirm={remove}
         >
           <p>
             Removes <InlineCode>{slug}</InlineCode> from gocov along with its uploads and every report behind them.

@@ -4,7 +4,7 @@ import { Link, useParams } from "react-router";
 import { Notice } from "@/components/atoms";
 import { Breadcrumbs, Card, PageHeader, QueryBoundary } from "@/components/molecules";
 import { SnippetPanel } from "@/components/organisms/SnippetPanel";
-import { postToken, setupQuery, setupStatusQuery, workspaceSettingsPath } from "@/lib/api/queries";
+import { revealWorkspaceToken, setupQuery, setupStatusQuery } from "@/lib/api/queries";
 import { track } from "@/lib/analytics";
 import type { SetupInfo } from "@/lib/api/types";
 import { usePageTitle } from "@/lib/title";
@@ -44,7 +44,7 @@ function Setup({ info }: { info: SetupInfo }) {
         <Card.Body>
           <SnippetPanel
             info={info}
-            onReveal={() => postToken(workspaceSettingsPath(forge, prefix, "reveal-token"))}
+            onReveal={() => revealWorkspaceToken(forge, prefix)}
           />
         </Card.Body>
       </Card>

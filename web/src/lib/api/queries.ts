@@ -68,6 +68,10 @@ export const workspaceSettingsQuery = (forge: string, prefix: string) =>
 /** POSTs a reveal-token or rotate-token path and yields the token — the one value that never enters the query cache. */
 export const postToken = (path: string) => apiPost<TokenReveal>(path).then((r) => r.token);
 
+/** An owner's reveal of a workspace's upload token, wherever the page offers it. */
+export const revealWorkspaceToken = (forge: string, prefix: string) =>
+  postToken(workspaceSettingsPath(forge, prefix, "reveal-token"));
+
 /** action "" = the settings document itself; the verb rides before the slug. */
 export const repoSettingsPath = (forge: string, slug: string, action = "") =>
   `/repo-settings/${action ? action + "/" : ""}${encodeURIComponent(forge)}/${segs(slug)}`;
