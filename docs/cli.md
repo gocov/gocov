@@ -53,8 +53,10 @@ When no `-token`/`$GOCOV_TOKEN` is set, the CLI tries two secret-free paths in o
 1. **OIDC.** If the CI job can provide an OIDC identity token — GitHub Actions with `permissions: id-token: write`,
    Bitbucket Pipelines with `oidc.audiences`, or GitLab CI with an `id_tokens` entry named `GOCOV_ID_TOKEN` — the
    CLI sends it in place of the token, scoped to the gocov server's audience. The server verifies the forge's
-   signature and the repository the token names, so the upload is fully verified — not marked unverified. This is
-   the recommended setup for a repo's own `push` and same-repo PR builds; see
+   signature and the repository the token names, so the upload is fully verified — not marked unverified. The
+   repository's workspace must be [connected](connecting.md) to its forge with a connection that still works;
+   otherwise the upload is refused with `oidc_not_connected` and the reason. This is the recommended setup for a
+   repo's own `push` and same-repo PR builds; see
    [GitHub Actions](github-actions.md#uploading-without-a-token),
    [Bitbucket Pipelines](bitbucket-pipelines.md#uploading-without-a-token) and
    [GitLab CI](gitlab-ci.md#uploading-without-a-token).

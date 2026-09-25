@@ -30,12 +30,19 @@ func splitConnectState(v string) (state, prefix string) {
 	return state, prefix
 }
 
-// oidcReady reports whether uploads from the workspace's repos can
+// oidcAvailable reports whether uploads from the workspace's repos can
 // authenticate with a forge-minted OIDC identity token instead of the
-// upload token: the workspace has to be connected to its forge, and the
-// connection has to work, since it is what the server verifies the
-// token's repository against — a broken grant refuses those uploads.
-func oidcReady(ws *store.Workspace) bool {
+// upload token — the one rule the upload endpoint enforces and the setup
+// screen offers the tokenless snippet by: this server verifies OIDC
+// tokens, this deployment can connect the forge in one click, and the
+// workspace is connected with a connection that still works. On every
+// forge: the connection is the owners' standing consent to the forge
+// proving uploads for their repositories, and on Bitbucket it is also
+// what the token's repository is checked against.
+func (s *Server) oidcAvailable(ws *store.Workspace) bool {
+	if s.oidc == nil || ws == nil || !s.forges.Capable(ws.Forge) {
+		return false
+	}
 	connected, broken, _ := forgeConnection(ws)
 	return connected && !broken
 }
@@ -235,7 +242,7 @@ func (s *Server) handleAPIWorkspaceSetup(w http.ResponseWriter, r *http.Request)
 	dto := setupInfoDTO{
 		Workspace:        workspaceRefDTO{Forge: ws.Forge, Prefix: ws.Prefix},
 		Owner:            owner,
-		Tokenless:        oidcReady(ws),
+		Tokenless:        s.oidcAvailable(ws),
 		ConnectionBroken: connectionBroken(ws),
 		BaseURL:          baseURL,
 		ServerImplicit:   baseURL == hosted.DefaultServer,
