@@ -170,31 +170,26 @@ func (p *Provider) primaryEmail(ctx context.Context, token string) (string, erro
 // the account's role in each org), following Link-header pagination.
 // Only active memberships count: a pending invitation is not membership.
 func (p *Provider) orgs(ctx context.Context, token string) (all, admin []string, err error) {
-	api := p.api(token)
-	next := "/user/memberships/orgs?state=active&per_page=100"
-	for range maxOrgPages {
-		var page []struct {
-			Role         string `json:"role"`
-			Organization struct {
-				Login string `json:"login"`
-			} `json:"organization"`
-		}
-		link, err := api.GetPage(ctx, next, &page)
-		if err != nil {
-			return nil, nil, err
-		}
-		for _, m := range page {
-			if m.Organization.Login == "" {
-				continue
+	type membership struct {
+		Role         string `json:"role"`
+		Organization struct {
+			Login string `json:"login"`
+		} `json:"organization"`
+	}
+	_, err = rest.EachPage(ctx, p.api(token), "/user/memberships/orgs?state=active&per_page=100", maxOrgPages,
+		func(page []membership) {
+			for _, m := range page {
+				if m.Organization.Login == "" {
+					continue
+				}
+				all = append(all, m.Organization.Login)
+				if m.Role == "admin" {
+					admin = append(admin, m.Organization.Login)
+				}
 			}
-			all = append(all, m.Organization.Login)
-			if m.Role == "admin" {
-				admin = append(admin, m.Organization.Login)
-			}
-		}
-		if next = link; next == "" {
-			return all, admin, nil
-		}
+		})
+	if err != nil {
+		return nil, nil, err
 	}
 	return all, admin, nil
 }

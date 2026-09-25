@@ -158,25 +158,20 @@ const (
 // (D2), so every path the user belongs to is a candidate. Follows
 // Link-header pagination.
 func (p *Provider) groups(ctx context.Context, token string, minAccess int) ([]string, error) {
+	type group struct {
+		FullPath string `json:"full_path"`
+	}
 	var out []string
-	api := p.api(token)
-	next := "/groups?min_access_level=" + strconv.Itoa(minAccess) + "&per_page=100"
-	for range maxGroupPages {
-		var page []struct {
-			FullPath string `json:"full_path"`
-		}
-		link, err := api.GetPage(ctx, next, &page)
-		if err != nil {
-			return nil, err
-		}
-		for _, g := range page {
-			if g.FullPath != "" {
-				out = append(out, g.FullPath)
+	_, err := rest.EachPage(ctx, p.api(token), "/groups?min_access_level="+strconv.Itoa(minAccess)+"&per_page=100", maxGroupPages,
+		func(page []group) {
+			for _, g := range page {
+				if g.FullPath != "" {
+					out = append(out, g.FullPath)
+				}
 			}
-		}
-		if next = link; next == "" {
-			return out, nil
-		}
+		})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }
