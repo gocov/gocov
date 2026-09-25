@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"errors"
 	"net/http"
 
@@ -21,10 +20,9 @@ import (
 // before the access token is used; the handlers here only start the
 // consent, take the code back, and forget the grant on disconnect.
 //
-// The two forges differ in nothing but the connector, the state cookie
-// that binds their consent redirect, and the workspace columns the grant
-// lives in — connectGrant carries those, and one set of handlers serves
-// both.
+// The two forges differ in nothing but the connector and the state
+// cookie that binds their consent redirect — connectGrant carries those,
+// and one set of handlers serves both.
 type connectGrant struct {
 	// forge names the forge everywhere: store value, route segment, log
 	// prefix and connector lookup.
@@ -32,8 +30,6 @@ type connectGrant struct {
 	// cookie binds the consent redirect to the browser that started it,
 	// and carries the workspace prefix being connected.
 	cookie string
-	// set writes the grant's columns on the workspace row.
-	set func(st store.Store, ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error
 }
 
 // The connect state cookies, one per forge so an in-flight consent on
@@ -46,8 +42,8 @@ const (
 // connectGrants lists the grant-backed forges. Whether a deployment
 // actually offers a grant is the connector's presence in core.Forges.
 var connectGrants = []*connectGrant{
-	{forge: "bitbucket", cookie: connectStateCookie, set: store.Store.SetWorkspaceBitbucketGrant},
-	{forge: "gitlab", cookie: glConnectStateCookie, set: store.Store.SetWorkspaceGitLabGrant},
+	{forge: "bitbucket", cookie: connectStateCookie},
+	{forge: "gitlab", cookie: glConnectStateCookie},
 }
 
 // connectGrantFor returns the grant description for a forge, nil for a
@@ -160,7 +156,7 @@ func (s *Server) connectCallback(g *connectGrant, w http.ResponseWriter, r *http
 		s.connectFailed(w, r, g.forge, prefix)
 		return true
 	}
-	if err := g.set(s.store, r.Context(), ws.ID, grant.Account, grant.RefreshToken, false); err != nil {
+	if err := s.store.SetWorkspaceGrant(r.Context(), ws.ID, g.forge, store.Grant{Account: grant.Account, RefreshToken: grant.RefreshToken}); err != nil {
 		s.internalError(w, "storing workspace grant", err)
 		return true
 	}
@@ -213,7 +209,7 @@ func (s *Server) disconnectWorkspace(w http.ResponseWriter, r *http.Request, ws 
 		tenantNotFound(w, r)
 		return false
 	}
-	if err := g.set(s.store, r.Context(), ws.ID, "", "", false); err != nil {
+	if err := s.store.SetWorkspaceGrant(r.Context(), ws.ID, g.forge, store.Grant{}); err != nil {
 		s.internalError(w, "disconnecting "+g.forge+" grant", err)
 		return false
 	}

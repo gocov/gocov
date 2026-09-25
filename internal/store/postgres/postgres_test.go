@@ -962,7 +962,7 @@ func TestWithGrantLock(t *testing.T) {
 	if err := st.CreateWorkspace(ctx, ws); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetWorkspaceBitbucketGrant(ctx, ws.ID, "covbot", "rt-0", false); err != nil {
+	if err := st.SetWorkspaceGrant(ctx, ws.ID, "bitbucket", store.Grant{Account: "covbot", RefreshToken: "rt-0"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -986,14 +986,14 @@ func TestWithGrantLock(t *testing.T) {
 					return err
 				}
 				var seq int
-				if _, err := fmt.Sscanf(fresh.BitbucketRefreshToken, "rt-%d", &seq); err != nil {
-					return fmt.Errorf("stored token %q: %w", fresh.BitbucketRefreshToken, err)
+				if _, err := fmt.Sscanf(fresh.Grant.RefreshToken, "rt-%d", &seq); err != nil {
+					return fmt.Errorf("stored token %q: %w", fresh.Grant.RefreshToken, err)
 				}
 				if got := rotations.Load(); int64(seq) != got {
 					return fmt.Errorf("read rt-%d under the lock, but %d rotations have happened", seq, got)
 				}
 				rotations.Add(1)
-				return tx.SetWorkspaceBitbucketGrant(ctx, ws.ID, "covbot", fmt.Sprintf("rt-%d", seq+1), false)
+				return tx.SetWorkspaceGrant(ctx, ws.ID, "bitbucket", store.Grant{Account: "covbot", RefreshToken: fmt.Sprintf("rt-%d", seq+1)})
 			})
 		})
 	}
@@ -1007,8 +1007,8 @@ func TestWithGrantLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := fmt.Sprintf("rt-%d", n); fresh.BitbucketRefreshToken != want {
-		t.Errorf("stored token = %q, want %q after %d serialized rotations", fresh.BitbucketRefreshToken, want, n)
+	if want := fmt.Sprintf("rt-%d", n); fresh.Grant.RefreshToken != want {
+		t.Errorf("stored token = %q, want %q after %d serialized rotations", fresh.Grant.RefreshToken, want, n)
 	}
 
 	// The lock is transaction-scoped: fn's error rolls back and releases
@@ -1260,7 +1260,7 @@ func TestBitbucketGrantEncryptedAtRest(t *testing.T) {
 	if err := st.CreateWorkspace(ctx, w); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetWorkspaceBitbucketGrant(ctx, w.ID, "covbot", "rt-secret-1", false); err != nil {
+	if err := st.SetWorkspaceGrant(ctx, w.ID, "bitbucket", store.Grant{Account: "covbot", RefreshToken: "rt-secret-1"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1278,30 +1278,30 @@ func TestBitbucketGrantEncryptedAtRest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.BitbucketRefreshToken != "rt-secret-1" || got.BitbucketGrantAccount != "covbot" || got.BitbucketGrantBroken {
-		t.Errorf("loaded grant = %q/%q/%v", got.BitbucketGrantAccount, got.BitbucketRefreshToken, got.BitbucketGrantBroken)
+	if got.Grant.RefreshToken != "rt-secret-1" || got.Grant.Account != "covbot" || got.Grant.Broken {
+		t.Errorf("loaded grant = %q/%q/%v", got.Grant.Account, got.Grant.RefreshToken, got.Grant.Broken)
 	}
 
 	// Rotation: the swap replaces the stored token.
-	if err := st.SetWorkspaceBitbucketGrant(ctx, w.ID, "covbot", "rt-secret-2", false); err != nil {
+	if err := st.SetWorkspaceGrant(ctx, w.ID, "bitbucket", store.Grant{Account: "covbot", RefreshToken: "rt-secret-2"}); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ = st.WorkspaceByPrefix(ctx, "bitbucket", "acme"); got.BitbucketRefreshToken != "rt-secret-2" {
-		t.Errorf("after rotation: %q, want rt-secret-2", got.BitbucketRefreshToken)
+	if got, _ = st.WorkspaceByPrefix(ctx, "bitbucket", "acme"); got.Grant.RefreshToken != "rt-secret-2" {
+		t.Errorf("after rotation: %q, want rt-secret-2", got.Grant.RefreshToken)
 	}
 
 	// UpdateWorkspace must not touch the grant columns — a full-row
 	// write from an earlier read would resurrect a rotated-away token.
 	stale := *got
-	stale.BitbucketRefreshToken = "rt-secret-1"
+	stale.Grant.RefreshToken = "rt-secret-1"
 	stale.DefaultBranch = "trunk"
 	if err := st.UpdateWorkspace(ctx, &stale); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = st.WorkspaceByPrefix(ctx, "bitbucket", "acme")
-	if got.DefaultBranch != "trunk" || got.BitbucketRefreshToken != "rt-secret-2" {
+	if got.DefaultBranch != "trunk" || got.Grant.RefreshToken != "rt-secret-2" {
 		t.Errorf("after full-row update: branch %q token %q, want trunk + untouched rt-secret-2",
-			got.DefaultBranch, got.BitbucketRefreshToken)
+			got.DefaultBranch, got.Grant.RefreshToken)
 	}
 
 	// A different (rotated-away) key cannot brick reads: the token comes
@@ -1313,17 +1313,17 @@ func TestBitbucketGrantEncryptedAtRest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("wrong key must degrade, not error: %v", err)
 	}
-	if got.BitbucketRefreshToken != "" || !got.BitbucketGrantBroken {
-		t.Errorf("wrong key: token %q broken %v, want empty + broken", got.BitbucketRefreshToken, got.BitbucketGrantBroken)
+	if got.Grant.RefreshToken != "" || !got.Grant.Broken {
+		t.Errorf("wrong key: token %q broken %v, want empty + broken", got.Grant.RefreshToken, got.Grant.Broken)
 	}
 
 	// Writing a grant without a cipher fails loudly.
 	st3 := postgres.New(st.Pool())
-	if err := st3.SetWorkspaceBitbucketGrant(ctx, w.ID, "covbot", "rt-plain", false); err == nil {
+	if err := st3.SetWorkspaceGrant(ctx, w.ID, "bitbucket", store.Grant{Account: "covbot", RefreshToken: "rt-plain"}); err == nil {
 		t.Error("storing a grant without GOCOV_SECRET_KEY must fail")
 	}
 	// Clearing the grant needs no cipher (empty token).
-	if err := st3.SetWorkspaceBitbucketGrant(ctx, w.ID, "", "", false); err != nil {
+	if err := st3.SetWorkspaceGrant(ctx, w.ID, "bitbucket", store.Grant{}); err != nil {
 		t.Errorf("clearing without cipher: %v", err)
 	}
 }
@@ -1341,7 +1341,7 @@ func TestGitLabGrantEncryptedAtRest(t *testing.T) {
 	if err := st.CreateWorkspace(ctx, w); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetWorkspaceGitLabGrant(ctx, w.ID, "covbot", "rt-secret-1", false); err != nil {
+	if err := st.SetWorkspaceGrant(ctx, w.ID, "gitlab", store.Grant{Account: "covbot", RefreshToken: "rt-secret-1"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1359,24 +1359,24 @@ func TestGitLabGrantEncryptedAtRest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.GitLabRefreshToken != "rt-secret-1" || got.GitLabGrantAccount != "covbot" || got.GitLabGrantBroken {
-		t.Errorf("loaded grant = %q/%q/%v", got.GitLabGrantAccount, got.GitLabRefreshToken, got.GitLabGrantBroken)
+	if got.Grant.RefreshToken != "rt-secret-1" || got.Grant.Account != "covbot" || got.Grant.Broken {
+		t.Errorf("loaded grant = %q/%q/%v", got.Grant.Account, got.Grant.RefreshToken, got.Grant.Broken)
 	}
 
 	// Rotation swap + full-row-update isolation, in one pass.
-	if err := st.SetWorkspaceGitLabGrant(ctx, w.ID, "covbot", "rt-secret-2", false); err != nil {
+	if err := st.SetWorkspaceGrant(ctx, w.ID, "gitlab", store.Grant{Account: "covbot", RefreshToken: "rt-secret-2"}); err != nil {
 		t.Fatal(err)
 	}
 	stale := *got
-	stale.GitLabRefreshToken = "rt-secret-1"
+	stale.Grant.RefreshToken = "rt-secret-1"
 	stale.DefaultBranch = "trunk"
 	if err := st.UpdateWorkspace(ctx, &stale); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = st.WorkspaceByPrefix(ctx, "gitlab", "grp/sub")
-	if got.DefaultBranch != "trunk" || got.GitLabRefreshToken != "rt-secret-2" {
+	if got.DefaultBranch != "trunk" || got.Grant.RefreshToken != "rt-secret-2" {
 		t.Errorf("after rotation + full-row update: branch %q token %q, want trunk + rt-secret-2",
-			got.DefaultBranch, got.GitLabRefreshToken)
+			got.DefaultBranch, got.Grant.RefreshToken)
 	}
 }
 
@@ -1495,5 +1495,40 @@ func TestGateBasePctRoundTrip(t *testing.T) {
 	}
 	if got, err := st.CommitReport(ctx, repo.ID, "c1"); err != nil || got.GateBasePct == nil || *got.GateBasePct != 72.5 {
 		t.Errorf("report GateBasePct = %v (err %v), want 72.5", got.GateBasePct, err)
+	}
+}
+
+// A grant lives in its own forge's columns and only on a workspace of that
+// forge: created with the row, it reads back; aimed at another forge, the
+// write finds nothing to update.
+func TestWorkspaceGrantStaysOnItsForge(t *testing.T) {
+	st := newTestStore(t)
+	box, err := secretbox.New(testSecretKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SetCipher(box)
+	ctx := t.Context()
+
+	w := &store.Workspace{Forge: "gitlab", Prefix: "acme", Token: "ws-tok", DefaultBranch: "main",
+		Grant: store.Grant{Account: "covbot", RefreshToken: "rt-0"}}
+	if err := st.CreateWorkspace(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.WorkspaceByPrefix(ctx, "gitlab", "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Grant != (store.Grant{Account: "covbot", RefreshToken: "rt-0"}) {
+		t.Errorf("created grant = %+v, want covbot/rt-0", got.Grant)
+	}
+
+	for _, forge := range []string{"bitbucket", "github"} {
+		if err := st.SetWorkspaceGrant(ctx, w.ID, forge, store.Grant{Account: "other"}); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("SetWorkspaceGrant(%s) on a gitlab workspace = %v, want ErrNotFound", forge, err)
+		}
+	}
+	if got, _ := st.WorkspaceByPrefix(ctx, "gitlab", "acme"); got.Grant.Account != "covbot" {
+		t.Errorf("grant after refused writes = %+v, want it untouched", got.Grant)
 	}
 }

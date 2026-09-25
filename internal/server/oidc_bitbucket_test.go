@@ -59,7 +59,7 @@ func newBitbucketOIDCFixture(t *testing.T, forgeUUID string) (*fixture, *oidcIss
 	if err := st.CreateWorkspace(ctx, ws); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetWorkspaceBitbucketGrant(ctx, ws.ID, "covbot", "rt-0", false); err != nil {
+	if err := st.SetWorkspaceGrant(ctx, ws.ID, "bitbucket", store.Grant{Account: "covbot", RefreshToken: "rt-0"}); err != nil {
 		t.Fatal(err)
 	}
 	blobs := blobmem.New()

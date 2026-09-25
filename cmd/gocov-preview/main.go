@@ -280,17 +280,17 @@ func main() {
 		{Forge: "github", Prefix: "gh-broken", Token: "gh-broken-token", DefaultBranch: "main",
 			GitHubInstallationID: 4243, GitHubAppBroken: true},
 		{Forge: "bitbucket", Prefix: "bb-connected", Token: "bb-conn-token", DefaultBranch: "main",
-			BitbucketGrantAccount: "gocov-bot", BitbucketRefreshToken: "rt"},
+			Grant: store.Grant{Account: "gocov-bot", RefreshToken: "rt"}},
 		{Forge: "bitbucket", Prefix: "bb-broken", Token: "bb-broken-token", DefaultBranch: "main",
-			BitbucketGrantAccount: "gocov-bot", BitbucketRefreshToken: "rt", BitbucketGrantBroken: true},
+			Grant: store.Grant{Account: "gocov-bot", RefreshToken: "rt", Broken: true}},
 		// A GitLab workspace at subgroup depth, for the setup page's
 		// .gitlab-ci.yml snippet and the %2F-encoded workspace routes,
 		// plus the GitLab-connect states.
 		{Forge: "gitlab", Prefix: "gl-group/platform", Token: "gl-token", DefaultBranch: "main"},
 		{Forge: "gitlab", Prefix: "gl-connected", Token: "gl-conn-token", DefaultBranch: "main",
-			GitLabGrantAccount: "gocov-bot", GitLabRefreshToken: "rt"},
+			Grant: store.Grant{Account: "gocov-bot", RefreshToken: "rt"}},
 		{Forge: "gitlab", Prefix: "gl-broken", Token: "gl-broken-token", DefaultBranch: "main",
-			GitLabGrantAccount: "gocov-bot", GitLabRefreshToken: "rt", GitLabGrantBroken: true},
+			Grant: store.Grant{Account: "gocov-bot", RefreshToken: "rt", Broken: true}},
 	} {
 		if err := st.CreateWorkspace(ctx, ws); err != nil {
 			log.Fatal(err)

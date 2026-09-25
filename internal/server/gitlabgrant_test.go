@@ -110,7 +110,7 @@ func (f *glConnectFixture) workspace(t *testing.T) *store.Workspace {
 func (f *glConnectFixture) grant(t *testing.T, account, refresh string, broken bool) {
 	t.Helper()
 	ws := f.workspace(t)
-	if err := f.store.SetWorkspaceGitLabGrant(t.Context(), ws.ID, account, refresh, broken); err != nil {
+	if err := f.store.SetWorkspaceGrant(t.Context(), ws.ID, "gitlab", store.Grant{Account: account, RefreshToken: refresh, Broken: broken}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -167,8 +167,8 @@ func TestGitLabConnectFlow(t *testing.T) {
 		t.Errorf("callback redirect = %q, want the workspace's dashboard", loc)
 	}
 	ws := f.workspace(t)
-	if ws.GitLabGrantAccount != "covbot" || ws.GitLabRefreshToken != "rt-0" || ws.GitLabGrantBroken {
-		t.Errorf("stored grant = %q/%q/broken=%v", ws.GitLabGrantAccount, ws.GitLabRefreshToken, ws.GitLabGrantBroken)
+	if ws.Grant.Account != "covbot" || ws.Grant.RefreshToken != "rt-0" || ws.Grant.Broken {
+		t.Errorf("stored grant = %q/%q/broken=%v", ws.Grant.Account, ws.Grant.RefreshToken, ws.Grant.Broken)
 	}
 }
 
@@ -261,8 +261,8 @@ func TestGitLabUploadUsesGrantAndPersistsRotation(t *testing.T) {
 	if got := f.gl.redirectURIs; len(got) != 1 || got[0] != "https://gocov.example/oauth/gitlab/callback" {
 		t.Errorf("refresh redirect URIs = %v", got)
 	}
-	if ws := f.workspace(t); ws.GitLabRefreshToken != "rt-1" {
-		t.Errorf("stored refresh = %q, want the rotated rt-1", ws.GitLabRefreshToken)
+	if ws := f.workspace(t); ws.Grant.RefreshToken != "rt-1" {
+		t.Errorf("stored refresh = %q, want the rotated rt-1", ws.Grant.RefreshToken)
 	}
 }
 
@@ -289,10 +289,10 @@ func TestGitLabUploadGrantRevokedDegrades(t *testing.T) {
 		t.Errorf("build status = %q, want skipped", resp.BuildStatus)
 	}
 	ws := f.workspace(t)
-	if !ws.GitLabGrantBroken {
+	if !ws.Grant.Broken {
 		t.Error("revoked refresh must flag the grant broken")
 	}
-	if ws.GitLabGrantAccount != "covbot" {
+	if ws.Grant.Account != "covbot" {
 		t.Error("the account name is kept — it says who to replace")
 	}
 }
@@ -305,7 +305,7 @@ func TestGitLabUploadGrantHealsBrokenFlag(t *testing.T) {
 	if resp := f.upload(t); resp.BuildStatus != "posted" {
 		t.Fatalf("build status = %q", resp.BuildStatus)
 	}
-	if ws := f.workspace(t); ws.GitLabGrantBroken {
+	if ws := f.workspace(t); ws.Grant.Broken {
 		t.Error("a working refresh must clear the broken flag")
 	}
 }
@@ -317,8 +317,8 @@ func TestGitLabDisconnect(t *testing.T) {
 	wantStatus(t, postJSON(t, f.fixture, "/api/ui/workspace-settings/disconnect/gitlab/grp/sub", nil, sess),
 		"disconnect", http.StatusOK)
 	ws := f.workspace(t)
-	if ws.GitLabGrantAccount != "" || ws.GitLabRefreshToken != "" || ws.GitLabGrantBroken {
-		t.Errorf("after disconnect: %q/%q/%v", ws.GitLabGrantAccount, ws.GitLabRefreshToken, ws.GitLabGrantBroken)
+	if ws.Grant.Account != "" || ws.Grant.RefreshToken != "" || ws.Grant.Broken {
+		t.Errorf("after disconnect: %q/%q/%v", ws.Grant.Account, ws.Grant.RefreshToken, ws.Grant.Broken)
 	}
 }
 

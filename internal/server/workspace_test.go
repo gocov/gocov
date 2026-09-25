@@ -286,7 +286,7 @@ func TestAPIWorkspaceSetupBrokenConnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.store.SetWorkspaceBitbucketGrant(t.Context(), ws.ID, "acme-ci", "rt", true); err != nil {
+	if err := f.store.SetWorkspaceGrant(t.Context(), ws.ID, "bitbucket", store.Grant{Account: "acme-ci", RefreshToken: "rt", Broken: true}); err != nil {
 		t.Fatal(err)
 	}
 	got := decodeJSON[setupInfoDTO](t, get(f, "/api/ui/workspace-setup/bitbucket/acme", sess))
