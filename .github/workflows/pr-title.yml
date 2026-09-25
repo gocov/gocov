@@ -1,0 +1,40 @@
+name: pr-title
+
+# main takes squash merges, so a pull request's title becomes the commit
+# subject on main — and release-please reads those subjects to pick the
+# next version and write the CHANGELOG. A title without a conventional
+# prefix is silently left out of both, so it is refused here instead.
+#
+#   feat: …      new user-visible behaviour     → minor bump, "Features"
+#   fix: …       a bug fixed                    → patch bump, "Bug Fixes"
+#   perf: …      faster, same behaviour         → patch bump, "Performance Improvements"
+#   refactor: / docs: / test: / ci: / build: / chore: / style: / revert:
+#                no release by themselves, no CHANGELOG line
+#
+# An optional scope goes in parentheses (`fix(web): …`), and a `!` before
+# the colon (`feat!: …`) marks a breaking change.
+#
+# The title is passed through the environment, never interpolated into the
+# script, so a crafted title cannot run as shell.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions: {}
+
+jobs:
+  conventional:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Title is a conventional commit subject
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          re='^(feat|fix|perf|refactor|docs|test|ci|build|chore|style|revert)(\([a-z0-9._/-]+\))?!?: [^ ]'
+          if [[ "$TITLE" =~ $re ]]; then
+            echo "ok: $TITLE"
+            exit 0
+          fi
+          echo "::error title=PR title is not a conventional commit::\"$TITLE\" — start it with feat:, fix:, perf:, refactor:, docs:, test:, ci:, build:, chore:, style: or revert: (optional scope, e.g. fix(web): …). The squash commit on main takes this title, and release-please builds the version and CHANGELOG from it."
+          exit 1
