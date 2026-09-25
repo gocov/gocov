@@ -159,10 +159,30 @@ func mergedCoverage(ctx context.Context, tx store.CommitTx, parts []*store.Uploa
 	if err != nil {
 		return 0, 0, fmt.Errorf("loading part files: %w", err)
 	}
+	for _, f := range MergeParts(files) {
+		covered += f.CoveredStmts
+		total += f.TotalStmts
+	}
+	return covered, total, nil
+}
+
+// MergeParts merges the files of a commit's parts into the files of its
+// merged report, ordered by path — the rule its totals are counted by
+// (mergedCoverage), for the pages that list those files. A block several
+// parts report counts once, covered when any part ran it (profile.Merge);
+// each merged file belongs to the newest upload that reported it.
+func MergeParts(files []*store.UploadFile) []*store.UploadFile {
+	owner := make(map[string]int64, len(files))
 	all := &profile.Profile{Files: make([]profile.File, 0, len(files))}
 	for _, f := range files {
+		owner[f.Path] = max(owner[f.Path], f.UploadID)
 		all.Files = append(all.Files, profile.File{Path: f.Path, Blocks: f.Blocks})
 	}
-	covered, total = profile.Merge(all).Coverage()
-	return covered, total, nil
+	merged := profile.Merge(all)
+	out := make([]*store.UploadFile, len(merged.Files))
+	for i := range merged.Files {
+		out[i] = newUploadFile(&merged.Files[i])
+		out[i].UploadID = owner[out[i].Path]
+	}
+	return out
 }

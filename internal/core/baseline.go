@@ -70,18 +70,6 @@ func deltaBase(ctx context.Context, reports passedReports, repo *store.Repo, bra
 	return prev, nil
 }
 
-// CommitBaseline is deltaBase for the pages that compare a commit's merged
-// files with an earlier commit's: nil when there is nothing to compare
-// against, or the read fails — the comparison is decoration, never worth
-// failing a page over.
-func CommitBaseline(ctx context.Context, reports passedReports, repo *store.Repo, branch, commit string) *store.CommitReport {
-	base, err := deltaBase(ctx, reports, repo, branch, commit)
-	if err != nil {
-		return nil
-	}
-	return base
-}
-
 // ReportBaseline pairs a branch's newest merged report (reports come newest
 // first) with the one it is compared against on the branch's trend: the
 // most recent gate-passing, non-PR report before it. base is nil when none

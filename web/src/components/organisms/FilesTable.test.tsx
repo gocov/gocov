@@ -22,7 +22,6 @@ const file = (path: string, over: Partial<FileRow> = {}): FileRow => ({
 });
 
 const withBase: FilesView = {
-  upload_id: 412,
   merged: false,
   has_base: true,
   files: [
@@ -34,7 +33,6 @@ const withBase: FilesView = {
 };
 
 const noBase: FilesView = {
-  upload_id: 7,
   merged: false,
   has_base: false,
   files: [file("cmd/gocov/main.go", { upload_id: 7, covered_stmts: 3, total_stmts: 8 }), file("doc.go", { upload_id: 7 })],
@@ -63,7 +61,7 @@ test("the tree rolls directories up and files link to their source", () => {
 });
 
 test("a file from another part links to the upload that carried it", () => {
-  draw({ upload_id: 412, merged: true, has_base: false, files: [file("web/src/main.tsx", { upload_id: 411 }), file("main.go")] });
+  draw({ merged: true, has_base: false, files: [file("web/src/main.tsx", { upload_id: 411 }), file("main.go")] });
   // A merged card's source views merge the commit's parts too, so they
   // agree with the row they were opened from.
   expect(screen.getByRole("link", { name: "main.tsx" })).toHaveAttribute("href", "/uploads/411/files/web/src/main.tsx?parts=merged");
@@ -143,6 +141,6 @@ test("without a baseline the table counts statements instead", () => {
 });
 
 test("an upload with no per-file data says so", () => {
-  draw({ upload_id: 9, merged: false, has_base: false, files: [] });
+  draw({ merged: false, has_base: false, files: [] });
   expect(screen.getByText("No per-file data.")).toBeInTheDocument();
 });

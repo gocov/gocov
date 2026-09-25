@@ -184,11 +184,9 @@ type fileRowDTO struct {
 	CoverageChanged    bool   `json:"coverage_changed"`
 }
 
-// filesViewDTO is the files card: the upload it describes (on the repo
-// page, the latest upload of the commit whose parts it merges), and
-// whether there was a baseline to compare them against.
+// filesViewDTO is the files card: its rows, whether there was a baseline
+// to compare them against, and whether they merge a commit's parts.
 type filesViewDTO struct {
-	UploadID int64 `json:"upload_id"`
 	// Merged marks rows that merge every part of the commit (the repo
 	// page), so a file's source view merges them too (?parts=merged).
 	Merged  bool         `json:"merged"`

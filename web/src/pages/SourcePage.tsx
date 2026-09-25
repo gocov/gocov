@@ -15,7 +15,7 @@ export default function SourcePage() {
   const params = useParams();
   const path = params["*"] ?? "";
   const [search] = useSearchParams();
-  const query = useQuery(sourceQuery(params.id ?? "", path, search.get("parts") === "merged"));
+  const query = useQuery(sourceQuery(params.id ?? "", path, search.get("parts") ?? ""));
   usePageTitle(path);
   return <QueryBoundary query={query}>{(data) => <Source data={data} />}</QueryBoundary>;
 }

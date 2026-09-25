@@ -327,7 +327,7 @@ func TestAPIUploadPage(t *testing.T) {
 	if got.Diff != nil {
 		t.Errorf("diff = %+v, want none for a branch build", got.Diff)
 	}
-	if got.Files == nil || len(got.Files.Files) != 2 || got.Files.UploadID != 2 {
+	if got.Files == nil || len(got.Files.Files) != 2 || got.Files.Files[0].UploadID != 2 || got.Files.Merged {
 		t.Fatalf("files = %+v", got.Files)
 	}
 	if got.Provenance.ProfileName != "coverage.out" || got.Provenance.Parts == 0 {

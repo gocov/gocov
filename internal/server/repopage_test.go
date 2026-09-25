@@ -238,6 +238,15 @@ func TestAPIRepoFilesMergeEveryPart(t *testing.T) {
 	if m := decodeJSON[sourcePageDTO](t, get(f, backSrc)); m.File.TotalStmts != 8 {
 		t.Errorf("merged source view of back.go = %+v, want the backend part's file", m.File)
 	}
+	// It compares against the card's baseline commit, so its delta is the
+	// row's move: back.go from 100% at c1 to 0%.
+	u, err := f.store.Upload(t.Context(), front)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := f.srv.commitBaseFileFor(t.Context(), f.repo, u, "example.com/m/back.go"); b == nil || b.Pct != 100 {
+		t.Errorf("merged baseline of back.go = %+v, want c1's 100%%", b)
+	}
 }
 
 // A repo with no uploads at all still answers with a whole page.

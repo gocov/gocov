@@ -255,15 +255,19 @@ func (sub Submission) rows(blobKey string, diff *diffcov.Result, gate Verdict, g
 	}
 	files := make([]*store.UploadFile, 0, len(sub.Profile.Files))
 	for i := range sub.Profile.Files {
-		f := &sub.Profile.Files[i]
-		c, t := f.Coverage()
-		files = append(files, &store.UploadFile{
-			Path:         f.Path,
-			Pct:          profile.Percent(c, t),
-			CoveredStmts: c,
-			TotalStmts:   t,
-			Blocks:       f.Blocks,
-		})
+		files = append(files, newUploadFile(&sub.Profile.Files[i]))
 	}
 	return upload, files
+}
+
+// newUploadFile is a profile file as the store keeps it, with its counts.
+func newUploadFile(f *profile.File) *store.UploadFile {
+	c, t := f.Coverage()
+	return &store.UploadFile{
+		Path:         f.Path,
+		Pct:          profile.Percent(c, t),
+		CoveredStmts: c,
+		TotalStmts:   t,
+		Blocks:       f.Blocks,
+	}
 }

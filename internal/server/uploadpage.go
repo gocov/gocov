@@ -182,22 +182,23 @@ func (s *Server) loadFilesView(ctx context.Context, repo *store.Repo, upload *st
 	if err != nil {
 		return nil, nil, err
 	}
-	uploads := map[int64]*store.Upload{upload.ID: upload}
-	return buildFilesView(upload.ID, upload.DiffCoverage, uploads, files, base != nil, baseFiles), base, nil
+	return buildFilesView(upload.DiffCoverage, map[int64]*store.Upload{upload.ID: upload}, files, baseFiles), base, nil
 }
 
 // buildFilesView pairs each file with its coverage at the baseline — the
 // files card. The files come from the uploads keyed by id (one upload, or
 // every part of a commit), each row linking to the upload it came from;
-// diff marks the files whose source the PR touched. The directory tree the
-// card draws is the client's to build from these rows.
-func buildFilesView(viewID int64, diff *diffcov.Result, uploads map[int64]*store.Upload, files []*store.UploadFile, hasBase bool, baseFiles map[string]*store.UploadFile) *filesViewDTO {
+// diff marks the files whose source the PR touched, and a nil baseFiles
+// means there is no baseline. The directory tree the card draws is the
+// client's to build from these rows.
+func buildFilesView(diff *diffcov.Result, uploads map[int64]*store.Upload, files []*store.UploadFile, baseFiles map[string]*store.UploadFile) *filesViewDTO {
+	hasBase := baseFiles != nil
 	var diffPaths []string
-	if dc := diff; dc != nil {
-		for _, df := range dc.Files {
+	if diff != nil {
+		for _, df := range diff.Files {
 			diffPaths = append(diffPaths, df.Path)
 		}
-		diffPaths = append(diffPaths, dc.UnmatchedFiles...)
+		diffPaths = append(diffPaths, diff.UnmatchedFiles...)
 	}
 	touched := diffcov.NewDiffPaths(diffPaths)
 
@@ -211,7 +212,7 @@ func buildFilesView(viewID int64, diff *diffcov.Result, uploads map[int64]*store
 	rows := make([]sortedRow, 0, len(files))
 	for _, f := range files {
 		row := sortedRow{fileRowDTO: fileRowDTO{
-			UploadID:     cmp.Or(f.UploadID, viewID),
+			UploadID:     f.UploadID,
 			Path:         f.Path,
 			Coverage:     f.Pct,
 			CoveredStmts: f.CoveredStmts,
@@ -263,7 +264,7 @@ func buildFilesView(viewID int64, diff *diffcov.Result, uploads map[int64]*store
 		})
 	}
 
-	dto := &filesViewDTO{UploadID: viewID, HasBase: hasBase, Files: make([]fileRowDTO, len(rows))}
+	dto := &filesViewDTO{HasBase: hasBase, Files: make([]fileRowDTO, len(rows))}
 	for i, row := range rows {
 		dto.Files[i] = row.fileRowDTO
 	}

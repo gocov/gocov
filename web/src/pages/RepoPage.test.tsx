@@ -35,7 +35,6 @@ const repo = (over: Partial<RepoPageData> = {}): RepoPageData => ({
     { upload_id: 412, sha: "a1b2c3d4e5f67890", coverage: 82.3, at: "2026-08-05T10:00:00Z", gate_failed: false },
   ],
   files: {
-    upload_id: 412,
     merged: true,
     has_base: true,
     files: [
