@@ -97,21 +97,20 @@ const maxCommentPages = 10
 func (c *Client) FindPRComment(ctx context.Context, repoSlug, prID, prefix string) (string, error) {
 	next := fmt.Sprintf("%s/repos/%s/issues/%s/comments?per_page=100",
 		c.BaseURL, repoSlug, url.PathEscape(prID))
+	type comment struct {
+		ID   int64  `json:"id"`
+		Body string `json:"body"`
+	}
 	found := ""
-	for page := 0; next != "" && page < maxCommentPages; page++ {
-		var comments []struct {
-			ID   int64  `json:"id"`
-			Body string `json:"body"`
-		}
-		var err error
-		if next, err = c.api().GetPage(ctx, next, &comments); err != nil {
-			return "", err
-		}
+	_, err := rest.EachPage(ctx, c.api(), next, maxCommentPages, func(comments []comment) {
 		for _, cm := range comments {
 			if strings.HasPrefix(cm.Body, prefix) {
 				found = strconv.FormatInt(cm.ID, 10)
 			}
 		}
+	})
+	if err != nil {
+		return "", err
 	}
 	return found, nil
 }

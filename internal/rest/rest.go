@@ -184,6 +184,24 @@ func (c *Client) GetPage(ctx context.Context, url string, out any) (next string,
 	return NextLink(resp.Header.Get("Link")), nil
 }
 
+// EachPage walks a Link-paginated listing from url, decoding each page as
+// a []T and handing it to fn, for at most maxPages pages. truncated
+// reports that the listing went on past the cap — the caller decides
+// whether an unseen tail matters.
+func EachPage[T any](ctx context.Context, c *Client, url string, maxPages int, fn func(page []T)) (truncated bool, err error) {
+	for next := url; next != ""; maxPages-- {
+		if maxPages == 0 {
+			return true, nil
+		}
+		var page []T
+		if next, err = c.GetPage(ctx, next, &page); err != nil {
+			return false, err
+		}
+		fn(page)
+	}
+	return false, nil
+}
+
 // GetBytes reads the raw resource at url, asking for the media type
 // accept when set. An answer beyond max bytes is an error, not a
 // truncation: a cut-off diff or source file would silently mean wrong

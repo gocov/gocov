@@ -99,24 +99,23 @@ const maxNotePages = 10
 func (c *Client) FindPRComment(ctx context.Context, repoSlug, prID, prefix string) (string, error) {
 	next := fmt.Sprintf("%s/projects/%s/merge_requests/%s/notes?order_by=created_at&sort=asc&per_page=100",
 		c.BaseURL, projectID(repoSlug), url.PathEscape(prID))
+	type note struct {
+		ID     int64  `json:"id"`
+		Body   string `json:"body"`
+		System bool   `json:"system"`
+	}
 	found := ""
-	for page := 0; next != "" && page < maxNotePages; page++ {
-		var notes []struct {
-			ID     int64  `json:"id"`
-			Body   string `json:"body"`
-			System bool   `json:"system"`
-		}
-		var err error
-		if next, err = c.api().GetPage(ctx, next, &notes); err != nil {
-			return "", err
-		}
+	truncated, err := rest.EachPage(ctx, c.api(), next, maxNotePages, func(notes []note) {
 		for _, n := range notes {
 			if !n.System && strings.HasPrefix(n.Body, prefix) {
 				found = strconv.FormatInt(n.ID, 10)
 			}
 		}
+	})
+	if err != nil {
+		return "", err
 	}
-	if next != "" {
+	if truncated {
 		// Beyond the cap an existing marker note can go unseen, making
 		// every upload post a fresh comment — pathological (1000+ notes on
 		// one MR) but worth a trace when it happens.

@@ -2,9 +2,11 @@ package rest
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	neturl "net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -155,5 +157,43 @@ func TestEscapePathKeepsSlashes(t *testing.T) {
 		if got := EscapePath(tt.in); got != tt.want {
 			t.Errorf("EscapePath(%q) = %q, want %q", tt.in, got, tt.want)
 		}
+	}
+}
+
+// EachPage follows the Link header page by page, stops at the cap and
+// says so, and stops at the first error.
+func TestEachPage(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		if page == "boom" {
+			http.Error(w, "nope", http.StatusInternalServerError)
+			return
+		}
+		n := len(page) // "", "x", "xx": three pages, then the end
+		if n < 2 {
+			w.Header().Set("Link", `<`+srv.URL+`/items?page=`+page+`x>; rel="next"`)
+		}
+		_, _ = fmt.Fprintf(w, "[%d, %d]", 2*n, 2*n+1)
+	}))
+	defer srv.Close()
+	c := &Client{Name: "test", BaseURL: srv.URL, HTTPClient: srv.Client()}
+
+	walk := func(start string, maxPages int) ([]int, bool, error) {
+		var got []int
+		truncated, err := EachPage(t.Context(), c, start, maxPages, func(page []int) { got = append(got, page...) })
+		return got, truncated, err
+	}
+	if got, truncated, err := walk("/items", 5); err != nil || truncated || !slices.Equal(got, []int{0, 1, 2, 3, 4, 5}) {
+		t.Errorf("all pages = %v, truncated %v, err %v", got, truncated, err)
+	}
+	if got, truncated, err := walk("/items", 2); err != nil || !truncated || !slices.Equal(got, []int{0, 1, 2, 3}) {
+		t.Errorf("capped at 2 = %v, truncated %v, err %v; want 4 items and truncated", got, truncated, err)
+	}
+	if got, truncated, err := walk("/items", 3); err != nil || truncated || len(got) != 6 {
+		t.Errorf("cap equal to the listing = %v, truncated %v, err %v; want every item, not truncated", got, truncated, err)
+	}
+	if got, _, err := walk("/items?page=boom", 5); err == nil || got != nil {
+		t.Errorf("failing page = %v, err %v; want the error and nothing handed on", got, err)
 	}
 }
