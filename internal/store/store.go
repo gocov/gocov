@@ -454,6 +454,12 @@ type Store interface {
 	// LatestDefaultBranchReports; on any other branch a PR's builds are
 	// the branch's own history and stay.
 	ListBranchCommitReports(ctx context.Context, repoID int64, branch string, limit int) ([]*CommitReport, error)
+	// DefaultBranchReports is ListBranchCommitReports on each repo's own
+	// default branch, for many repos in one read: up to limit reports per
+	// repo, newest first, keyed by repo id (repos without reports are
+	// absent). It feeds the dashboard's rows, which read neither diff
+	// coverage nor any other branch, so DiffCoverage is left unloaded.
+	DefaultBranchReports(ctx context.Context, repoIDs []int64, limit int) (map[int64][]*CommitReport, error)
 	// TryPushStatus serializes forge status/PR-comment pushes for one commit
 	// and runs push only if version is at least the last successfully pushed
 	// version, recording version only after push returns nil. It closes the
