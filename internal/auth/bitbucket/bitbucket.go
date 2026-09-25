@@ -149,35 +149,28 @@ func (p *Provider) primaryEmail(ctx context.Context, token string) (string, erro
 // workspace_membership-shaped record says the same with
 // permission "owner" — both are honoured.
 func (p *Provider) workspaces(ctx context.Context, token string) (all, admin []string, err error) {
-	api := p.api(token)
-	next := "/user/workspaces?" + url.Values{"pagelen": {"100"}}.Encode()
-	for range maxWorkspacePages {
-		var page struct {
-			Values []struct {
-				Administrator bool   `json:"administrator"`
-				Permission    string `json:"permission"`
-				Workspace     struct {
-					Slug string `json:"slug"`
-				} `json:"workspace"`
-			} `json:"values"`
-			Next string `json:"next"`
-		}
-		if err := api.Get(ctx, next, &page); err != nil {
-			return nil, nil, err
-		}
-		for _, v := range page.Values {
-			if v.Workspace.Slug == "" {
-				continue
+	type access struct {
+		Administrator bool   `json:"administrator"`
+		Permission    string `json:"permission"`
+		Workspace     struct {
+			Slug string `json:"slug"`
+		} `json:"workspace"`
+	}
+	_, err = rest.EachValuesPage(ctx, p.api(token), "/user/workspaces?"+url.Values{"pagelen": {"100"}}.Encode(), maxWorkspacePages,
+		func(values []access) bool {
+			for _, v := range values {
+				if v.Workspace.Slug == "" {
+					continue
+				}
+				all = append(all, v.Workspace.Slug)
+				if v.Administrator || v.Permission == "owner" {
+					admin = append(admin, v.Workspace.Slug)
+				}
 			}
-			all = append(all, v.Workspace.Slug)
-			if v.Administrator || v.Permission == "owner" {
-				admin = append(admin, v.Workspace.Slug)
-			}
-		}
-		if page.Next == "" {
-			return all, admin, nil
-		}
-		next = page.Next
+			return true
+		})
+	if err != nil {
+		return nil, nil, err
 	}
 	return all, admin, nil
 }

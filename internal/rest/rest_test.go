@@ -197,3 +197,38 @@ func TestEachPage(t *testing.T) {
 		t.Errorf("failing page = %v, err %v; want the error and nothing handed on", got, err)
 	}
 }
+
+// EachValuesPage follows the body's "next" URL, stops at the cap and says
+// so, and stops early when the callback has what it needs.
+func TestEachValuesPage(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page") // "", "x", "xx": three pages
+		n := len(page)
+		next := ""
+		if n < 2 {
+			next = srv.URL + "/items?page=" + page + "x"
+		}
+		_, _ = fmt.Fprintf(w, `{"values": [%d, %d], "next": %q}`, 2*n, 2*n+1, next)
+	}))
+	defer srv.Close()
+	c := &Client{Name: "test", BaseURL: srv.URL, HTTPClient: srv.Client()}
+
+	walk := func(maxPages int, stopAt int) ([]int, bool, error) {
+		var got []int
+		truncated, err := EachValuesPage(t.Context(), c, "/items", maxPages, func(values []int) bool {
+			got = append(got, values...)
+			return !slices.Contains(values, stopAt)
+		})
+		return got, truncated, err
+	}
+	if got, truncated, err := walk(5, -1); err != nil || truncated || !slices.Equal(got, []int{0, 1, 2, 3, 4, 5}) {
+		t.Errorf("all pages = %v, truncated %v, err %v", got, truncated, err)
+	}
+	if got, truncated, err := walk(2, -1); err != nil || !truncated || len(got) != 4 {
+		t.Errorf("capped at 2 = %v, truncated %v, err %v; want 4 items and truncated", got, truncated, err)
+	}
+	if got, truncated, err := walk(5, 3); err != nil || truncated || !slices.Equal(got, []int{0, 1, 2, 3}) {
+		t.Errorf("stopped early = %v, truncated %v, err %v; want the first two pages only", got, truncated, err)
+	}
+}
