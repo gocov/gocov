@@ -50,7 +50,7 @@ func TestAPIWorkspaceSetup(t *testing.T) {
 	rec := get(f, path, sess)
 	wantStatus(t, rec, "GET setup", http.StatusOK)
 	got := decodeJSON[setupInfoDTO](t, rec)
-	if got.Workspace.Forge != "bitbucket" || got.Workspace.Prefix != "acme" || got.Workspace.ForgeLabel != "Bitbucket" {
+	if got.Workspace.Forge != "bitbucket" || got.Workspace.Prefix != "acme" {
 		t.Errorf("workspace = %+v", got.Workspace)
 	}
 	if !got.Owner || got.TokenMasked == nil || strings.Contains(*got.TokenMasked, "ws-secret") {

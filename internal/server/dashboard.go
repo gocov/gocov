@@ -50,7 +50,6 @@ type dashboardDTO struct {
 type wsGroupDTO struct {
 	Forge     string   `json:"forge"`
 	Prefix    string   `json:"prefix"`
-	ForgeName string   `json:"forge_name"`
 	RepoCount int      `json:"repo_count"`
 	Coverage  *float64 `json:"coverage"`
 	Current   bool     `json:"current"`
@@ -275,7 +274,6 @@ func groupDTO(g *dashGroup, latest map[int64]*store.CommitReport) wsGroupDTO {
 	return wsGroupDTO{
 		Forge:     g.key.forge,
 		Prefix:    g.key.prefix,
-		ForgeName: providerLabels[g.key.forge],
 		RepoCount: len(g.repos),
 		Coverage:  optPct(total > 0, profile.Percent(covered, total)),
 		Tracked:   g.ws != nil,

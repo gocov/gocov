@@ -1,7 +1,7 @@
 import { SnippetPanel } from "gocov-web";
 
 const info = {
-  workspace: { forge: "github", prefix: "acme", forge_label: "GitHub" },
+  workspace: { forge: "github", prefix: "acme" },
   owner: true,
   tokenless: true,
   connection_broken: false,
@@ -33,7 +33,7 @@ export function GitLabCatalog() {
       info={
         {
           ...info,
-          workspace: { forge: "gitlab", prefix: "acme/platform", forge_label: "GitLab" },
+          workspace: { forge: "gitlab", prefix: "acme/platform" },
           gitlab_catalog: true,
         } as never
       }

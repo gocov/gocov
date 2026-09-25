@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Forge, WorkspaceSettings } from "@/lib/api/types";
-import { plural } from "@/lib/format";
+import { forgeLabel, plural } from "@/lib/format";
 import { Avatar, Button, Chip, LinkButton, Notice } from "@/components/atoms";
 import { Card, ConfirmDialog, IdentityRow } from "@/components/molecules";
 
@@ -38,8 +38,6 @@ const sentenceCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 interface Props {
   forge: Forge;
-  /** "GitHub" / "GitLab" / "Bitbucket". */
-  forgeLabel: string;
   reporting: WorkspaceSettings["reporting"];
   owner: boolean;
   repoCount: number;
@@ -51,8 +49,9 @@ interface Props {
  * move that changes that. Renders nothing where the deployment has no way
  * to connect this forge at all.
  */
-export function ReportingCard({ forge, forgeLabel, reporting, owner, repoCount, onDisconnect }: Props) {
+export function ReportingCard({ forge, reporting, owner, repoCount, onDisconnect }: Props) {
   const [confirming, setConfirming] = useState(false);
+  const forgeName = forgeLabel(forge);
   if (!reporting.available) return null;
 
   const words = forgeWords[forge] ?? grant("commit statuses and merge-request comments");
@@ -71,26 +70,26 @@ export function ReportingCard({ forge, forgeLabel, reporting, owner, repoCount, 
   const explanation =
     state === "on"
       ? words.install
-        ? `${sentenceCase(words.posts)} are posted through the app install. Nothing to manage here — permissions and repository access are changed on ${forgeLabel}.`
-        : `${sentenceCase(words.posts)} are posted with the write access you granted. They appear under the connecting account — ${forgeLabel} has no bot identity for apps like gocov.`
+        ? `${sentenceCase(words.posts)} are posted through the app install. Nothing to manage here — permissions and repository access are changed on ${forgeName}.`
+        : `${sentenceCase(words.posts)} are posted with the write access you granted. They appear under the connecting account — ${forgeName} has no bot identity for apps like gocov.`
       : state === "broken"
         ? `Coverage still uploads and shows in gocov; only posting back has stopped. ${words.install ? "Reinstalling the app restores it." : "Granting access again restores it."}`
         : words.install
-          ? `Coverage still uploads and shows in gocov. Installing the app is what lets gocov post ${words.posts} back to ${forgeLabel}.`
+          ? `Coverage still uploads and shows in gocov. Installing the app is what lets gocov post ${words.posts} back to ${forgeName}.`
           : `Coverage still uploads and shows in gocov. Granting write access is what lets gocov post ${words.posts}, under your own account.`;
 
   const actionLabel = words.action[state];
 
   return (
     <Card>
-      <Card.Header title={`Reporting to ${forgeLabel}`} actions={chip} />
+      <Card.Header title={`Reporting to ${forgeName}`} actions={chip} />
       <Card.Body>
         <div className="stack">
           {state === "broken" && (
             <Notice tone="bad">
               {forge === "github"
                 ? "The app install stopped working — it was removed or suspended on GitHub."
-                : `The grant stopped working — it was revoked on ${forgeLabel}, or the account that connected it lost access.`}{" "}
+                : `The grant stopped working — it was revoked on ${forgeName}, or the account that connected it lost access.`}{" "}
               Nothing has been posted back since it broke.
             </Notice>
           )}
@@ -115,7 +114,7 @@ export function ReportingCard({ forge, forgeLabel, reporting, owner, repoCount, 
             <IdentityRow
               avatar={<Avatar kind={account === "" ? "bot" : "person"} />}
               id={account === "" ? "gocov[bot]" : `@${account}`}
-              description={words.install ? `Install removed or suspended on ${forgeLabel}` : "Grant revoked"}
+              description={words.install ? `Install removed or suspended on ${forgeName}` : "Grant revoked"}
               chip={<Chip tone="bad">Inactive</Chip>}
             />
           )}

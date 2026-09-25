@@ -4,7 +4,7 @@ import { Button, Chip, CoverageFigure, Mono, Notice, Spinner } from "@/component
 import { Card } from "@/components/molecules";
 import { track } from "@/lib/analytics";
 import type { SetupInfo, SetupStatus } from "@/lib/api/types";
-import { humanInt, shortSha } from "@/lib/format";
+import { forgeLabel, humanInt, shortSha } from "@/lib/format";
 import { checklist, docsRecipe, snippetFilename } from "@/lib/snippets";
 import { routes, server } from "@/lib/urls";
 import { SnippetPanel, storedLanguage } from "./SnippetPanel";
@@ -70,7 +70,8 @@ interface Props {
  */
 export function SetupChecklist({ info, status, listeningSince, onReveal, onCopied, onDismiss }: Props) {
   const [shown, setShown] = useState(false);
-  const { forge, prefix, forge_label: forgeLabel } = info.workspace;
+  const { forge, prefix } = info.workspace;
+  const forgeName = forgeLabel(forge);
   const auth = info.tokenless ? "oidc" : "token";
   const events = { forge, auth, language: storedLanguage() };
 
@@ -101,7 +102,7 @@ export function SetupChecklist({ info, status, listeningSince, onReveal, onCopie
             {status.reports_posted !== "" ? (
               <Notice tone="good">{status.reports_posted}</Notice>
             ) : (
-              offerReporting && <Notice>Nothing was posted back to {forgeLabel} yet.</Notice>
+              offerReporting && <Notice>Nothing was posted back to {forgeName} yet.</Notice>
             )}
             <div className="stack stack-1">
               <h3 className="SetupChecklist__title">Next</h3>
@@ -161,7 +162,7 @@ export function SetupChecklist({ info, status, listeningSince, onReveal, onCopie
                 </ul>
                 <p>
                   <a href={server.docs(docsRecipe(forge))} target="_blank" rel="noopener">
-                    The {forgeLabel} recipe in the docs
+                    The {forgeName} recipe in the docs
                   </a>
                 </p>
               </div>

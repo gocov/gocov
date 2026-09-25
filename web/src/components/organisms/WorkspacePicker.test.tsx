@@ -6,7 +6,6 @@ import { WorkspacePicker } from "./WorkspacePicker";
 
 const info = (over: Partial<OnboardingInfo> = {}): OnboardingInfo => ({
   forge: "bitbucket",
-  forge_label: "Bitbucket",
   account: "Ada Lovelace",
   mode: "pick",
   install_url: "",
@@ -37,7 +36,7 @@ function show(props: Partial<Parameters<typeof WorkspacePicker>[0]> = {}) {
 test("GitHub is offered the app install, and nothing else", async () => {
   const user = userEvent.setup();
   const { onEvent } = show({
-    info: info({ forge: "github", forge_label: "GitHub", mode: "install", install_url: "https://github.com/apps/gocov/installations/new" }),
+    info: info({ forge: "github", mode: "install", install_url: "https://github.com/apps/gocov/installations/new" }),
   });
 
   expect(screen.getByRole("heading", { name: "Install gocov on your GitHub organization" })).toBeInTheDocument();
@@ -54,7 +53,7 @@ test("GitHub is offered the app install, and nothing else", async () => {
 });
 
 test("an instance without the GitHub App says so instead of offering a dead link", () => {
-  show({ info: info({ forge: "github", forge_label: "GitHub", mode: "install", install_url: "" }) });
+  show({ info: info({ forge: "github", mode: "install", install_url: "" }) });
   expect(screen.getByText(/The GitHub App is not configured on this instance/)).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: "Install the gocov app" })).not.toBeInTheDocument();
 });
@@ -99,7 +98,7 @@ test("the row being registered spins, and the rest wait with it", () => {
 
 test("on GitLab they are groups", () => {
   show({
-    info: info({ forge: "gitlab", forge_label: "GitLab", rows: [{ prefix: "other-co", state: "unowned" }], membership_count: 1 }),
+    info: info({ forge: "gitlab", rows: [{ prefix: "other-co", state: "unowned" }], membership_count: 1 }),
   });
   expect(screen.getByRole("heading", { name: "Choose a group" })).toBeInTheDocument();
   expect(screen.getByText("Creating it takes an owner of the group — ask one to sign in and set it up.")).toBeInTheDocument();

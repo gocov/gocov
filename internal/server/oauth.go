@@ -50,7 +50,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) loginProviders() []loginProviderDTO {
 	providers := make([]loginProviderDTO, 0, len(s.authOrder))
 	for _, p := range s.authOrder {
-		providers = append(providers, loginProviderDTO{Name: p.Name(), Label: providerLabel(p.Name())})
+		providers = append(providers, loginProviderDTO{Name: p.Name()})
 	}
 	return providers
 }
@@ -65,8 +65,7 @@ type loginInfoDTO struct {
 }
 
 type loginProviderDTO struct {
-	Name  string `json:"name"`
-	Label string `json:"label"`
+	Name string `json:"name"`
 }
 
 // trackedWorkspaceDTO is one tracked workspace, its forge named the way
@@ -94,21 +93,6 @@ func (s *Server) handleAPILogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.writeJSON(w, dto)
-}
-
-// providerLabels maps forge names to their proper spelling; unknown
-// forges fall back to their capitalized name.
-var providerLabels = map[string]string{
-	"bitbucket": "Bitbucket",
-	"github":    "GitHub",
-	"gitlab":    "GitLab",
-}
-
-func providerLabel(name string) string {
-	if l, ok := providerLabels[name]; ok {
-		return l
-	}
-	return strings.ToUpper(name[:1]) + name[1:]
 }
 
 // oauthProvider resolves the {forge} path segment of the login routes,

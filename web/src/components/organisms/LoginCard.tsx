@@ -2,13 +2,9 @@ import { Link } from "react-router";
 import { ForgeMark, Logo, Notice } from "@/components/atoms";
 import { Card } from "@/components/molecules";
 import type { Forge, LoginInfo } from "@/lib/api/types";
+import { forgeLabel } from "@/lib/format";
 import { routes, server } from "@/lib/urls";
 import "./LoginCard.css";
-
-/** The ring, as the app bar wears it. Copied from AppShell — atoms own no mark. */
-const forgeLabels: Record<string, string> = { github: "GitHub", gitlab: "GitLab", bitbucket: "Bitbucket" };
-
-const forgeLabel = (forge: Forge) => forgeLabels[forge] ?? forge.charAt(0).toUpperCase() + forge.slice(1);
 
 /**
  * "a, b on GitHub; c on GitLab" — the workspaces grouped by the forge they
@@ -70,7 +66,7 @@ export function LoginCard({
                 {info.providers.map((provider) => (
                   <a key={provider.name} className="LoginCard__provider" href={server.oauthStart(provider.name, next)}>
                     <ForgeMark forge={provider.name} size={16} />
-                    Sign in with {provider.label}
+                    Sign in with {forgeLabel(provider.name)}
                   </a>
                 ))}
               </div>

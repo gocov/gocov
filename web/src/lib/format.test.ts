@@ -1,4 +1,8 @@
-import { deltaText, gateSummary, level, splitPath, timeAgo, trend } from "./format";
+import { deltaText, forgeLabel, gateSummary, level, splitPath, timeAgo, trend } from "./format";
+
+test("forge names are spelled the forge's way", () => {
+  expect(["github", "gitlab", "bitbucket", "gitea"].map(forgeLabel)).toEqual(["GitHub", "GitLab", "Bitbucket", "Gitea"]);
+});
 
 test("coverage thresholds", () => {
   expect([49.9, 50, 75, 75.1].map(level)).toEqual(["bad", "warn", "warn", "good"]);

@@ -17,14 +17,13 @@ beforeEach(() => {
 const acme: Dashboard["current"] = {
   forge: "github",
   prefix: "acme",
-  forge_name: "GitHub",
   repo_count: 4,
   coverage: 74.6,
   current: true,
   tracked: true,
 };
 
-const labs = { ...acme!, forge: "gitlab", prefix: "acme-labs", forge_name: "GitLab", coverage: null, current: false, tracked: false };
+const labs = { ...acme!, forge: "gitlab", prefix: "acme-labs", coverage: null, current: false, tracked: false };
 
 const dashboard: Dashboard = {
   needs_onboarding: false,
@@ -203,7 +202,7 @@ test("a hosted user with no workspace is sent to onboarding, without leaving the
 // ---- the setup card ---------------------------------------------------------
 
 const setupInfo: SetupInfo = {
-  workspace: { forge: "github", prefix: "acme", forge_label: "GitHub" },
+  workspace: { forge: "github", prefix: "acme" },
   owner: true,
   tokenless: true,
   connection_broken: false,

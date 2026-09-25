@@ -20,6 +20,11 @@ export const humanInt = (n: number) => n.toLocaleString("en-US");
 
 export const plural = (n: number, one: string, many = one + "s") => `${n} ${n === 1 ? one : many}`;
 
+const forgeLabels: Record<string, string> = { github: "GitHub", gitlab: "GitLab", bitbucket: "Bitbucket" };
+
+/** A forge's proper name — "GitHub", "GitLab", "Bitbucket" — or the name capitalized for one it does not know. */
+export const forgeLabel = (forge: string) => forgeLabels[forge] ?? forge.charAt(0).toUpperCase() + forge.slice(1);
+
 export type Trend = "up" | "down" | "flat";
 
 /** A change under 0.05 points rounds to 0.0 and reads as flat. */

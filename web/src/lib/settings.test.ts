@@ -42,7 +42,6 @@ const workspace: WorkspaceSettings = {
   workspace: {
     forge: "github",
     prefix: "acme",
-    forge_label: "GitHub",
     default_branch: "main",
     report_retention_days: 90,
     gate: gate({ min_coverage: 80 }),

@@ -1,7 +1,7 @@
 import { Avatar, Button, LinkButton, Mono, Notice } from "@/components/atoms";
 import { Card, EmptyState, OptionRow, PageHeader } from "@/components/molecules";
 import type { OnboardingInfo, OnboardingRow } from "@/lib/api/types";
-import { plural } from "@/lib/format";
+import { forgeLabel, plural } from "@/lib/format";
 import { routes, server } from "@/lib/urls";
 import "./WorkspacePicker.css";
 
@@ -114,7 +114,7 @@ export function WorkspacePicker({ info, busy, onRegister, onEvent }: WorkspacePi
       <Card>
         <Card.Body>
           {rows.length === 0 ? (
-            <EmptyState message={`Your ${info.forge_label} account reported no ${noun}s at sign-in.`} />
+            <EmptyState message={`Your ${forgeLabel(info.forge)} account reported no ${noun}s at sign-in.`} />
           ) : (
             <div className="WorkspacePicker__rows">
               {rows.map((row) => (

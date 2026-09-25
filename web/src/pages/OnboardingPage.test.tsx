@@ -8,7 +8,6 @@ const at = { route: "onboarding", path: "/onboarding" };
 
 const info: OnboardingInfo = {
   forge: "bitbucket",
-  forge_label: "Bitbucket",
   account: "Ada Lovelace",
   mode: "pick",
   install_url: "",

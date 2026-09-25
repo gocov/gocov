@@ -239,9 +239,8 @@ type workspaceSettingsDTO struct {
 }
 
 type workspaceDTO struct {
-	Forge      string `json:"forge"`
-	Prefix     string `json:"prefix"`
-	ForgeLabel string `json:"forge_label"`
+	Forge  string `json:"forge"`
+	Prefix string `json:"prefix"`
 	// DefaultBranch and Gate are what repos registered from now on inherit.
 	DefaultBranch string `json:"default_branch"`
 	// ReportRetentionDays is 0 for "keep forever".
@@ -285,7 +284,6 @@ func (s *Server) newWorkspaceSettingsDTO(r *http.Request, ws *store.Workspace, o
 		Workspace: workspaceDTO{
 			Forge:               ws.Forge,
 			Prefix:              ws.Prefix,
-			ForgeLabel:          providerLabel(ws.Forge),
 			DefaultBranch:       ws.DefaultBranch,
 			ReportRetentionDays: ws.ReportRetentionDays,
 			Gate:                newGateDTO(ws.Gate),

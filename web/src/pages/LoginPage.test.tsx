@@ -7,7 +7,7 @@ const signedOut: Session = { user: null, auth_enabled: true, hosted: false };
 
 const login: LoginInfo = {
   hosted: false,
-  providers: [{ name: "github", label: "GitHub" }],
+  providers: [{ name: "github" }],
   tracked_workspaces: [],
 };
 

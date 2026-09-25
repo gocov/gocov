@@ -314,7 +314,7 @@ func TestAPIOnboardingAndRegister(t *testing.T) {
 	rec := get(f, "/api/ui/onboarding", sess)
 	wantStatus(t, rec, "GET onboarding", http.StatusOK)
 	got := decodeJSON[onboardingDTO](t, rec)
-	if got.Forge != "bitbucket" || got.ForgeLabel != "Bitbucket" || got.Account != "Jane Dev" {
+	if got.Forge != "bitbucket" || got.Account != "Jane Dev" {
 		t.Errorf("onboarding = %+v, want the signed-in Bitbucket account", got)
 	}
 	if got.Mode != "pick" || got.InstallURL != "" || got.MembershipCount != 2 {

@@ -92,9 +92,8 @@ func reportsPostedMsg(ws *store.Workspace) string {
 // onboardingDTO is the workspace picker: who is signed in, and how a
 // workspace is chosen on their forge.
 type onboardingDTO struct {
-	Forge      string `json:"forge"`
-	ForgeLabel string `json:"forge_label"`
-	Account    string `json:"account"`
+	Forge   string `json:"forge"`
+	Account string `json:"account"`
 	// Mode is "install" where the page shows the GitHub App prompt and
 	// "pick" where it lists the memberships read at sign-in.
 	Mode string `json:"mode"`
@@ -123,7 +122,6 @@ func (s *Server) handleAPIOnboarding(w http.ResponseWriter, r *http.Request) {
 	}
 	dto := onboardingDTO{
 		Forge:           u.Forge,
-		ForgeLabel:      providerLabel(u.Forge),
 		Account:         u.DisplayName,
 		Mode:            "pick",
 		Rows:            []onboardingRowDTO{},
@@ -152,8 +150,8 @@ func (s *Server) handleAPIOnboarding(w http.ResponseWriter, r *http.Request) {
 // workspace: the snippet itself is assembled client-side, so this is
 // every input it varies on, plus the first-report state it waits on.
 type setupInfoDTO struct {
-	Workspace setupWorkspaceDTO `json:"workspace"`
-	Owner     bool              `json:"owner"`
+	Workspace workspaceRefDTO `json:"workspace"`
+	Owner     bool            `json:"owner"`
 	// Tokenless: the snippet leads with an OIDC identity token instead of
 	// GOCOV_TOKEN, which only a working forge connection allows.
 	Tokenless bool `json:"tokenless"`
@@ -172,12 +170,6 @@ type setupInfoDTO struct {
 	TokenMasked *string        `json:"token_masked"`
 	Reporting   reportingDTO   `json:"reporting"`
 	Status      setupStatusDTO `json:"status"`
-}
-
-// setupWorkspaceDTO names the workspace the snippet is for.
-type setupWorkspaceDTO struct {
-	workspaceRefDTO
-	ForgeLabel string `json:"forge_label"`
 }
 
 // setupStatusDTO is the part the app polls: whether anything has been
@@ -241,10 +233,7 @@ func (s *Server) handleAPIWorkspaceSetup(w http.ResponseWriter, r *http.Request)
 	owner := role == store.RoleOwner
 	baseURL := s.baseURL
 	dto := setupInfoDTO{
-		Workspace: setupWorkspaceDTO{
-			workspaceRefDTO: workspaceRefDTO{Forge: ws.Forge, Prefix: ws.Prefix},
-			ForgeLabel:      providerLabel(ws.Forge),
-		},
+		Workspace:        workspaceRefDTO{Forge: ws.Forge, Prefix: ws.Prefix},
 		Owner:            owner,
 		Tokenless:        oidcReady(ws),
 		ConnectionBroken: connectionBroken(ws),
