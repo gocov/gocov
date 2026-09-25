@@ -103,15 +103,10 @@ func (p *Provider) exchange(ctx context.Context, code, redirectURI string) (stri
 		"code":         {code},
 		"redirect_uri": {redirectURI},
 	}
-	var tok struct {
-		AccessToken string `json:"access_token"`
-	}
 	c := &rest.Client{Name: "bitbucket", HTTPClient: p.client(), Authorize: rest.Basic(p.Key, p.Secret)}
-	if err := c.PostForm(ctx, p.authBase()+"/access_token", form, &tok); err != nil {
+	tok, err := c.ExchangeToken(ctx, p.authBase()+"/access_token", form)
+	if err != nil {
 		return "", fmt.Errorf("token exchange: %w", err)
-	}
-	if tok.AccessToken == "" {
-		return "", fmt.Errorf("bitbucket: token exchange returned no access token")
 	}
 	return tok.AccessToken, nil
 }

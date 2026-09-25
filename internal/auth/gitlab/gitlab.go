@@ -126,19 +126,10 @@ func (p *Provider) exchange(ctx context.Context, code, redirectURI string) (stri
 		"grant_type":    {"authorization_code"},
 		"redirect_uri":  {redirectURI},
 	}
-	var tok struct {
-		AccessToken string `json:"access_token"`
-		Error       string `json:"error"`
-	}
 	c := &rest.Client{Name: "gitlab", HTTPClient: p.client()}
-	if err := c.PostForm(ctx, p.authBase()+"/token", form, &tok); err != nil {
+	tok, err := c.ExchangeToken(ctx, p.authBase()+"/token", form)
+	if err != nil {
 		return "", fmt.Errorf("token exchange: %w", err)
-	}
-	if tok.Error != "" {
-		return "", fmt.Errorf("gitlab: token exchange: %s", tok.Error)
-	}
-	if tok.AccessToken == "" {
-		return "", fmt.Errorf("gitlab: token exchange returned no access token")
 	}
 	return tok.AccessToken, nil
 }
