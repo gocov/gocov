@@ -165,6 +165,9 @@ func (v *verdictDTO) against(uploadID int64, sha string, basePct float64) {
 // fileRowDTO is one file of an upload with its baseline comparison. The
 // tree the files card draws is built client-side from these rows.
 type fileRowDTO struct {
+	// UploadID is the upload the row's file came from — the one its source
+	// view opens. A commit's parts each carry their own files.
+	UploadID     int64    `json:"upload_id"`
 	Path         string   `json:"path"`
 	Coverage     float64  `json:"coverage"`
 	CoveredStmts int64    `json:"covered_stmts"`
@@ -181,12 +184,14 @@ type fileRowDTO struct {
 	CoverageChanged    bool   `json:"coverage_changed"`
 }
 
-// filesViewDTO is the files card: which upload the rows came from, and
-// whether there was a baseline to compare them against.
+// filesViewDTO is the files card: its rows, whether there was a baseline
+// to compare them against, and whether they merge a commit's parts.
 type filesViewDTO struct {
-	UploadID int64        `json:"upload_id"`
-	HasBase  bool         `json:"has_base"`
-	Files    []fileRowDTO `json:"files"`
+	// Merged marks rows that merge every part of the commit (the repo
+	// page), so a file's source view merges them too (?parts=merged).
+	Merged  bool         `json:"merged"`
+	HasBase bool         `json:"has_base"`
+	Files   []fileRowDTO `json:"files"`
 }
 
 // optPct is a percentage the app must be able to tell apart from zero:

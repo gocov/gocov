@@ -116,3 +116,11 @@ test("a file the viewer may not see is a not-found panel", async () => {
   renderPage(<SourcePage />, { route, path });
   expect(await screen.findByText("We couldn’t find that page.")).toBeInTheDocument();
 });
+
+test("opened from a merged files card, it asks for the commit's parts merged", async () => {
+  const fetch = mockApi({ [key]: source });
+  renderPage(<SourcePage />, { route, path: path + "?parts=merged" });
+
+  await screen.findByRole("heading", { level: 1 });
+  expect(String(fetch.mock.calls[0]?.[0])).toBe("/api/ui/uploads/412/files/internal/server/upload.go?parts=merged");
+});

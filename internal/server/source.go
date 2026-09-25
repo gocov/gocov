@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -44,9 +45,31 @@ func (s *Server) buildSourcePage(w http.ResponseWriter, r *http.Request) (*sourc
 		return nil, false
 	}
 	path := r.PathValue("path")
+	// ?parts=merged is the repo page's files card: the file as the commit's
+	// parts merged report it, against the baseline commit's parts merged
+	// alike, so the view agrees with the row it was opened from.
+	readFile := func(ctx context.Context) (*store.UploadFile, error) { return s.store.UploadFile(ctx, upload.ID, path) }
+	baseFor := s.baseFileFor
+	if r.FormValue("parts") == "merged" {
+		readFile = func(ctx context.Context) (*store.UploadFile, error) {
+			return s.commitFile(ctx, repo.ID, upload.CommitSHA, path)
+		}
+		baseFor = s.commitBaseFileFor
+	}
+
+	// The file at the baseline needs only its path, so it reads alongside
+	// the file itself and the source (a forge round trip on a cache miss).
+	var (
+		wg          sync.WaitGroup
+		source      []byte
+		unavailable string
+		base        *store.UploadFile
+	)
+	defer wg.Wait()
+	wg.Go(func() { base = baseFor(r.Context(), repo, upload, path) })
 	// Access was settled before this per-file lookup, so a signed-out
 	// probe cannot tell a missing file from a missing upload.
-	file, err := s.store.UploadFile(r.Context(), upload.ID, path)
+	file, err := readFile(r.Context())
 	if errors.Is(err, store.ErrNotFound) {
 		httpError(w, http.StatusNotFound, "not found")
 		return nil, false
@@ -56,16 +79,7 @@ func (s *Server) buildSourcePage(w http.ResponseWriter, r *http.Request) (*sourc
 		return nil, false
 	}
 
-	// The source (a forge round trip on a cache miss) and the file at the
-	// baseline commit are independent reads.
-	var (
-		wg          sync.WaitGroup
-		source      []byte
-		unavailable string
-		base        *store.UploadFile
-	)
 	wg.Go(func() { source, unavailable = s.fetchSource(r, repo, upload, file) })
-	wg.Go(func() { base = s.baseFileFor(r.Context(), repo, upload, file.Path) })
 	wg.Wait()
 	dto := &sourcePageDTO{
 		Repo:   newRepoRefDTO(repo),
@@ -343,11 +357,16 @@ func (s *Server) baselineUpload(ctx context.Context, repo *store.Repo, u *store.
 	if err != nil {
 		return nil, nil
 	}
+	return base, filesByPath(files)
+}
+
+// filesByPath keys files by their profile path.
+func filesByPath(files []*store.UploadFile) map[string]*store.UploadFile {
 	byPath := make(map[string]*store.UploadFile, len(files))
 	for _, f := range files {
 		byPath[f.Path] = f
 	}
-	return base, byPath
+	return byPath
 }
 
 // baseFileFor returns the same file at the baseline upload
@@ -359,6 +378,30 @@ func (s *Server) baseFileFor(ctx context.Context, repo *store.Repo, u *store.Upl
 		return nil
 	}
 	f, err := s.store.UploadFile(ctx, base.ID, path)
+	if err != nil {
+		return nil
+	}
+	return f
+}
+
+// commitBaseFileFor is baseFileFor for the merged view: the same file,
+// merged across its parts, at the commit the repo page's files card
+// measures this commit against — core.ReportBaseline over the branch's
+// reports from this commit back, the card's own rule.
+func (s *Server) commitBaseFileFor(ctx context.Context, repo *store.Repo, u *store.Upload, path string) *store.UploadFile {
+	reports, err := s.store.ListBranchCommitReports(ctx, repo.ID, u.Branch, trendReportLimit)
+	if err != nil {
+		return nil
+	}
+	i := slices.IndexFunc(reports, func(cr *store.CommitReport) bool { return cr.CommitSHA == u.CommitSHA })
+	if i < 0 {
+		return nil
+	}
+	_, base := core.ReportBaseline(reports[i:min(i+baselineLookback, len(reports))])
+	if base == nil {
+		return nil
+	}
+	f, err := s.commitFile(ctx, repo.ID, base.CommitSHA, path)
 	if err != nil {
 		return nil
 	}

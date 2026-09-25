@@ -164,7 +164,7 @@ export function FilesTable({ view, heading = "Files" }: { view: FilesView; headi
                             <Mono>{node.name}/</Mono>
                           </button>
                         ) : (
-                          <Link className="FilesTable__file" to={routes.source(view.upload_id, node.path)}>
+                          <Link className="FilesTable__file" to={routes.source(node.row.upload_id, node.path, view.merged)}>
                             {mode === "tree" && <Icon name="file" size={14} />}
                             <Mono>
                               {mode === "tree" ? (

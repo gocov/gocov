@@ -9,7 +9,9 @@ export const routes = {
   dashboard: (ws?: string) => (ws ? `/w/${ws}` : "/"),
   repo: (forge: string, slug: string) => `/repos/${forge}/${slug}`,
   upload: (id: number | string) => `/uploads/${id}`,
-  source: (id: number | string, path: string) => `/uploads/${id}/files/${path}`,
+  /** `merged`: the file as every part of the upload's commit reports it, not this upload alone. */
+  source: (id: number | string, path: string, merged = false) =>
+    `/uploads/${id}/files/${path}${merged ? "?parts=merged" : ""}`,
   workspace: (forge: string, prefix: string) => `/workspace-settings/${forge}/${prefix}`,
   repoSettings: (forge: string, slug: string) => `/repo-settings/${forge}/${slug}`,
   /** Choose or create a workspace. */

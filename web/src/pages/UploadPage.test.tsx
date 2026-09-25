@@ -28,10 +28,11 @@ const upload = (over: Partial<UploadPageData> = {}): UploadPageData => ({
   total_stmts: 12481,
   diff: { coverage: 48, covered_lines: 12, total_lines: 25, changed_files: 3, unmatched_files: 1 },
   files: {
-    upload_id: 412,
+    merged: false,
     has_base: true,
     files: [
       {
+        upload_id: 412,
         path: "internal/server/api.go",
         coverage: 80,
         covered_stmts: 8,
@@ -46,6 +47,7 @@ const upload = (over: Partial<UploadPageData> = {}): UploadPageData => ({
         coverage_changed: true,
       },
       {
+        upload_id: 412,
         path: "internal/server/spa.go",
         coverage: 55,
         covered_stmts: 11,
@@ -141,7 +143,7 @@ test("a first upload has no base, no diff and no baseline note", async () => {
       upload: { ...upload().upload, pr_id: "", commit_message: "", branch: "main" },
       verdict: { state: "neutral", coverage: 74, delta: null, reason: "No gate is configured.", base: null },
       diff: null,
-      files: { upload_id: 412, has_base: false, files: [] },
+      files: { merged: false, has_base: false, files: [] },
       download_url: null,
     }),
   );

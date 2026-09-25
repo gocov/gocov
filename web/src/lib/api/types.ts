@@ -124,6 +124,8 @@ export interface Verdict {
 }
 
 export interface FileRow {
+  /** The upload the file came from — its source view. A commit's parts each carry their own files. */
+  upload_id: number;
   path: string;
   coverage: number;
   covered_stmts: number;
@@ -146,7 +148,8 @@ export interface FileRow {
 }
 
 export interface FilesView {
-  upload_id: number;
+  /** The rows merge every part of the commit (the repo page); their source views merge them too. */
+  merged: boolean;
   has_base: boolean;
   files: FileRow[];
 }

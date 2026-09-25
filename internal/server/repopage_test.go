@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"slices"
@@ -164,6 +165,87 @@ func TestAPIRepoPage(t *testing.T) {
 	}
 	if len(feat.Trend) != 1 {
 		t.Errorf("feat trend = %+v, want its single point", feat.Trend)
+	}
+}
+
+// A commit uploaded in parts shows every part's files, not only the last
+// part in: the files card merges the commit's parts the way its totals were
+// merged, compares them with the baseline commit's parts merged alike, and
+// links each file to the upload that carried it.
+func TestAPIRepoFilesMergeEveryPart(t *testing.T) {
+	f := newFixture(t, nil)
+	up := func(commit, part, profile string) int64 {
+		t.Helper()
+		var res uploadResponse
+		rec := doUpload(t, f, "secret-token", map[string]string{"commit": commit, "branch": "main", "part": part}, profile)
+		if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+			t.Fatal(err)
+		}
+		return res.ID
+	}
+	up("c1", "backend", "mode: set\nexample.com/m/back.go:1.1,5.2 8 1\n")
+	up("c1", "frontend", "mode: set\nexample.com/m/front.go:1.1,5.2 2 0\n")
+	// shared.go is covered by the older part only, so the newer part's own
+	// view of it would read 0%.
+	back := up("c2", "backend", "mode: set\nexample.com/m/back.go:1.1,5.2 8 0\nexample.com/m/shared.go:1.1,2.2 2 1\n")
+	front := up("c2", "frontend", "mode: set\nexample.com/m/front.go:1.1,5.2 2 1\nexample.com/m/shared.go:1.1,2.2 2 0\n")
+
+	got := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets"))
+	if got.Files == nil || !got.Files.HasBase || !got.Files.Merged {
+		t.Fatalf("files = %+v, want the commit's merged files against a baseline", got.Files)
+	}
+	rows := map[string]fileRowDTO{}
+	for _, r := range got.Files.Files {
+		rows[r.Path] = r
+	}
+	if len(rows) != 3 {
+		t.Fatalf("files = %+v, want back.go, front.go and shared.go from both parts", got.Files.Files)
+	}
+	want := []struct {
+		path      string
+		upload    int64
+		coverage  float64
+		before    *float64
+		isNewFile bool
+	}{
+		{"example.com/m/back.go", back, 0, new(float64(100)), false},
+		{"example.com/m/front.go", front, 100, new(float64(0)), false},
+		// Both parts report shared.go; a line either part ran is covered.
+		{"example.com/m/shared.go", front, 100, nil, true},
+	}
+	for _, w := range want {
+		r := rows[w.path]
+		if r.UploadID != w.upload || r.Coverage != w.coverage || r.NewFile != w.isNewFile {
+			t.Errorf("%s = upload %d %.1f%% new=%v, want upload %d %.1f%% new=%v",
+				w.path, r.UploadID, r.Coverage, r.NewFile, w.upload, w.coverage, w.isNewFile)
+		}
+		if (r.Before == nil) != (w.before == nil) || (r.Before != nil && *r.Before != *w.before) {
+			t.Errorf("%s before = %v, want %v", w.path, r.Before, w.before)
+		}
+	}
+
+	// The merged source view agrees with the row it opens from; the
+	// upload's own view still reads that upload alone.
+	src := fmt.Sprintf("/api/ui/uploads/%d/files/example.com/m/shared.go", front)
+	if m := decodeJSON[sourcePageDTO](t, get(f, src+"?parts=merged")); m.File.Coverage != 100 {
+		t.Errorf("merged source view = %.1f%%, want the row's 100%%", m.File.Coverage)
+	}
+	if own := decodeJSON[sourcePageDTO](t, get(f, src)); own.File.Coverage != 0 {
+		t.Errorf("upload's own source view = %.1f%%, want its own 0%%", own.File.Coverage)
+	}
+	// A file only another part carries is found through the merge too.
+	backSrc := fmt.Sprintf("/api/ui/uploads/%d/files/example.com/m/back.go?parts=merged", front)
+	if m := decodeJSON[sourcePageDTO](t, get(f, backSrc)); m.File.TotalStmts != 8 {
+		t.Errorf("merged source view of back.go = %+v, want the backend part's file", m.File)
+	}
+	// It compares against the card's baseline commit, so its delta is the
+	// row's move: back.go from 100% at c1 to 0%.
+	u, err := f.store.Upload(t.Context(), front)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := f.srv.commitBaseFileFor(t.Context(), f.repo, u, "example.com/m/back.go"); b == nil || b.Pct != 100 {
+		t.Errorf("merged baseline of back.go = %+v, want c1's 100%%", b)
 	}
 }
 

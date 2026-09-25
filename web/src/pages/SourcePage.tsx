@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "react-router";
+import { Link, useParams, useSearchParams } from "react-router";
 import { CoverageFigure, Delta, Mono } from "@/components/atoms";
 import { Breadcrumbs, Card, PageHeader, QueryBoundary, UncoveredRanges } from "@/components/molecules";
 import { SourceViewer } from "@/components/organisms/SourceViewer";
@@ -14,7 +14,8 @@ import "./SourcePage.css";
 export default function SourcePage() {
   const params = useParams();
   const path = params["*"] ?? "";
-  const query = useQuery(sourceQuery(params.id ?? "", path));
+  const [search] = useSearchParams();
+  const query = useQuery(sourceQuery(params.id ?? "", path, search.get("parts") ?? ""));
   usePageTitle(path);
   return <QueryBoundary query={query}>{(data) => <Source data={data} />}</QueryBoundary>;
 }

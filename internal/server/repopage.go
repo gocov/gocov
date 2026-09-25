@@ -1,11 +1,13 @@
 // The repo page (GET /repos/{slug...}): one repo's current verdict, its
-// coverage trend, the files behind its latest upload, and a paged list of
-// the uploads behind it.
+// coverage trend, the files behind its latest commit (every part merged),
+// and a paged list of the uploads behind it.
 
 package server
 
 import (
 	"cmp"
+	"context"
+	"errors"
 	"net/http"
 	"slices"
 	"strconv"
@@ -79,14 +81,9 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 		if latest == nil {
 			return
 		}
-		lu, err := s.store.Upload(r.Context(), latest.UploadID)
-		if err != nil {
-			s.log.Warn("loading latest upload for repo page", "upload", latest.UploadID, "err", err)
-			return
-		}
-		lastUpload = lu
-		if files, _, err = s.loadFilesView(r.Context(), repo, lu); err != nil {
-			s.log.Warn("loading files for repo page", "upload", lu.ID, "err", err)
+		var err error
+		if files, lastUpload, err = s.loadCommitFilesView(r.Context(), repo, latest, base); err != nil {
+			s.log.Warn("loading files for repo page", "commit", latest.CommitSHA, "err", err)
 		}
 	})
 	// The settings link is for members of a tracked workspace; anyone
@@ -162,10 +159,91 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 	}
 	if lastUpload != nil {
 		summary.LastUpload = &lastUploadDTO{At: lastUpload.CreatedAt, CIProvider: lastUpload.Meta.CIProvider}
-		dto.Files = files
 	}
+	dto.Files = files
 	dto.Summary = summary
 	return dto, true
+}
+
+// loadCommitFilesView builds the repo page's files card from the latest
+// commit's merged report: the files of every part's latest upload, merged
+// the way the recompute merged the totals (core.MergeParts), against the
+// baseline commit's parts merged the same way. A commit uploaded in parts
+// (backend, frontend) lists every part's files, not only the last part in.
+// It also returns the latest upload, one of the parts it read.
+func (s *Server) loadCommitFilesView(ctx context.Context, repo *store.Repo, latest, base *store.CommitReport) (*filesViewDTO, *store.Upload, error) {
+	var (
+		wg        sync.WaitGroup
+		uploads   map[int64]*store.Upload
+		files     []*store.UploadFile
+		err       error
+		baseFiles map[string]*store.UploadFile
+	)
+	wg.Go(func() { uploads, files, err = s.commitFiles(ctx, repo.ID, latest.CommitSHA) })
+	if base != nil {
+		// The comparison is decoration, never worth failing the card over.
+		wg.Go(func() {
+			_, bf, berr := s.commitFiles(ctx, repo.ID, base.CommitSHA)
+			if berr != nil {
+				s.log.Warn("loading baseline files for repo page", "commit", base.CommitSHA, "err", berr)
+				return
+			}
+			baseFiles = filesByPath(bf)
+		})
+	}
+	wg.Wait()
+	if err != nil {
+		return nil, nil, err
+	}
+	view := buildFilesView(latest.DiffCoverage, uploads, files, baseFiles)
+	view.Merged = true
+	return view, uploads[latest.UploadID], nil
+}
+
+// commitFiles reads a commit's merged files: the latest upload of each of
+// its parts, keyed by id, and their files merged (core.MergeParts).
+func (s *Server) commitFiles(ctx context.Context, repoID int64, commitSHA string) (map[int64]*store.Upload, []*store.UploadFile, error) {
+	parts, err := s.store.LatestUploadsPerPart(ctx, repoID, commitSHA)
+	if err != nil {
+		return nil, nil, err
+	}
+	uploads := make(map[int64]*store.Upload, len(parts))
+	ids := make([]int64, len(parts))
+	for i, p := range parts {
+		uploads[p.ID] = p
+		ids[i] = p.ID
+	}
+	files, err := s.store.PartFiles(ctx, ids)
+	if err != nil {
+		return nil, nil, err
+	}
+	return uploads, core.MergeParts(files), nil
+}
+
+// commitFile reads one file of a commit merged across its parts — the
+// source view's read behind a merged files card, which needs a single
+// file of parts that may carry thousands. store.ErrNotFound when no part
+// reports the path.
+func (s *Server) commitFile(ctx context.Context, repoID int64, commitSHA, path string) (*store.UploadFile, error) {
+	parts, err := s.store.LatestUploadsPerPart(ctx, repoID, commitSHA)
+	if err != nil {
+		return nil, err
+	}
+	var found []*store.UploadFile
+	for _, p := range parts {
+		f, err := s.store.UploadFile(ctx, p.ID, path)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		found = append(found, f)
+	}
+	if len(found) == 0 {
+		return nil, store.ErrNotFound
+	}
+	return core.MergeParts(found)[0], nil
 }
 
 // repoPageDTO is the repo page for the app. The trend arrives as raw

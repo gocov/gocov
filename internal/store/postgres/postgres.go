@@ -889,6 +889,16 @@ func uploadFiles(ctx context.Context, q querier, uploadID int64) ([]*store.Uploa
 		FROM upload_files WHERE upload_id = $1 ORDER BY path`, uploadID)
 }
 
+func (s *Store) PartFiles(ctx context.Context, uploadIDs []int64) ([]*store.UploadFile, error) {
+	return partFiles(ctx, s.pool, uploadIDs)
+}
+
+func partFiles(ctx context.Context, q querier, uploadIDs []int64) ([]*store.UploadFile, error) {
+	return queryUploadFiles(ctx, q, `
+		SELECT upload_id, path, pct, covered_stmts, total_stmts, blocks
+		FROM upload_files WHERE upload_id = ANY($1)`, uploadIDs)
+}
+
 func (s *Store) UploadFile(ctx context.Context, uploadID int64, path string) (*store.UploadFile, error) {
 	files, err := queryUploadFiles(ctx, s.pool, `
 		SELECT upload_id, path, pct, covered_stmts, total_stmts, blocks
@@ -994,9 +1004,7 @@ func (c *commitReportTx) LatestUploadsPerPart(ctx context.Context, repoID int64,
 }
 
 func (c *commitReportTx) PartFiles(ctx context.Context, uploadIDs []int64) ([]*store.UploadFile, error) {
-	return queryUploadFiles(ctx, c.tx, `
-		SELECT upload_id, path, pct, covered_stmts, total_stmts, blocks
-		FROM upload_files WHERE upload_id = ANY($1)`, uploadIDs)
+	return partFiles(ctx, c.tx, uploadIDs)
 }
 
 func (c *commitReportTx) LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*store.CommitReport, error) {
