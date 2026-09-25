@@ -322,3 +322,61 @@ func latestReports(ctx context.Context, st store.Store, repoIDs []int64) (map[in
 	}
 	return latest, nil
 }
+
+// LatestPassedUpload is the upload baseline as a query: the newest
+// non-PR, gate-passing upload on the branch, older than beforeID when set
+// and off excludeCommit when set. RecentBranches names the branches of the
+// newest uploads, sorted byte-wise.
+func TestLatestPassedUploadAndRecentBranches(t *testing.T) {
+	st := New()
+	ctx := t.Context()
+	repo := &store.Repo{Forge: "github", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]int64{}
+	for _, u := range []*store.Upload{
+		{CommitSHA: "m1", Branch: "main"},
+		{CommitSHA: "m2", Branch: "main", GateFailed: true},
+		{CommitSHA: "p1", Branch: "main", PRID: "7"},
+		{CommitSHA: "f1", Branch: "feat"},
+		{CommitSHA: "m3", Branch: "main"},
+		{CommitSHA: "z1", Branch: "Zeta"},
+	} {
+		u.RepoID, u.Format = repo.ID, "go"
+		if err := st.CreateUpload(ctx, u, nil); err != nil {
+			t.Fatal(err)
+		}
+		ids[u.CommitSHA] = u.ID
+	}
+	for _, tc := range []struct {
+		name, branch  string
+		beforeID      int64
+		excludeCommit string
+		want          string // "" for ErrNotFound
+	}{
+		{"newest passing", "main", 0, "", "m3"},
+		{"older than m3 skips the PR build and the failure", "main", ids["m3"], "", "m1"},
+		{"excluding m3's commit", "main", 0, "m3", "m1"},
+		{"nothing older", "main", ids["m1"], "", ""},
+		{"another branch", "feat", 0, "", "f1"},
+		{"unknown branch", "nope", 0, "", ""},
+	} {
+		got, err := st.LatestPassedUpload(ctx, repo.ID, tc.branch, tc.beforeID, tc.excludeCommit)
+		switch {
+		case tc.want == "" && !errors.Is(err, store.ErrNotFound):
+			t.Errorf("%s: got %v, %v; want ErrNotFound", tc.name, got, err)
+		case tc.want != "" && (err != nil || got.CommitSHA != tc.want):
+			t.Errorf("%s: got %v, %v; want %s", tc.name, got, err, tc.want)
+		}
+	}
+
+	branches, err := st.RecentBranches(ctx, repo.ID, 100)
+	if err != nil || !slices.Equal(branches, []string{"Zeta", "feat", "main"}) {
+		t.Errorf("recent branches = %v, %v; want Zeta, feat, main", branches, err)
+	}
+	// Only the newest scan uploads count: z1 and m3.
+	if branches, err = st.RecentBranches(ctx, repo.ID, 2); err != nil || !slices.Equal(branches, []string{"Zeta", "main"}) {
+		t.Errorf("branches of the newest two = %v, %v; want Zeta, main", branches, err)
+	}
+}

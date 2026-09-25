@@ -156,7 +156,7 @@ func TestAcceptRefusesAllIgnored(t *testing.T) {
 	if !errors.Is(err, ErrAllIgnored) {
 		t.Fatalf("err = %v, want ErrAllIgnored", err)
 	}
-	if uploads, _ := p.Store.ListUploads(t.Context(), repo.ID, 10); len(uploads) != 0 {
+	if uploads, _ := p.Store.ListUploads(t.Context(), repo.ID, 0, 10); len(uploads) != 0 {
 		t.Errorf("refused upload was stored: %d rows", len(uploads))
 	}
 }

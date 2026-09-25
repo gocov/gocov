@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/gocov/gocov/internal/store"
+	storemem "github.com/gocov/gocov/internal/store/memory"
 )
 
 func TestReportBaseline(t *testing.T) {
@@ -49,5 +50,52 @@ func TestReportBaseline(t *testing.T) {
 				t.Errorf("ReportBaseline = %d, %d, want %d, %d", id(cur), id(base), tc.wantCur, tc.want)
 			}
 		})
+	}
+}
+
+// UploadBaseline finds the branch's newest earlier passing build however
+// many PR builds sit on top of it, and falls back to the default branch —
+// never the upload's own commit there — for a branch with none.
+func TestUploadBaseline(t *testing.T) {
+	ctx := t.Context()
+	st := storemem.New()
+	repo := &store.Repo{Forge: "github", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	put := func(sha, branch, prID string) *store.Upload {
+		t.Helper()
+		u := &store.Upload{RepoID: repo.ID, CommitSHA: sha, Branch: branch, PRID: prID, Format: "go"}
+		if err := st.CreateUpload(ctx, u, nil); err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+	sha := func(u *store.Upload) string {
+		if u == nil {
+			return "none"
+		}
+		return u.CommitSHA
+	}
+
+	first := put("m1", "main", "")
+	if got := UploadBaseline(ctx, st, repo, first); got != nil {
+		t.Errorf("first upload's baseline = %s, want none", sha(got))
+	}
+	put("f0", "feat", "")
+	// More PR builds than any fixed window a scan would read.
+	for i := range 70 {
+		put(fmt.Sprintf("p%d", i), "feat", "7")
+	}
+	pr := put("p70", "feat", "7")
+	if got := UploadBaseline(ctx, st, repo, pr); sha(got) != "f0" {
+		t.Errorf("PR build's baseline = %s, want the branch's push build f0 under 70 PR builds", sha(got))
+	}
+	// A branch with no passing build of its own falls back to main, but
+	// not to main's upload of this very commit.
+	put("x1", "main", "")
+	fresh := put("x1", "fresh", "")
+	if got := UploadBaseline(ctx, st, repo, fresh); sha(got) != "m1" {
+		t.Errorf("fresh branch's baseline = %s, want main's m1, skipping its own commit x1", sha(got))
 	}
 }

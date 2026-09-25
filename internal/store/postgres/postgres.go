@@ -810,25 +810,46 @@ func (s *Store) Upload(ctx context.Context, id int64) (*store.Upload, error) {
 		`SELECT `+uploadCols+` FROM uploads WHERE id = $1`, id))
 }
 
-func (s *Store) ListUploads(ctx context.Context, repoID int64, limit int) ([]*store.Upload, error) {
+func (s *Store) ListUploads(ctx context.Context, repoID int64, offset, limit int) ([]*store.Upload, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT `+uploadCols+` FROM uploads WHERE repo_id = $1 ORDER BY id DESC LIMIT $2`,
-		repoID, limitArg(limit))
+		`SELECT `+uploadCols+` FROM uploads WHERE repo_id = $1 ORDER BY id DESC OFFSET $2 LIMIT $3`,
+		repoID, offset, limitArg(limit))
 	if err != nil {
 		return nil, err
 	}
 	return collect(rows, s.scanUpload)
 }
 
-func (s *Store) ListBranchUploads(ctx context.Context, repoID int64, branch string, limit int) ([]*store.Upload, error) {
+func (s *Store) ListBranchUploads(ctx context.Context, repoID int64, branch string, offset, limit int) ([]*store.Upload, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT `+uploadCols+` FROM uploads
-		 WHERE repo_id = $1 AND branch = $2 ORDER BY id DESC LIMIT $3`,
-		repoID, branch, limitArg(limit))
+		 WHERE repo_id = $1 AND branch = $2 ORDER BY id DESC OFFSET $3 LIMIT $4`,
+		repoID, branch, offset, limitArg(limit))
 	if err != nil {
 		return nil, err
 	}
 	return collect(rows, s.scanUpload)
+}
+
+func (s *Store) RecentBranches(ctx context.Context, repoID int64, scan int) ([]string, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT branch FROM (
+			SELECT branch FROM uploads WHERE repo_id = $1 ORDER BY id DESC LIMIT $2
+		 ) recent GROUP BY branch ORDER BY branch COLLATE "C"`,
+		repoID, limitArg(scan))
+	if err != nil {
+		return nil, err
+	}
+	return pgx.AppendRows([]string(nil), rows, pgx.RowTo[string])
+}
+
+func (s *Store) LatestPassedUpload(ctx context.Context, repoID int64, branch string, beforeID int64, excludeCommit string) (*store.Upload, error) {
+	return s.scanUpload(s.pool.QueryRow(ctx,
+		`SELECT `+uploadCols+` FROM uploads
+		 WHERE repo_id = $1 AND branch = $2 AND pr_id = '' AND NOT gate_failed
+		   AND ($3 = 0 OR id < $3) AND commit_sha <> $4
+		 ORDER BY id DESC LIMIT 1`,
+		repoID, branch, beforeID, excludeCommit))
 }
 
 func (s *Store) scanUpload(row rowScanner) (*store.Upload, error) {

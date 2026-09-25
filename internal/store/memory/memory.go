@@ -570,22 +570,45 @@ func copyUpload(u *store.Upload) *store.Upload {
 	return cp
 }
 
-func (s *Store) ListUploads(_ context.Context, repoID int64, limit int) ([]*store.Upload, error) {
+func (s *Store) ListUploads(_ context.Context, repoID int64, offset, limit int) ([]*store.Upload, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.newestUploads(limit, func(u *store.Upload) bool { return u.RepoID == repoID }), nil
+	return s.newestUploads(offset, limit, func(u *store.Upload) bool { return u.RepoID == repoID }), nil
 }
 
-func (s *Store) ListBranchUploads(_ context.Context, repoID int64, branch string, limit int) ([]*store.Upload, error) {
+func (s *Store) ListBranchUploads(_ context.Context, repoID int64, branch string, offset, limit int) ([]*store.Upload, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.newestUploads(limit, func(u *store.Upload) bool { return u.RepoID == repoID && u.Branch == branch }), nil
+	return s.newestUploads(offset, limit, func(u *store.Upload) bool { return u.RepoID == repoID && u.Branch == branch }), nil
 }
 
-// newestUploads returns copies of the uploads keep admits, newest first and
-// capped at limit — the shape of every upload listing, since Postgres pages
-// them by descending ID. Callers hold s.mu.
-func (s *Store) newestUploads(limit int, keep func(*store.Upload) bool) []*store.Upload {
+func (s *Store) RecentBranches(_ context.Context, repoID int64, scan int) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	seen := map[string]bool{}
+	for _, u := range s.newestUploads(0, scan, func(u *store.Upload) bool { return u.RepoID == repoID }) {
+		seen[u.Branch] = true
+	}
+	return slices.Sorted(maps.Keys(seen)), nil
+}
+
+func (s *Store) LatestPassedUpload(_ context.Context, repoID int64, branch string, beforeID int64, excludeCommit string) (*store.Upload, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	passed := s.newestUploads(0, 1, func(u *store.Upload) bool {
+		return u.RepoID == repoID && u.Branch == branch && u.PRID == "" && !u.GateFailed &&
+			(beforeID == 0 || u.ID < beforeID) && u.CommitSHA != excludeCommit
+	})
+	if len(passed) == 0 {
+		return nil, store.ErrNotFound
+	}
+	return passed[0], nil
+}
+
+// newestUploads returns copies of the uploads keep admits, newest first,
+// past the newest offset and capped at limit — the shape of every upload
+// listing, since Postgres pages them by descending ID. Callers hold s.mu.
+func (s *Store) newestUploads(offset, limit int, keep func(*store.Upload) bool) []*store.Upload {
 	var out []*store.Upload
 	for _, u := range s.uploads {
 		if keep(u) {
@@ -593,7 +616,7 @@ func (s *Store) newestUploads(limit int, keep func(*store.Upload) bool) []*store
 		}
 	}
 	slices.SortFunc(out, func(a, b *store.Upload) int { return cmp.Compare(b.ID, a.ID) })
-	return atMost(out, limit)
+	return atMost(out[min(offset, len(out)):], limit)
 }
 
 func (s *Store) UploadFiles(_ context.Context, uploadID int64) ([]*store.UploadFile, error) {

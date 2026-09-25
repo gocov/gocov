@@ -6,7 +6,6 @@ package server
 
 import (
 	"cmp"
-	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -45,7 +44,7 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 	branch := r.FormValue("branch")
 
 	// The page's reads are independent of each other, so they run side by
-	// side: the recent uploads (the branch selector), the trend with the
+	// side: the recent branches (the branch selector), the trend with the
 	// files view hanging off its latest report, and the settings button's
 	// workspace lookup.
 	// The trend follows the page's branch filter, defaulting to the
@@ -53,8 +52,8 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 	trendBranch := cmp.Or(branch, repo.DefaultBranch)
 	var (
 		wg           sync.WaitGroup
-		recent       []*store.Upload
-		recentErr    error
+		branches     []string
+		branchesErr  error
 		trendReports []*store.CommitReport
 		trendErr     error
 		latest, base *store.CommitReport
@@ -63,7 +62,7 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 		canSettings  bool
 	)
 	wg.Go(func() {
-		recent, recentErr = s.store.ListUploads(r.Context(), repo.ID, recentUploads)
+		branches, branchesErr = s.store.RecentBranches(r.Context(), repo.ID, recentUploads)
 	})
 	wg.Go(func() {
 		trendReports, trendErr = s.store.ListBranchCommitReports(r.Context(), repo.ID, trendBranch, trendReportLimit)
@@ -82,11 +81,11 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 		}
 		lu, err := s.store.Upload(r.Context(), latest.UploadID)
 		if err != nil {
+			s.log.Warn("loading latest upload for repo page", "upload", latest.UploadID, "err", err)
 			return
 		}
 		lastUpload = lu
-		baseUpload, baseFiles := s.baselineUpload(r.Context(), repo, lu)
-		if files, err = s.buildFilesView(r.Context(), lu, baseUpload, baseFiles); err != nil {
+		if files, _, err = s.loadFilesView(r.Context(), repo, lu); err != nil {
 			s.log.Warn("loading files for repo page", "upload", lu.ID, "err", err)
 		}
 	})
@@ -106,19 +105,14 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 	}
 	wg.Wait()
 
-	if recentErr != nil {
-		s.internalError(w, "listing uploads", recentErr)
+	if branchesErr != nil {
+		s.internalError(w, "listing recent branches", branchesErr)
 		return nil, false
 	}
 	if trendErr != nil {
 		s.internalError(w, "listing reports for trend", trendErr)
 		return nil, false
 	}
-	seen := map[string]bool{}
-	for _, u := range recent {
-		seen[u.Branch] = true
-	}
-	branches := slices.Sorted(maps.Keys(seen))
 
 	dto := &repoPageDTO{
 		Repo: repoHeadDTO{
@@ -269,30 +263,29 @@ func (s *Server) handleAPIRepoUploads(w http.ResponseWriter, r *http.Request) {
 		page = 0
 	}
 
-	// Fetch one row beyond the current page so "Older" knows whether to
+	// Fetch the page and one row beyond it, so "Older" knows whether to
 	// render.
-	limit := (page+1)*uploadsPageSize + 1
+	offset, limit := page*uploadsPageSize, uploadsPageSize+1
 	var (
 		fetched []*store.Upload
 		err     error
 	)
 	if branch == "" {
-		fetched, err = s.store.ListUploads(r.Context(), repo.ID, limit)
+		fetched, err = s.store.ListUploads(r.Context(), repo.ID, offset, limit)
 	} else {
-		fetched, err = s.store.ListBranchUploads(r.Context(), repo.ID, branch, limit)
+		fetched, err = s.store.ListBranchUploads(r.Context(), repo.ID, branch, offset, limit)
 	}
 	if err != nil {
 		s.internalError(w, "listing uploads", err)
 		return
 	}
-	start := min(page*uploadsPageSize, len(fetched))
-	end := min(start+uploadsPageSize, len(fetched))
+	shown := fetched[:min(len(fetched), uploadsPageSize)]
 	dto := &repoUploadsDTO{
-		Uploads:  make([]uploadRowDTO, 0, end-start),
+		Uploads:  make([]uploadRowDTO, 0, len(shown)),
 		Page:     page,
-		HasOlder: len(fetched) > (page+1)*uploadsPageSize,
+		HasOlder: len(fetched) > uploadsPageSize,
 	}
-	for _, u := range fetched[start:end] {
+	for _, u := range shown {
 		dto.Uploads = append(dto.Uploads, uploadRowDTO{
 			ID:       u.ID,
 			SHA:      u.CommitSHA,

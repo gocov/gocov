@@ -423,10 +423,20 @@ type Store interface {
 	// setting u.ID and u.CreatedAt.
 	CreateUpload(ctx context.Context, u *Upload, files []*UploadFile) error
 	Upload(ctx context.Context, id int64) (*Upload, error)
-	// ListUploads returns uploads newest first; limit <= 0 means all.
-	ListUploads(ctx context.Context, repoID int64, limit int) ([]*Upload, error)
+	// ListUploads returns uploads newest first, skipping the newest offset
+	// of them; limit <= 0 means all the rest.
+	ListUploads(ctx context.Context, repoID int64, offset, limit int) ([]*Upload, error)
 	// ListBranchUploads is ListUploads restricted to one branch.
-	ListBranchUploads(ctx context.Context, repoID int64, branch string, limit int) ([]*Upload, error)
+	ListBranchUploads(ctx context.Context, repoID int64, branch string, offset, limit int) ([]*Upload, error)
+	// RecentBranches returns the distinct branches of the repo's newest
+	// scan uploads, sorted — the repo page's branch selector, which needs
+	// the names and nothing else of those rows.
+	RecentBranches(ctx context.Context, repoID int64, scan int) ([]string, error)
+	// LatestPassedUpload returns the newest gate-passing, non-PR upload on
+	// a branch, or ErrNotFound: the upload-granularity baseline
+	// (core.UploadBaseline). beforeID > 0 keeps only uploads older than
+	// it; a non-empty excludeCommit skips that commit's uploads.
+	LatestPassedUpload(ctx context.Context, repoID int64, branch string, beforeID int64, excludeCommit string) (*Upload, error)
 	UploadFiles(ctx context.Context, uploadID int64) ([]*UploadFile, error)
 	// UploadFile returns one file of an upload by its profile path, or
 	// ErrNotFound — the source view's read, which needs a single file of
