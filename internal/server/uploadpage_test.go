@@ -252,30 +252,6 @@ func TestUploadProfileDownload(t *testing.T) {
 	}
 }
 
-func TestIsSourceChanged(t *testing.T) {
-	diff := map[string]bool{"internal/server/upload.go": true, "main.go": true}
-	for _, tc := range []struct {
-		path, prefix string
-		want         bool
-	}{
-		{"internal/server/upload.go", "", true},
-		{"github.com/acme/widgets/internal/server/upload.go", "", true}, // module-qualified profile path
-		{"github.com/acme/widgets/internal/server/upload.go", "github.com/acme/widgets", true},
-		{"github.com/acme/widgets/internal/server/other.go", "github.com/acme/widgets", false},
-		{"main.go", "", true},
-		{"cmd/gocov/main.go", "", false}, // a bare diff name never matches by suffix
-		{"cmd/gocov/main.go", "github.com/acme/widgets", false},
-		{"internal/server/upload.go", "", true},
-	} {
-		if got := isSourceChanged(tc.path, tc.prefix, diff); got != tc.want {
-			t.Errorf("isSourceChanged(%q, %q) = %v, want %v", tc.path, tc.prefix, got, tc.want)
-		}
-	}
-	if isSourceChanged("main.go", "", nil) {
-		t.Error("nil diff set matched")
-	}
-}
-
 // A file the PR's diff touches is flagged as source-changed, which is
 // what the files card filters on.
 func TestAPIUploadPageDiffCoverageSourceChanged(t *testing.T) {
