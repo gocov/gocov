@@ -30,7 +30,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/forge"
 	"github.com/gocov/gocov/internal/oidc"
 	"github.com/gocov/gocov/internal/store"
@@ -299,18 +298,11 @@ func (s *Server) oidcLookup(w http.ResponseWriter, r *http.Request, slug, forgeN
 // token's first upload goes through (resolveUploadRepo), writing the
 // error response itself.
 func (s *Server) oidcRegisterRepo(w http.ResponseWriter, r *http.Request, ws *store.Workspace, slug string) (*store.Repo, bool) {
-	name := strings.TrimPrefix(slug, ws.Prefix+"/")
-	if !core.ValidRepoName(ws.Forge, name) {
-		httpError(w, http.StatusBadRequest, "invalid repo name %q under workspace %q", slug, ws.Prefix)
+	if !checkRepoName(w, ws, slug) {
 		return nil, false
 	}
-	repo, err := s.pipeline.RegisterRepo(r.Context(), ws, slug)
-	if errors.Is(err, forge.ErrRepoNotFound) {
-		httpError(w, http.StatusNotFound, "repo %q not found on %s", slug, ws.Forge)
-		return nil, false
-	}
-	if err != nil {
-		s.internalError(w, "auto-registering repo", err)
+	repo, ok := s.registerRepo(w, r, ws, slug)
+	if !ok {
 		return nil, false
 	}
 	s.log.Info("oidc upload registered repo", "repo", slug, "workspace", ws.Prefix)

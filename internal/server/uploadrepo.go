@@ -57,13 +57,11 @@ func (s *Server) resolveUploadRepo(w http.ResponseWriter, r *http.Request, repo 
 		httpError(w, http.StatusBadRequest, "workspace tokens require the repo field")
 		return nil, false, false
 	}
-	name, matched := strings.CutPrefix(slug, ws.Prefix+"/")
-	if !matched {
+	if !strings.HasPrefix(slug, ws.Prefix+"/") {
 		httpError(w, http.StatusForbidden, "token is for workspace %q, not %q", ws.Prefix, slug)
 		return nil, false, false
 	}
-	if !core.ValidRepoName(ws.Forge, name) {
-		httpError(w, http.StatusBadRequest, "invalid repo name %q under workspace %q", slug, ws.Prefix)
+	if !checkRepoName(w, ws, slug) {
 		return nil, false, false
 	}
 
@@ -75,14 +73,36 @@ func (s *Server) resolveUploadRepo(w http.ResponseWriter, r *http.Request, repo 
 		s.internalError(w, "looking up repo", err)
 		return nil, false, false
 	}
-	repo, err = s.pipeline.RegisterRepo(ctx, ws, slug)
-	if errors.Is(err, forge.ErrRepoNotFound) {
-		httpError(w, http.StatusNotFound, "repo %q not found on %s", slug, ws.Forge)
-		return nil, false, false
-	}
-	if err != nil {
-		s.internalError(w, "auto-registering repo", err)
+	if repo, ok = s.registerRepo(w, r, ws, slug); !ok {
 		return nil, false, false
 	}
 	return repo, true, true
+}
+
+// checkRepoName refuses, with a 400 written, a repo name the forge could
+// not have under the workspace. Slugs arrive from uploaders, and a first
+// upload registers them.
+func checkRepoName(w http.ResponseWriter, ws *store.Workspace, slug string) bool {
+	if !core.ValidRepoName(ws.Forge, strings.TrimPrefix(slug, ws.Prefix+"/")) {
+		httpError(w, http.StatusBadRequest, "invalid repo name %q under workspace %q", slug, ws.Prefix)
+		return false
+	}
+	return true
+}
+
+// registerRepo registers an upload's repo on its first upload, confirming
+// it exists on the forge, and answers the uploader itself when it cannot:
+// 404 for a repo the forge does not have, 500 for anything else. Both
+// the workspace-token and the OIDC paths register through it.
+func (s *Server) registerRepo(w http.ResponseWriter, r *http.Request, ws *store.Workspace, slug string) (*store.Repo, bool) {
+	repo, err := s.pipeline.RegisterRepo(r.Context(), ws, slug)
+	if errors.Is(err, forge.ErrRepoNotFound) {
+		httpError(w, http.StatusNotFound, "repo %q not found on %s", slug, ws.Forge)
+		return nil, false
+	}
+	if err != nil {
+		s.internalError(w, "auto-registering repo", err)
+		return nil, false
+	}
+	return repo, true
 }
