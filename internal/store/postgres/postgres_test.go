@@ -1905,3 +1905,40 @@ func TestLatestPassedUploadAndRecentBranches(t *testing.T) {
 		t.Errorf("branches of the newest two = %v, %v; want Zeta, main", branches, err)
 	}
 }
+
+// The two stores agree on the edges: an upload without files — or no
+// upload at all — lists no files rather than failing, files come back
+// ordered by path, and a membership needs its workspace to exist.
+func TestStoreContractEdges(t *testing.T) {
+	st := newTestStore(t)
+	ctx := t.Context()
+	repo := &store.Repo{Forge: "github", Slug: "acme/edges", Token: "tok-edges", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	bare := &store.Upload{RepoID: repo.ID, CommitSHA: "c1", Branch: "main", Format: "go"}
+	if err := st.CreateUpload(ctx, bare, nil); err != nil {
+		t.Fatal(err)
+	}
+	withFiles := &store.Upload{RepoID: repo.ID, CommitSHA: "c2", Branch: "main", Format: "go"}
+	if err := st.CreateUpload(ctx, withFiles, []*store.UploadFile{{Path: "b.go"}, {Path: "a.go"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{bare.ID, 999999} {
+		if files, err := st.UploadFiles(ctx, id); err != nil || len(files) != 0 {
+			t.Errorf("UploadFiles(%d) = %v, %v; want no files and no error", id, files, err)
+		}
+	}
+	files, err := st.UploadFiles(ctx, withFiles.ID)
+	if err != nil || len(files) != 2 || files[0].Path != "a.go" || files[1].Path != "b.go" {
+		t.Errorf("UploadFiles = %v, %v; want a.go then b.go", files, err)
+	}
+
+	u := &store.User{Forge: "github", ForgeUUID: "edge-user", DisplayName: "Edge"}
+	if err := st.UpsertUser(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetUserMemberships(ctx, u.ID, []store.Membership{{WorkspaceID: 999999, Role: store.RoleMember}}); err == nil {
+		t.Error("a membership in a workspace that does not exist was accepted")
+	}
+}

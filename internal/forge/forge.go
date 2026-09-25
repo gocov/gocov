@@ -10,6 +10,16 @@ import (
 	"time"
 )
 
+// MaxDiffBytes bounds the PR or MR diff a forge client fetches; a larger
+// diff is an error rather than a silently truncated one.
+const MaxDiffBytes = 32 << 20
+
+// MaxFileBytes bounds the source file a forge client fetches for the
+// source view. It sits above the view's own display limit (1 MiB), so a
+// file just past that limit still arrives and is turned away with a
+// reason instead of a failed fetch.
+const MaxFileBytes = 2 << 20
+
 // ErrNotImplemented is returned by forge methods an implementation does not
 // support yet.
 var ErrNotImplemented = errors.New("forge: not implemented")

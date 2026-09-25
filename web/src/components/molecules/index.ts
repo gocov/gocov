@@ -1,4 +1,3 @@
-export { Banner } from "./Banner";
 export { BeforeAfter } from "./BeforeAfter";
 export { Breadcrumbs, type Crumb } from "./Breadcrumbs";
 export { Card } from "./Card";

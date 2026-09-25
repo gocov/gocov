@@ -316,7 +316,7 @@ func (f *Forges) markAppBroken(ctx context.Context, ws *store.Workspace, cause e
 
 // InstallURL resolves the app's public install page, best effort: a
 // GitHub hiccup must not take a settings page down with it. Empty string
-// when unavailable; templates then render the state without a link.
+// when unavailable; the app then shows the state without a link.
 func (f *Forges) InstallURL(ctx context.Context) string {
 	if f.GitHubApp == nil {
 		return ""

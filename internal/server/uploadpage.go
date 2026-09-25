@@ -9,7 +9,6 @@ package server
 import (
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -176,12 +175,7 @@ func (s *Server) loadFilesView(ctx context.Context, repo *store.Repo, upload *st
 		baseFiles map[string]*store.UploadFile
 	)
 	wg.Go(func() { base, baseFiles = s.baselineUpload(ctx, repo, upload) })
-	wg.Go(func() {
-		files, err = s.store.UploadFiles(ctx, upload.ID)
-		if errors.Is(err, store.ErrNotFound) {
-			err = nil
-		}
-	})
+	wg.Go(func() { files, err = s.store.UploadFiles(ctx, upload.ID) })
 	wg.Wait()
 	if err != nil {
 		return nil, nil, err

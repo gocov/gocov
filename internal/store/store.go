@@ -54,7 +54,7 @@ type RepoRef struct {
 // that prefix; unknown repos are auto-registered on first upload.
 type Workspace struct {
 	ID     int64
-	Forge  string // forge for auto-created repos, "bitbucket" for now
+	Forge  string // "bitbucket", "github" or "gitlab"; auto-created repos inherit it
 	Prefix string // e.g. "myworkspace"
 	Token  string
 	// DefaultBranch is assigned to auto-created repos when the forge
@@ -110,7 +110,7 @@ const (
 // Repo is a tracked repository. Slug is namespaced ("workspace/repo").
 type Repo struct {
 	ID            int64
-	Forge         string // "bitbucket" for now
+	Forge         string // "bitbucket", "github" or "gitlab"
 	Slug          string
 	Token         string // per-repo upload token
 	DefaultBranch string
@@ -219,7 +219,7 @@ type UploadMeta struct {
 // passwords are ever stored.
 type User struct {
 	ID    int64
-	Forge string // "bitbucket" for now
+	Forge string // the forge the user signed in with: "bitbucket", "github" or "gitlab"
 	// ForgeUUID is the forge's stable account identifier (survives
 	// renames). Unique per forge.
 	ForgeUUID   string
@@ -394,7 +394,8 @@ type Store interface {
 	// given set: memberships not listed are removed, listed ones are added
 	// or have their role updated, so re-running it with the same set is a
 	// no-op. Called at login to mirror the user's current forge membership
-	// and role (M2).
+	// and role (M2). A membership in a workspace that does not exist is
+	// an error.
 	SetUserMemberships(ctx context.Context, userID int64, memberships []Membership) error
 	// ListWorkspacesForUser returns the workspaces the user is a member of,
 	// ordered by forge, then prefix.
@@ -437,6 +438,8 @@ type Store interface {
 	// (core.UploadBaseline). beforeID > 0 keeps only uploads older than
 	// it; a non-empty excludeCommit skips that commit's uploads.
 	LatestPassedUpload(ctx context.Context, repoID int64, branch string, beforeID int64, excludeCommit string) (*Upload, error)
+	// UploadFiles returns an upload's files ordered by path; an upload
+	// without per-file data, or no such upload, yields an empty list.
 	UploadFiles(ctx context.Context, uploadID int64) ([]*UploadFile, error)
 	// UploadFile returns one file of an upload by its profile path, or
 	// ErrNotFound — the source view's read, which needs a single file of
