@@ -439,8 +439,6 @@ type Store interface {
 	// count: a PR can only reach the default branch's name from a fork (a
 	// fork's "main"), and it must not stand in for the repo's own branch.
 	LatestDefaultBranchReports(ctx context.Context, repoIDs []int64) (map[int64]*CommitReport, error)
-	// LatestCommitReport returns the most recent merged report on a branch.
-	LatestCommitReport(ctx context.Context, repoID int64, branch string) (*CommitReport, error)
 	// LatestPassedCommitReport returns the most recent gate-passing merged
 	// report on a branch, skipping excludeCommit (the commit being uploaded,
 	// whose own in-progress report must not serve as its baseline). Used as

@@ -116,40 +116,39 @@ func (c *Client) FindPRComment(ctx context.Context, repoSlug, prID, prefix strin
 	if err != nil {
 		return "", err
 	}
-	next := fmt.Sprintf("%s/repositories/%s/pullrequests/%s/comments?pagelen=100&sort=-created_on",
+	type comment struct {
+		ID      int64 `json:"id"`
+		Deleted bool  `json:"deleted"`
+		Inline  *struct {
+			Path string `json:"path"`
+		} `json:"inline"`
+		Parent *struct {
+			ID int64 `json:"id"`
+		} `json:"parent"`
+		User    bitbucketUser `json:"user"`
+		Content struct {
+			Raw string `json:"raw"`
+		} `json:"content"`
+	}
+	listing := fmt.Sprintf("%s/repositories/%s/pullrequests/%s/comments?pagelen=100&sort=-created_on",
 		c.BaseURL, repoSlug, url.PathEscape(prID))
-	for page := 0; next != "" && page < maxCommentPages; page++ {
-		var body struct {
-			Values []struct {
-				ID      int64 `json:"id"`
-				Deleted bool  `json:"deleted"`
-				Inline  *struct {
-					Path string `json:"path"`
-				} `json:"inline"`
-				Parent *struct {
-					ID int64 `json:"id"`
-				} `json:"parent"`
-				User    bitbucketUser `json:"user"`
-				Content struct {
-					Raw string `json:"raw"`
-				} `json:"content"`
-			} `json:"values"`
-			Next string `json:"next"`
-		}
-		if err := c.api().Get(ctx, next, &body); err != nil {
-			return "", err
-		}
-		for _, v := range body.Values {
+	found := ""
+	_, err = rest.EachValuesPage(ctx, c.api(), listing, maxCommentPages, func(comments []comment) bool {
+		for _, v := range comments {
 			if v.Deleted || v.Inline != nil || v.Parent != nil || !self.is(v.User) {
 				continue
 			}
 			if strings.HasPrefix(v.Content.Raw, prefix) {
-				return strconv.FormatInt(v.ID, 10), nil
+				found = strconv.FormatInt(v.ID, 10)
+				return false // newest first: the first match is the one
 			}
 		}
-		next = body.Next
+		return true
+	})
+	if err != nil {
+		return "", err
 	}
-	return "", nil
+	return found, nil
 }
 
 // UpdatePRComment replaces a comment's body via

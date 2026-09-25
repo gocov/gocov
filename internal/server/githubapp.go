@@ -46,8 +46,8 @@ func (s *Server) handleGitHubSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := strconv.ParseInt(r.FormValue("installation_id"), 10, 64)
-	if err != nil || id <= 0 {
+	id, err := positiveInt(r.FormValue("installation_id"))
+	if err != nil {
 		s.connectOutcome(w, r, "no_installation", "", 0)
 		return
 	}
@@ -131,11 +131,7 @@ func (s *Server) connectNew(w http.ResponseWriter, r *http.Request, u *store.Use
 		s.connectOutcome(w, r, "not_your_workspace", login, installationID)
 		return
 	}
-	token, err := core.NewToken()
-	if err != nil {
-		s.internalError(w, "generating workspace token", err)
-		return
-	}
+	token := core.NewToken()
 	ws := &store.Workspace{
 		Forge:                "github",
 		Prefix:               login,

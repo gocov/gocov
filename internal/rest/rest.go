@@ -202,6 +202,30 @@ func EachPage[T any](ctx context.Context, c *Client, url string, maxPages int, f
 	return false, nil
 }
 
+// EachValuesPage is EachPage for listings that page in the body the way
+// Bitbucket's do — {"values": [...], "next": "<absolute url>"} — rather
+// than in a Link header. fn returning false stops the walk early, as a
+// search does at its first hit.
+func EachValuesPage[T any](ctx context.Context, c *Client, url string, maxPages int, fn func(values []T) (more bool)) (truncated bool, err error) {
+	for next := url; next != ""; maxPages-- {
+		if maxPages == 0 {
+			return true, nil
+		}
+		var page struct {
+			Values []T    `json:"values"`
+			Next   string `json:"next"`
+		}
+		if err := c.Get(ctx, next, &page); err != nil {
+			return false, err
+		}
+		if !fn(page.Values) {
+			return false, nil
+		}
+		next = page.Next
+	}
+	return false, nil
+}
+
 // GetBytes reads the raw resource at url, asking for the media type
 // accept when set. An answer beyond max bytes is an error, not a
 // truncation: a cut-off diff or source file would silently mean wrong

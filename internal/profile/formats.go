@@ -36,6 +36,16 @@ var formats = []Format{
 	{Name: "simplecov", Parser: SimpleCovParser{}, Filename: "resultset.json", SourceExts: []string{".rb", ".rake"}},
 }
 
+// Names lists the registered formats' names, in registry order — for
+// messages that tell a user which formats there are.
+func Names() []string {
+	names := make([]string, len(formats))
+	for i, f := range formats {
+		names[i] = f.Name
+	}
+	return names
+}
+
 // Lookup returns the format of the given name.
 func Lookup(name string) (Format, bool) {
 	i := slices.IndexFunc(formats, func(f Format) bool { return f.Name == name })

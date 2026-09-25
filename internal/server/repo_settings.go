@@ -202,11 +202,7 @@ func (s *Server) handleAPIRepoRotateToken(w http.ResponseWriter, r *http.Request
 	if repo == nil {
 		return
 	}
-	token, err := core.NewToken()
-	if err != nil {
-		s.internalError(w, "generating repo token", err)
-		return
-	}
+	token := core.NewToken()
 	repo.Token = token
 	if err := s.store.UpdateRepo(r.Context(), repo); err != nil {
 		s.internalError(w, "rotating repo token", err)

@@ -281,7 +281,10 @@ func (s *Server) trackedWorkspaceKeys(r *http.Request) []wsKey {
 // sortedKeys orders an allow-set by forge, then name — the store's own
 // listing order.
 func sortedKeys(set map[wsKey]bool) []wsKey {
-	return slices.SortedFunc(maps.Keys(set), func(a, b wsKey) int {
-		return cmp.Or(cmp.Compare(a.forge, b.forge), cmp.Compare(a.prefix, b.prefix))
-	})
+	return slices.SortedFunc(maps.Keys(set), compareWsKey)
+}
+
+// compareWsKey orders workspaces by forge, then prefix.
+func compareWsKey(a, b wsKey) int {
+	return cmp.Or(cmp.Compare(a.forge, b.forge), cmp.Compare(a.prefix, b.prefix))
 }

@@ -711,10 +711,6 @@ func (s *Store) commitReportLocked(repoID int64, commitSHA string) *store.Commit
 	return find(s.reports, func(cr *store.CommitReport) bool { return cr.RepoID == repoID && cr.CommitSHA == commitSHA })
 }
 
-func (s *Store) LatestCommitReport(_ context.Context, repoID int64, branch string) (*store.CommitReport, error) {
-	return s.latestCommitReport(repoID, branch, "", false, false)
-}
-
 func (s *Store) LatestDefaultBranchReports(ctx context.Context, repoIDs []int64) (map[int64]*store.CommitReport, error) {
 	out := map[int64]*store.CommitReport{}
 	for _, id := range repoIDs {

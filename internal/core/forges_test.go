@@ -220,11 +220,7 @@ func TestForWithoutAConnection(t *testing.T) {
 	// No connection is not an error: the upload lands and the forge
 	// surfaces report that they were skipped.
 	f, _ := newForges(t, nil)
-	fg, err := f.For(t.Context(), &store.Repo{Forge: "bitbucket", Slug: "acme/widgets"})
-	if err != nil {
-		t.Fatalf("err = %v, want nil", err)
-	}
-	if fg != nil {
+	if fg := f.For(t.Context(), &store.Repo{Forge: "bitbucket", Slug: "acme/widgets"}); fg != nil {
 		t.Errorf("forge = %#v, want nil", fg)
 	}
 }

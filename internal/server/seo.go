@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -38,7 +39,7 @@ func (s *Server) repoPageHead(repo *store.Repo) appHead {
 
 // uploadPageHead titles one upload's report and keeps it out of indexes.
 func uploadPageHead(repo *store.Repo, upload *store.Upload) appHead {
-	return appHead{Title: repo.Slug + " @ " + shortSHA(upload.CommitSHA) + " — gocov", Extra: noindexHead}
+	return appHead{Title: repo.Slug + " @ " + core.ShortSHA(upload.CommitSHA) + " — gocov", Extra: noindexHead}
 }
 
 // sourcePageHead titles one file's source view and keeps it out of

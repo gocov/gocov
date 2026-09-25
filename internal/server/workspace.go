@@ -151,23 +151,11 @@ func reportingState(ws *store.Workspace) (state, account string) {
 	return "off", account
 }
 
-// reportingAvailable reports whether this deployment has a one-click
-// connect mechanism for the workspace's forge at all: the GitHub App, or
-// the Bitbucket/GitLab consent grant. Without one the card explains that
-// reporting needs stored credentials instead.
-func (s *Server) reportingAvailable(ws *store.Workspace) bool {
-	if ws.Forge == "github" {
-		return s.forges.GitHubApp != nil
-	}
-	g := connectGrantFor(ws.Forge)
-	return g != nil && s.forges.Connector(g.forge) != nil
-}
-
 // connectURL is where an owner starts connecting the workspace: GitHub's
 // App installation page, or this server's consent-grant route for the
 // forges that use one. Empty when the deployment offers neither.
 func (s *Server) connectURL(r *http.Request, ws *store.Workspace) string {
-	if !s.reportingAvailable(ws) {
+	if !s.forges.Capable(ws.Forge) {
 		return ""
 	}
 	if ws.Forge == "github" {
@@ -263,7 +251,10 @@ type reportingDTO struct {
 func (s *Server) newReportingDTO(r *http.Request, ws *store.Workspace) reportingDTO {
 	state, account := reportingState(ws)
 	return reportingDTO{
-		Available:  s.reportingAvailable(ws),
+		// Whether this deployment has a one-click connect for the forge at
+		// all; without one the card explains that reporting needs stored
+		// credentials instead.
+		Available:  s.forges.Capable(ws.Forge),
 		State:      state,
 		Account:    account,
 		ConnectURL: s.connectURL(r, ws),
@@ -361,11 +352,7 @@ func (s *Server) handleAPIWorkspaceRotate(w http.ResponseWriter, r *http.Request
 	if ws == nil {
 		return
 	}
-	token, err := core.NewToken()
-	if err != nil {
-		s.internalError(w, "generating workspace token", err)
-		return
-	}
+	token := core.NewToken()
 	ws.Token = token
 	if err := s.store.UpdateWorkspace(r.Context(), ws); err != nil {
 		s.internalError(w, "rotating workspace token", err)

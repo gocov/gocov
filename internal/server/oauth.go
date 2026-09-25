@@ -8,8 +8,6 @@ package server
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"net/http"
 	"net/url"
 	"path"
@@ -117,11 +115,7 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 	if provider == nil {
 		return
 	}
-	state, err := newState()
-	if err != nil {
-		s.internalError(w, "generating oauth state", err)
-		return
-	}
+	state := newState()
 	// The next path is percent-encoded, because a cookie value is not a
 	// place for an arbitrary path: net/http drops every byte SetCookie
 	// considers invalid — anything non-ASCII, '"', ';' — so an unencoded
@@ -263,11 +257,7 @@ func (s *Server) provisionUser(w http.ResponseWriter, r *http.Request, forge str
 // the database, handed to the browser in an HttpOnly cookie. A false return
 // means the error response is already written.
 func (s *Server) startSession(w http.ResponseWriter, r *http.Request, u *store.User) bool {
-	token, err := newState() // same entropy requirement: 256 random bits
-	if err != nil {
-		s.internalError(w, "generating session token", err)
-		return false
-	}
+	token := newState() // same entropy requirement: 256 random bits
 	sess := &store.Session{
 		TokenHash: hashToken(token),
 		UserID:    u.ID,
@@ -320,13 +310,7 @@ func (s *Server) redirectURI(forge string) string {
 
 // newState returns 256 random bits hex-encoded, used for both the OAuth
 // state and session tokens.
-func newState() (string, error) {
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(buf), nil
-}
+func newState() string { return core.RandomHex(32) }
 
 func readStateCookie(r *http.Request) (state, next string) {
 	c, err := r.Cookie(stateCookie)

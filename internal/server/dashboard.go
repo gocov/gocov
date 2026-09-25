@@ -3,6 +3,7 @@ package server
 import (
 	"cmp"
 	"context"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -144,36 +145,28 @@ func (s *Server) buildDashboard(r *http.Request, dto *dashboardDTO, selected str
 	// Groups are keyed by wsKey: the GitHub org and the GitLab group of
 	// one name are two workspaces, and the switcher lists both.
 	groups := map[wsKey]*dashGroup{}
-	order := []wsKey{}
-	add := func(prefix, forge string, ws *store.Workspace) *dashGroup {
-		key := wsKey{forge, prefix}
-		g := groups[key]
-		if g == nil {
-			g = &dashGroup{key: key, ws: ws}
-			groups[key] = g
-			order = append(order, key)
-		}
-		if ws != nil && g.ws == nil {
-			g.ws = ws
-		}
-		return g
-	}
 	for _, ws := range tracked {
-		add(ws.Prefix, ws.Forge, ws)
+		key := wsKey{ws.Forge, ws.Prefix}
+		groups[key] = &dashGroup{key: key, ws: ws}
 	}
 	for _, repo := range repos {
+		// visibleRepos already scoped the list; checking again keeps one
+		// tenant's repos out of another's dashboard should it ever not.
 		if !scope.allows(repo) {
 			continue
 		}
-		g := add(s.groupPrefix(repo, tracked), repo.Forge, nil)
+		key := wsKey{repo.Forge, s.groupPrefix(repo, tracked)}
+		g := groups[key]
+		if g == nil {
+			g = &dashGroup{key: key}
+			groups[key] = g
+		}
 		g.repos = append(g.repos, repo)
 	}
-	if len(order) == 0 {
+	if len(groups) == 0 {
 		return nil
 	}
-	slices.SortFunc(order, func(a, b wsKey) int {
-		return cmp.Or(cmp.Compare(a.forge, b.forge), cmp.Compare(a.prefix, b.prefix))
-	})
+	order := slices.SortedFunc(maps.Keys(groups), compareWsKey)
 
 	// Resolve the selected group (?ws=forge/prefix); fall back to the
 	// first when ?ws is missing or names a group the viewer cannot see.
@@ -254,10 +247,7 @@ func (s *Server) groupPrefix(repo *store.Repo, tracked []*store.Workspace) strin
 	if ws := owningWorkspace(repo, tracked); ws != nil {
 		return ws.Prefix
 	}
-	if i := strings.IndexByte(repo.Slug, '/'); i >= 0 {
-		return repo.Slug[:i]
-	}
-	return repo.Slug
+	return ownerOf(repo.Slug)
 }
 
 // groupDTO is a group's switcher entry: its identity, a repo count, and a

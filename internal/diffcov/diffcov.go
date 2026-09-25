@@ -413,20 +413,30 @@ func (r *Result) Clone() *Result {
 	return &cp
 }
 
-// Ranges renders sorted line numbers as compact ranges: "45-47, 52".
-func Ranges(lines []int) string {
+// LineSpans groups sorted line numbers into runs of consecutive lines:
+// [45 46 47 52] is 45-47 and 52. A repeated line stays in its run.
+func LineSpans(lines []int) []Span {
 	if len(lines) == 0 {
-		return ""
+		return nil
 	}
-	var parts []string
+	var spans []Span
 	sp := Span{lines[0], lines[0]}
 	for _, l := range lines[1:] {
 		if l == sp.End || l == sp.End+1 {
 			sp.End = l
 			continue
 		}
-		parts = append(parts, sp.String())
+		spans = append(spans, sp)
 		sp = Span{l, l}
 	}
-	return strings.Join(append(parts, sp.String()), ", ")
+	return append(spans, sp)
+}
+
+// Ranges renders sorted line numbers as compact ranges: "45-47, 52".
+func Ranges(lines []int) string {
+	parts := make([]string, 0, len(lines))
+	for _, sp := range LineSpans(lines) {
+		parts = append(parts, sp.String())
+	}
+	return strings.Join(parts, ", ")
 }

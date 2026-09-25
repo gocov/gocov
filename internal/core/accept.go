@@ -7,8 +7,6 @@ package core
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
@@ -70,7 +68,7 @@ type Result struct {
 func (p *Pipeline) Accept(ctx context.Context, sub Submission) (*Result, error) {
 	// The client every forge surface below publishes through; nil when the
 	// repo's workspace has no connection.
-	fg, fgErr := p.forgeFor(ctx, sub.Repo)
+	fg := p.forgeFor(ctx, sub.Repo)
 	// Re-ask the repo's visibility while a forge client is at hand — but
 	// only when the cached answer has aged out, and never concurrently
 	// with another request's ask, so a commit uploading many parts costs
@@ -101,7 +99,7 @@ func (p *Pipeline) Accept(ctx context.Context, sub Submission) (*Result, error) 
 	defer diffDone.Wait()
 	if sub.PRID != "" {
 		diffDone.Go(func() {
-			diffResult, diffStatus = p.diffCoverage(ctx, fg, fgErr, sub.Repo, sub.PRID, sub.Profile, sub.Format, sub.PathPrefix, rules)
+			diffResult, diffStatus = p.diffCoverage(ctx, fg, sub.Repo, sub.PRID, sub.Profile, sub.Format, sub.PathPrefix, rules)
 		})
 	}
 
@@ -141,17 +139,14 @@ func (p *Pipeline) Accept(ctx context.Context, sub Submission) (*Result, error) 
 		Upload:     upload,
 		Merged:     merged,
 		DiffStatus: diffStatus,
-		Push:       p.Push(ctx, fg, fgErr, sub.Repo, upload, merged),
+		Push:       p.Push(ctx, fg, sub.Repo, upload, merged),
 	}, nil
 }
 
 // diffCoverage fetches the PR diff from the forge and intersects it
 // with the parsed profile. Best effort: any failure is reported in the
 // returned status, never as an upload error.
-func (p *Pipeline) diffCoverage(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, prID string, prof *profile.Profile, format, pathPrefix string, ignored *ignore.Rules) (*diffcov.Result, string) {
-	if fgErr != nil {
-		return nil, "error: " + fgErr.Error()
-	}
+func (p *Pipeline) diffCoverage(ctx context.Context, fg forge.Forge, repo *store.Repo, prID string, prof *profile.Profile, format, pathPrefix string, ignored *ignore.Rules) (*diffcov.Result, string) {
 	if fg == nil {
 		return nil, "skipped: no forge connection"
 	}
@@ -216,11 +211,7 @@ func applyIgnore(sub *Submission) (*ignore.Rules, int, error) {
 }
 
 func (p *Pipeline) storeRaw(ctx context.Context, repoID int64, raw []byte) (string, error) {
-	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	key := fmt.Sprintf("profiles/%d/%s", repoID, hex.EncodeToString(buf))
+	key := fmt.Sprintf("profiles/%d/%s", repoID, RandomHex(16))
 	if err := p.Blobs.Put(ctx, key, raw); err != nil {
 		return "", err
 	}
@@ -228,11 +219,11 @@ func (p *Pipeline) storeRaw(ctx context.Context, repoID int64, raw []byte) (stri
 }
 
 // forgeFor resolves the client the repo's workspace is connected through:
-// (nil, nil) when it has no connection, or when the deployment offers no
+// nil when it has no connection, or when the deployment offers no
 // one-click connect at all.
-func (p *Pipeline) forgeFor(ctx context.Context, repo *store.Repo) (forge.Forge, error) {
+func (p *Pipeline) forgeFor(ctx context.Context, repo *store.Repo) forge.Forge {
 	if p.Forges == nil {
-		return nil, nil
+		return nil
 	}
 	return p.Forges.For(ctx, repo)
 }

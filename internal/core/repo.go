@@ -79,10 +79,7 @@ func (p *Pipeline) RegisterRepo(ctx context.Context, ws *store.Workspace, slug s
 	}
 	branch = cmp.Or(branch, ws.DefaultBranch, "main")
 
-	token, err := NewToken()
-	if err != nil {
-		return nil, err
-	}
+	token := NewToken()
 	repo := &store.Repo{
 		Forge:         ws.Forge,
 		Slug:          slug,
@@ -231,8 +228,8 @@ func (p *Pipeline) endVisibilityRefresh(repoID int64) {
 // verified before they can open pages. Without a connection nothing
 // changes: the cached answer keeps its age.
 func (p *Pipeline) ReverifyVisibility(ctx context.Context, repo *store.Repo) {
-	fg, err := p.forgeFor(ctx, repo)
-	if err != nil || fg == nil {
+	fg := p.forgeFor(ctx, repo)
+	if fg == nil {
 		return
 	}
 	p.refreshVisibilityOnce(ctx, fg, repo)
@@ -308,15 +305,22 @@ func (p *Pipeline) claimVisibilityRecheck(repoID int64) bool {
 	return true
 }
 
+// ShortSHA abbreviates a commit SHA to the twelve characters gocov shows
+// wherever a commit is named.
+func ShortSHA(sha string) string { return sha[:min(12, len(sha))] }
+
 // NewToken generates a token: 24 random bytes in hex. Repo and workspace
 // tokens are the same shape, and only their hash is ever compared, so one
 // generator serves both.
-func NewToken() (string, error) {
-	buf := make([]byte, 24)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(buf), nil
+func NewToken() string { return RandomHex(24) }
+
+// RandomHex returns n cryptographically random bytes, hex-encoded.
+// crypto/rand.Read cannot fail — it crashes the program rather than
+// return short — so neither can this.
+func RandomHex(n int) string {
+	buf := make([]byte, n)
+	rand.Read(buf)
+	return hex.EncodeToString(buf)
 }
 
 // SlugPrefixes returns every slash-boundary prefix of a repo slug,

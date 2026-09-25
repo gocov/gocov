@@ -218,19 +218,17 @@ func (c *tokenCache) drop(workspaceID int64) {
 
 // For builds a forge client for the repo through the workspace's
 // one-click connection (GitHub App installation, Bitbucket grant or
-// GitLab grant). Returns (nil, nil) when the repo's workspace has no
-// connection — there is no manual-credential fallback.
-func (f *Forges) For(ctx context.Context, repo *store.Repo) (forge.Forge, error) {
+// GitLab grant), or nil when the repo's workspace has no working
+// connection — there is no manual-credential fallback. Lookup and token
+// trouble is logged where it happens and reads as no connection.
+func (f *Forges) For(ctx context.Context, repo *store.Repo) forge.Forge {
 	// The workspace is looked up lazily: only when a connection could
 	// apply, so a forge that supports no one-click connect skips the
 	// query entirely.
-	if f.Capable(repo.Forge) {
-		ws := f.WorkspaceFor(ctx, repo.Slug, repo.Forge)
-		if fg := f.Connected(ctx, ws, repo.Forge); fg != nil {
-			return fg, nil
-		}
+	if !f.Capable(repo.Forge) {
+		return nil
 	}
-	return nil, nil
+	return f.Connected(ctx, f.WorkspaceFor(ctx, repo.Slug, repo.Forge), repo.Forge)
 }
 
 // Capable reports whether a one-click connection could supply
