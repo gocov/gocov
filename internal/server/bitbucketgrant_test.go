@@ -38,7 +38,7 @@ func (f *fakeBBConnect) Exchange(_ context.Context, code, _ string) (*bitbucket.
 	return &bitbucket.Grant{Account: "covbot", AccessToken: "at-0", RefreshToken: "rt-0", TTL: 2 * time.Hour}, nil
 }
 
-func (f *fakeBBConnect) Refresh(_ context.Context, refreshToken string) (*bitbucket.Grant, error) {
+func (f *fakeBBConnect) Refresh(_ context.Context, refreshToken, _ string) (*bitbucket.Grant, error) {
 	f.refreshCalls = append(f.refreshCalls, refreshToken)
 	if f.refreshErr != nil {
 		return nil, f.refreshErr

@@ -94,7 +94,7 @@ func TestRefreshRotates(t *testing.T) {
 			"access_token": "at-2", "refresh_token": "rt-2", "expires_in": 7200,
 		})
 	})
-	grant, err := c.Refresh(t.Context(), "rt-1")
+	grant, err := c.Refresh(t.Context(), "rt-1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestRefreshRevoked(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(body))
 		})
-		_, err := c.Refresh(t.Context(), "rt-dead")
+		_, err := c.Refresh(t.Context(), "rt-dead", "")
 		if !errors.Is(err, forge.ErrCredentialsRevoked) {
 			t.Errorf("%s: err = %v, want ErrCredentialsRevoked", body, err)
 		}
@@ -143,7 +143,7 @@ func TestRefreshTransientError(t *testing.T) {
 	c := testConsumer(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	})
-	_, err := c.Refresh(t.Context(), "rt-1")
+	_, err := c.Refresh(t.Context(), "rt-1", "")
 	if err == nil || errors.Is(err, forge.ErrCredentialsRevoked) {
 		t.Errorf("err = %v, want a plain (transient) error", err)
 	}

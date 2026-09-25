@@ -44,42 +44,30 @@ type Forges struct {
 // NewForges wires the connectors together with the token caches they
 // need. The caches live for the process: they hold access tokens only,
 // so losing them costs one refresh, never a reconnect.
-func NewForges(st store.Store, log *slog.Logger, baseURL string, app GitHubApp, bb BitbucketConnect, gl GitLabConnect) *Forges {
+// grants holds the grant-backed connectors the deployment configured, by
+// forge name ("bitbucket", "gitlab"); a forge without one offers no
+// one-click connect.
+func NewForges(st store.Store, log *slog.Logger, baseURL string, app GitHubApp, grants map[string]GrantConnect) *Forges {
 	f := &Forges{
 		Store: st, Log: log, BaseURL: baseURL, GitHubApp: app,
 		grants: map[string]*grant{},
 	}
-	if bb != nil {
-		f.grants["bitbucket"] = &grant{
-			forge:   "bitbucket",
-			connect: bb,
-			tokens:  newTokenCache(),
-			refresh: bb.Refresh,
-		}
-	}
-	if gl != nil {
-		f.grants["gitlab"] = &grant{
-			forge:   "gitlab",
-			connect: gl,
-			tokens:  newTokenCache(),
-			refresh: func(ctx context.Context, refreshToken string) (*forge.Grant, error) {
-				return gl.Refresh(ctx, refreshToken, RedirectURI(f.BaseURL, "gitlab"))
-			},
+	for name, connect := range grants {
+		if connect != nil {
+			f.grants[name] = &grant{forge: name, connect: connect, tokens: newTokenCache()}
 		}
 	}
 	return f
 }
 
 // grant is one forge's workspace-connect grant as the upkeep code sees
-// it. Bitbucket and GitLab differ only in the connector and the refresh
-// call's shape; everything from refresh to revocation runs once through
-// this table, reading and writing the workspace's store.Grant.
+// it. Bitbucket and GitLab differ only in the connector; everything from
+// refresh to revocation runs once through this table, reading and writing
+// the workspace's store.Grant.
 type grant struct {
 	forge   string
 	connect GrantConnect
 	tokens  *tokenCache
-	// refresh trades the stored refresh token for a fresh token set.
-	refresh func(ctx context.Context, refreshToken string) (*forge.Grant, error)
 }
 
 // Connector returns the grant-backed connector for the forge — the
@@ -116,40 +104,23 @@ func RedirectURI(baseURL, forgeName string) string {
 	return strings.TrimSuffix(baseURL, "/") + "/oauth/" + forgeName + "/callback"
 }
 
-// GrantConnect is what every grant-backed connector shares: the consent
-// page, the code exchange and the client an access token drives. The
-// per-forge interfaces add Refresh in the shape their token endpoint
-// wants.
+// GrantConnect runs a forge's OAuth grants for workspace connect —
+// forge/bitbucket.Consumer and forge/gitlab.Application. Errors wrapping
+// forge.ErrCredentialsRevoked mean the grant is gone (revoked, or the
+// refresh token aged out unused).
 type GrantConnect interface {
 	// AuthorizeURL is the consent page for the connect grant.
 	AuthorizeURL(state, redirectURI string) string
 	// Exchange trades the consent code for the grant, including the
 	// granting account's username.
 	Exchange(ctx context.Context, code, redirectURI string) (*forge.Grant, error)
+	// Refresh trades a refresh token for a fresh access token and — the
+	// tokens rotate — a new refresh token to persist. redirectURI is the
+	// connect callback: GitLab's token endpoint wants it on refreshes too,
+	// Bitbucket's ignores it.
+	Refresh(ctx context.Context, refreshToken, redirectURI string) (*forge.Grant, error)
 	// ForgeClient returns a forge client acting through the access token.
 	ForgeClient(accessToken string) forge.Forge
-}
-
-// BitbucketConnect runs the Bitbucket OAuth grants for workspace
-// connect. Errors wrapping forge.ErrCredentialsRevoked mean the grant
-// is gone (revoked, or the refresh token aged out unused).
-type BitbucketConnect interface {
-	GrantConnect
-	// Refresh trades a refresh token for a fresh access token and — the
-	// tokens rotate — a new refresh token to persist.
-	Refresh(ctx context.Context, refreshToken string) (*forge.Grant, error)
-}
-
-// GitLabConnect runs the GitLab OAuth grants for workspace connect —
-// BitbucketConnect's twin (consent scope api). Errors wrapping
-// forge.ErrCredentialsRevoked mean the grant is gone (revoked on the
-// account's applications page).
-type GitLabConnect interface {
-	GrantConnect
-	// Refresh trades a refresh token for a fresh access token and — the
-	// tokens rotate — a new refresh token to persist. GitLab's token
-	// endpoint wants the redirect URI on refreshes too.
-	Refresh(ctx context.Context, refreshToken, redirectURI string) (*forge.Grant, error)
 }
 
 // GitHubApp mints installation-scoped forge clients and answers the two
@@ -412,7 +383,7 @@ func (f *Forges) accessToken(ctx context.Context, g *grant, ws *store.Workspace)
 			// reconnect is the fix.
 			return fmt.Errorf("%w: workspace %s has no usable grant", forge.ErrCredentialsRevoked, ws.Prefix)
 		}
-		got, err := g.refresh(ctx, stored.RefreshToken)
+		got, err := g.connect.Refresh(ctx, stored.RefreshToken, RedirectURI(f.BaseURL, g.forge))
 		if err != nil {
 			return err
 		}

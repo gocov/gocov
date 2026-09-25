@@ -32,7 +32,7 @@ func (f *fakeBB) AuthorizeURL(state, redirectURI string) string {
 func (f *fakeBB) Exchange(ctx context.Context, code, redirectURI string) (*bbforge.Grant, error) {
 	return nil, errors.New("not used")
 }
-func (f *fakeBB) Refresh(ctx context.Context, refreshToken string) (*bbforge.Grant, error) {
+func (f *fakeBB) Refresh(ctx context.Context, refreshToken, redirectURI string) (*bbforge.Grant, error) {
 	f.refreshes++
 	if f.err != nil {
 		return nil, f.err
@@ -46,10 +46,10 @@ func (f *fakeBB) Refresh(ctx context.Context, refreshToken string) (*bbforge.Gra
 }
 func (f *fakeBB) ForgeClient(accessToken string) forge.Forge { return f.client }
 
-func newForges(t *testing.T, bb BitbucketConnect) (*Forges, *storemem.Store) {
+func newForges(t *testing.T, bb GrantConnect) (*Forges, *storemem.Store) {
 	t.Helper()
 	st := storemem.New()
-	return NewForges(st, slog.New(slog.NewTextHandler(io.Discard, nil)), "https://cov.example.com", nil, bb, nil), st
+	return NewForges(st, slog.New(slog.NewTextHandler(io.Discard, nil)), "https://cov.example.com", nil, map[string]GrantConnect{"bitbucket": bb}), st
 }
 
 func connectedWorkspace(t *testing.T, st *storemem.Store, prefix string) *store.Workspace {
