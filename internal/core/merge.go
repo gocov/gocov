@@ -99,6 +99,7 @@ func (p *Pipeline) Recompute(ctx context.Context, repo *store.Repo, u *store.Upl
 			TotalStmts:   total,
 			GateFailed:   gate.Failed(),
 			GateBasePct:  dropBase,
+			Gate:         new(repo.Gate),
 			DiffCoverage: mergedDiff,
 			PartCount:    len(parts),
 			UploadID:     u.ID,

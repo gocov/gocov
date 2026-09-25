@@ -134,13 +134,13 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 	}
 	for _, u := range uploads {
 		dto.Uploads = append(dto.Uploads, uploadRowDTO{
-			ID:         u.ID,
-			SHA:        u.CommitSHA,
-			Branch:     u.Branch,
-			PRID:       u.PRID,
-			Coverage:   u.TotalPct,
-			GateFailed: u.GateFailed,
-			At:         u.CreatedAt,
+			ID:       u.ID,
+			SHA:      u.CommitSHA,
+			Branch:   u.Branch,
+			PRID:     u.PRID,
+			Coverage: u.TotalPct,
+			Gate:     gateState(store.JudgedGate(u.Gate, repo.Gate), u.GateFailed),
+			At:       u.CreatedAt,
 		})
 	}
 	if latest == nil {
@@ -148,7 +148,7 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 	}
 
 	summary := &repoSummaryDTO{
-		Verdict: gateVerdict("The latest commit", latest.TotalPct, latest.DiffCoverage, latest.GateFailed, repo.Gate, latest.GateBasePct),
+		Verdict: gateVerdict("The latest commit", latest.TotalPct, latest.DiffCoverage, latest.GateFailed, store.JudgedGate(latest.Gate, repo.Gate), latest.GateBasePct),
 		Commit: repoCommitDTO{
 			UploadID:  latest.UploadID,
 			SHA:       latest.CommitSHA,
@@ -235,13 +235,13 @@ type trendPointDTO struct {
 
 // uploadRowDTO is one row of the upload history.
 type uploadRowDTO struct {
-	ID         int64     `json:"id"`
-	SHA        string    `json:"sha"`
-	Branch     string    `json:"branch"`
-	PRID       string    `json:"pr_id"`
-	Coverage   float64   `json:"coverage"`
-	GateFailed bool      `json:"gate_failed"`
-	At         time.Time `json:"at"`
+	ID       int64     `json:"id"`
+	SHA      string    `json:"sha"`
+	Branch   string    `json:"branch"`
+	PRID     string    `json:"pr_id"`
+	Coverage float64   `json:"coverage"`
+	Gate     string    `json:"gate"` // pass / fail / none, against the gate it was judged by
+	At       time.Time `json:"at"`
 }
 
 // handleAPIRepo implements GET /api/ui/repos/{forge}/{slug...}, the repo

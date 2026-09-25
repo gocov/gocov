@@ -56,7 +56,7 @@ const repo = (over: Partial<RepoPageData> = {}): RepoPageData => ({
     ],
   },
   uploads: [
-    { id: 412, sha: "a1b2c3d4e5f67890", branch: "main", pr_id: "", coverage: 82.3, gate_failed: false, at: now },
+    { id: 412, sha: "a1b2c3d4e5f67890", branch: "main", pr_id: "", coverage: 82.3, gate: "pass", at: now },
   ],
   page: 0,
   has_older: true,

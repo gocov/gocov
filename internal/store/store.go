@@ -28,6 +28,16 @@ type Gate struct {
 	MaxCoverageDrop *float64
 }
 
+// JudgedGate is the gate a row was judged against: the one recorded with
+// it, or — for rows from before gates were recorded — current, the repo's
+// gate today, which is all there is to go on.
+func JudgedGate(recorded *Gate, current Gate) Gate {
+	if recorded != nil {
+		return *recorded
+	}
+	return current
+}
+
 // Configured reports whether any gate rule is set.
 func (g Gate) Configured() bool {
 	return g.MinCoverage != nil || g.MinDiffCoverage != nil || g.MaxCoverageDrop != nil
@@ -160,6 +170,10 @@ type Upload struct {
 	// against; nil when the rule was off, had no base, or the upload
 	// predates it being recorded.
 	GateBasePct *float64
+	// Gate is the gate the upload was judged against, whatever the repo's
+	// gate has become since; nil on uploads judged before it was recorded
+	// (JudgedGate falls back to the current one).
+	Gate *Gate
 	// PathPrefix maps profile paths to repo-relative paths (e.g. the Go
 	// module path), as sent with the upload.
 	PathPrefix string
@@ -278,6 +292,8 @@ type CommitReport struct {
 	// GateBasePct is the default-branch total the gate's drop rule compared
 	// against, as on Upload.
 	GateBasePct *float64
+	// Gate is the gate the report was judged against, as on Upload.
+	Gate *Gate
 	// DiffCoverage is the merged diff coverage for PR commits; nil otherwise.
 	DiffCoverage *diffcov.Result
 	// PartCount is how many parts (distinct upload parts) fed the report.

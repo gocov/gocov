@@ -44,6 +44,13 @@ func dropOver(drop, allowed float64) bool { return drop > allowed+gateEpsilon }
 // touches no covered lines has nothing to measure.
 func diffMeasured(diff *diffcov.Result) bool { return diff != nil && diff.TotalLines > 0 }
 
+// MinCoverageFailed reports whether the gate's minimum-total rule is what
+// a total of totalPct fails — the one rule whose threshold a "below the
+// minimum" message may quote.
+func MinCoverageFailed(g store.Gate, totalPct float64) bool {
+	return g.MinCoverage != nil && belowMin(totalPct, *g.MinCoverage)
+}
+
 // EvaluateGate checks the repo's coverage requirements. dropBase is the
 // total of the gate's drop baseline (gateDropBase): the latest gate-passing
 // report on the default branch — never a gate-failing one, so re-running

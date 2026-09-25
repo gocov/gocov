@@ -1752,3 +1752,41 @@ func TestDefaultBranchReports(t *testing.T) {
 		}
 	}
 }
+
+// The judged gate round-trips on uploads and commit reports: rules set and
+// unset, an empty gate distinct from none recorded.
+func TestJudgedGateRoundTrip(t *testing.T) {
+	st := newTestStore(t)
+	ctx := t.Context()
+	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	judged := &store.Gate{MinCoverage: new(80.0), MaxCoverageDrop: new(0.0)}
+	for _, tc := range []struct {
+		commit string
+		gate   *store.Gate
+	}{{"c1", judged}, {"c2", &store.Gate{}}, {"c3", nil}} {
+		u := &store.Upload{RepoID: repo.ID, CommitSHA: tc.commit, Branch: "main", Format: "go", Gate: tc.gate}
+		if err := st.CreateUpload(ctx, u, nil); err != nil {
+			t.Fatal(err)
+		}
+		cr := &store.CommitReport{RepoID: repo.ID, CommitSHA: tc.commit, Branch: "main", PartCount: 1, Gate: tc.gate}
+		if err := st.UpsertCommitReport(ctx, cr); err != nil {
+			t.Fatal(err)
+		}
+		gotUpload, err := st.Upload(ctx, u.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotReport, err := st.CommitReport(ctx, repo.ID, tc.commit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, got := range map[string]*store.Gate{"upload": gotUpload.Gate, "report": gotReport.Gate} {
+			if !reflect.DeepEqual(got, tc.gate) {
+				t.Errorf("%s %s gate = %+v, want %+v", tc.commit, name, got, tc.gate)
+			}
+		}
+	}
+}

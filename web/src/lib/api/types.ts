@@ -195,7 +195,8 @@ export interface UploadRow {
   branch: string;
   pr_id: string;
   coverage: number;
-  gate_failed: boolean;
+  /** Against the gate the upload was judged by; "none" when no rule was set. */
+  gate: "pass" | "fail" | "none";
   at: string;
 }
 

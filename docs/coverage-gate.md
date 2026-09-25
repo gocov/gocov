@@ -19,6 +19,10 @@ Gate-failing uploads are recorded but never serve as a baseline, so re-running C
 cannot ratchet coverage down push by push. Violations mark the pushed build status FAILED and are reported in the PR
 comment and the upload response (`gate` field).
 
+Every upload keeps the gate it was judged against. Changing or removing a repository's gate applies to uploads from
+then on; earlier verdicts, their explanations, the upload history and the dashboard keep describing the rules they were
+held to, and an upload made while no gate was set reads "No gate" rather than "Passed".
+
 ## Making the gate block merges
 
 - **Bitbucket** — require the `gocov` build in the repo's merge checks; a FAILED status then blocks the PR.
