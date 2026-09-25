@@ -67,8 +67,6 @@ func (s *Server) buildUploadPage(w http.ResponseWriter, r *http.Request) (*uploa
 		Verdict:      gateVerdict("This upload", u.TotalPct, u.DiffCoverage, u.GateFailed, repo.Gate, u.GateBasePct),
 		CoveredStmts: u.CoveredStmts,
 		TotalStmts:   u.TotalStmts,
-		FileCount:    len(files.Files),
-		Format:       u.Format,
 		Files:        files,
 		Provenance:   s.uploadProvenance(r.Context(), u),
 	}
@@ -102,8 +100,6 @@ type uploadPageDTO struct {
 	Verdict      verdictDTO    `json:"verdict"`
 	CoveredStmts int64         `json:"covered_stmts"`
 	TotalStmts   int64         `json:"total_stmts"`
-	FileCount    int           `json:"file_count"`
-	Format       string        `json:"format"`
 	Diff         *diffCovDTO   `json:"diff"`
 	Files        *filesViewDTO `json:"files"`
 	Provenance   provenanceDTO `json:"provenance"`

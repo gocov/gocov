@@ -66,8 +66,8 @@ export default function UploadPage() {
                   label="Report"
                   value={
                     <>
-                      {plural(data.file_count, "file")}{" "}
-                      <span className="muted small">&middot; {data.format} profile</span>
+                      {plural(data.files.files.length, "file")}{" "}
+                      <span className="muted small">&middot; {data.provenance.format} profile</span>
                     </>
                   }
                 />

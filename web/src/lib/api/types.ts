@@ -220,8 +220,6 @@ export interface UploadPage {
   verdict: Verdict;
   covered_stmts: number;
   total_stmts: number;
-  file_count: number;
-  format: string;
   diff: { coverage: number; covered_lines: number; total_lines: number; changed_files: number; unmatched_files: number } | null;
   /** Always present; `files: []` when the upload has no per-file data. */
   files: FilesView;
