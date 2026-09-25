@@ -24,5 +24,7 @@ export default defineConfig(({ command }) => ({
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   build: { outDir: "../internal/webui/dist", emptyOutDir: true },
   server: { proxy: Object.fromEntries(serverPaths.map((p) => [p, { target: backend, changeOrigin: false }])) },
-  test: { environment: "jsdom", globals: true, setupFiles: ["./src/test/setup.ts"], css: false },
+  // vmThreads builds jsdom once per worker instead of once per test file,
+  // while still giving each file a fresh module graph and globals.
+  test: { environment: "jsdom", pool: "vmThreads", globals: true, setupFiles: ["./src/test/setup.ts"], css: false },
 }));
