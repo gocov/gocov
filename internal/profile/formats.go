@@ -26,8 +26,14 @@ var formats = []Format{
 		SourceExts: []string{".java", ".kt", ".kts", ".scala", ".groovy"}},
 	{Name: "cobertura", Parser: CoberturaParser{}, Filename: "cobertura.xml",
 		SourceExts: []string{".py", ".cs", ".php", ".cpp", ".cc", ".c"}},
-	{Name: "clover", Parser: CloverParser{}},
-	{Name: "simplecov", Parser: SimpleCovParser{}},
+	// Clover comes from PHPUnit, from Istanbul/Jest and from OpenClover
+	// for the JVM, so it counts all three families as source.
+	{Name: "clover", Parser: CloverParser{}, Filename: "clover.xml",
+		SourceExts: []string{".php", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte",
+			".java", ".groovy", ".kt"}},
+	// SimpleCov writes .resultset.json; the download drops the leading dot,
+	// since the name follows the commit ("abc1234-resultset.json").
+	{Name: "simplecov", Parser: SimpleCovParser{}, Filename: "resultset.json", SourceExts: []string{".rb", ".rake"}},
 }
 
 // Lookup returns the format of the given name.

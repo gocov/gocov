@@ -30,8 +30,9 @@ branch protection rule or merge check [block the merge](coverage-gate.md#making-
   conclusion that mirrors the gate so branch protection can require it, and inline annotations on uncovered changed
   lines in the Files changed view.
 - **Bitbucket** — a Code Insights report card on the commit, shown in the PR's Reports panel, with inline annotations
-  on uncovered changed lines right in the diff view. Changed files with no coverage data at all get a file-level
-  marker. No other coverage product on Bitbucket Cloud ships this today.
+  on uncovered changed lines right in the diff view. Changed source files with no coverage data at all get a
+  file-level marker; a changed README or config file is not untested code, so it gets none. No other coverage product
+  on Bitbucket Cloud ships this today.
 - **GitLab** — GitLab has no check-run equivalent, so the MR note's diff coverage table is the in-MR surface.
 
 ## Fork PRs without a token
