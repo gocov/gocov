@@ -156,6 +156,10 @@ type Upload struct {
 	// GateFailed marks uploads that violated the coverage gate; they are
 	// excluded from comparison baselines.
 	GateFailed bool
+	// GateBasePct is the default-branch total the gate's drop rule compared
+	// against; nil when the rule was off, had no base, or the upload
+	// predates it being recorded.
+	GateBasePct *float64
 	// PathPrefix maps profile paths to repo-relative paths (e.g. the Go
 	// module path), as sent with the upload.
 	PathPrefix string
@@ -271,6 +275,9 @@ type CommitReport struct {
 	// GateFailed marks reports that violated the coverage gate; they are
 	// excluded from comparison baselines, the same rule uploads carried.
 	GateFailed bool
+	// GateBasePct is the default-branch total the gate's drop rule compared
+	// against, as on Upload.
+	GateBasePct *float64
 	// DiffCoverage is the merged diff coverage for PR commits; nil otherwise.
 	DiffCoverage *diffcov.Result
 	// PartCount is how many parts (distinct upload parts) fed the report.

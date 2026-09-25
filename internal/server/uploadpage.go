@@ -65,16 +65,12 @@ func (s *Server) buildUploadPage(w http.ResponseWriter, r *http.Request) (*uploa
 		s.internalError(w, "loading upload files", err)
 		return nil, false
 	}
-	var baseTotal *float64
-	if base != nil {
-		baseTotal = &base.TotalPct
-	}
 	return &uploadPageData{
 		Upload:    upload,
 		Repo:      repo,
 		Base:      base,
 		FilesView: fv,
-		Verdict:   gateVerdict("This upload", upload.TotalPct, upload.DiffCoverage, upload.GateFailed, repo.Gate, baseTotal),
+		Verdict:   gateVerdict("This upload", upload.TotalPct, upload.DiffCoverage, upload.GateFailed, repo.Gate, upload.GateBasePct),
 		Prov:      s.uploadProvenance(r.Context(), upload),
 	}, true
 }
@@ -343,10 +339,12 @@ type verdictView struct {
 
 // gateVerdict assembles the verdict. The headline pass/fail follows the
 // stored gate result; the reason narrates each configured rule against
-// the values measured, so a reader sees why it stands. base is the total
-// it is compared against, nil when there is nothing earlier; subject is
-// how the reason names what was measured ("This upload").
-func gateVerdict(subject string, totalPct float64, diff *diffcov.Result, gateFailed bool, gate store.Gate, base *float64) verdictView {
+// the values measured, so a reader sees why it stands. dropBase is the
+// drop baseline the gate was judged against (GateBasePct), so the reason
+// narrates the comparison the gate made rather than the page's own
+// baseline; subject is how the reason names what was measured ("This
+// upload").
+func gateVerdict(subject string, totalPct float64, diff *diffcov.Result, gateFailed bool, gate store.Gate, dropBase *float64) verdictView {
 	v := verdictView{State: "pass"}
 	switch {
 	case !gate.Configured():
@@ -354,11 +352,7 @@ func gateVerdict(subject string, totalPct float64, diff *diffcov.Result, gateFai
 	case gateFailed:
 		v.State = "fail"
 	}
-	var baseTotal float64
-	if base != nil {
-		baseTotal = *base
-	}
-	v.Reason = core.GateReason(totalPct, diff, gate, baseTotal, base != nil, subject)
+	v.Reason = core.GateReason(totalPct, diff, gate, dropBase, subject)
 	return v
 }
 

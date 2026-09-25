@@ -565,6 +565,9 @@ func (s *Store) Upload(_ context.Context, id int64) (*store.Upload, error) {
 func copyUpload(u *store.Upload) *store.Upload {
 	cp := new(*u)
 	cp.DiffCoverage = u.DiffCoverage.Clone()
+	if u.GateBasePct != nil {
+		cp.GateBasePct = new(*u.GateBasePct)
+	}
 	return cp
 }
 
@@ -805,5 +808,8 @@ func tokenlessKey(repoID, runID, runAttempt int64, part string) string {
 func copyCommitReport(cr *store.CommitReport) *store.CommitReport {
 	cp := new(*cr)
 	cp.DiffCoverage = cr.DiffCoverage.Clone()
+	if cr.GateBasePct != nil {
+		cp.GateBasePct = new(*cr.GateBasePct)
+	}
 	return cp
 }

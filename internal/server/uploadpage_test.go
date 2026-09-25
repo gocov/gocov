@@ -377,3 +377,45 @@ func TestAPIUploadPageWithoutProfile(t *testing.T) {
 		t.Errorf("files = %+v, want an empty list", got.Files)
 	}
 }
+
+// On a feature branch the page's baseline (the branch's own previous
+// build) and the gate's drop baseline (the default branch) differ. The
+// verdict's reason must narrate the comparison the gate made, never a drop
+// against the branch's history that the gate did not judge.
+func TestVerdictReasonNarratesTheGatesDropBaseline(t *testing.T) {
+	f := newFixture(t, nil)
+	f.repo.Gate = store.Gate{MaxCoverageDrop: new(float64(2))}
+	if err := f.store.UpdateRepo(t.Context(), f.repo); err != nil {
+		t.Fatal(err)
+	}
+	half := "mode: set\nexample.com/m/a.go:1.1,5.2 5 1\nexample.com/m/a.go:7.1,9.2 5 0\n"
+	full := "mode: set\nexample.com/m/a.go:1.1,5.2 10 3\n"
+	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, half)        // 50%
+	doUpload(t, f, "secret-token", map[string]string{"commit": "f1", "branch": "feat"}, full)        // 100%
+	doUpload(t, f, "secret-token", map[string]string{"commit": "f2", "branch": "feat"}, testProfile) // 80%
+
+	// 80% is 20 points under the branch's previous build but 30 above the
+	// default branch, which is what the drop rule compares against.
+	for _, path := range []string{"/api/ui/uploads/3", "/api/ui/repos/bitbucket/acme/widgets?branch=feat"} {
+		var v verdictDTO
+		if path == "/api/ui/uploads/3" {
+			v = decodeJSON[uploadPageDTO](t, get(f, path)).Verdict
+		} else {
+			v = decodeJSON[repoPageDTO](t, get(f, path)).Summary.Verdict
+		}
+		if v.State != "pass" {
+			t.Errorf("%s: state = %q, want pass", path, v.State)
+		}
+		if want := "Coverage held or rose against the default branch."; v.Reason != want {
+			t.Errorf("%s: reason = %q, want %q", path, v.Reason, want)
+		}
+	}
+
+	up, err := f.store.Upload(t.Context(), 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if up.GateBasePct == nil || *up.GateBasePct != 50 {
+		t.Errorf("upload GateBasePct = %v, want the default branch's 50", up.GateBasePct)
+	}
+}

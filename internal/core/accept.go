@@ -105,7 +105,7 @@ func (p *Pipeline) Accept(ctx context.Context, sub Submission) (*Result, error) 
 		})
 	}
 
-	dropDelta, err := gateDropDelta(ctx, p.Store, sub.Repo, sub.Commit, totalPct)
+	dropBase, err := gateDropBase(ctx, p.Store, sub.Repo, sub.Commit)
 	if err != nil {
 		return nil, err
 	}
@@ -115,8 +115,8 @@ func (p *Pipeline) Accept(ctx context.Context, sub Submission) (*Result, error) 
 	}
 	diffDone.Wait()
 
-	gate := EvaluateGate(sub.Repo.Gate, totalPct, dropDelta, diffResult)
-	upload, files := sub.rows(blobKey, diffResult, gate, covered, total)
+	gate := EvaluateGate(sub.Repo.Gate, totalPct, dropBase, diffResult)
+	upload, files := sub.rows(blobKey, diffResult, gate, dropBase, covered, total)
 	if err := p.Store.CreateUpload(ctx, upload, files); err != nil {
 		// The raw profile was already written; don't leave it orphaned.
 		if delErr := p.Blobs.Delete(ctx, blobKey); delErr != nil {
@@ -251,7 +251,7 @@ func (p *Pipeline) forgeFor(ctx context.Context, repo *store.Repo) (forge.Forge,
 // column still feeds the per-upload web views); the response, forge
 // status, gate and PR comment are driven by the merged report computed
 // after the row is stored.
-func (sub Submission) rows(blobKey string, diff *diffcov.Result, gate Verdict, covered, total int64) (*store.Upload, []*store.UploadFile) {
+func (sub Submission) rows(blobKey string, diff *diffcov.Result, gate Verdict, gateBase *float64, covered, total int64) (*store.Upload, []*store.UploadFile) {
 	upload := &store.Upload{
 		RepoID:       sub.Repo.ID,
 		CommitSHA:    sub.Commit,
@@ -264,6 +264,7 @@ func (sub Submission) rows(blobKey string, diff *diffcov.Result, gate Verdict, c
 		RawBlobKey:   blobKey,
 		DiffCoverage: diff,
 		GateFailed:   gate.Failed(),
+		GateBasePct:  gateBase,
 		PathPrefix:   sub.PathPrefix,
 		Part:         sub.Part,
 		Meta:         sub.Meta,

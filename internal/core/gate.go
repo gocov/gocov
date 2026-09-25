@@ -31,65 +31,79 @@ func (v Verdict) String() string {
 // 56.999999999999993 in float arithmetic).
 const gateEpsilon = 1e-9
 
-// EvaluateGate checks the repo's coverage requirements. dropDelta is the
-// difference to the latest gate-passing upload on the default branch —
-// never a gate-failing upload, so re-running CI cannot launder a failure,
-// and never the branch's own history, so a PR cannot ratchet coverage
-// down within tolerance push by push. The drop and diff rules are
-// fail-open when their inputs are unavailable.
-func EvaluateGate(gate store.Gate, totalPct float64, dropDelta *float64, diff *diffcov.Result) Verdict {
+// Each rule's comparison lives in one predicate, shared by the verdict
+// and the sentence explaining it, so the two cannot disagree.
+
+// belowMin reports whether a measured percentage misses a minimum.
+func belowMin(measured, minimum float64) bool { return measured < minimum-gateEpsilon }
+
+// dropOver reports whether a coverage drop exceeds what the gate allows.
+func dropOver(drop, allowed float64) bool { return drop > allowed+gateEpsilon }
+
+// diffMeasured reports whether there is diff coverage to judge: a PR that
+// touches no covered lines has nothing to measure.
+func diffMeasured(diff *diffcov.Result) bool { return diff != nil && diff.TotalLines > 0 }
+
+// EvaluateGate checks the repo's coverage requirements. dropBase is the
+// total of the gate's drop baseline (gateDropBase): the latest gate-passing
+// report on the default branch — never a gate-failing one, so re-running
+// CI cannot launder a failure, and never the branch's own history, so a PR
+// cannot ratchet coverage down within tolerance push by push. The drop and
+// diff rules are fail-open when their inputs are unavailable.
+func EvaluateGate(gate store.Gate, totalPct float64, dropBase *float64, diff *diffcov.Result) Verdict {
 	res := Verdict{Configured: gate.Configured()}
-	if gate.MinCoverage != nil && totalPct < *gate.MinCoverage-gateEpsilon {
+	if gate.MinCoverage != nil && belowMin(totalPct, *gate.MinCoverage) {
 		res.Failures = append(res.Failures,
 			fmt.Sprintf("total coverage %.4g%% is below the minimum %.4g%%", totalPct, *gate.MinCoverage))
 	}
-	if gate.MaxCoverageDrop != nil && dropDelta != nil && *dropDelta < -*gate.MaxCoverageDrop-gateEpsilon {
+	if gate.MaxCoverageDrop != nil && dropBase != nil && dropOver(*dropBase-totalPct, *gate.MaxCoverageDrop) {
 		res.Failures = append(res.Failures,
-			fmt.Sprintf("coverage dropped %.4g%% (allowed %.4g%%)", -*dropDelta, *gate.MaxCoverageDrop))
+			fmt.Sprintf("coverage dropped %.4g%% (allowed %.4g%%)", *dropBase-totalPct, *gate.MaxCoverageDrop))
 	}
-	if gate.MinDiffCoverage != nil && diff != nil && diff.TotalLines > 0 && diff.Percent() < *gate.MinDiffCoverage-gateEpsilon {
+	if gate.MinDiffCoverage != nil && diffMeasured(diff) && belowMin(diff.Percent(), *gate.MinDiffCoverage) {
 		res.Failures = append(res.Failures,
 			fmt.Sprintf("diff coverage %.4g%% is below the minimum %.4g%%", diff.Percent(), *gate.MinDiffCoverage))
 	}
 	return res
 }
 
-// GateReason narrates the Verdict:  one clause per configured rule, comparing this
-// upload's measured value to the threshold, joined into a sentence. It reads
-// the same whether the gate passed or failed — the clauses themselves say
-// which rule is the problem.
+// GateReason narrates the Verdict: one clause per configured rule, comparing
+// the measured value to the threshold, joined into a sentence. It reads the
+// same whether the gate passed or failed — the clauses themselves say which
+// rule is the problem.
+//
 // subject names the thing being described in the fallback sentences (e.g.
-// "This upload", "The latest commit on this branch") so the same narration
-// serves both the upload page and the repo page. totalPct/diff are the
-// measured values; baseTotal is the baseline's total coverage, valid only
-// when hasBase is true.
-func GateReason(totalPct float64, diff *diffcov.Result, g store.Gate, baseTotal float64, hasBase bool, subject string) string {
+// "This upload", "The latest commit") so the same narration serves the
+// upload page and the repo page. dropBase is the drop baseline the gate
+// was evaluated against, as recorded with the row (GateBasePct); nil leaves
+// the drop rule out, as the gate itself did.
+func GateReason(totalPct float64, diff *diffcov.Result, g store.Gate, dropBase *float64, subject string) string {
 	if !g.Configured() {
 		return fmt.Sprintf("No coverage gate is configured for this repo. %s records %.1f%% total coverage.", subject, totalPct)
 	}
 	var parts []string
 	if g.MinCoverage != nil {
 		rel := "is above"
-		if totalPct < *g.MinCoverage-gateEpsilon {
+		if belowMin(totalPct, *g.MinCoverage) {
 			rel = "is below"
 		}
 		parts = append(parts, fmt.Sprintf("total coverage %s the minimum of %.4g%%", rel, *g.MinCoverage))
 	}
-	if g.MaxCoverageDrop != nil && hasBase {
-		drop := baseTotal - totalPct
+	if g.MaxCoverageDrop != nil && dropBase != nil {
+		drop := *dropBase - totalPct
 		if drop <= gateEpsilon {
-			parts = append(parts, "coverage held or rose against the base")
+			parts = append(parts, "coverage held or rose against the default branch")
 		} else {
 			rel := "under"
-			if drop > *g.MaxCoverageDrop+gateEpsilon {
+			if dropOver(drop, *g.MaxCoverageDrop) {
 				rel = "over"
 			}
-			parts = append(parts, fmt.Sprintf("the drop against the base is %.4g%% — %s the %.4g%% allowed", drop, rel, *g.MaxCoverageDrop))
+			parts = append(parts, fmt.Sprintf("the drop against the default branch is %.4g%% — %s the %.4g%% allowed", drop, rel, *g.MaxCoverageDrop))
 		}
 	}
-	if g.MinDiffCoverage != nil && diff != nil && diff.TotalLines > 0 {
+	if g.MinDiffCoverage != nil && diffMeasured(diff) {
 		rel := "meets"
-		if diff.Percent() < *g.MinDiffCoverage-gateEpsilon {
+		if belowMin(diff.Percent(), *g.MinDiffCoverage) {
 			rel = "is below"
 		}
 		parts = append(parts, fmt.Sprintf("diff coverage %s the %.4g%% minimum", rel, *g.MinDiffCoverage))
