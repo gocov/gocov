@@ -1,6 +1,7 @@
 package diffcov
 
 import (
+	"math/rand/v2"
 	"reflect"
 	"strings"
 	"testing"
@@ -406,4 +407,130 @@ func TestRanges(t *testing.T) {
 			t.Errorf("Ranges(%v) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
+}
+
+func TestDiffPathsTouches(t *testing.T) {
+	diff := NewDiffPaths([]string{"internal/server/upload.go", "main.go"})
+	for _, tc := range []struct {
+		path, prefix string
+		want         bool
+	}{
+		{"internal/server/upload.go", "", true},
+		{"github.com/acme/widgets/internal/server/upload.go", "", true}, // module-qualified profile path
+		{"github.com/acme/widgets/internal/server/upload.go", "github.com/acme/widgets", true},
+		{"github.com/acme/widgets/internal/server/other.go", "github.com/acme/widgets", false},
+		{"main.go", "", true},
+		{"cmd/gocov/main.go", "", false}, // a bare diff name never matches by suffix
+		{"cmd/gocov/main.go", "github.com/acme/widgets", false},
+		{"server/upload.go", "", true}, // package-qualified: the diff path ends with it
+		{"upload.go", "", false},       // ...but never a bare name
+	} {
+		if got := diff.Touches(tc.path, tc.prefix); got != tc.want {
+			t.Errorf("Touches(%q, %q) = %v, want %v", tc.path, tc.prefix, got, tc.want)
+		}
+	}
+	if NewDiffPaths(nil).Touches("main.go", "") {
+		t.Error("an empty diff matched")
+	}
+}
+
+// The indexed pairing must pick exactly what the linear scans it replaced
+// picked, ties and all. Random paths over a tiny alphabet make every kind
+// of collision common: exact hits, several forward candidates of one
+// length, nested reverse candidates, repeated paths.
+func TestIndexedPairingMatchesTheLinearRule(t *testing.T) {
+	rng := rand.New(rand.NewPCG(1, 2))
+	segs := []string{"a", "b", "c", "x.go", "y.go"}
+	path := func() string {
+		n := 1 + rng.IntN(4)
+		parts := make([]string, n)
+		for i := range parts {
+			parts[i] = segs[rng.IntN(len(segs))]
+		}
+		return strings.Join(parts, "/")
+	}
+	for round := range 3000 {
+		files := make([]FileBlocks, rng.IntN(12))
+		for i := range files {
+			files[i] = FileBlocks{Path: path()}
+		}
+		diffPaths := make([]string, 1+rng.IntN(6))
+		for i := range diffPaths {
+			diffPaths[i] = path()
+		}
+		prefix := []string{"", "", "a", "a/b/"}[rng.IntN(4)]
+
+		idx := newProfileIndex(files, prefix)
+		touched := NewDiffPaths(diffPaths)
+		for _, dp := range diffPaths {
+			if got, want := idx.match(dp, prefix), linearMatchFile(files, dp, prefix); got != want {
+				t.Fatalf("round %d: match(%q, prefix %q) over %v = %v, want %v", round, dp, prefix, files, got, want)
+			}
+		}
+		for _, f := range files {
+			if got, want := touched.Touches(f.Path, prefix), linearTouches(f.Path, prefix, diffPaths); got != want {
+				t.Fatalf("round %d: Touches(%q, prefix %q) over %v = %v, want %v", round, f.Path, prefix, diffPaths, got, want)
+			}
+		}
+	}
+}
+
+// linearMatchFile is the pairing as it was written before the index: a
+// scan of every profile file per diff path.
+func linearMatchFile(files []FileBlocks, diffPath, pathPrefix string) *FileBlocks {
+	if pathPrefix != "" {
+		want := strings.TrimSuffix(pathPrefix, "/") + "/" + diffPath
+		for i := range files {
+			if files[i].Path == want || files[i].Path == diffPath {
+				return &files[i]
+			}
+		}
+		return nil
+	}
+	var forward, reverse *FileBlocks
+	for i := range files {
+		fb := &files[i]
+		if fb.Path == diffPath {
+			return fb
+		}
+		if strings.Contains(diffPath, "/") && strings.HasSuffix(fb.Path, "/"+diffPath) {
+			if forward == nil || len(fb.Path) < len(forward.Path) {
+				forward = fb
+			}
+		}
+		if strings.Contains(fb.Path, "/") && strings.HasSuffix(diffPath, "/"+fb.Path) {
+			if reverse == nil || len(fb.Path) > len(reverse.Path) {
+				reverse = fb
+			}
+		}
+	}
+	if forward != nil {
+		return forward
+	}
+	return reverse
+}
+
+// linearTouches is the server's isSourceChanged as it was written before
+// DiffPaths: a scan of every diff path per profile file.
+func linearTouches(fPath, pathPrefix string, diffPaths []string) bool {
+	diffFiles := map[string]bool{}
+	for _, p := range diffPaths {
+		diffFiles[p] = true
+	}
+	if diffFiles[fPath] {
+		return true
+	}
+	if pathPrefix != "" {
+		repoPath, _ := strings.CutPrefix(fPath, strings.TrimSuffix(pathPrefix, "/")+"/")
+		return diffFiles[repoPath]
+	}
+	for dp := range diffFiles {
+		if strings.Contains(dp, "/") && strings.HasSuffix(fPath, "/"+dp) {
+			return true
+		}
+		if strings.Contains(fPath, "/") && strings.HasSuffix(dp, "/"+fPath) {
+			return true
+		}
+	}
+	return false
 }

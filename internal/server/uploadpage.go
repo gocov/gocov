@@ -170,15 +170,14 @@ func (s *Server) buildFilesView(ctx context.Context, upload *store.Upload, base 
 		return nil, err
 	}
 
-	diffFiles := make(map[string]bool)
-	if upload.DiffCoverage != nil {
-		for _, df := range upload.DiffCoverage.Files {
-			diffFiles[df.Path] = true
+	var diffPaths []string
+	if dc := upload.DiffCoverage; dc != nil {
+		for _, df := range dc.Files {
+			diffPaths = append(diffPaths, df.Path)
 		}
-		for _, uf := range upload.DiffCoverage.UnmatchedFiles {
-			diffFiles[uf] = true
-		}
+		diffPaths = append(diffPaths, dc.UnmatchedFiles...)
 	}
+	touched := diffcov.NewDiffPaths(diffPaths)
 
 	// Each row keeps its delta and whether it changed at all, which order
 	// the card but are not sent.
@@ -215,7 +214,7 @@ func (s *Server) buildFilesView(ctx context.Context, upload *store.Upload, base 
 				row.CoverageChanged = true
 			}
 		}
-		row.SourceChanged = isSourceChanged(f.Path, upload.PathPrefix, diffFiles)
+		row.SourceChanged = touched.Touches(f.Path, upload.PathPrefix)
 		row.changed = row.CoverageChanged || row.SourceChanged
 		rows = append(rows, row)
 	}
@@ -247,30 +246,6 @@ func (s *Server) buildFilesView(ctx context.Context, upload *store.Upload, base 
 // deltaEpsilon is the smallest coverage move the UI shows as one: below
 // it a file reads as unchanged rather than as a rounded-away "+0.0%".
 const deltaEpsilon = 0.05
-
-// isSourceChanged reports whether a profile path is one of the diff's files,
-// matching the way diffcov pairs the two: exact (after the upload's path
-// prefix) when a prefix is known, otherwise by a directory-aligned suffix in
-// either direction. A bare file name never matches by suffix — "main.go"
-// in the diff must not flag every main.go in the profile.
-func isSourceChanged(fPath, pathPrefix string, diffFiles map[string]bool) bool {
-	if diffFiles[fPath] {
-		return true
-	}
-	if pathPrefix != "" {
-		repoPath, _ := strings.CutPrefix(fPath, strings.TrimSuffix(pathPrefix, "/")+"/")
-		return diffFiles[repoPath]
-	}
-	for dp := range diffFiles {
-		if strings.Contains(dp, "/") && strings.HasSuffix(fPath, "/"+dp) {
-			return true
-		}
-		if strings.Contains(fPath, "/") && strings.HasSuffix(dp, "/"+fPath) {
-			return true
-		}
-	}
-	return false
-}
 
 // gateVerdict states a coverage standing against the repo's gate, once at
 // the top of the upload page (for that upload) and of the repo page (for

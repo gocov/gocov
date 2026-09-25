@@ -8,6 +8,7 @@ import (
 	"cmp"
 	"fmt"
 	"io"
+	"iter"
 	"maps"
 	"regexp"
 	"slices"
@@ -175,12 +176,13 @@ func targetPath(l string) string {
 // an unrelated one.
 func Compute(files []FileBlocks, added map[string][]int, pathPrefix string) *Result {
 	res := &Result{}
+	idx := newProfileIndex(files, pathPrefix)
 	for _, dp := range slices.Sorted(maps.Keys(added)) {
 		lines := added[dp]
 		if len(lines) == 0 {
 			continue
 		}
-		fb := matchFile(files, dp, pathPrefix)
+		fb := idx.match(dp, pathPrefix)
 		if fb == nil {
 			res.UnmatchedFiles = append(res.UnmatchedFiles, dp)
 			continue
@@ -259,48 +261,141 @@ func inSpans(spans []Span, l int) bool {
 	return i < len(spans) && spans[i].Start <= l
 }
 
-// matchFile finds the coverage entry for a repo-relative diff path.
-// With a pathPrefix the match is exact. Without one, two suffix
-// directions are tried, bare basenames never matching either way:
+// profileIndex finds the coverage entry for a repo-relative diff path,
+// built once per Compute so that pairing every changed file costs its
+// path's depth rather than a scan of every profile file. With a
+// pathPrefix the match is exact. Without one, two suffix directions are
+// tried, bare basenames never matching either way:
 //   - profile path ends with the diff path (module-qualified profiles,
 //     e.g. Go: "example.com/mod/a/b.go" vs "a/b.go"); the shortest
-//     profile path wins, being the least ambiguous.
+//     profile path wins, being the least ambiguous, the first listed on
+//     a tie.
 //   - diff path ends with the profile path (package-qualified profiles,
 //     e.g. JaCoCo: "com/example/Foo.java" vs
 //     "src/main/java/com/example/Foo.java"); the longest profile path
 //     wins, being the most specific.
-func matchFile(files []FileBlocks, diffPath, pathPrefix string) *FileBlocks {
+type profileIndex struct {
+	files  []FileBlocks
+	byPath map[string]int // path → index, the first listed for a repeat
+	// forward maps each directory-aligned suffix with a slash in it to
+	// the profile path the forward rule picks for it.
+	forward map[string]int
+}
+
+func newProfileIndex(files []FileBlocks, pathPrefix string) *profileIndex {
+	idx := &profileIndex{files: files, byPath: make(map[string]int, len(files))}
+	for i, f := range files {
+		if _, seen := idx.byPath[f.Path]; !seen {
+			idx.byPath[f.Path] = i
+		}
+	}
+	if pathPrefix != "" {
+		return idx // exact matching only
+	}
+	idx.forward = map[string]int{}
+	for i, f := range files {
+		for suffix := range dirSuffixes(f.Path) {
+			if !strings.Contains(suffix, "/") {
+				break // shorter suffixes are bare names too
+			}
+			if best, ok := idx.forward[suffix]; !ok || len(f.Path) < len(files[best].Path) {
+				idx.forward[suffix] = i
+			}
+		}
+	}
+	return idx
+}
+
+func (idx *profileIndex) match(diffPath, pathPrefix string) *FileBlocks {
 	if pathPrefix != "" {
 		want := strings.TrimSuffix(pathPrefix, "/") + "/" + diffPath
-		for i := range files {
-			if files[i].Path == want || files[i].Path == diffPath {
-				return &files[i]
-			}
+		i, okWant := idx.byPath[want]
+		j, okDiff := idx.byPath[diffPath]
+		switch {
+		case okWant && (!okDiff || i < j):
+			return &idx.files[i]
+		case okDiff:
+			return &idx.files[j]
 		}
 		return nil
 	}
+	if i, ok := idx.byPath[diffPath]; ok {
+		return &idx.files[i]
+	}
+	if strings.Contains(diffPath, "/") {
+		if i, ok := idx.forward[diffPath]; ok {
+			return &idx.files[i]
+		}
+	}
+	for suffix := range dirSuffixes(diffPath) { // longest first
+		if !strings.Contains(suffix, "/") {
+			break
+		}
+		if i, ok := idx.byPath[suffix]; ok {
+			return &idx.files[i]
+		}
+	}
+	return nil
+}
 
-	var forward, reverse *FileBlocks
-	for i := range files {
-		fb := &files[i]
-		if fb.Path == diffPath {
-			return fb
-		}
-		if strings.Contains(diffPath, "/") && strings.HasSuffix(fb.Path, "/"+diffPath) {
-			if forward == nil || len(fb.Path) < len(forward.Path) {
-				forward = fb
+// dirSuffixes yields the directory-aligned proper suffixes of a path,
+// longest first: "a/b/c.go" yields "b/c.go", then "c.go".
+func dirSuffixes(p string) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		for i := strings.IndexByte(p, '/'); i >= 0; {
+			p = p[i+1:]
+			if !yield(p) {
+				return
 			}
-		}
-		if strings.Contains(fb.Path, "/") && strings.HasSuffix(diffPath, "/"+fb.Path) {
-			if reverse == nil || len(fb.Path) > len(reverse.Path) {
-				reverse = fb
-			}
+			i = strings.IndexByte(p, '/')
 		}
 	}
-	if forward != nil {
-		return forward
+}
+
+// DiffPaths is the set of files a PR's diff touches, asked of profile
+// paths under the same pairing rule Compute uses to bind them, so a file
+// flagged as changed is one diff coverage would have measured.
+type DiffPaths struct {
+	paths map[string]bool
+	// suffixes holds every directory-aligned suffix of every diff path,
+	// for the reverse rule.
+	suffixes map[string]bool
+}
+
+// NewDiffPaths indexes the repo-relative paths of a diff.
+func NewDiffPaths(paths []string) DiffPaths {
+	d := DiffPaths{paths: make(map[string]bool, len(paths)), suffixes: map[string]bool{}}
+	for _, p := range paths {
+		d.paths[p] = true
+		for suffix := range dirSuffixes(p) {
+			d.suffixes[suffix] = true
+		}
 	}
-	return reverse
+	return d
+}
+
+// Touches reports whether the diff touches the file at a profile path:
+// exact (after the upload's path prefix) when a prefix is known,
+// otherwise by a directory-aligned suffix in either direction. A bare
+// file name never matches by suffix — "main.go" in the diff must not
+// flag every main.go in the profile.
+func (d DiffPaths) Touches(profilePath, pathPrefix string) bool {
+	if d.paths[profilePath] {
+		return true
+	}
+	if pathPrefix != "" {
+		repoPath, _ := strings.CutPrefix(profilePath, strings.TrimSuffix(pathPrefix, "/")+"/")
+		return d.paths[repoPath]
+	}
+	for suffix := range dirSuffixes(profilePath) {
+		if !strings.Contains(suffix, "/") {
+			break
+		}
+		if d.paths[suffix] {
+			return true // the profile path ends with a diff path
+		}
+	}
+	return strings.Contains(profilePath, "/") && d.suffixes[profilePath] // a diff path ends with it
 }
 
 // Clone returns a deep copy, so stored results cannot alias caller slices.
