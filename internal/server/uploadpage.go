@@ -141,19 +141,21 @@ type diffCovDTO struct {
 // provenanceDTO is the Upload card: what we recorded about how this upload
 // arrived. Every field degrades to empty for uploads made before the
 // metadata was captured or through the raw API.
+// The card's sentences are the app's to write (web/src/lib/format.ts): it
+// is sent the facts, as numbers and codes.
 type provenanceDTO struct {
 	ReceivedAt   time.Time `json:"received_at"`
 	ProfileName  string    `json:"profile_name"`
-	ProfileSize  string    `json:"profile_size"`
+	ProfileBytes int64     `json:"profile_bytes"` // 0 when not recorded
 	Format       string    `json:"format"`
-	CILabel      string    `json:"ci_label"` // "GitHub Actions", "GitLab CI", "Bitbucket Pipelines"
+	CIProvider   string    `json:"ci_provider"` // "github", "gitlab", "bitbucket"; "" when unknown
 	CIRunURL     string    `json:"ci_run_url"`
 	Uploader     string    `json:"uploader"`
-	UploaderKind string    `json:"uploader_kind"` // "CLI" or "Action"
+	UploaderKind string    `json:"uploader_kind"` // "cli", "action"; "" when unknown
 	Part         string    `json:"part"`          // the upload's part, "" for the default single profile
-	PartsNote    string    `json:"parts_note"`    // "single profile, no merge" or "merged from N parts"
-	Processed    string    `json:"processed"`     // server processing time, "" when not recorded
-	Ignored      string    `json:"ignored"`       // "3 files ignored", "" when no pattern matched
+	Parts        int       `json:"parts"`         // parts merged into the commit's report; 0 when unknown
+	ProcessMs    int64     `json:"process_ms"`    // server processing time; 0 when not recorded
+	IgnoredFiles int       `json:"ignored_files"` // files the ignore patterns dropped
 }
 
 // handleAPIUpload implements GET /api/ui/uploads/{id}.
@@ -219,7 +221,7 @@ func buildFilesView(upload *store.Upload, files []*store.UploadFile, base *store
 				row.BeforeTotalStmts = new(bf.TotalStmts)
 				row.delta = f.Pct - bf.Pct
 				// A move too small to show as a percentage is not a change.
-				if row.delta >= deltaEpsilon || row.delta <= -deltaEpsilon {
+				if coverageMoved(row.delta) {
 					row.CoverageChanged = true
 				}
 				if nm := newlyUncovered(f.Blocks, bf.Blocks); nm != "" {
@@ -260,6 +262,11 @@ func buildFilesView(upload *store.Upload, files []*store.UploadFile, base *store
 	return dto
 }
 
+// coverageMoved reports whether a coverage delta is one the UI shows as a
+// move — the app's trend() draws the same line (web/src/lib/format.ts;
+// testdata/presentation.json pins the two).
+func coverageMoved(delta float64) bool { return delta >= deltaEpsilon || delta <= -deltaEpsilon }
+
 // deltaEpsilon is the smallest coverage move the UI shows as one: below
 // it a file reads as unchanged rather than as a rounded-away "+0.0%".
 const deltaEpsilon = 0.05
@@ -294,14 +301,6 @@ func gateVerdict(subject string, totalPct float64, diff *diffcov.Result, gateFai
 	return v
 }
 
-var ciLabels = map[string]string{
-	"github":    "GitHub Actions",
-	"gitlab":    "GitLab CI",
-	"bitbucket": "Bitbucket Pipelines",
-}
-
-var uploaderKindLabels = map[string]string{"cli": "CLI", "action": "Action"}
-
 // uploadProvenance builds the Upload card from the upload's captured metadata,
 // resolving how many parts merged into the commit for the flags line.
 func (s *Server) uploadProvenance(ctx context.Context, u *store.Upload) provenanceDTO {
@@ -309,35 +308,21 @@ func (s *Server) uploadProvenance(ctx context.Context, u *store.Upload) provenan
 	p := provenanceDTO{
 		ReceivedAt:   u.CreatedAt,
 		ProfileName:  cmp.Or(m.ProfileName, profileFilename(u.Format)),
+		ProfileBytes: m.ProfileBytes,
 		Format:       u.Format,
-		CILabel:      ciLabels[m.CIProvider],
+		CIProvider:   m.CIProvider,
 		CIRunURL:     m.CIRunURL,
 		Uploader:     m.Uploader,
-		UploaderKind: uploaderKindLabels[m.UploaderKind],
-	}
-	if m.ProfileBytes > 0 {
-		p.ProfileSize = humanBytes(m.ProfileBytes)
+		UploaderKind: m.UploaderKind,
+		ProcessMs:    m.ProcessMillis,
+		IgnoredFiles: m.IgnoredFiles,
 	}
 	if u.Part != "" && u.Part != core.DefaultPart {
 		p.Part = u.Part
 	}
-	switch n := m.IgnoredFiles; {
-	case n == 1:
-		p.Ignored = "1 file ignored"
-	case n > 1:
-		p.Ignored = fmt.Sprintf("%d files ignored", n)
-	}
-	switch ms := m.ProcessMillis; {
-	case ms >= 1000:
-		p.Processed = fmt.Sprintf("%.1f s", float64(ms)/1000)
-	case ms > 0:
-		p.Processed = fmt.Sprintf("%d ms", ms)
-	}
 	// Count the parts that fed the commit for the flags line.
-	if parts, err := s.store.CommitParts(ctx, u.RepoID, u.CommitSHA); err == nil && len(parts) > 1 {
-		p.PartsNote = fmt.Sprintf("merged from %d parts", len(parts))
-	} else {
-		p.PartsNote = "single profile, no merge"
+	if parts, err := s.store.CommitParts(ctx, u.RepoID, u.CommitSHA); err == nil {
+		p.Parts = len(parts)
 	}
 	return p
 }

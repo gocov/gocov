@@ -222,14 +222,17 @@ func TestAPIUploadPageProvenance(t *testing.T) {
 		t.Errorf("commit = %+v", got.Upload)
 	}
 	prov := got.Provenance
-	if prov.CILabel != "GitHub Actions" || prov.CIRunURL != "https://github.com/acme/widgets/actions/runs/7" {
+	if prov.CIProvider != "github" || prov.CIRunURL != "https://github.com/acme/widgets/actions/runs/7" {
 		t.Errorf("CI = %+v", prov)
 	}
-	if prov.Uploader != "gocov v1.2.3" || prov.UploaderKind != "Action" {
+	if prov.Uploader != "gocov v1.2.3" || prov.UploaderKind != "action" {
 		t.Errorf("uploader = %+v", prov)
 	}
-	if prov.ProfileName != "coverage.out" || prov.Format != "go" {
+	if prov.ProfileName != "coverage.out" || prov.Format != "go" || prov.ProfileBytes == 0 {
 		t.Errorf("profile = %+v", prov)
+	}
+	if prov.Parts != 1 {
+		t.Errorf("parts = %d, want the commit's one part", prov.Parts)
 	}
 }
 
@@ -327,7 +330,7 @@ func TestAPIUploadPage(t *testing.T) {
 	if got.Files == nil || len(got.Files.Files) != 2 || got.Files.UploadID != 2 {
 		t.Fatalf("files = %+v", got.Files)
 	}
-	if got.Provenance.ProfileName != "coverage.out" || got.Provenance.PartsNote == "" {
+	if got.Provenance.ProfileName != "coverage.out" || got.Provenance.Parts == 0 {
 		t.Errorf("provenance = %+v", got.Provenance)
 	}
 	if got.Provenance.ReceivedAt.IsZero() {

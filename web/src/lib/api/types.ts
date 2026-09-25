@@ -173,7 +173,8 @@ export interface RepoSummary {
   commit: { upload_id: number; sha: string; at: string; branch: string; pr_id: string; is_default: boolean };
   covered_stmts: number;
   total_stmts: number;
-  last_upload: { at: string; ci_label: string } | null;
+  /** ci_provider is a code ("github", "gitlab", "bitbucket"); "" when unknown. */
+  last_upload: { at: string; ci_provider: string } | null;
 }
 
 export interface TrendPoint {
@@ -229,19 +230,26 @@ export interface UploadPage {
   download_url: string | null;
 }
 
+/** How an upload arrived, as facts: the card words them (lib/format). */
 export interface Provenance {
   received_at: string;
   profile_name: string;
-  profile_size: string;
+  /** 0 when not recorded. */
+  profile_bytes: number;
   format: string;
-  ci_label: string;
+  /** "github", "gitlab", "bitbucket"; "" when unknown. */
+  ci_provider: string;
   ci_run_url: string;
   uploader: string;
+  /** "cli", "action"; "" when unknown. */
   uploader_kind: string;
+  /** The upload's part, "" for the default single profile. */
   part: string;
-  parts_note: string;
-  processed: string;
-  ignored: string;
+  /** Parts merged into the commit's report; 0 when unknown. */
+  parts: number;
+  /** Server processing time; 0 when not recorded. */
+  process_ms: number;
+  ignored_files: number;
 }
 
 // ---- GET /api/ui/uploads/{id}/files/{path...} -------------------------------

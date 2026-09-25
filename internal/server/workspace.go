@@ -122,6 +122,10 @@ func ownersOnly(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, msg, http.StatusForbidden)
 }
 
+// appAccount is who the GitHub App's posts appear as. The app names it too
+// (web/src/lib/format.ts); testdata/presentation.json pins the two.
+const appAccount = "gocov[bot]"
+
 // forgeConnection reads the workspace's per-forge connection columns:
 // whether a connection is recorded (a GitHub App installation or a stored
 // grant), whether it is flagged broken, and the account its posts carry

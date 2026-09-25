@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Forge, WorkspaceSettings } from "@/lib/api/types";
-import { forgeLabel, plural } from "@/lib/format";
+import { appAccount, forgeLabel, plural } from "@/lib/format";
 import { Avatar, Button, Chip, LinkButton, Notice } from "@/components/atoms";
 import { Card, ConfirmDialog, IdentityRow } from "@/components/molecules";
 
@@ -98,7 +98,7 @@ export function ReportingCard({ forge, reporting, owner, repoCount, onDisconnect
             (words.install ? (
               <IdentityRow
                 avatar={<Avatar kind="bot" />}
-                id="gocov[bot]"
+                id={appAccount}
                 description={`Posting through the app install${repos}`}
                 chip={<Chip tone="plain">App install</Chip>}
               />
@@ -113,7 +113,7 @@ export function ReportingCard({ forge, reporting, owner, repoCount, onDisconnect
           {state === "broken" && (
             <IdentityRow
               avatar={<Avatar kind={account === "" ? "bot" : "person"} />}
-              id={account === "" ? "gocov[bot]" : `@${account}`}
+              id={account === "" ? appAccount : `@${account}`}
               description={words.install ? `Install removed or suspended on ${forgeName}` : "Grant revoked"}
               chip={<Chip tone="bad">Inactive</Chip>}
             />

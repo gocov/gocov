@@ -161,7 +161,7 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 		summary.Verdict.against(base.UploadID, base.CommitSHA, base.TotalPct)
 	}
 	if lastUpload != nil {
-		summary.LastUpload = &lastUploadDTO{At: lastUpload.CreatedAt, CILabel: ciLabels[lastUpload.Meta.CIProvider]}
+		summary.LastUpload = &lastUploadDTO{At: lastUpload.CreatedAt, CIProvider: lastUpload.Meta.CIProvider}
 		dto.Files = files
 	}
 	dto.Summary = summary
@@ -208,8 +208,8 @@ type repoCommitDTO struct {
 }
 
 type lastUploadDTO struct {
-	At      time.Time `json:"at"`
-	CILabel string    `json:"ci_label"`
+	At         time.Time `json:"at"`
+	CIProvider string    `json:"ci_provider"` // "github", "gitlab", "bitbucket"; "" when unknown
 }
 
 // trendPointDTO is one point of the coverage trend, oldest first.

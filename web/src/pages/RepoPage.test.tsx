@@ -27,7 +27,7 @@ const repo = (over: Partial<RepoPageData> = {}): RepoPageData => ({
     commit: { upload_id: 412, sha: "a1b2c3d4e5f67890", at: now, branch: "main", pr_id: "", is_default: true },
     covered_stmts: 11254,
     total_stmts: 12480,
-    last_upload: { at: now, ci_label: "GitHub Actions" },
+    last_upload: { at: now, ci_provider: "github" },
   },
   trend: [
     { upload_id: 410, sha: "0000aaaa1111bbbb", coverage: 80.9, at: "2026-08-01T10:00:00Z", gate_failed: false },
