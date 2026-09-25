@@ -18,15 +18,6 @@ import (
 // maxSourceBytes bounds source files rendered by the source view.
 const maxSourceBytes = 1 << 20
 
-// sourceLine is one rendered line of the source view.
-type sourceLine struct {
-	No      int
-	Class   string // "hit", "miss" or "" for non-executable lines
-	Count   int    // executions, meaningful only on an executable line
-	Text    string
-	NewMiss bool // uncovered now but covered at the baseline commit
-}
-
 // handleSource implements GET /uploads/{id}/files/{path...} — the file's
 // source at the upload's commit with per-line coverage overlay. The
 // upload decides access, exactly as on the upload page; which paths the
@@ -39,25 +30,12 @@ func (s *Server) handleSource(w http.ResponseWriter, r *http.Request) {
 	s.serveApp(w, r, http.StatusOK, sourcePageHead(r.PathValue("path")))
 }
 
-// sourcePageData is one file's source at an upload's commit with its
-// coverage overlay, as read from the store and the forge. The UI API
-// hands the lines over as they are; the folds and the miss rail are the
-// client's to draw.
-type sourcePageData struct {
-	Repo   *store.Repo
-	Upload *store.Upload
-	File   *store.UploadFile
-	// Unavailable is why no source could be shown; Lines is then empty.
-	Unavailable string
-	Lines       []sourceLine
-	// Delta is the file's coverage against the baseline commit, nil when
-	// there is no baseline (or no source to compare line by line).
-	Delta *float64
-}
-
-// buildSourcePage assembles the source view. A false second result means
-// the answer is already written.
-func (s *Server) buildSourcePage(w http.ResponseWriter, r *http.Request) (*sourcePageData, bool) {
+// buildSourcePage assembles the source view for the app: one file's source
+// at an upload's commit with its coverage overlay, read from the store and
+// the forge. The lines go over as they are; the folds and the miss rail are
+// the client's to draw. A false second result means the answer is already
+// written.
+func (s *Server) buildSourcePage(w http.ResponseWriter, r *http.Request) (*sourcePageDTO, bool) {
 	upload, repo, ok := s.reportUpload(w, r)
 	if !ok {
 		return nil, false
@@ -76,17 +54,29 @@ func (s *Server) buildSourcePage(w http.ResponseWriter, r *http.Request) (*sourc
 	}
 
 	source, unavailable := s.fetchSource(r, repo, upload, file)
-	d := &sourcePageData{Repo: repo, Upload: upload, File: file, Unavailable: unavailable}
+	dto := &sourcePageDTO{
+		Repo:   newRepoRefDTO(repo),
+		Upload: sourceUploadDTO{ID: upload.ID, SHA: upload.CommitSHA},
+		File: sourceFileDTO{
+			Path:         file.Path,
+			Coverage:     file.Pct,
+			CoveredStmts: file.CoveredStmts,
+			TotalStmts:   file.TotalStmts,
+		},
+		Unavailable: unavailable,
+		Uncovered:   uncoveredRanges(file.Blocks),
+		Lines:       []sourceLineDTO{},
+	}
 	if unavailable == "" {
-		d.Lines = renderSourceLines(source, file.Blocks)
+		dto.Lines = renderSourceLines(source, file.Blocks)
 		// Compare against the file at the previous baseline commit to flag
 		// regressions and show a coverage delta.
 		if base := s.baseFileFor(r.Context(), repo, upload, file.Path); base != nil {
-			markNewlyUncovered(d.Lines, base.Blocks)
-			d.Delta = new(file.Pct - base.Pct)
+			markNewlyUncovered(dto.Lines, base.Blocks)
+			dto.Delta = new(file.Pct - base.Pct)
 		}
 	}
-	return d, true
+	return dto, true
 }
 
 // sourcePageDTO is the source view for the app: the lines with their
@@ -122,37 +112,17 @@ type sourceLineDTO struct {
 	No      int    `json:"no"`
 	Text    string `json:"text"`
 	Hits    *int   `json:"hits"`
-	NewMiss bool   `json:"new_miss"`
+	NewMiss bool   `json:"new_miss"` // uncovered now but covered at the baseline commit
 }
+
+// missed reports an executable line that did not run.
+func (l sourceLineDTO) missed() bool { return l.Hits != nil && *l.Hits == 0 }
 
 // handleAPISource implements GET /api/ui/uploads/{id}/files/{path...}.
 func (s *Server) handleAPISource(w http.ResponseWriter, r *http.Request) {
-	d, ok := s.buildSourcePage(w, r)
-	if !ok {
-		return
+	if dto, ok := s.buildSourcePage(w, r); ok {
+		s.writeJSON(w, dto)
 	}
-	dto := sourcePageDTO{
-		Repo:   newRepoRefDTO(d.Repo),
-		Upload: sourceUploadDTO{ID: d.Upload.ID, SHA: d.Upload.CommitSHA},
-		File: sourceFileDTO{
-			Path:         d.File.Path,
-			Coverage:     d.File.Pct,
-			CoveredStmts: d.File.CoveredStmts,
-			TotalStmts:   d.File.TotalStmts,
-		},
-		Delta:       d.Delta,
-		Unavailable: d.Unavailable,
-		Uncovered:   uncoveredRanges(d.File.Blocks),
-		Lines:       make([]sourceLineDTO, 0, len(d.Lines)),
-	}
-	for _, line := range d.Lines {
-		l := sourceLineDTO{No: line.No, Text: line.Text, NewMiss: line.NewMiss}
-		if line.Class != "" { // executable: a statement block spans it
-			l.Hits = new(line.Count)
-		}
-		dto.Lines = append(dto.Lines, l)
-	}
-	s.writeJSON(w, dto)
 }
 
 // fetchSource returns the file content at the upload's commit, preferring
@@ -334,21 +304,17 @@ func (s *Server) validateSource(content []byte) ([]byte, string) {
 // renderSourceLines overlays coverage blocks onto source lines. A line is
 // executable when any block spans it; it is covered when any such block
 // has a positive count — the same rule diff coverage uses.
-func renderSourceLines(source []byte, blocks []profile.Block) []sourceLine {
+func renderSourceLines(source []byte, blocks []profile.Block) []sourceLineDTO {
 	text := strings.TrimSuffix(string(source), "\n")
 	rawLines := strings.Split(text, "\n")
 	counts := lineCounts(blocks, len(rawLines))
 
-	lines := make([]sourceLine, 0, len(rawLines))
+	lines := make([]sourceLineDTO, 0, len(rawLines))
 	for i, raw := range rawLines {
 		no := i + 1
-		line := sourceLine{No: no, Text: strings.TrimSuffix(raw, "\r")}
+		line := sourceLineDTO{No: no, Text: strings.TrimSuffix(raw, "\r")}
 		if n, executable := counts[no]; executable {
-			line.Count = n
-			line.Class = "miss"
-			if n > 0 {
-				line.Class = "hit"
-			}
+			line.Hits = new(n)
 		}
 		lines = append(lines, line)
 	}
@@ -392,11 +358,11 @@ func (s *Server) baseFileFor(ctx context.Context, repo *store.Repo, u *store.Upl
 // markNewlyUncovered flags each line that is uncovered now but was covered
 // at the baseline, and returns how many. Matching is by line number, so it
 // surfaces regressions on a best-effort basis without a full diff.
-func markNewlyUncovered(lines []sourceLine, baseBlocks []profile.Block) int {
+func markNewlyUncovered(lines []sourceLineDTO, baseBlocks []profile.Block) int {
 	baseCounts := lineCounts(baseBlocks, len(lines))
 	n := 0
 	for i := range lines {
-		if lines[i].Class == "miss" && baseCounts[lines[i].No] > 0 {
+		if lines[i].missed() && baseCounts[lines[i].No] > 0 {
 			lines[i].NewMiss = true
 			n++
 		}

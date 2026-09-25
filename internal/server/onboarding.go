@@ -193,8 +193,7 @@ type setupFirstReportDTO struct {
 	TotalStmts   int64      `json:"total_stmts"`
 }
 
-// newSetupStatusDTO assembles the polled half of the setup screen, the
-// same reading setupViewData takes.
+// newSetupStatusDTO assembles the polled half of the setup screen.
 func (s *Server) newSetupStatusDTO(r *http.Request, ws *store.Workspace) (setupStatusDTO, error) {
 	repos, err := s.workspaceRepos(r, ws)
 	if err != nil {

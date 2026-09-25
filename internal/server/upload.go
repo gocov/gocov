@@ -1,8 +1,9 @@
 // The upload endpoint: the one write path into gocov. A CI job posts a
 // coverage profile here, and this file runs it end to end — authenticate,
 // read and validate the request, parse the profile, store it, merge the
-// commit's parts, then report back to the uploader. The steps it delegates
-// live next door: gate.go, merge.go, forgepush.go and uploadrepo.go.
+// commit's parts, then report back to the uploader. The coverage pipeline
+// itself is internal/core (Pipeline.Accept); registering a repo on its
+// first upload lives next door in uploadrepo.go.
 
 package server
 

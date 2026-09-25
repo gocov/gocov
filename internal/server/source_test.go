@@ -282,13 +282,13 @@ func TestRenderSourceLines(t *testing.T) {
 	if len(lines) != 4 {
 		t.Fatalf("lines = %d, want 4", len(lines))
 	}
-	if lines[0].Class != "hit" || lines[0].Count != 3 {
+	if lines[0].Hits == nil || *lines[0].Hits != 3 {
 		t.Errorf("line 1 = %+v", lines[0])
 	}
-	if lines[2].Class != "" || lines[2].Count != 0 {
+	if lines[2].Hits != nil {
 		t.Errorf("line 3 must be neutral: %+v", lines[2])
 	}
-	if lines[3].Class != "miss" {
+	if !lines[3].missed() {
 		t.Errorf("line 4 = %+v", lines[3])
 	}
 	// Overlapping blocks: a line ran if any block over it did, and shows the
@@ -298,7 +298,7 @@ func TestRenderSourceLines(t *testing.T) {
 		{StartLine: 2, EndLine: 2, NumStmts: 1, Count: 5},
 		{StartLine: 2, EndLine: 2, NumStmts: 1, Count: 2},
 	})
-	if overlap[0].Class != "miss" || overlap[1].Class != "hit" || overlap[1].Count != 5 {
+	if !overlap[0].missed() || overlap[1].Hits == nil || *overlap[1].Hits != 5 {
 		t.Errorf("overlapping blocks = %+v", overlap)
 	}
 	// Blocks beyond EOF must not panic.

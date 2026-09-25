@@ -22,72 +22,18 @@ import (
 
 const dashStaleAfter = 14 * 24 * time.Hour
 
-// dashboardView is the whole page: the selected workspace, the switcher over
-// all groups the viewer can pick, the selected group's repos, and the rollups
-// (stats + needs-attention) derived from them.
-type dashboardView struct {
-	Current   *wsGroup
-	Switcher  []*wsGroup
-	Repos     []*dashRepo
-	Stats     dashStats
-	Attention []attnItem
+// dashGroup is one switcher group while the dashboard is assembled: a
+// workspace (tracked or not) and the visible repos bucketed into it.
+type dashGroup struct {
+	key   wsKey
+	ws    *store.Workspace // nil for an untracked group
+	repos []*store.Repo
 }
 
-// wsGroup is one workspace in the switcher — its identity, a repo count, and a
-// weighted-coverage rollup so the picker previews each workspace's health.
-type wsGroup struct {
-	Prefix    string
-	Forge     string
-	Workspace *store.Workspace
-	ForgeName string // GitHub / Bitbucket / GitLab
-	RepoCount int
-	HasCov    bool
-	Pct       float64
-	Current   bool
-
-	repos []*store.Repo // repos bucketed into this group (assembly-only)
-}
-
-// dashRepo is one row of the repositories table.
-type dashRepo struct {
-	Repo   *store.Repo
-	Name   string // slug with the workspace prefix trimmed
-	Latest *store.CommitReport
-	Gate   string // pass / fail / ""
-	Stale  bool
-	Series []float64 // the sparkline's points, for the app to plot
-
-	HasReport bool
-	CovVal    float64
-	HasDelta  bool
-	DropVal   float64
-}
-
-// dashStats is the three-up rollup above the tables.
-type dashStats struct {
-	HasCoverage    bool
-	CoveragePct    float64
-	GatesPassing   int
-	GatesTotal     int
-	StaleCount     int
-	ReportingSub   string // "gocov[bot]", the granting account, or ""
-	ReportingState string // on / off / broken / "" (styling)
-}
-
-// attnItem is one needs-attention notice as data: which condition raised
-// it, the repo it is about and the numbers behind it. The app writes the
-// sentence.
-type attnItem struct {
-	cause       string // failing / stale
-	name        string // repo name as the table shows it
-	repo        *store.Repo
-	coverage    *float64
-	minCoverage *float64
-	staleDays   *int
-}
-
-// dashboardDTO is the dashboard as the app reads it: the assembly below,
-// minus the sentences.
+// dashboardDTO is the dashboard as the app reads it: the selected
+// workspace, the switcher over every group the viewer can pick, the
+// selected group's repos, and the rollups (stats + needs-attention)
+// derived from them — minus the sentences, which are the app's to write.
 type dashboardDTO struct {
 	// NeedsOnboarding is the state a hosted user with no workspace lands
 	// in: the app routes itself to onboarding. The rest is then empty.
@@ -147,13 +93,13 @@ type attentionDTO struct {
 	StaleDays   *int     `json:"stale_days"`
 }
 
-// reportingStates maps the styling state the dashboard computes to the
-// word the API reports it with.
+// reportingStates maps a workspace's reporting state to the word the
+// dashboard reports it with.
 var reportingStates = map[string]string{"on": "connected", "off": "not_connected", "broken": "broken"}
 
 // handleAPIDashboard implements GET /api/ui/dashboard?ws=.
 func (s *Server) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
-	dto := dashboardDTO{
+	dto := &dashboardDTO{
 		// A signed-in user may register a workspace; an open instance has
 		// no identity to register from.
 		CanOnboard: currentUser(r) != nil,
@@ -175,85 +121,22 @@ func (s *Server) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, dto)
 		return
 	}
-	dash, err := s.buildDashboard(r, strings.TrimSpace(r.FormValue("ws")), scope, tracked)
-	if err != nil {
+	if err := s.buildDashboard(r, dto, strings.TrimSpace(r.FormValue("ws")), scope, tracked); err != nil {
 		s.internalError(w, "building dashboard", err)
 		return
-	}
-	if dash == nil { // no repos and no workspaces at all
-		s.writeJSON(w, dto)
-		return
-	}
-
-	for _, g := range dash.Switcher {
-		dto.Switcher = append(dto.Switcher, newWSGroupDTO(g))
-	}
-	if dash.Current != nil {
-		cur := newWSGroupDTO(dash.Current)
-		dto.Current = &cur
-	}
-	for _, row := range dash.Repos {
-		repo := dashRepoDTO{
-			Forge:    row.Repo.Forge,
-			Slug:     row.Repo.Slug,
-			Name:     row.Name,
-			Coverage: optPct(row.HasReport, row.CovVal),
-			Delta:    optPct(row.HasDelta, row.DropVal),
-			Gate:     cmp.Or(row.Gate, "none"),
-			Stale:    row.Stale,
-			Series:   row.Series,
-		}
-		if repo.Series == nil {
-			repo.Series = []float64{}
-		}
-		if row.Latest != nil {
-			repo.UploadedAt = &row.Latest.CreatedAt
-		}
-		dto.Repos = append(dto.Repos, repo)
-	}
-	for _, item := range dash.Attention {
-		dto.Attention = append(dto.Attention, attentionDTO{
-			Kind:        item.cause,
-			Forge:       item.repo.Forge,
-			Slug:        item.repo.Slug,
-			Name:        item.name,
-			Coverage:    item.coverage,
-			MinCoverage: item.minCoverage,
-			StaleDays:   item.staleDays,
-		})
-	}
-	dto.Stats = dashStatsDTO{
-		Coverage:     optPct(dash.Stats.HasCoverage, dash.Stats.CoveragePct),
-		GatesPassing: dash.Stats.GatesPassing,
-		GatesTotal:   dash.Stats.GatesTotal,
-		StaleCount:   dash.Stats.StaleCount,
-		Reporting:    reportingStates[dash.Stats.ReportingState],
-		ReportingAs:  dash.Stats.ReportingSub,
 	}
 	s.writeJSON(w, dto)
 }
 
-func newWSGroupDTO(g *wsGroup) wsGroupDTO {
-	return wsGroupDTO{
-		Forge:     g.Forge,
-		Prefix:    g.Prefix,
-		ForgeName: g.ForgeName,
-		RepoCount: g.RepoCount,
-		Coverage:  optPct(g.HasCov, g.Pct),
-		Current:   g.Current,
-		Tracked:   g.Workspace != nil,
-	}
-}
-
-// buildDashboard assembles the dashboard for the given ?ws selection. Returns a
-// nil view when the viewer has no repos and no tracked workspaces at all (the
-// template then shows the empty state). tracked is viewerWorkspaces and scope
-// is derived from it, both resolved once by the handler.
-func (s *Server) buildDashboard(r *http.Request, selected string, scope repoScope, tracked []*store.Workspace) (*dashboardView, error) {
+// buildDashboard fills the dashboard for the given ?ws selection. With no
+// repos and no tracked workspaces at all it leaves dto empty, which the
+// app shows as the empty state. tracked is viewerWorkspaces and scope is
+// derived from it, both resolved once by the handler.
+func (s *Server) buildDashboard(r *http.Request, dto *dashboardDTO, selected string, scope repoScope, tracked []*store.Workspace) error {
 	ctx := r.Context()
 	repos, err := s.store.ListRepos(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Seed groups from the viewer's tracked workspaces so a workspace with no
@@ -261,18 +144,18 @@ func (s *Server) buildDashboard(r *http.Request, selected string, scope repoScop
 	// creating an untracked group for any prefix that has no workspace row.
 	// Groups are keyed by wsKey: the GitHub org and the GitLab group of
 	// one name are two workspaces, and the switcher lists both.
-	groups := map[wsKey]*wsGroup{}
+	groups := map[wsKey]*dashGroup{}
 	order := []wsKey{}
-	add := func(prefix, forge string, ws *store.Workspace) *wsGroup {
+	add := func(prefix, forge string, ws *store.Workspace) *dashGroup {
 		key := wsKey{forge, prefix}
 		g := groups[key]
 		if g == nil {
-			g = &wsGroup{Prefix: prefix, Forge: forge, Workspace: ws}
+			g = &dashGroup{key: key, ws: ws}
 			groups[key] = g
 			order = append(order, key)
 		}
-		if ws != nil && g.Workspace == nil {
-			g.Workspace = ws
+		if ws != nil && g.ws == nil {
+			g.ws = ws
 		}
 		return g
 	}
@@ -287,7 +170,7 @@ func (s *Server) buildDashboard(r *http.Request, selected string, scope repoScop
 		g.repos = append(g.repos, repo)
 	}
 	if len(order) == 0 {
-		return nil, nil
+		return nil
 	}
 	slices.SortFunc(order, func(a, b wsKey) int {
 		return cmp.Or(cmp.Compare(a.forge, b.forge), cmp.Compare(a.prefix, b.prefix))
@@ -301,16 +184,16 @@ func (s *Server) buildDashboard(r *http.Request, selected string, scope repoScop
 		cur = groups[order[0]]
 	}
 
-	dv := &dashboardView{Current: cur}
 	for _, k := range order {
-		g := groups[k]
-		s.fillGroupMeta(ctx, g)
-		g.Current = g == cur
-		dv.Switcher = append(dv.Switcher, g)
+		g := s.groupDTO(ctx, groups[k])
+		g.Current = groups[k] == cur
+		dto.Switcher = append(dto.Switcher, g)
+		if g.Current {
+			dto.Current = &g
+		}
 	}
-
-	s.fillCurrent(r, dv)
-	return dv, nil
+	s.fillCurrent(r, dto, cur)
+	return nil
 }
 
 // viewerWorkspaces lists the workspaces the switcher may offer: the signed-in
@@ -337,12 +220,11 @@ func (s *Server) groupPrefix(repo *store.Repo, tracked []*store.Workspace) strin
 	return repo.Slug
 }
 
-// fillGroupMeta computes a group's switcher preview: repo count and weighted
-// coverage over its repos' latest default-branch reports. This runs for every
+// groupDTO is a group's switcher entry: its identity, a repo count, and a
+// weighted-coverage rollup over its repos' latest default-branch reports,
+// so the picker previews each workspace's health. This runs for every
 // group, so it stays to one report lookup per repo.
-func (s *Server) fillGroupMeta(ctx context.Context, g *wsGroup) {
-	g.ForgeName = providerLabels[g.Forge]
-	g.RepoCount = len(g.repos)
+func (s *Server) groupDTO(ctx context.Context, g *dashGroup) wsGroupDTO {
 	var covered, total int64
 	for _, repo := range g.repos {
 		latest, err := s.store.LatestCommitReport(ctx, repo.ID, repo.DefaultBranch)
@@ -352,133 +234,127 @@ func (s *Server) fillGroupMeta(ctx context.Context, g *wsGroup) {
 		covered += latest.CoveredStmts
 		total += latest.TotalStmts
 	}
-	if total > 0 {
-		g.HasCov = true
-		g.Pct = profile.Percent(covered, total)
+	return wsGroupDTO{
+		Forge:     g.key.forge,
+		Prefix:    g.key.prefix,
+		ForgeName: providerLabels[g.key.forge],
+		RepoCount: len(g.repos),
+		Coverage:  optPct(total > 0, profile.Percent(covered, total)),
+		Tracked:   g.ws != nil,
 	}
 }
 
 // fillCurrent builds the selected group's repo rows, the stat rollup and the
 // needs-attention list. Repos in the selected group get the full treatment
 // (delta + sparkline), reading each branch's recent reports once.
-func (s *Server) fillCurrent(r *http.Request, dv *dashboardView) {
+func (s *Server) fillCurrent(r *http.Request, dto *dashboardDTO, cur *dashGroup) {
 	ctx := r.Context()
-	cur := dv.Current
 	var covered, total int64
 	for _, repo := range cur.repos {
 		reports, err := s.store.ListBranchCommitReports(ctx, repo.ID, repo.DefaultBranch, trendReportLimit)
 		if err != nil {
 			continue
 		}
-		row := &dashRepo{
-			Repo: repo,
-			Name: strings.TrimPrefix(repo.Slug, cur.Prefix+"/"),
+		row := dashRepoDTO{
+			Forge:  repo.Forge,
+			Slug:   repo.Slug,
+			Name:   strings.TrimPrefix(repo.Slug, cur.key.prefix+"/"),
+			Gate:   "none",
+			Series: sparkSeries(reports),
 		}
-		var latest *store.CommitReport
-		if len(reports) > 0 {
-			latest = reports[0]
-			row.Latest = latest
-			row.HasReport = true
-			row.CovVal = latest.TotalPct
+		latest, base := core.ReportBaseline(reports)
+		if latest != nil {
+			row.Coverage = new(latest.TotalPct)
+			row.UploadedAt = new(latest.CreatedAt)
+			row.Stale = time.Since(latest.CreatedAt) > dashStaleAfter
 			covered += latest.CoveredStmts
 			total += latest.TotalStmts
-		}
-		stale := latest != nil && time.Since(latest.CreatedAt) > dashStaleAfter
-		row.Stale = stale
-		if repo.Gate.Configured() && latest != nil {
-			row.Gate = "pass"
-			if latest.GateFailed {
-				row.Gate = "fail"
+			if repo.Gate.Configured() {
+				row.Gate = "pass"
+				if latest.GateFailed {
+					row.Gate = "fail"
+				}
 			}
 		}
-		if _, base := core.ReportBaseline(reports); base != nil {
-			row.HasDelta = true
-			row.DropVal = latest.TotalPct - base.TotalPct
+		if base != nil {
+			row.Delta = new(latest.TotalPct - base.TotalPct)
 		}
-		row.Series = sparkSeries(reports)
-
-		dv.Repos = append(dv.Repos, row)
-		s.collectAttention(dv, repo, row, latest, stale)
+		dto.Repos = append(dto.Repos, row)
+		dto.Attention = append(dto.Attention, attention(repo, row, latest)...)
 	}
 
 	// Default order: lowest coverage first (repos without a report sort last),
 	// so the rows needing work lead. The client re-sorts on the sort control.
-	slices.SortStableFunc(dv.Repos, func(a, b *dashRepo) int {
-		if (a.Latest == nil) != (b.Latest == nil) {
-			if a.Latest != nil {
+	slices.SortStableFunc(dto.Repos, func(a, b dashRepoDTO) int {
+		if (a.Coverage == nil) != (b.Coverage == nil) {
+			if a.Coverage != nil {
 				return -1
 			}
 			return 1
 		}
-		if a.Latest == nil {
+		if a.Coverage == nil {
 			return cmp.Compare(a.Name, b.Name)
 		}
-		return cmp.Compare(a.Latest.TotalPct, b.Latest.TotalPct)
+		return cmp.Compare(*a.Coverage, *b.Coverage)
 	})
 
 	// Attention reads most-severe first: failing, then stale, then no-gate.
-	slices.SortStableFunc(dv.Attention, func(a, b attnItem) int {
-		return cmp.Compare(attnRank(a.cause), attnRank(b.cause))
+	slices.SortStableFunc(dto.Attention, func(a, b attentionDTO) int {
+		return cmp.Compare(attnRank(a.Kind), attnRank(b.Kind))
 	})
 
-	dv.Stats = dashStats{}
-	for _, row := range dv.Repos {
+	dto.Stats = dashStatsDTO{Coverage: optPct(total > 0, profile.Percent(covered, total))}
+	for _, row := range dto.Repos {
 		if row.Stale {
-			dv.Stats.StaleCount++
+			dto.Stats.StaleCount++
+		}
+		if row.Gate != "none" {
+			dto.Stats.GatesTotal++
+			if row.Gate == "pass" {
+				dto.Stats.GatesPassing++
+			}
 		}
 	}
-	if total > 0 {
-		dv.Stats.HasCoverage = true
-		dv.Stats.CoveragePct = profile.Percent(covered, total)
-	}
-	for _, row := range dv.Repos {
-		if row.Gate == "" {
-			continue
-		}
-		dv.Stats.GatesTotal++
-		if row.Gate == "pass" {
-			dv.Stats.GatesPassing++
-		}
-	}
-	s.fillReporting(&dv.Stats, cur)
+	dto.Stats.Reporting, dto.Stats.ReportingAs = dashReporting(cur.ws)
 }
 
-// collectAttention appends the needs-attention entries a repo warrants: a
-// failing gate or a stale feed — things that happened. A repo without a gate
-// is a standing choice, not an event: listing it made the section permanent,
-// and a notice that is always there stops being read. The table still offers
-// "Set a gate" on its row and counts it under the No gate filter.
-func (s *Server) collectAttention(dv *dashboardView, repo *store.Repo, row *dashRepo, latest *store.CommitReport, stale bool) {
+// attention returns the needs-attention entries a repo warrants: a failing
+// gate or a stale feed — things that happened. A repo without a gate is a
+// standing choice, not an event: listing it made the section permanent,
+// and a notice that is always there stops being read. The table still
+// offers "Set a gate" on its row and counts it under the No gate filter.
+func attention(repo *store.Repo, row dashRepoDTO, latest *store.CommitReport) []attentionDTO {
+	var out []attentionDTO
+	item := func(kind string) attentionDTO {
+		return attentionDTO{Kind: kind, Forge: repo.Forge, Slug: repo.Slug, Name: row.Name, Coverage: new(latest.TotalPct)}
+	}
 	if row.Gate == "fail" {
-		dv.Attention = append(dv.Attention, attnItem{
-			cause: "failing", name: row.Name, repo: repo,
-			coverage: &latest.TotalPct, minCoverage: repo.Gate.MinCoverage,
-		})
+		a := item("failing")
+		a.MinCoverage = repo.Gate.MinCoverage
+		out = append(out, a)
 	}
-	if stale {
-		days := int(time.Since(latest.CreatedAt).Hours() / 24)
-		dv.Attention = append(dv.Attention, attnItem{
-			cause: "stale", name: row.Name, repo: repo,
-			coverage: &latest.TotalPct, staleDays: &days,
-		})
+	if row.Stale {
+		a := item("stale")
+		a.StaleDays = new(int(time.Since(latest.CreatedAt).Hours() / 24))
+		out = append(out, a)
 	}
+	return out
 }
 
-// fillReporting sets the Reporting stat from the current group's tracked
-// workspace connection. Untracked groups (or deployments without a one-click
-// mechanism) read as not connected, and only a working connection names
-// who it posts as.
-func (s *Server) fillReporting(st *dashStats, g *wsGroup) {
-	st.ReportingState = "off"
-	if g.Workspace == nil {
-		return
+// dashReporting is the Reporting stat for the current group's tracked
+// workspace connection. Untracked groups (or deployments without a
+// one-click mechanism) read as not connected, and only a working
+// connection names who it posts as.
+func dashReporting(ws *store.Workspace) (state, as string) {
+	if ws == nil {
+		return reportingStates["off"], ""
 	}
-	state, account := reportingState(g.Workspace)
-	st.ReportingState = state
+	state, account := reportingState(ws)
 	if state == "on" {
 		// The GitHub App has no granting account; it posts as its bot.
-		st.ReportingSub = cmp.Or(account, "gocov[bot]")
+		as = cmp.Or(account, "gocov[bot]")
 	}
+	return reportingStates[state], as
 }
 
 func attnRank(cause string) int {
@@ -492,9 +368,9 @@ func attnRank(cause string) int {
 // points the dashboard plots as a sparkline and hands the app to draw its
 // own. PR reports are excluded — the series follows the branch's own
 // commits — and only the last dozen points are kept, since older ones
-// crowd the glyph.
+// crowd the glyph. Never nil: a repo without reports plots an empty series.
 func sparkSeries(reports []*store.CommitReport) []float64 {
-	var series []float64
+	series := []float64{}
 	for _, report := range slices.Backward(reports) {
 		if report.PRID == "" {
 			series = append(series, report.TotalPct)
