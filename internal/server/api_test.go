@@ -191,6 +191,7 @@ func TestAPINeverLeaksTokens(t *testing.T) {
 		"/api/ui/login?denied=1",
 		"/api/ui/dashboard",
 		"/api/ui/repos/bitbucket/acme/widgets",
+		"/api/ui/repo-uploads/bitbucket/acme/widgets",
 		"/api/ui/uploads/1",
 		"/api/ui/uploads/1/files/a.go",
 		"/api/ui/workspace-settings/bitbucket/acme",

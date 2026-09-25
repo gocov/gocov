@@ -31,9 +31,11 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 }
 
 // buildRepoPage assembles the repo page for the app: the standing of the
-// selected branch, the trend behind it, the files of its latest report and
-// a page of uploads. A false second result means the answer — a not-found,
-// a refusal or an internal error — is already written.
+// selected branch, the trend behind it and the files of its latest report.
+// The upload history pages through its own endpoint (handleAPIRepoUploads), so
+// turning a page reads only the uploads. A false second result means the
+// answer — a not-found, a refusal or an internal error — is already
+// written.
 func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPageDTO, bool) {
 	repo, member, ok := s.reportRepo(w, r)
 	if !ok {
@@ -41,49 +43,28 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 	}
 
 	branch := r.FormValue("branch")
-	page, _ := strconv.Atoi(r.FormValue("page"))
-	if page < 0 {
-		page = 0
-	}
 
 	// The page's reads are independent of each other, so they run side by
-	// side: the recent uploads (the branch selector), the page of history,
-	// the trend with the files view hanging off its latest report, and the
-	// settings button's workspace lookup.
-	limit := (page+1)*uploadsPageSize + 1
+	// side: the recent uploads (the branch selector), the trend with the
+	// files view hanging off its latest report, and the settings button's
+	// workspace lookup.
 	// The trend follows the page's branch filter, defaulting to the
 	// repo's default branch when "All branches" is selected.
 	trendBranch := cmp.Or(branch, repo.DefaultBranch)
 	var (
-		wg                    sync.WaitGroup
-		recent, fetched       []*store.Upload
-		recentErr, fetchedErr error
-		trendReports          []*store.CommitReport
-		trendErr              error
-		latest, base          *store.CommitReport
-		lastUpload            *store.Upload
-		files                 *filesViewDTO
-		canSettings           bool
+		wg           sync.WaitGroup
+		recent       []*store.Upload
+		recentErr    error
+		trendReports []*store.CommitReport
+		trendErr     error
+		latest, base *store.CommitReport
+		lastUpload   *store.Upload
+		files        *filesViewDTO
+		canSettings  bool
 	)
-	// Fetch one page beyond the current one so "Older" knows whether to
-	// render; the recent list also feeds the branch selector.
 	wg.Go(func() {
 		recent, recentErr = s.store.ListUploads(r.Context(), repo.ID, recentUploads)
 	})
-	switch {
-	case branch != "":
-		wg.Go(func() {
-			fetched, fetchedErr = s.store.ListBranchUploads(r.Context(), repo.ID, branch, limit)
-		})
-	case limit > recentUploads:
-		// The recent fetch doubles as the history only while it also
-		// covers the sentinel row; at limit == recentUploads+1 it is one
-		// row short of deciding "Older" and would hide the link with pages
-		// still to come.
-		wg.Go(func() {
-			fetched, fetchedErr = s.store.ListUploads(r.Context(), repo.ID, limit)
-		})
-	}
 	wg.Go(func() {
 		trendReports, trendErr = s.store.ListBranchCommitReports(r.Context(), repo.ID, trendBranch, trendReportLimit)
 		if trendErr != nil {
@@ -129,27 +110,15 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 		s.internalError(w, "listing uploads", recentErr)
 		return nil, false
 	}
-	if fetchedErr != nil {
-		s.internalError(w, "listing uploads", fetchedErr)
-		return nil, false
-	}
 	if trendErr != nil {
 		s.internalError(w, "listing reports for trend", trendErr)
 		return nil, false
-	}
-	if branch == "" && limit <= recentUploads {
-		fetched = recent
 	}
 	seen := map[string]bool{}
 	for _, u := range recent {
 		seen[u.Branch] = true
 	}
 	branches := slices.Sorted(maps.Keys(seen))
-
-	start := min(page*uploadsPageSize, len(fetched))
-	end := min(start+uploadsPageSize, len(fetched))
-	uploads := fetched[start:end]
-	hasOlder := len(fetched) > (page+1)*uploadsPageSize
 
 	dto := &repoPageDTO{
 		Repo: repoHeadDTO{
@@ -162,9 +131,6 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 		Branch:      branch,
 		TrendBranch: trendBranch,
 		Trend:       []trendPointDTO{},
-		Uploads:     make([]uploadRowDTO, 0, len(uploads)),
-		Page:        page,
-		HasOlder:    hasOlder,
 	}
 	if dto.Branches == nil {
 		dto.Branches = []string{}
@@ -181,17 +147,6 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 			Coverage:   report.TotalPct,
 			At:         report.CreatedAt,
 			GateFailed: report.GateFailed,
-		})
-	}
-	for _, u := range uploads {
-		dto.Uploads = append(dto.Uploads, uploadRowDTO{
-			ID:       u.ID,
-			SHA:      u.CommitSHA,
-			Branch:   u.Branch,
-			PRID:     u.PRID,
-			Coverage: u.TotalPct,
-			Gate:     gateState(store.JudgedGate(u.Gate, repo.Gate), u.GateFailed),
-			At:       u.CreatedAt,
 		})
 	}
 	if latest == nil {
@@ -233,9 +188,6 @@ type repoPageDTO struct {
 	Summary     *repoSummaryDTO `json:"summary"`
 	Trend       []trendPointDTO `json:"trend"`
 	Files       *filesViewDTO   `json:"files"`
-	Uploads     []uploadRowDTO  `json:"uploads"`
-	Page        int             `json:"page"`
-	HasOlder    bool            `json:"has_older"`
 }
 
 type repoHeadDTO struct {
@@ -298,10 +250,68 @@ func (s *Server) handleAPIRepo(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// repoUploadsDTO is one page of the repo page's upload history.
+type repoUploadsDTO struct {
+	Uploads  []uploadRowDTO `json:"uploads"`
+	Page     int            `json:"page"`
+	HasOlder bool           `json:"has_older"`
+}
+
+// handleAPIRepoUploads implements GET
+// /api/ui/repo-uploads/{forge}/{slug...}?branch=&page=, the repo page's
+// upload history. It answers to the same access decision as the page.
+func (s *Server) handleAPIRepoUploads(w http.ResponseWriter, r *http.Request) {
+	repo, _, ok := s.reportRepo(w, r)
+	if !ok {
+		return
+	}
+	branch := r.FormValue("branch")
+	page, _ := strconv.Atoi(r.FormValue("page"))
+	if page < 0 {
+		page = 0
+	}
+
+	// Fetch one row beyond the current page so "Older" knows whether to
+	// render.
+	limit := (page+1)*uploadsPageSize + 1
+	var (
+		fetched []*store.Upload
+		err     error
+	)
+	if branch == "" {
+		fetched, err = s.store.ListUploads(r.Context(), repo.ID, limit)
+	} else {
+		fetched, err = s.store.ListBranchUploads(r.Context(), repo.ID, branch, limit)
+	}
+	if err != nil {
+		s.internalError(w, "listing uploads", err)
+		return
+	}
+	start := min(page*uploadsPageSize, len(fetched))
+	end := min(start+uploadsPageSize, len(fetched))
+	dto := &repoUploadsDTO{
+		Uploads:  make([]uploadRowDTO, 0, end-start),
+		Page:     page,
+		HasOlder: len(fetched) > (page+1)*uploadsPageSize,
+	}
+	for _, u := range fetched[start:end] {
+		dto.Uploads = append(dto.Uploads, uploadRowDTO{
+			ID:       u.ID,
+			SHA:      u.CommitSHA,
+			Branch:   u.Branch,
+			PRID:     u.PRID,
+			Coverage: u.TotalPct,
+			Gate:     gateState(store.JudgedGate(u.Gate, repo.Gate), u.GateFailed),
+			At:       u.CreatedAt,
+		})
+	}
+	s.writeJSON(w, dto)
+}
+
 const (
 	uploadsPageSize = 10
 	// recentUploads bounds the newest-uploads fetch that fills the branch
-	// selector, and doubles as the first pages' history without a second query.
+	// selector.
 	recentUploads = 100
 	// trendReportLimit bounds the branch history behind the coverage trend
 	// and the dashboard's sparklines.

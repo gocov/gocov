@@ -98,7 +98,11 @@ func (s *Server) publicReportCandidate(r *http.Request) bool {
 		return false
 	}
 	// The same two report surfaces, as pages and as the UI API behind the
-	// single-page app's versions of them.
+	// single-page app's versions of them; the repo page's upload history
+	// is an API read of its own.
+	if strings.HasPrefix(r.URL.Path, apiUIPrefix+"repo-uploads/") {
+		return true
+	}
 	p := strings.TrimPrefix(r.URL.Path, strings.TrimSuffix(apiUIPrefix, "/"))
 	return strings.HasPrefix(p, "/repos/") || strings.HasPrefix(p, "/uploads/")
 }

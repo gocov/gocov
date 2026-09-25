@@ -42,6 +42,7 @@ func (s *Server) apiRoutes() {
 	// signed-out pass-through (session.go) recognizes both spellings and a
 	// public repo reads the same way through either.
 	handle("GET /api/ui/repos/{forge}/{slug...}", s.handleAPIRepo)
+	handle("GET /api/ui/repo-uploads/{forge}/{slug...}", s.handleAPIRepoUploads)
 	handle("GET /api/ui/uploads/{id}", s.handleAPIUpload)
 	handle("GET /api/ui/uploads/{id}/files/{path...}", s.handleAPISource)
 	// Onboarding: the workspace picker, the claim it posts, and the setup

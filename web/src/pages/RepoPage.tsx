@@ -17,7 +17,7 @@ import { FilesTable } from "@/components/organisms/FilesTable";
 import { TrendChart } from "@/components/organisms/TrendChart";
 import { UploadsTable } from "@/components/organisms/UploadsTable";
 import { VerdictCard } from "@/components/organisms/VerdictCard";
-import { repoQuery } from "@/lib/api/queries";
+import { repoQuery, repoUploadsQuery } from "@/lib/api/queries";
 import type { RepoPage as RepoPageData } from "@/lib/api/types";
 import { gateSummary, humanInt, pct, shortSha, timeAgo } from "@/lib/format";
 import { usePageTitle } from "@/lib/title";
@@ -38,8 +38,10 @@ export default function RepoPage() {
   const page = Math.max(0, Number(search.get("page") ?? 0) || 0);
 
   // Switching branch or page keeps the page it has: the new answer replaces
-  // it when it lands, rather than flashing a skeleton in between.
-  const query = useQuery({ ...repoQuery(forge, slug, branch, page), placeholderData: keepPreviousData });
+  // it when it lands, rather than flashing a skeleton in between. The
+  // history pages on its own, so a page turn reads only the uploads.
+  const query = useQuery({ ...repoQuery(forge, slug, branch), placeholderData: keepPreviousData });
+  const history = useQuery({ ...repoUploadsQuery(forge, slug, branch, page), placeholderData: keepPreviousData });
   usePageTitle(`${slug} code coverage`);
 
   const go = (next: { branch?: string; page?: number }) => {
@@ -124,16 +126,22 @@ export default function RepoPage() {
                 )}
               </span>
             </SectionHeader>
-            <UploadsTable
-              uploads={data.uploads}
-              empty={branch === "" ? "No uploads yet." : `No uploads on ${branch} yet.`}
-            />
-            {(page > 0 || data.has_older) && (
-              <Pagination
-                newer={page > 0 ? { to: pageLink(page - 1) } : { disabled: true }}
-                older={data.has_older ? { to: pageLink(page + 1) } : { disabled: true }}
-              />
-            )}
+            <QueryBoundary query={history}>
+              {(uploads) => (
+                <>
+                  <UploadsTable
+                    uploads={uploads.uploads}
+                    empty={branch === "" ? "No uploads yet." : `No uploads on ${branch} yet.`}
+                  />
+                  {(page > 0 || uploads.has_older) && (
+                    <Pagination
+                      newer={page > 0 ? { to: pageLink(page - 1) } : { disabled: true }}
+                      older={uploads.has_older ? { to: pageLink(page + 1) } : { disabled: true }}
+                    />
+                  )}
+                </>
+              )}
+            </QueryBoundary>
           </section>
         </div>
       )}
