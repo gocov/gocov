@@ -505,7 +505,8 @@ type Store interface {
 type CommitTx interface {
 	LatestUploadsPerPart(ctx context.Context, repoID int64, commitSHA string) ([]*Upload, error)
 	// PartFiles reads the files of every given upload in one go — the
-	// parts a multi-part recompute merges.
+	// parts a multi-part recompute merges. The order is unspecified: the
+	// merge keys blocks by path and position, so it needs none.
 	PartFiles(ctx context.Context, uploadIDs []int64) ([]*UploadFile, error)
 	LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*CommitReport, error)
 	UpsertCommitReport(ctx context.Context, cr *CommitReport) error

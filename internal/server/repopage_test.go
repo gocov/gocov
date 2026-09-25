@@ -158,3 +158,24 @@ func TestAPIRepoPageWithoutReports(t *testing.T) {
 		}
 	}
 }
+
+// On an open instance every viewer is a member, so the settings button
+// hangs on whether a tracked workspace owns the repo.
+func TestAPIRepoSettingsButtonOnOpenInstance(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		connected map[string]string
+		want      bool
+	}{
+		{"untracked", nil, false},
+		{"tracked", map[string]string{}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t, tc.connected)
+			got := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets"))
+			if got.Repo.CanSettings != tc.want {
+				t.Errorf("can_settings = %v, want %v", got.Repo.CanSettings, tc.want)
+			}
+		})
+	}
+}

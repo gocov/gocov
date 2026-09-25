@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gocov/gocov/internal/core"
@@ -45,12 +46,99 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 		page = 0
 	}
 
+	// The page's reads are independent of each other, so they run side by
+	// side: the recent uploads (the branch selector), the page of history,
+	// the trend with the files view hanging off its latest report, and the
+	// settings button's workspace lookup.
+	limit := (page+1)*uploadsPageSize + 1
+	// The trend follows the page's branch filter, defaulting to the
+	// repo's default branch when "All branches" is selected.
+	trendBranch := cmp.Or(branch, repo.DefaultBranch)
+	var (
+		wg                    sync.WaitGroup
+		recent, fetched       []*store.Upload
+		recentErr, fetchedErr error
+		trendReports          []*store.CommitReport
+		trendErr              error
+		latest, base          *store.CommitReport
+		lastUpload            *store.Upload
+		files                 *filesViewDTO
+		canSettings           bool
+	)
 	// Fetch one page beyond the current one so "Older" knows whether to
 	// render; the recent list also feeds the branch selector.
-	recent, err := s.store.ListUploads(r.Context(), repo.ID, recentUploads)
-	if err != nil {
-		s.internalError(w, "listing uploads", err)
+	wg.Go(func() {
+		recent, recentErr = s.store.ListUploads(r.Context(), repo.ID, recentUploads)
+	})
+	switch {
+	case branch != "":
+		wg.Go(func() {
+			fetched, fetchedErr = s.store.ListBranchUploads(r.Context(), repo.ID, branch, limit)
+		})
+	case limit > recentUploads:
+		// The recent fetch doubles as the history only while it also
+		// covers the sentinel row; at limit == recentUploads+1 it is one
+		// row short of deciding "Older" and would hide the link with pages
+		// still to come.
+		wg.Go(func() {
+			fetched, fetchedErr = s.store.ListUploads(r.Context(), repo.ID, limit)
+		})
+	}
+	wg.Go(func() {
+		trendReports, trendErr = s.store.ListBranchCommitReports(r.Context(), repo.ID, trendBranch, trendReportLimit)
+		if trendErr != nil {
+			return
+		}
+		// The verdict, stats and files view all describe the selected
+		// branch's current standing (the default branch when "All
+		// branches" is chosen); they ride inside the branch-filtered region
+		// so the selector moves them together with the trend and history.
+		// trendReports come newest first, so they carry the latest report
+		// and, within the last 50, the baseline it is measured against.
+		latest, base = core.ReportBaseline(trendReports[:min(baselineLookback, len(trendReports))])
+		if latest == nil {
+			return
+		}
+		lu, err := s.store.Upload(r.Context(), latest.UploadID)
+		if err != nil {
+			return
+		}
+		lastUpload = lu
+		baseUpload, baseFiles := s.baselineUpload(r.Context(), repo, lu)
+		if files, err = s.buildFilesView(r.Context(), lu, baseUpload, baseFiles); err != nil {
+			s.log.Warn("loading files for repo page", "upload", lu.ID, "err", err)
+		}
+	})
+	// The settings link is for members of a tracked workspace; anyone
+	// admitted through the public branch — anonymous or a signed-in
+	// non-member — gets neither the button nor the workspace lookup behind
+	// it. With sign-in on, membership already is a tracked workspace owning
+	// the repo, so only an open instance has one to look up.
+	switch {
+	case !member:
+	case s.authEnabled():
+		canSettings = true
+	default:
+		wg.Go(func() {
+			canSettings = s.forges.WorkspaceFor(r.Context(), repo.Slug, repo.Forge) != nil
+		})
+	}
+	wg.Wait()
+
+	if recentErr != nil {
+		s.internalError(w, "listing uploads", recentErr)
 		return nil, false
+	}
+	if fetchedErr != nil {
+		s.internalError(w, "listing uploads", fetchedErr)
+		return nil, false
+	}
+	if trendErr != nil {
+		s.internalError(w, "listing reports for trend", trendErr)
+		return nil, false
+	}
+	if branch == "" && limit <= recentUploads {
+		fetched = recent
 	}
 	seen := map[string]bool{}
 	for _, u := range recent {
@@ -58,54 +146,17 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 	}
 	branches := slices.Sorted(maps.Keys(seen))
 
-	limit := (page+1)*uploadsPageSize + 1
-	var fetched []*store.Upload
-	if branch == "" {
-		// Reuse the branch-selector fetch only while it also covers the
-		// sentinel row; at limit == recentUploads+1 it is one row short of
-		// deciding "Older" and would hide the link with pages still to come.
-		if limit <= recentUploads {
-			fetched = recent
-		} else if fetched, err = s.store.ListUploads(r.Context(), repo.ID, limit); err != nil {
-			s.internalError(w, "listing uploads", err)
-			return nil, false
-		}
-	} else if fetched, err = s.store.ListBranchUploads(r.Context(), repo.ID, branch, limit); err != nil {
-		s.internalError(w, "listing branch uploads", err)
-		return nil, false
-	}
 	start := min(page*uploadsPageSize, len(fetched))
 	end := min(start+uploadsPageSize, len(fetched))
 	uploads := fetched[start:end]
 	hasOlder := len(fetched) > (page+1)*uploadsPageSize
-
-	// The trend follows the page's branch filter, defaulting to the
-	// repo's default branch when "All branches" is selected.
-	trendBranch := cmp.Or(branch, repo.DefaultBranch)
-	trendReports, err := s.store.ListBranchCommitReports(r.Context(), repo.ID, trendBranch, trendReportLimit)
-	if err != nil {
-		s.internalError(w, "listing reports for trend", err)
-		return nil, false
-	}
-
-	// The verdict, stats and files view all describe the
-	// selected branch's current standing (the default branch when "All
-	// branches" is chosen); they ride inside the branch-filtered region so the
-	// selector moves them together with the trend and history.
-	// trendReports come newest first, so they carry the latest report and,
-	// within the last 50, the baseline it is measured against.
-	latest, base := core.ReportBaseline(trendReports[:min(baselineLookback, len(trendReports))])
 
 	dto := &repoPageDTO{
 		Repo: repoHeadDTO{
 			repoRefDTO:    newRepoRefDTO(repo),
 			DefaultBranch: repo.DefaultBranch,
 			Gate:          newGateDTO(repo.Gate),
-			// The settings link is for members of a tracked workspace;
-			// anyone admitted through the public branch — anonymous or a
-			// signed-in non-member — gets neither the button nor the
-			// workspace lookup behind it.
-			CanSettings: member && s.forges.WorkspaceFor(r.Context(), repo.Slug, repo.Forge) != nil,
+			CanSettings:   canSettings,
 		},
 		Branches:    branches,
 		Branch:      branch,
@@ -163,14 +214,9 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 	if base != nil {
 		summary.Verdict.against(base.UploadID, base.CommitSHA, base.TotalPct)
 	}
-	if lu, err := s.store.Upload(r.Context(), latest.UploadID); err == nil {
-		summary.LastUpload = &lastUploadDTO{At: lu.CreatedAt, CILabel: ciLabels[lu.Meta.CIProvider]}
-		baseUpload, baseFiles := s.baselineUpload(r.Context(), repo, lu)
-		if files, err := s.buildFilesView(r.Context(), lu, baseUpload, baseFiles); err == nil {
-			dto.Files = files
-		} else {
-			s.log.Warn("loading files for repo page", "upload", lu.ID, "err", err)
-		}
+	if lastUpload != nil {
+		summary.LastUpload = &lastUploadDTO{At: lastUpload.CreatedAt, CILabel: ciLabels[lastUpload.Meta.CIProvider]}
+		dto.Files = files
 	}
 	dto.Summary = summary
 	return dto, true

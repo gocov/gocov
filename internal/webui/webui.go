@@ -8,6 +8,7 @@ package webui
 import (
 	"embed"
 	"io/fs"
+	"sync"
 )
 
 //go:embed all:dist
@@ -24,7 +25,13 @@ func FS() fs.FS {
 }
 
 // Index returns the SPA shell, or false when the web build has not run.
+// The embedded build never changes, so it is read once; callers share the
+// bytes and must not modify them.
 func Index() ([]byte, bool) {
-	b, err := fs.ReadFile(FS(), "index.html")
+	b, err := index()
 	return b, err == nil
 }
+
+var index = sync.OnceValues(func() ([]byte, error) {
+	return fs.ReadFile(FS(), "index.html")
+})

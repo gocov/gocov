@@ -1586,6 +1586,9 @@ func TestPartFilesReadsEveryPartAtOnce(t *testing.T) {
 		fmt.Sprintf("%d:backend/a.go", ids[0]), fmt.Sprintf("%d:backend/b.go", ids[0]),
 		fmt.Sprintf("%d:frontend/a.go", ids[1]), fmt.Sprintf("%d:frontend/b.go", ids[1]),
 	}
+	// The order is unspecified: the merge needs none.
+	slices.Sort(got)
+	slices.Sort(want)
 	if !slices.Equal(got, want) {
 		t.Errorf("PartFiles = %v, want %v", got, want)
 	}
