@@ -6,7 +6,7 @@
 //
 // Every response is an explicit DTO. The store's rows carry upload tokens
 // and connection state, so a handler never marshals one directly: it copies
-// out the fields the UI shows, the same ones the templates print.
+// out the fields the UI shows.
 
 package server
 
@@ -154,6 +154,13 @@ type verdictDTO struct {
 	Base     *baseRefDTO `json:"base"`
 }
 
+// against records the report the verdict is measured against, and the
+// delta to it.
+func (v *verdictDTO) against(uploadID int64, sha string, basePct float64) {
+	v.Delta = new(v.Coverage - basePct)
+	v.Base = &baseRefDTO{UploadID: uploadID, SHA: sha, Coverage: basePct}
+}
+
 // fileRowDTO is one file of an upload with its baseline comparison. The
 // tree the files card draws is built client-side from these rows.
 type fileRowDTO struct {
@@ -181,33 +188,6 @@ type filesViewDTO struct {
 	Files    []fileRowDTO `json:"files"`
 }
 
-func newFilesViewDTO(fv *filesViewData) *filesViewDTO {
-	if fv == nil {
-		return nil
-	}
-	dto := &filesViewDTO{UploadID: fv.UploadID, HasBase: fv.HasBase, Files: make([]fileRowDTO, 0, len(fv.Files))}
-	for _, row := range fv.Files {
-		file := fileRowDTO{
-			Path:            row.Path,
-			Coverage:        row.Pct,
-			CoveredStmts:    row.CoveredStmts,
-			TotalStmts:      row.TotalStmts,
-			Uncovered:       row.Uncovered,
-			NewFile:         row.NewFile,
-			NewlyUncovered:  row.NewlyMiss,
-			SourceChanged:   row.IsSourceChanged,
-			CoverageChanged: row.IsCoverageChanged,
-		}
-		if row.HasBefore {
-			file.Before = &row.BeforePct
-			file.BeforeCoveredStmts = &row.BeforeCovered
-			file.BeforeTotalStmts = &row.BeforeTotal
-		}
-		dto.Files = append(dto.Files, file)
-	}
-	return dto
-}
-
 // optPct is a percentage the app must be able to tell apart from zero:
 // "no coverage yet" is null, not 0.
 func optPct(has bool, pct float64) *float64 {
@@ -228,7 +208,7 @@ func (s *Server) writeJSON(w http.ResponseWriter, v any) {
 }
 
 // sessionDTO is what the app shell needs before it renders anything: who is
-// looking, and how this instance is set up. It mirrors layoutData.
+// looking, and how this instance is set up.
 type sessionDTO struct {
 	User *userDTO `json:"user"`
 	// AuthEnabled false is the open instance: no sign-in, and the shell

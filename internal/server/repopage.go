@@ -29,34 +29,11 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	s.serveApp(w, r, http.StatusOK, s.repoPageHead(repo))
 }
 
-// repoPageData is one repo's page as read from the store: the standing of
-// the selected branch, the trend behind it, the files of its latest
-// report and a page of uploads. The UI API copies it into its DTO.
-type repoPageData struct {
-	Repo *store.Repo
-	// Branch is the ?branch filter, empty for "all branches";
-	// TrendBranch is the branch the verdict, trend and files describe.
-	Branch      string
-	TrendBranch string
-	Branches    []string
-	Latest      *store.CommitReport
-	// Base is the report Latest is measured against, nil when the branch
-	// has no earlier passing report.
-	Base         *store.CommitReport
-	Verdict      *verdictView
-	LastUpload   *store.Upload
-	FilesView    *filesViewData
-	TrendReports []*store.CommitReport
-	Settings     bool
-	Uploads      []*store.Upload
-	Page         int
-	HasOlder     bool
-}
-
-// buildRepoPage assembles the repo page. A false second result means the
-// answer — a not-found, a refusal or an internal error — is already
-// written.
-func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPageData, bool) {
+// buildRepoPage assembles the repo page for the app: the standing of the
+// selected branch, the trend behind it, the files of its latest report and
+// a page of uploads. A false second result means the answer — a not-found,
+// a refusal or an internal error — is already written.
+func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPageDTO, bool) {
 	repo, member, ok := s.reportRepo(w, r)
 	if !ok {
 		return nil, false
@@ -119,37 +96,84 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 	// within the last 50, the baseline it is measured against.
 	latest, base := core.ReportBaseline(trendReports[:min(baselineLookback, len(trendReports))])
 
-	d := &repoPageData{
-		Repo:         repo,
-		Branch:       branch,
-		TrendBranch:  trendBranch,
-		Branches:     branches,
-		Latest:       latest,
-		TrendReports: trendReports,
-		Uploads:      uploads,
-		Page:         page,
-		HasOlder:     hasOlder,
+	dto := &repoPageDTO{
+		Repo: repoHeadDTO{
+			repoRefDTO:    newRepoRefDTO(repo),
+			DefaultBranch: repo.DefaultBranch,
+			Gate:          newGateDTO(repo.Gate),
+			// The settings link is for members of a tracked workspace;
+			// anyone admitted through the public branch — anonymous or a
+			// signed-in non-member — gets neither the button nor the
+			// workspace lookup behind it.
+			CanSettings: member && s.forges.WorkspaceFor(r.Context(), repo.Slug, repo.Forge) != nil,
+		},
+		Branches:    branches,
+		Branch:      branch,
+		TrendBranch: trendBranch,
+		Trend:       []trendPointDTO{},
+		Uploads:     make([]uploadRowDTO, 0, len(uploads)),
+		Page:        page,
+		HasOlder:    hasOlder,
 	}
-	if latest != nil {
-		d.Base = base
-		d.Verdict = new(gateVerdict("The latest commit", latest.TotalPct, latest.DiffCoverage, latest.GateFailed, repo.Gate, latest.GateBasePct))
-		if lu, err := s.store.Upload(r.Context(), latest.UploadID); err == nil {
-			d.LastUpload = lu
-			baseUpload, baseFiles := s.baselineUpload(r.Context(), repo, lu)
-			if fv, err := s.buildFilesViewData(r.Context(), lu, baseUpload, baseFiles); err == nil {
-				d.FilesView = &fv
-			} else {
-				s.log.Warn("loading files for repo page", "upload", lu.ID, "err", err)
-			}
+	if dto.Branches == nil {
+		dto.Branches = []string{}
+	}
+	// The trend reads oldest first and skips PR reports, the same series
+	// the chart plots.
+	for _, report := range slices.Backward(trendReports) {
+		if report.PRID != "" {
+			continue
 		}
+		dto.Trend = append(dto.Trend, trendPointDTO{
+			UploadID:   report.UploadID,
+			SHA:        report.CommitSHA,
+			Coverage:   report.TotalPct,
+			At:         report.CreatedAt,
+			GateFailed: report.GateFailed,
+		})
+	}
+	for _, u := range uploads {
+		dto.Uploads = append(dto.Uploads, uploadRowDTO{
+			ID:         u.ID,
+			SHA:        u.CommitSHA,
+			Branch:     u.Branch,
+			PRID:       u.PRID,
+			Coverage:   u.TotalPct,
+			GateFailed: u.GateFailed,
+			At:         u.CreatedAt,
+		})
+	}
+	if latest == nil {
+		return dto, true
 	}
 
-	// The settings link is for members of a tracked workspace; anyone
-	// admitted through the public branch — anonymous or a signed-in
-	// non-member — gets neither the button nor the workspace lookup
-	// behind it.
-	d.Settings = member && s.forges.WorkspaceFor(r.Context(), repo.Slug, repo.Forge) != nil
-	return d, true
+	summary := &repoSummaryDTO{
+		Verdict: gateVerdict("The latest commit", latest.TotalPct, latest.DiffCoverage, latest.GateFailed, repo.Gate, latest.GateBasePct),
+		Commit: repoCommitDTO{
+			UploadID:  latest.UploadID,
+			SHA:       latest.CommitSHA,
+			At:        latest.CreatedAt,
+			Branch:    latest.Branch,
+			PRID:      latest.PRID,
+			IsDefault: latest.Branch == repo.DefaultBranch,
+		},
+		CoveredStmts: latest.CoveredStmts,
+		TotalStmts:   latest.TotalStmts,
+	}
+	if base != nil {
+		summary.Verdict.against(base.UploadID, base.CommitSHA, base.TotalPct)
+	}
+	if lu, err := s.store.Upload(r.Context(), latest.UploadID); err == nil {
+		summary.LastUpload = &lastUploadDTO{At: lu.CreatedAt, CILabel: ciLabels[lu.Meta.CIProvider]}
+		baseUpload, baseFiles := s.baselineUpload(r.Context(), repo, lu)
+		if files, err := s.buildFilesView(r.Context(), lu, baseUpload, baseFiles); err == nil {
+			dto.Files = files
+		} else {
+			s.log.Warn("loading files for repo page", "upload", lu.ID, "err", err)
+		}
+	}
+	dto.Summary = summary
+	return dto, true
 }
 
 // repoPageDTO is the repo page for the app. The trend arrives as raw
@@ -223,83 +247,9 @@ type uploadRowDTO struct {
 // handleAPIRepo implements GET /api/ui/repos/{forge}/{slug...}, the repo
 // page's data. Like the page it may be read anonymously on a public repo.
 func (s *Server) handleAPIRepo(w http.ResponseWriter, r *http.Request) {
-	d, ok := s.buildRepoPage(w, r)
-	if !ok {
-		return
+	if dto, ok := s.buildRepoPage(w, r); ok {
+		s.writeJSON(w, dto)
 	}
-	dto := repoPageDTO{
-		Repo: repoHeadDTO{
-			repoRefDTO:    newRepoRefDTO(d.Repo),
-			DefaultBranch: d.Repo.DefaultBranch,
-			Gate:          newGateDTO(d.Repo.Gate),
-			CanSettings:   d.Settings,
-		},
-		Branches:    d.Branches,
-		Branch:      d.Branch,
-		TrendBranch: d.TrendBranch,
-		Trend:       []trendPointDTO{},
-		Files:       newFilesViewDTO(d.FilesView),
-		Uploads:     make([]uploadRowDTO, 0, len(d.Uploads)),
-		Page:        d.Page,
-		HasOlder:    d.HasOlder,
-	}
-	if dto.Branches == nil {
-		dto.Branches = []string{}
-	}
-	// The trend reads oldest first and skips PR reports, the same series
-	// the chart plots.
-	for _, report := range slices.Backward(d.TrendReports) {
-		if report.PRID != "" {
-			continue
-		}
-		dto.Trend = append(dto.Trend, trendPointDTO{
-			UploadID:   report.UploadID,
-			SHA:        report.CommitSHA,
-			Coverage:   report.TotalPct,
-			At:         report.CreatedAt,
-			GateFailed: report.GateFailed,
-		})
-	}
-	for _, u := range d.Uploads {
-		dto.Uploads = append(dto.Uploads, uploadRowDTO{
-			ID:         u.ID,
-			SHA:        u.CommitSHA,
-			Branch:     u.Branch,
-			PRID:       u.PRID,
-			Coverage:   u.TotalPct,
-			GateFailed: u.GateFailed,
-			At:         u.CreatedAt,
-		})
-	}
-	if d.Latest != nil {
-		summary := &repoSummaryDTO{
-			Verdict: verdictDTO{
-				State:    d.Verdict.State,
-				Coverage: d.Latest.TotalPct,
-				Reason:   d.Verdict.Reason,
-			},
-			Commit: repoCommitDTO{
-				UploadID:  d.Latest.UploadID,
-				SHA:       d.Latest.CommitSHA,
-				At:        d.Latest.CreatedAt,
-				Branch:    d.Latest.Branch,
-				PRID:      d.Latest.PRID,
-				IsDefault: d.Latest.Branch == d.Repo.DefaultBranch,
-			},
-			CoveredStmts: d.Latest.CoveredStmts,
-			TotalStmts:   d.Latest.TotalStmts,
-		}
-		if d.Base != nil {
-			delta := d.Latest.TotalPct - d.Base.TotalPct
-			summary.Verdict.Delta = &delta
-			summary.Verdict.Base = &baseRefDTO{UploadID: d.Base.UploadID, SHA: d.Base.CommitSHA, Coverage: d.Base.TotalPct}
-		}
-		if d.LastUpload != nil {
-			summary.LastUpload = &lastUploadDTO{At: d.LastUpload.CreatedAt, CILabel: ciLabels[d.LastUpload.Meta.CIProvider]}
-		}
-		dto.Summary = summary
-	}
-	s.writeJSON(w, dto)
 }
 
 const (
