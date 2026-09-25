@@ -647,7 +647,8 @@ func (s *Store) UploadFile(_ context.Context, uploadID int64, path string) (*sto
 	return nil, store.ErrNotFound
 }
 
-// PartFiles is the CommitTx read of every given upload's files at once.
+// PartFiles reads every given upload's files at once, for the recompute
+// (CommitTx) and the repo page alike.
 // Uploads without files contribute nothing.
 func (s *Store) PartFiles(_ context.Context, uploadIDs []int64) ([]*store.UploadFile, error) {
 	s.mu.Lock()

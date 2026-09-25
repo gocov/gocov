@@ -39,6 +39,7 @@ const repo = (over: Partial<RepoPageData> = {}): RepoPageData => ({
     has_base: true,
     files: [
       {
+        upload_id: 412,
         path: "internal/server/api.go",
         coverage: 80,
         covered_stmts: 8,

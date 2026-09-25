@@ -493,6 +493,10 @@ type Store interface {
 	// CommitParts returns the distinct part names uploaded for a commit —
 	// a cheap read (no blocks/diff) for the per-commit parts cap.
 	CommitParts(ctx context.Context, repoID int64, commitSHA string) ([]string, error)
+	// PartFiles reads the files of every given upload in one go, in no
+	// particular order — the parts of a commit, which the repo page's files
+	// card merges the way the recompute does (CommitTx.PartFiles).
+	PartFiles(ctx context.Context, uploadIDs []int64) ([]*UploadFile, error)
 
 	// ClaimTokenlessUpload records that the (workflow run, attempt, part)
 	// triple has been accepted for a tokenless upload and reports whether

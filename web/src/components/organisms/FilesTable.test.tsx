@@ -5,6 +5,7 @@ import type { FileRow, FilesView } from "@/lib/api/types";
 import { FilesTable } from "./FilesTable";
 
 const file = (path: string, over: Partial<FileRow> = {}): FileRow => ({
+  upload_id: 412,
   path,
   coverage: 70,
   covered_stmts: 7,
@@ -34,7 +35,7 @@ const withBase: FilesView = {
 const noBase: FilesView = {
   upload_id: 7,
   has_base: false,
-  files: [file("cmd/gocov/main.go", { covered_stmts: 3, total_stmts: 8 }), file("doc.go")],
+  files: [file("cmd/gocov/main.go", { upload_id: 7, covered_stmts: 3, total_stmts: 8 }), file("doc.go", { upload_id: 7 })],
 };
 
 const draw = (view: FilesView, heading?: string) =>
@@ -57,6 +58,12 @@ test("the tree rolls directories up and files link to their source", () => {
   // internal holds two collapsed chains, so it stays a directory of its own.
   expect(rowNames()).toEqual(["internal/", "core/", "pipeline.go", "server/", "api.go", "spa.go", "main.go"]);
   expect(screen.getByRole("link", { name: "api.go" })).toHaveAttribute("href", "/uploads/412/files/internal/server/api.go");
+});
+
+test("a file from another part links to the upload that carried it", () => {
+  draw({ upload_id: 412, has_base: false, files: [file("web/src/main.tsx", { upload_id: 411 }), file("main.go")] });
+  expect(screen.getByRole("link", { name: "main.tsx" })).toHaveAttribute("href", "/uploads/411/files/web/src/main.tsx");
+  expect(screen.getByRole("link", { name: "main.go" })).toHaveAttribute("href", "/uploads/412/files/main.go");
 });
 
 test("a directory collapses and takes its files with it", async () => {

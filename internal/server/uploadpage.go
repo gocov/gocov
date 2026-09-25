@@ -182,15 +182,18 @@ func (s *Server) loadFilesView(ctx context.Context, repo *store.Repo, upload *st
 	if err != nil {
 		return nil, nil, err
 	}
-	return buildFilesView(upload, files, base, baseFiles), base, nil
+	uploads := map[int64]*store.Upload{upload.ID: upload}
+	return buildFilesView(upload.ID, upload.DiffCoverage, uploads, files, base != nil, baseFiles), base, nil
 }
 
-// buildFilesView pairs each of an upload's files with its coverage at the
-// baseline — the files card. The directory tree the card draws is the
-// client's to build from these rows.
-func buildFilesView(upload *store.Upload, files []*store.UploadFile, base *store.Upload, baseFiles map[string]*store.UploadFile) *filesViewDTO {
+// buildFilesView pairs each file with its coverage at the baseline — the
+// files card. The files come from the uploads keyed by id (one upload, or
+// every part of a commit), each row linking to the upload it came from;
+// diff marks the files whose source the PR touched. The directory tree the
+// card draws is the client's to build from these rows.
+func buildFilesView(viewID int64, diff *diffcov.Result, uploads map[int64]*store.Upload, files []*store.UploadFile, hasBase bool, baseFiles map[string]*store.UploadFile) *filesViewDTO {
 	var diffPaths []string
-	if dc := upload.DiffCoverage; dc != nil {
+	if dc := diff; dc != nil {
 		for _, df := range dc.Files {
 			diffPaths = append(diffPaths, df.Path)
 		}
@@ -208,13 +211,14 @@ func buildFilesView(upload *store.Upload, files []*store.UploadFile, base *store
 	rows := make([]sortedRow, 0, len(files))
 	for _, f := range files {
 		row := sortedRow{fileRowDTO: fileRowDTO{
+			UploadID:     cmp.Or(f.UploadID, viewID),
 			Path:         f.Path,
 			Coverage:     f.Pct,
 			CoveredStmts: f.CoveredStmts,
 			TotalStmts:   f.TotalStmts,
 			Uncovered:    uncoveredRanges(f.Blocks),
 		}}
-		if base != nil {
+		if hasBase {
 			if bf, ok := baseFiles[f.Path]; ok {
 				row.Before = new(bf.Pct)
 				row.BeforeCoveredStmts = new(bf.CoveredStmts)
@@ -233,12 +237,16 @@ func buildFilesView(upload *store.Upload, files []*store.UploadFile, base *store
 				row.CoverageChanged = true
 			}
 		}
-		row.SourceChanged = touched.Touches(f.Path, upload.PathPrefix)
+		var prefix string
+		if u := uploads[f.UploadID]; u != nil {
+			prefix = u.PathPrefix
+		}
+		row.SourceChanged = touched.Touches(f.Path, prefix)
 		row.changed = row.CoverageChanged || row.SourceChanged
 		rows = append(rows, row)
 	}
 
-	if base != nil {
+	if hasBase {
 		slices.SortStableFunc(rows, func(a, b sortedRow) int {
 			if a.changed != b.changed {
 				if a.changed {
@@ -255,7 +263,7 @@ func buildFilesView(upload *store.Upload, files []*store.UploadFile, base *store
 		})
 	}
 
-	dto := &filesViewDTO{UploadID: upload.ID, HasBase: base != nil, Files: make([]fileRowDTO, len(rows))}
+	dto := &filesViewDTO{UploadID: viewID, HasBase: hasBase, Files: make([]fileRowDTO, len(rows))}
 	for i, row := range rows {
 		dto.Files[i] = row.fileRowDTO
 	}

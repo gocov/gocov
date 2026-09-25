@@ -2,6 +2,7 @@ import type { FileRow } from "./api/types";
 import { buildFileTree, defaultOpenDirs, filterTree, isChanged, visibleRows, type TreeDir, type TreeNode } from "./tree";
 
 const file = (path: string, covered: number, total: number, extra: Partial<FileRow> = {}): FileRow => ({
+  upload_id: 1,
   path,
   coverage: total === 0 ? 0 : (covered / total) * 100,
   covered_stmts: covered,

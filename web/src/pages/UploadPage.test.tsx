@@ -32,6 +32,7 @@ const upload = (over: Partial<UploadPageData> = {}): UploadPageData => ({
     has_base: true,
     files: [
       {
+        upload_id: 412,
         path: "internal/server/api.go",
         coverage: 80,
         covered_stmts: 8,
@@ -46,6 +47,7 @@ const upload = (over: Partial<UploadPageData> = {}): UploadPageData => ({
         coverage_changed: true,
       },
       {
+        upload_id: 412,
         path: "internal/server/spa.go",
         coverage: 55,
         covered_stmts: 11,

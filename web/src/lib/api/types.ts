@@ -124,6 +124,8 @@ export interface Verdict {
 }
 
 export interface FileRow {
+  /** The upload the file came from — its source view. A commit's parts each carry their own files. */
+  upload_id: number;
   path: string;
   coverage: number;
   covered_stmts: number;
