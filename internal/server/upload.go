@@ -328,24 +328,21 @@ func (s *Server) readUploadRequest(w http.ResponseWriter, r *http.Request, authe
 		req.branch = repo.DefaultBranch
 	}
 
-	// A part names one slice of the commit's coverage (backend, frontend,
-	// e2e, ...) uploaded from a separate CI job. It is normalized (trimmed
-	// and lowercased) before validation so the same logical part from
-	// different callers keys the same bucket; the API is called directly,
-	// not only through the CLI, so normalization lives here on the server.
-	// Omitting it keeps the historical single-upload behaviour: everything
-	// lands in "default".
-	req.part = strings.ToLower(strings.TrimSpace(r.FormValue("part")))
-	if req.part == "" {
-		req.part = "default"
-	} else if !partRe.MatchString(req.part) {
-		httpError(w, http.StatusBadRequest, "invalid part %q: want up to 64 alphanumeric, dot, dash or underscore characters starting with a letter or digit", req.part)
+	// Omitting the part keeps the historical single-upload behaviour:
+	// everything lands in core.DefaultPart.
+	part, err := core.NormalizePart(r.FormValue("part"))
+	if err != nil {
+		httpError(w, http.StatusBadRequest, "%v", err)
 		return nil, false
 	}
+	req.part = part
 
 	// Cap the distinct parts per commit before doing any work, so a runaway
 	// part name (e.g. -part $CI_JOB_ID) can't accumulate parts unbounded.
-	// Re-uploading an existing part is always allowed — it replaces.
+	// Re-uploading an existing part is always allowed — it replaces. The
+	// check runs outside the commit's recompute lock, so new parts arriving
+	// at once at the cap can each pass it and overshoot by a few; the cap
+	// guards against the unbounded case, which that cannot become.
 	if parts, err := s.store.CommitParts(r.Context(), repo.ID, req.commit); err != nil {
 		s.internalError(w, "counting commit parts", err)
 		return nil, false
@@ -405,10 +402,3 @@ func (s *Server) readUploadRequest(w http.ResponseWriter, r *http.Request, authe
 // commitRe bounds commit identifiers: they appear in forge API paths and
 // in blobstore cache keys, so separators are not welcome.
 var commitRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
-
-// partRe bounds a normalized part name — a canonical lowercase slug that
-// starts alphanumeric. It becomes a storage key (and later a flag key), so
-// the charset is conservative and the length is bounded. Names are trimmed
-// and lowercased before this check, so "Backend" and " backend " reduce to
-// the same "backend" and can't split one commit into two parts.
-var partRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
