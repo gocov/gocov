@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/gocov/gocov/internal/profile"
@@ -69,6 +70,9 @@ func TestRecomputeMergesEveryPart(t *testing.T) {
 	}
 	if merged.Upload.TotalStmts != 20 || merged.Upload.CoveredStmts != 15 {
 		t.Fatalf("two parts: %d/%d, want 15/20", merged.Upload.CoveredStmts, merged.Upload.TotalStmts)
+	}
+	if got := strings.Join(merged.Parts, ","); got != "backend,frontend" {
+		t.Errorf("parts = %q, want backend,frontend", got)
 	}
 	if merged.Upload.TotalPct != 75 {
 		t.Errorf("merged total = %.1f%%, want 75%%", merged.Upload.TotalPct)

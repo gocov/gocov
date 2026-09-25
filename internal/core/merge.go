@@ -9,6 +9,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -33,6 +34,9 @@ type Merged struct {
 	Delta    *float64
 	Verdict  Verdict
 	Warnings []string // surfaced to the uploader, e.g. conservative diff merges
+	// Parts names, sorted, every part the merged report was built from —
+	// the parts received so far, since gocov never waits for a fixed set.
+	Parts []string
 }
 
 // recomputeTimeout bounds a single recompute so a saturated connection pool
@@ -55,7 +59,9 @@ func (p *Pipeline) Recompute(ctx context.Context, repo *store.Repo, u *store.Upl
 		}
 
 		diffs := make([]*diffcov.Result, 0, len(parts))
+		names := make([]string, 0, len(parts))
 		for _, p := range parts {
+			names = append(names, p.Part)
 			if p.DiffCoverage != nil {
 				diffs = append(diffs, p.DiffCoverage)
 			}
@@ -119,11 +125,13 @@ func (p *Pipeline) Recompute(ctx context.Context, repo *store.Repo, u *store.Upl
 			TotalStmts:   total,
 			DiffCoverage: mergedDiff,
 		}
+		slices.Sort(names)
 		result = &Merged{
 			Upload:   mergedUpload,
 			Delta:    deltaPct,
 			Verdict:  gate,
 			Warnings: warnings,
+			Parts:    names,
 		}
 		return nil
 	})

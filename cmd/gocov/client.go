@@ -49,6 +49,10 @@ type uploadResponse struct {
 	// Warnings are the server's non-fatal notices about how the commit's
 	// merged report was built; an older server sends none.
 	Warnings []string `json:"warnings"`
+	// Part is this upload's normalized part name and Parts every part the
+	// totals were merged from so far; an older server sends neither.
+	Part  string   `json:"part"`
+	Parts []string `json:"parts"`
 
 	DiffPct          *float64 `json:"diff_pct"`
 	DiffCoveredLines *int64   `json:"diff_covered_lines"`

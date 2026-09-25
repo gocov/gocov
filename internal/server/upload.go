@@ -60,6 +60,11 @@ type uploadResponse struct {
 	// parts disagreed. Omitted when there are none.
 	Warnings []string `json:"warnings,omitempty"`
 
+	// Part is this upload's part name as stored (normalized); Parts lists,
+	// sorted, every part the merged totals above were built from so far.
+	Part  string   `json:"part"`
+	Parts []string `json:"parts"`
+
 	// PR-only fields, set when pr_id was part of the upload.
 	DiffPct          *float64 `json:"diff_pct,omitempty"`
 	DiffCoveredLines *int64   `json:"diff_covered_lines,omitempty"`
@@ -239,6 +244,8 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		IgnoredFiles: res.Upload.Meta.IgnoredFiles,
 		DiffStatus:   res.DiffStatus,
 		Warnings:     res.Merged.Warnings,
+		Part:         res.Upload.Part,
+		Parts:        res.Merged.Parts,
 		BuildStatus:  res.Push.BuildStatus,
 		CodeInsights: res.Push.CodeInsights,
 		PRComment:    res.Push.PRComment,

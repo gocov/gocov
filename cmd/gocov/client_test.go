@@ -95,3 +95,46 @@ func TestUploadPrintsServerWarnings(t *testing.T) {
 		t.Errorf("output:\n%s\nwant:\n%s", out.String(), want)
 	}
 }
+
+// With named parts the totals are the commit's merged report so far, not
+// this upload's, and the headline says so — a part that lands first must
+// not read as the commit's final coverage.
+func TestPrintResultNamesTheParts(t *testing.T) {
+	cases := []struct {
+		name string
+		resp uploadResponse
+		want string
+	}{
+		{"single default part reads as before",
+			uploadResponse{TotalPct: 80, CoveredStmts: 4, TotalStmts: 5, Part: "default", Parts: []string{"default"}},
+			"uploaded: 80.0% (4/5 statements)\n"},
+		{"older server sends no parts",
+			uploadResponse{TotalPct: 80, CoveredStmts: 4, TotalStmts: 5},
+			"uploaded: 80.0% (4/5 statements)\n"},
+		{"first of several parts",
+			uploadResponse{TotalPct: 95, CoveredStmts: 1158, TotalStmts: 1219, DeltaPct: new(10.3), Part: "web", Parts: []string{"web"}},
+			"uploaded part: web\n" +
+				"commit coverage: 95.0% (1158/1219 statements), delta +10.3%\n" +
+				"merged from 1 part so far: web\n"},
+		{"last part lands",
+			uploadResponse{TotalPct: 86.5, CoveredStmts: 8650, TotalStmts: 10000, Part: "go", Parts: []string{"go", "web"}},
+			"uploaded part: go\n" +
+				"commit coverage: 86.5% (8650/10000 statements)\n" +
+				"merged from 2 parts so far: go, web\n"},
+		{"default part beside named ones",
+			uploadResponse{TotalPct: 50, CoveredStmts: 1, TotalStmts: 2, Part: "default", Parts: []string{"default", "e2e"}},
+			"uploaded part: default\n" +
+				"commit coverage: 50.0% (1/2 statements)\n" +
+				"merged from 2 parts so far: default, e2e\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			c.resp.BuildStatus = "posted"
+			var out strings.Builder
+			printResult(&out, &c.resp)
+			if want := c.want + "build status: posted\n"; out.String() != want {
+				t.Errorf("output:\n%s\nwant:\n%s", out.String(), want)
+			}
+		})
+	}
+}
