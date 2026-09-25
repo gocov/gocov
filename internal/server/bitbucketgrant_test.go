@@ -191,7 +191,7 @@ func TestBitbucketConnectCallbackRejects(t *testing.T) {
 		rec.Header().Get("Location") != "/?error=connect_denied" {
 		t.Errorf("non-member workspace: %d -> %q, want the dashboard's connect_denied notice", rec.Code, rec.Header().Get("Location"))
 	}
-	// A workspace that is not there reads exactly the same (D3).
+	// A workspace that is not there reads exactly the same.
 	if rec := get(f.fixture, "/oauth/bitbucket/callback?code=x&state=s", mk("s|nowhere"), sess); rec.Code != http.StatusSeeOther ||
 		rec.Header().Get("Location") != "/?error=connect_denied" {
 		t.Errorf("missing workspace: %d -> %q, want the same answer as a non-member", rec.Code, rec.Header().Get("Location"))
@@ -224,7 +224,7 @@ func TestBitbucketConnectRequiresFeature(t *testing.T) {
 }
 
 func TestUploadUsesGrantAndPersistsRotation(t *testing.T) {
-	// D7: the grant serves the upload, and the rotated refresh token
+	// The grant serves the upload, and the rotated refresh token
 	// replaces the stored one on the first refresh.
 	f, _ := newBBConnectFixture(t)
 	f.grant(t, "covbot", "rt-0", false)
@@ -258,7 +258,7 @@ func TestUploadGrantAccessTokenCached(t *testing.T) {
 }
 
 func TestUploadGrantRevokedDegrades(t *testing.T) {
-	// The connecting member left, Bitbucket revoked the grant (D7):
+	// The connecting member left, Bitbucket revoked the grant:
 	// detected lazily, flagged, upload degrades like missing credentials.
 	f, _ := newBBConnectFixture(t)
 	f.grant(t, "covbot", "rt-0", false)

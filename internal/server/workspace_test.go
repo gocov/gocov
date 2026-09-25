@@ -140,7 +140,7 @@ func TestOwnerDemotedOnTheForgeLosesTheControls(t *testing.T) {
 
 func TestWorkspaceSettingsNeedAuthEnabled(t *testing.T) {
 	// Open mode has no notion of members, so the workspace endpoints do not
-	// exist (M2/D5: open mode stays byte-identical, no new surfaces).
+	// exist (open mode stays byte-identical, no new surfaces).
 	f := newFixture(t, nil)
 	if err := f.store.CreateWorkspace(t.Context(),
 		&store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "ws-secret", DefaultBranch: "main"}); err != nil {
@@ -159,7 +159,7 @@ func TestWorkspaceSettingsNeedAuthEnabled(t *testing.T) {
 
 // Rotation is a live secret change, not just a stored value: the old
 // token stops authenticating uploads the moment the new one is handed
-// back (R3).
+// back.
 func TestWorkspaceRotateTokenKillsTheOldOne(t *testing.T) {
 	f, sess := newWorkspaceFixture(t, true)
 
@@ -293,7 +293,7 @@ func TestAPIWorkspaceSetupBrokenConnection(t *testing.T) {
 	}
 }
 
-// TestGitLabSubgroupWorkspace covers D2 end to end at the UI layer: a
+// TestGitLabSubgroupWorkspace covers nested GitLab groups end to end at the UI layer: a
 // workspace registered at subgroup depth ("grp/sub") admits its member,
 // serves its pages behind a %2F-encoded prefix, and scopes visibility to
 // projects below the subgroup.

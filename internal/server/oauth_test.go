@@ -234,7 +234,7 @@ func TestNonMemberIsDenied(t *testing.T) {
 		t.Fatalf("%d -> %q, want denial redirect", rec.Code, rec.Header().Get("Location"))
 	}
 
-	// R3: no user row, no session.
+	// No user row, no session.
 	if users, _ := f.store.ListUsers(t.Context()); len(users) != 0 {
 		t.Errorf("denied login created users: %v", users)
 	}

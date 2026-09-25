@@ -19,7 +19,7 @@ const DefaultBaseURL = "https://api.bitbucket.org/2.0"
 // Client implements forge.Forge against the Bitbucket Cloud API using an
 // app password (or scoped API token) for authentication — or, when
 // AccessToken is set, an OAuth access token from the workspace's
-// connect grant (One-Click Connect P2).
+// connect grant (One-Click Connect).
 type Client struct {
 	BaseURL     string
 	Username    string

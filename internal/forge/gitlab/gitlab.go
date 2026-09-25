@@ -140,7 +140,7 @@ func (c *Client) UpdatePRComment(ctx context.Context, repoSlug, prID, commentID,
 // diff and silently wrong coverage numbers, so it errors instead.
 // GitLab has deprecated /changes in favor of the paginated /diffs
 // endpoint; it still serves API v4, and switching to /diffs (which also
-// lifts the overflow ceiling) is planned as a P1 follow-up.
+// lifts the overflow ceiling) is a planned follow-up.
 func (c *Client) GetPRDiff(ctx context.Context, repoSlug, prID string) (string, error) {
 	path := fmt.Sprintf("/projects/%s/merge_requests/%s/changes", projectID(repoSlug), url.PathEscape(prID))
 	// Read through Do rather than Get: the changes document is a diff

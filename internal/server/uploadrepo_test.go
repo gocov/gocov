@@ -186,7 +186,7 @@ func TestWorkspaceTokenUpload(t *testing.T) {
 }
 
 func TestGitLabNestedWorkspaceUpload(t *testing.T) {
-	// GitLab namespaces nest (D2): the workspace prefix is the registered
+	// GitLab namespaces nest: the workspace prefix is the registered
 	// namespace path — possibly a subgroup — and project slugs may carry
 	// further subgroup segments below it.
 	ctx := t.Context()

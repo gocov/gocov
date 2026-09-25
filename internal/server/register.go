@@ -11,9 +11,9 @@ import (
 	"github.com/gocov/gocov/internal/store"
 )
 
-// Workspace registration (M3/R2): a hosted-mode user claims a workspace
+// Workspace registration: a hosted-mode user claims a workspace
 // the forge says they belong to. The picker is drawn from the forge
-// workspace snapshot stored at login (D3) — never from a live forge call,
+// workspace snapshot stored at login — never from a live forge call,
 // because OAuth tokens are discarded at login.
 
 // registerRow is one forge workspace on the onboarding picker.
@@ -31,7 +31,7 @@ type registerRow struct {
 }
 
 // registerUser gates both registration routes: hosted mode only (a private
-// instance has no registration UI, D1) and a signed-in user required.
+// instance has no registration UI) and a signed-in user required.
 func (s *Server) registerUser(w http.ResponseWriter, r *http.Request) *store.User {
 	u := currentUser(r)
 	if u == nil {
@@ -52,7 +52,7 @@ func (s *Server) registerUser(w http.ResponseWriter, r *http.Request) *store.Use
 // registerRows resolves the user's stored forge workspaces against the
 // tracked ones. Registered-by-others-and-member cannot appear as a fourth
 // state: login sync already made the user a member of any tracked
-// workspace their forge list contains (D2).
+// workspace their forge list contains.
 func (s *Server) registerRows(r *http.Request, u *store.User) ([]registerRow, error) {
 	memberOf, err := s.store.ListWorkspacesForUser(r.Context(), u.ID)
 	if err != nil {
@@ -101,7 +101,7 @@ var errNotListed = errors.New("workspace is not in the user's forge account")
 // prefix against the login snapshot, then either create the workspace or
 // grant membership in the one already there. created says which happened.
 func (s *Server) claimOrJoin(r *http.Request, u *store.User, prefix string) (ws *store.Workspace, created bool, err error) {
-	// D2, enforced server-side: only workspaces the forge reported at
+	// Enforced server-side: only workspaces the forge reported at
 	// login are claimable, no matter what the request posts.
 	if prefix == "" || !slices.Contains(u.ForgeWorkspaces, prefix) {
 		return nil, false, errNotListed
@@ -114,7 +114,7 @@ func (s *Server) claimOrJoin(r *http.Request, u *store.User, prefix string) (ws 
 		s.log.Info("workspace registered", "prefix", fresh.Prefix, "forge", fresh.Forge, "user", u.DisplayName)
 		return fresh, true, nil
 	}
-	// Someone else registered it first — a non-event by construction (D2):
+	// Someone else registered it first — a non-event by construction:
 	// the forge says the user belongs, so membership is theirs; grant it
 	// now instead of making them wait for the next login sync.
 	if err := s.joinWorkspace(r, u, existing); err != nil {

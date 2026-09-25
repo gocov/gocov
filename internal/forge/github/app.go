@@ -20,7 +20,7 @@ import (
 	"github.com/gocov/gocov/internal/rest"
 )
 
-// App is a GitHub App identity (One-Click Connect D1/D2): the hosted
+// App is a GitHub App identity (One-Click Connect): the hosted
 // instance's official "gocov" app, or a self-hoster's own registration.
 // It trades a short-lived RS256 JWT signed with the app key for hour-long
 // installation tokens, cached per installation until shortly before
@@ -120,7 +120,7 @@ const tokenLeeway = 5 * time.Minute
 // fresh one when the cache is empty or near expiry; fresh reports which
 // of the two happened. A 401/404 from the mint means the installation is
 // gone (uninstalled, or the app credentials were rotated away) and maps
-// to ErrCredentialsRevoked — lazy uninstall detection (D3) keys off
+// to ErrCredentialsRevoked — lazy uninstall detection keys off
 // exactly this.
 func (a *App) installationToken(ctx context.Context, installationID int64) (token string, fresh bool, err error) {
 	a.mu.Lock()
@@ -176,7 +176,7 @@ func (a *App) tokenValid(ctx context.Context, token string) bool {
 }
 
 // ForgeClient returns a Client authenticated as the installation — the
-// server's top credential-precedence link (D4). The token is minted (or
+// server's top credential-precedence link. The token is minted (or
 // reused) here rather than per request: an upload's handful of API calls
 // completes well inside the token's hour, and a mint failure then
 // surfaces before any call is attempted. A cache hit is probed first:

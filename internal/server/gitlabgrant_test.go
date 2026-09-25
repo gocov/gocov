@@ -198,7 +198,7 @@ func TestGitLabConnectCallbackRejects(t *testing.T) {
 		rec.Header().Get("Location") != "/?error=connect_denied" {
 		t.Errorf("non-member workspace: %d -> %q, want the dashboard's connect_denied notice", rec.Code, rec.Header().Get("Location"))
 	}
-	// A workspace that is not there reads exactly the same (D3).
+	// A workspace that is not there reads exactly the same.
 	if rec := get(f.fixture, "/oauth/gitlab/callback?code=x&state=s", mk("s|nowhere"), sess); rec.Code != http.StatusSeeOther ||
 		rec.Header().Get("Location") != "/?error=connect_denied" {
 		t.Errorf("missing workspace: %d -> %q, want the same answer as a non-member", rec.Code, rec.Header().Get("Location"))

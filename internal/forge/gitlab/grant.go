@@ -12,7 +12,7 @@ import (
 	"github.com/gocov/gocov/internal/rest"
 )
 
-// Workspace-connect OAuth grant (GitLab Connect, the P2 one-click item).
+// Workspace-connect OAuth grant (GitLab's One-Click Connect).
 // Application is the deployment's GitLab OAuth application — the same
 // one that powers sign-in — used here for the bigger "Connect workspace"
 // grant whose refresh token is stored on the workspace. GitLab lets an
@@ -46,8 +46,8 @@ type Application struct {
 }
 
 // Grant is one issued (or refreshed) token set. Account is the granting
-// GitLab account — notes will visibly post as it (the Bitbucket D8
-// caveat applies) — and TTL is two hours on gitlab.com.
+// GitLab account — notes will visibly post as it, as Bitbucket's comments
+// do — and TTL is two hours on gitlab.com.
 type Grant = forge.Grant
 
 func (a *Application) authBase() string { return cmp.Or(a.AuthBaseURL, DefaultAuthBaseURL) }

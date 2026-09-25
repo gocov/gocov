@@ -67,8 +67,8 @@ type Workspace struct {
 	// job that prunes on it lands separately.
 	ReportRetentionDays int
 	// GitHubInstallationID links the workspace to a GitHub App
-	// installation (One-Click Connect D3); 0 when not connected. When
-	// set, installation tokens outrank every stored credential (D4).
+	// installation (One-Click Connect); 0 when not connected. When
+	// set, installation tokens outrank every stored credential.
 	GitHubInstallationID int64
 	// GitHubAppBroken marks a connection whose installation token was
 	// refused — the app was uninstalled or suspended on GitHub. Set
@@ -76,7 +76,7 @@ type Workspace struct {
 	// mint succeeds again; the settings page renders it as "reconnect".
 	GitHubAppBroken bool
 	// Grant is the workspace's Bitbucket or GitLab connect grant (One-Click
-	// Connect D6), whichever forge the workspace is on; zero on GitHub,
+	// Connect), whichever forge the workspace is on; zero on GitHub,
 	// which connects through the app installation above, and when not
 	// connected.
 	Grant     Grant
@@ -86,7 +86,7 @@ type Workspace struct {
 // Grant is a Bitbucket or GitLab workspace-connect grant as stored.
 type Grant struct {
 	// Account is the username of the account that granted the connect;
-	// posts visibly carry this identity (D8). Empty when not connected.
+	// posts visibly carry this identity. Empty when not connected.
 	Account string
 	// RefreshToken is the grant's rotating refresh token, encrypted at
 	// rest by the postgres store (AES-GCM under GOCOV_SECRET_KEY). Empty
@@ -226,7 +226,7 @@ type User struct {
 	Email       string
 	DisplayName string
 	// ForgeWorkspaces are the workspace slugs the forge reported at the
-	// last sign-in (M3/D3). OAuth tokens are discarded at login, so this
+	// last sign-in. OAuth tokens are discarded at login, so this
 	// snapshot is what the registration page renders from; it goes stale
 	// until the next login, never fresher.
 	ForgeWorkspaces []string
@@ -239,7 +239,7 @@ type User struct {
 
 // Owns reports whether the repo belongs to this workspace: same forge,
 // slug below the prefix. Repos carry no workspace id; this is the tie
-// (the M2 convention), and DeleteWorkspace cascades by the same rule.
+// by convention, and DeleteWorkspace cascades by the same rule.
 func (w *Workspace) Owns(r *Repo) bool {
 	return r.Forge == w.Forge && strings.HasPrefix(r.Slug, w.Prefix+"/")
 }
@@ -369,7 +369,7 @@ type Store interface {
 	WorkspaceByToken(ctx context.Context, token string) (*Workspace, error)
 	ListWorkspaces(ctx context.Context) ([]*Workspace, error)
 	// RegisterWorkspace creates the workspace and makes userID its first
-	// member — an owner — atomically: self-service registration (M3) must
+	// member — an owner — atomically: self-service registration must
 	// never leave a workspace nobody can see or administer.
 	RegisterWorkspace(ctx context.Context, w *Workspace, userID int64) error
 	// SetWorkspaceGrant updates only the workspace's grant. Bitbucket and
@@ -394,7 +394,7 @@ type Store interface {
 	// given set: memberships not listed are removed, listed ones are added
 	// or have their role updated, so re-running it with the same set is a
 	// no-op. Called at login to mirror the user's current forge membership
-	// and role (M2). A membership in a workspace that does not exist is
+	// and role. A membership in a workspace that does not exist is
 	// an error.
 	SetUserMemberships(ctx context.Context, userID int64, memberships []Membership) error
 	// ListWorkspacesForUser returns the workspaces the user is a member of,

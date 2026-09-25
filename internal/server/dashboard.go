@@ -114,7 +114,7 @@ func (s *Server) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
 	scope := s.scopeFor(tracked)
 	// A hosted user without a single workspace membership would see a
 	// permanently empty dashboard; onboarding is the only useful screen
-	// for them (M3/R1), and the app routes itself there.
+	// for them, and the app routes itself there.
 	if s.hosted && scope.scoped && len(scope.prefixes) == 0 && currentUser(r) != nil {
 		dto.NeedsOnboarding = true
 		s.writeJSON(w, dto)

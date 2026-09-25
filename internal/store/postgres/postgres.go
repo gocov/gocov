@@ -27,7 +27,7 @@ var migrationsFS embed.FS
 type Store struct {
 	pool *pgxpool.Pool
 	// cipher seals the Bitbucket grant refresh token at rest (One-Click
-	// Connect D6). Nil when GOCOV_SECRET_KEY is not configured — storing
+	// Connect). Nil when GOCOV_SECRET_KEY is not configured — storing
 	// a grant then fails loudly, but everything else works.
 	cipher *secretbox.Box
 }
@@ -436,8 +436,8 @@ func (s *Store) DeleteWorkspace(ctx context.Context, id int64) error {
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
 
 	// The workspace prefix decides which repos belong to it — repos carry
-	// no workspace_id, the tie is the slug prefix on the same forge (M2
-	// convention). Delete those repos first; uploads, upload_files and
+	// no workspace_id, the tie is the slug prefix on the same forge.
+	// Delete those repos first; uploads, upload_files and
 	// commit_reports cascade off repos(id). Membership rows cascade off
 	// the workspace row below.
 	var forge, prefix string

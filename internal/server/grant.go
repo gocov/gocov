@@ -7,12 +7,12 @@ import (
 	"github.com/gocov/gocov/internal/store"
 )
 
-// Workspace-connect grants for Bitbucket and GitLab (One-Click Connect
-// P2/D6/D7). An owner clicks Connect on the settings page, consents once
+// Workspace-connect grants for Bitbucket and GitLab (One-Click Connect).
+// An owner clicks Connect on the settings page, consents once
 // on the forge, and the workspace from then on acts through that grant:
 // statuses, PR comments, reports, diff and source fetch — no manual
 // credentials. The grant's refresh token lives on the workspace row,
-// encrypted at rest; posts visibly carry the connecting account (D8).
+// encrypted at rest; posts visibly carry the connecting account.
 //
 // Both forges rotate refresh tokens on every use: each refresh
 // invalidates the stored token and returns a new one. The refresh path
@@ -178,8 +178,8 @@ func (s *Server) connectFailed(w http.ResponseWriter, r *http.Request, forge, pr
 }
 
 // connectDenied ends a consent that came back for a workspace the viewer
-// has no seat in — or for one that is not there, which must read the same
-// (D3). Neither has a settings page to show them, so the dashboard carries
+// has no seat in — or for one that is not there, which must read the same.
+// Neither has a settings page to show them, so the dashboard carries
 // the notice, and the redirect names no workspace.
 func (s *Server) connectDenied(w http.ResponseWriter, r *http.Request, g *connectGrant, u *store.User) {
 	s.log.Warn(g.forge+" connect callback denied", "user", u.DisplayName)

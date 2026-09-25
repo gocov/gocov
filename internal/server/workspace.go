@@ -11,9 +11,9 @@ import (
 	"github.com/gocov/gocov/internal/store"
 )
 
-// Workspace settings (M3/R3) — the way workspaces are administered:
+// Workspace settings — the way workspaces are administered:
 // token rotation, default branch, one-click forge connection and gate
-// defaults — and the setup screen (R4) next to it. Both are the app's
+// defaults — and the setup screen next to it. Both are the app's
 // screens over the endpoints here; their page routes serve the shell and
 // leave every access question to this file. Both are members-only;
 // anyone else 404s (like every other tenant surface, a non-member must
@@ -55,7 +55,7 @@ func (s *Server) memberWorkspace(w http.ResponseWriter, r *http.Request) (*store
 
 // tenantNotFound is how a member-only surface answers for a workspace or
 // repo that is missing — or that is there but the viewer may not see, so
-// that a non-member cannot tell the two apart (D3). Pages get net/http's
+// that a non-member cannot tell the two apart. Pages get net/http's
 // plain 404; the UI API gets the same answer in JSON.
 func tenantNotFound(w http.ResponseWriter, r *http.Request) {
 	if apiUIPath(r.URL.Path) {

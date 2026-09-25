@@ -31,7 +31,6 @@ type Provider interface {
 	AuthorizeURL(state, redirectURI string) string
 	// Identity exchanges the callback code for the account's identity and
 	// workspace memberships. The provider's access token stays internal to
-	// this call and is discarded afterwards (an M1 decision — a future
-	// milestone may add a way to retain tokens).
+	// this call and is discarded afterwards; nothing retains it.
 	Identity(ctx context.Context, code, redirectURI string) (*Identity, error)
 }

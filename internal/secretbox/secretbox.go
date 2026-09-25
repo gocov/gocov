@@ -1,5 +1,5 @@
 // Package secretbox seals short secrets for at-rest storage with
-// AES-256-GCM (One-Click Connect D6). The key is the operator's
+// AES-256-GCM (One-Click Connect). The key is the operator's
 // GOCOV_SECRET_KEY, hex-decoded; sealed values are self-describing
 // strings safe for TEXT columns.
 package secretbox
