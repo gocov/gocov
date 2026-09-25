@@ -7,8 +7,6 @@ package core
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
@@ -213,11 +211,7 @@ func applyIgnore(sub *Submission) (*ignore.Rules, int, error) {
 }
 
 func (p *Pipeline) storeRaw(ctx context.Context, repoID int64, raw []byte) (string, error) {
-	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	key := fmt.Sprintf("profiles/%d/%s", repoID, hex.EncodeToString(buf))
+	key := fmt.Sprintf("profiles/%d/%s", repoID, RandomHex(16))
 	if err := p.Blobs.Put(ctx, key, raw); err != nil {
 		return "", err
 	}

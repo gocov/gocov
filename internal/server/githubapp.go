@@ -131,11 +131,7 @@ func (s *Server) connectNew(w http.ResponseWriter, r *http.Request, u *store.Use
 		s.connectOutcome(w, r, "not_your_workspace", login, installationID)
 		return
 	}
-	token, err := core.NewToken()
-	if err != nil {
-		s.internalError(w, "generating workspace token", err)
-		return
-	}
+	token := core.NewToken()
 	ws := &store.Workspace{
 		Forge:                "github",
 		Prefix:               login,

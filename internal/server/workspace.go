@@ -361,11 +361,7 @@ func (s *Server) handleAPIWorkspaceRotate(w http.ResponseWriter, r *http.Request
 	if ws == nil {
 		return
 	}
-	token, err := core.NewToken()
-	if err != nil {
-		s.internalError(w, "generating workspace token", err)
-		return
-	}
+	token := core.NewToken()
 	ws.Token = token
 	if err := s.store.UpdateWorkspace(r.Context(), ws); err != nil {
 		s.internalError(w, "rotating workspace token", err)

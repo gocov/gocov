@@ -192,10 +192,7 @@ func (s *Server) claimWorkspace(r *http.Request, u *store.User, prefix string) (
 	if forgeRole(u, prefix) != store.RoleOwner {
 		return nil, nil, errNotOwner
 	}
-	token, err := core.NewToken()
-	if err != nil {
-		return nil, nil, err
-	}
+	token := core.NewToken()
 	ws := &store.Workspace{
 		Forge:         u.Forge,
 		Prefix:        prefix,

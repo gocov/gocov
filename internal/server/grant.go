@@ -78,11 +78,7 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	if ws == nil {
 		return
 	}
-	state, err := newState()
-	if err != nil {
-		s.internalError(w, "generating connect state", err)
-		return
-	}
+	state := newState()
 	setCookie(w, g.cookie, state+"|"+ws.Prefix, stateCookieTTL, s.secureCookies)
 	http.Redirect(w, r, connector.AuthorizeURL(state, s.redirectURI(g.forge)), http.StatusFound)
 }
