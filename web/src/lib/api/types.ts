@@ -78,9 +78,6 @@ export interface DashRepo {
 
 export interface DashStats {
   coverage: number | null;
-  gates_passing: number;
-  gates_total: number;
-  stale_count: number;
   reporting: "connected" | "not_connected" | "broken";
   /** "gocov[bot]" or the granting account; "" when not connected. */
   reporting_as: string;

@@ -14,7 +14,7 @@ import { useUrlNotice } from "@/lib/notice";
 import { readStored, writeStored } from "@/lib/storage";
 import { usePageTitle } from "@/lib/title";
 import { routes } from "@/lib/urls";
-import { attentionRows } from "@/lib/dashboard";
+import { attentionRows, repoCounts } from "@/lib/dashboard";
 
 /** The codes the connect redirects carry, said the way this page can act on them. */
 const connectNotices = {
@@ -135,6 +135,9 @@ function Workspace({ data, current }: { data: Dashboard; current: WorkspaceGroup
   const reporting = reportingStates[stats.reporting];
   const setup = setupRoute(current);
   const hasReports = repos.some((r) => r.coverage !== null);
+  // The tiles count the rows the filter tabs count: every gate is pass, fail or none.
+  const counts = repoCounts(repos);
+  const gated = counts.all - counts.nogate;
 
   return (
     <div className="stack stack-3">
@@ -171,8 +174,8 @@ function Workspace({ data, current }: { data: Dashboard; current: WorkspaceGroup
         />
         <StatTile
           label="Gates passing"
-          value={stats.gates_passing}
-          hint={`of ${stats.gates_total} with a gate${stats.stale_count > 0 ? ` · ${stats.stale_count} stale` : ""}`}
+          value={gated - counts.failing}
+          hint={`of ${gated} with a gate${counts.stale > 0 ? ` · ${counts.stale} stale` : ""}`}
         />
         <StatTile
           label="Reporting"

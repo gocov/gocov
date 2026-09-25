@@ -59,8 +59,14 @@ func TestAPIDashboardNeedsAttention(t *testing.T) {
 		t.Errorf("attention order = %q, want failing before stale",
 			[]string{got.Attention[0].Kind, got.Attention[1].Kind})
 	}
-	if got.Stats.StaleCount != 1 {
-		t.Errorf("stale count = %d, want 1", got.Stats.StaleCount)
+	stale := 0
+	for _, row := range got.Repos {
+		if row.Stale {
+			stale++
+		}
+	}
+	if stale != 1 {
+		t.Errorf("stale rows = %d, want 1", stale)
 	}
 	// Statement-weighted across the three repos that reported: (40+80+70)/300.
 	if got.Stats.Coverage == nil || math.Abs(*got.Stats.Coverage-63.333) > 0.01 {
@@ -161,8 +167,8 @@ func TestAPIDashboard(t *testing.T) {
 	if row.UploadedAt == nil {
 		t.Error("row carries no upload time")
 	}
-	if got.Stats.GatesTotal != 1 || got.Stats.GatesPassing != 0 {
-		t.Errorf("gate stats = %d/%d, want 0/1", got.Stats.GatesPassing, got.Stats.GatesTotal)
+	if row.Gate != "fail" {
+		t.Errorf("gate = %q, want fail (the one gated repo, not passing)", row.Gate)
 	}
 	if got.Stats.Reporting != "not_connected" {
 		t.Errorf("reporting = %q, want not_connected", got.Stats.Reporting)

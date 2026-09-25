@@ -78,9 +78,6 @@ const dashboard: Dashboard = {
   ],
   stats: {
     coverage: 74.6,
-    gates_passing: 1,
-    gates_total: 2,
-    stale_count: 1,
     reporting: "connected",
     reporting_as: "gocov[bot]",
   },
