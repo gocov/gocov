@@ -8,7 +8,7 @@ import { SnippetPanel } from "./SnippetPanel";
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 const info: SetupInfo = {
-  workspace: { forge: "github", prefix: "acme", forge_label: "GitHub" },
+  workspace: { forge: "github", prefix: "acme" },
   owner: true,
   tokenless: true,
   connection_broken: false,
@@ -140,7 +140,7 @@ test("a self-hosted instance also hands over GOCOV_SERVER", () => {
 });
 
 test("the GitLab panel offers the catalog component and its own filename", () => {
-  show({ workspace: { forge: "gitlab", prefix: "acme/team", forge_label: "GitLab" }, gitlab_catalog: true });
+  show({ workspace: { forge: "gitlab", prefix: "acme/team" }, gitlab_catalog: true });
   expect(screen.getByText(".gitlab-ci.yml")).toBeInTheDocument();
   expect(snippetText()).toContain("gitlab.com/gocov/gocov/upload@1");
 });

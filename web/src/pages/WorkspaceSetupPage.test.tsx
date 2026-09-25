@@ -7,7 +7,7 @@ afterEach(() => vi.unstubAllGlobals());
 beforeEach(() => window.localStorage.clear());
 
 const info: SetupInfo = {
-  workspace: { forge: "github", prefix: "acme", forge_label: "GitHub" },
+  workspace: { forge: "github", prefix: "acme" },
   owner: true,
   tokenless: false,
   connection_broken: false,

@@ -3,7 +3,7 @@ import { SetupChecklist } from "gocov-web";
 const waiting = { repo_count: 0, first_report: null, reports_posted: "" };
 
 const info = {
-  workspace: { forge: "github", prefix: "acme", forge_label: "GitHub" },
+  workspace: { forge: "github", prefix: "acme" },
   owner: true,
   tokenless: true,
   connection_broken: false,

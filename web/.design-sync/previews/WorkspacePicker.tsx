@@ -2,7 +2,6 @@ import { WorkspacePicker } from "gocov-web";
 
 const bitbucket = {
   forge: "bitbucket",
-  forge_label: "Bitbucket",
   account: "Ada Lovelace",
   mode: "pick",
   install_url: "",
@@ -28,7 +27,6 @@ export function GitLabGroups() {
     <WorkspacePicker
       info={{
         forge: "gitlab",
-        forge_label: "GitLab",
         account: "Ada Lovelace",
         mode: "pick",
         install_url: "",
@@ -50,7 +48,6 @@ export function InstallOnGitHub() {
     <WorkspacePicker
       info={{
         forge: "github",
-        forge_label: "GitHub",
         account: "Ada Lovelace",
         mode: "install",
         install_url: "https://github.com/apps/gocov/installations/new",
@@ -68,7 +65,6 @@ export function TheAppIsNotConfigured() {
     <WorkspacePicker
       info={{
         forge: "github",
-        forge_label: "GitHub",
         account: "Ada Lovelace",
         mode: "install",
         install_url: "",
@@ -86,7 +82,6 @@ export function NoMemberships() {
     <WorkspacePicker
       info={{
         forge: "bitbucket",
-        forge_label: "Bitbucket",
         account: "Ada Lovelace",
         mode: "pick",
         install_url: "",

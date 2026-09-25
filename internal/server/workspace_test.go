@@ -362,7 +362,7 @@ func TestAPIWorkspaceSettings(t *testing.T) {
 	f, sess := newWorkspaceFixture(t, true)
 
 	got := decodeJSON[workspaceSettingsDTO](t, get(f, "/api/ui/workspace-settings/bitbucket/acme", sess))
-	if got.Workspace.Prefix != "acme" || got.Workspace.ForgeLabel != "Bitbucket" {
+	if got.Workspace.Prefix != "acme" {
 		t.Errorf("workspace = %+v", got.Workspace)
 	}
 	if !got.Owner || got.RepoCount != 1 {

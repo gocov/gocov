@@ -4,6 +4,7 @@ import { CodeBlock, Mono, Notice } from "@/components/atoms";
 import { CopyButton, SecretField, SegmentedControl } from "@/components/molecules";
 import { track } from "@/lib/analytics";
 import type { SetupInfo } from "@/lib/api/types";
+import { forgeLabel } from "@/lib/format";
 import { readStored, writeStored } from "@/lib/storage";
 import { buildSnippet, languageSpec, languages, tokenWhere, type LanguageId } from "@/lib/snippets";
 import { routes } from "@/lib/urls";
@@ -38,7 +39,8 @@ export function SnippetPanel({ info, onReveal, onCopied }: Props) {
   const [language, setLanguage] = useState<LanguageId>(storedLanguage);
   const [tokenOpen, setTokenOpen] = useState(false);
 
-  const { forge, forge_label: forgeLabel, prefix } = info.workspace;
+  const { forge, prefix } = info.workspace;
+  const forgeName = forgeLabel(forge);
   // The alternative path rewrites the snippet while it is open: what is on
   // screen is always what the chosen authentication needs.
   const tokenless = info.tokenless && !tokenOpen;
@@ -113,13 +115,13 @@ export function SnippetPanel({ info, onReveal, onCopied }: Props) {
 
       <p className="SnippetPanel__auth">
         {tokenless
-          ? `No secret needed — each job proves which repository it is with a short-lived identity token from ${forgeLabel}.`
+          ? `No secret needed — each job proves which repository it is with a short-lived identity token from ${forgeName}.`
           : tokenWhere(forge, info.server_implicit)}
       </p>
 
       {info.connection_broken && (
         <Notice tone="warn">
-          The workspace&rsquo;s connection to {forgeLabel} no longer works, so jobs need the token below.{" "}
+          The workspace&rsquo;s connection to {forgeName} no longer works, so jobs need the token below.{" "}
           <Link to={routes.workspace(forge, prefix)}>Reconnect it</Link> and uploads go back to needing no secret.
         </Notice>
       )}

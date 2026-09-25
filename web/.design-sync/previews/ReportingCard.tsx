@@ -6,7 +6,6 @@ export function GitHubConnected() {
   return (
     <ReportingCard
       forge="github"
-      forgeLabel="GitHub"
       reporting={{
         available: true,
         state: "on",
@@ -24,7 +23,6 @@ export function GitLabNotConnected() {
   return (
     <ReportingCard
       forge="gitlab"
-      forgeLabel="GitLab"
       reporting={{
         available: true,
         state: "off",
@@ -42,7 +40,6 @@ export function BitbucketBroken() {
   return (
     <ReportingCard
       forge="bitbucket"
-      forgeLabel="Bitbucket"
       reporting={{
         available: true,
         state: "broken",
@@ -60,7 +57,6 @@ export function MemberView() {
   return (
     <ReportingCard
       forge="github"
-      forgeLabel="GitHub"
       reporting={{
         available: true,
         state: "on",

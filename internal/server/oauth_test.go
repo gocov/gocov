@@ -410,9 +410,6 @@ func TestTwoProviders(t *testing.T) {
 	if len(info.Providers) != 2 || info.Providers[0].Name != "bitbucket" || info.Providers[1].Name != "github" {
 		t.Errorf("providers = %+v, want bitbucket then github", info.Providers)
 	}
-	if info.Providers[0].Label != "Bitbucket" || info.Providers[1].Label != "GitHub" {
-		t.Errorf("provider labels = %+v", info.Providers)
-	}
 
 	// The GitHub flow signs in through the GitHub provider only, with a
 	// forge-specific callback as the redirect URI.
@@ -514,7 +511,7 @@ func TestAPILogin(t *testing.T) {
 		t.Fatalf("login info: status = %d", rec.Code)
 	}
 	got := decodeJSON[loginInfoDTO](t, rec)
-	if len(got.Providers) != 1 || got.Providers[0].Name != "bitbucket" || got.Providers[0].Label != "Bitbucket" {
+	if len(got.Providers) != 1 || got.Providers[0].Name != "bitbucket" {
 		t.Errorf("providers = %+v, want the one configured forge with its label", got.Providers)
 	}
 	if got.Hosted {

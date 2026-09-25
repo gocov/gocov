@@ -6,8 +6,8 @@ import { LoginCard, trackedText } from "./LoginCard";
 const info: LoginInfo = {
   hosted: false,
   providers: [
-    { name: "github", label: "GitHub" },
-    { name: "gitlab", label: "GitLab" },
+    { name: "github" },
+    { name: "gitlab" },
   ],
   tracked_workspaces: [],
 };

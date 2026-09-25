@@ -10,7 +10,7 @@ import { Card, FormField, PageHeader, QueryBoundary, SaveFooter } from "@/compon
 import { apiPost, errorMessage } from "@/lib/api/client";
 import { workspaceSettingsPath, workspaceSettingsQuery } from "@/lib/api/queries";
 import type { TokenReveal, WorkspaceSettings, WorkspaceSettingsInput } from "@/lib/api/types";
-import { plural } from "@/lib/format";
+import { forgeLabel, plural } from "@/lib/format";
 import { useUrlNotice } from "@/lib/notice";
 import { useSectionSave } from "@/lib/sectionSave";
 import { retentionOptions, workspaceInput } from "@/lib/settings";
@@ -96,7 +96,7 @@ function WorkspaceSettingsView({ forge, prefix, settings }: { forge: string; pre
       }
       meta={
         <>
-          {ws.forge_label}
+          {forgeLabel(ws.forge)}
           {settings.repo_count > 0 && <> · {plural(settings.repo_count, "repository", "repositories")}</>} ·{" "}
           <Link to={routes.workspaceSetup(forge, prefix)}>Setup instructions</Link>
         </>
@@ -110,7 +110,7 @@ function WorkspaceSettingsView({ forge, prefix, settings }: { forge: string; pre
       {!owner && (
         <Notice>
           You are a member of this workspace, so these settings are read-only. Changing them — and seeing the upload
-          token — takes a workspace owner: an admin or owner of <Mono>{prefix}</Mono> on {ws.forge_label}. Roles refresh
+          token — takes a workspace owner: an admin or owner of <Mono>{prefix}</Mono> on {forgeLabel(ws.forge)}. Roles refresh
           at every sign-in.
         </Notice>
       )}
@@ -120,7 +120,6 @@ function WorkspaceSettingsView({ forge, prefix, settings }: { forge: string; pre
         <SettingsLayout.Section id="reporting">
           <ReportingCard
             forge={ws.forge}
-            forgeLabel={ws.forge_label}
             reporting={settings.reporting}
             owner={owner}
             repoCount={settings.repo_count}
@@ -220,7 +219,7 @@ function WorkspaceSettingsView({ forge, prefix, settings }: { forge: string; pre
             Removes <InlineCode>{prefix}</InlineCode>
             {settings.repo_count > 0 && <>, its {plural(settings.repo_count, "repository", "repositories")}</>} and
             every coverage report gocov holds for them. Uploads with this token start failing immediately. Nothing is
-            changed on {ws.forge_label}.
+            changed on {forgeLabel(ws.forge)}.
           </p>
         </DangerCard>
       </SettingsLayout.Section>

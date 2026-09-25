@@ -5,7 +5,7 @@ import { renderPage } from "@/test/render";
 import { SetupChecklist } from "./SetupChecklist";
 
 const info: SetupInfo = {
-  workspace: { forge: "github", prefix: "acme", forge_label: "GitHub" },
+  workspace: { forge: "github", prefix: "acme" },
   owner: true,
   tokenless: true,
   connection_broken: false,
@@ -130,7 +130,7 @@ test("the help is the token-mode help when the workspace uploads with a token", 
 
 test("a GitLab workspace gets GitLab's help and GitLab's recipe", () => {
   show({
-    info: { workspace: { forge: "gitlab", prefix: "acme", forge_label: "GitLab" }, tokenless: false },
+    info: { workspace: { forge: "gitlab", prefix: "acme" }, tokenless: false },
     listeningSince: Date.now() - 30_000,
   });
   expect(screen.getByText(/masked but not protected/)).toBeInTheDocument();

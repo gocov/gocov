@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { ForgeMark, Icon, Mono, TextInput } from "@/components/atoms";
 import type { WorkspaceGroup } from "@/lib/api/types";
-import { pct } from "@/lib/format";
+import { forgeLabel, pct } from "@/lib/format";
 import { routes } from "@/lib/urls";
 import "./WorkspaceSwitcher.css";
 
@@ -48,12 +48,10 @@ export function WorkspaceSwitcher({
   const name = (
     <>
       <Mono className="WorkspaceSwitcher__name">{current.prefix}</Mono>
-      {current.forge_name !== "" && (
-        <span className="WorkspaceSwitcher__forge">
-          <ForgeMark forge={current.forge} size={14} />
-          {current.forge_name}
-        </span>
-      )}
+      <span className="WorkspaceSwitcher__forge">
+        <ForgeMark forge={current.forge} size={14} />
+        {forgeLabel(current.forge)}
+      </span>
     </>
   );
 

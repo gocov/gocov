@@ -17,7 +17,6 @@ const settings = (over: Partial<WorkspaceSettings> = {}): WorkspaceSettings => (
   workspace: {
     forge: "github",
     prefix: "acme",
-    forge_label: "GitHub",
     default_branch: "main",
     report_retention_days: 90,
     gate: { min_coverage: 80, min_diff_coverage: null, max_coverage_drop: null },
@@ -178,7 +177,7 @@ test("text the server never sends is not shown", async () => {
 });
 
 test("a nested GitLab group's settings are asked for by its whole path", async () => {
-  const nested = settings({ workspace: { ...settings().workspace, forge: "gitlab", prefix: "grp/sub", forge_label: "GitLab" } });
+  const nested = settings({ workspace: { ...settings().workspace, forge: "gitlab", prefix: "grp/sub" } });
   const fetchMock = mockApi({ "GET /workspace-settings/gitlab/grp/sub": nested });
   renderPage(<WorkspaceSettingsPage />, { ...at, path: "/workspace-settings/gitlab/grp/sub" });
 

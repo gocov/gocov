@@ -28,7 +28,7 @@ export interface Session {
 export interface LoginInfo {
   hosted: boolean;
   /** Sign-in starts at /oauth/{name}/start?next=… (server route). */
-  providers: { name: Forge; label: string }[];
+  providers: { name: Forge }[];
   /** Only disclosed with ?denied=1 on a private instance (the "no access" notice); [] otherwise. */
   tracked_workspaces: { name: string; forge: Forge }[];
 }
@@ -51,8 +51,6 @@ export interface Dashboard {
 export interface WorkspaceGroup {
   forge: Forge;
   prefix: string;
-  /** "GitHub" / "GitLab" / "Bitbucket", "" when unknown. */
-  forge_name: string;
   repo_count: number;
   /** Statement-weighted, null before any upload. */
   coverage: number | null;
@@ -282,7 +280,6 @@ export interface WorkspaceSettings {
   workspace: {
     forge: Forge;
     prefix: string;
-    forge_label: string;
     default_branch: string;
     /** 0 = forever. */
     report_retention_days: number;
@@ -354,7 +351,6 @@ export interface RepoSettingsInput {
 
 export interface OnboardingInfo {
   forge: Forge;
-  forge_label: string;
   /** Display name of the signed-in account. */
   account: string;
   /**
@@ -398,7 +394,7 @@ export interface RegisterResult {
 // The upload token comes from the workspace reveal-token POST (owners).
 
 export interface SetupInfo {
-  workspace: { forge: Forge; prefix: string; forge_label: string };
+  workspace: { forge: Forge; prefix: string };
   owner: boolean;
   /**
    * Uploads can authenticate with a forge-minted OIDC identity token (the

@@ -1,9 +1,9 @@
 import { LoginCard } from "gocov-web";
 
 const providers = [
-  { name: "github" as const, label: "GitHub" },
-  { name: "gitlab" as const, label: "GitLab" },
-  { name: "bitbucket" as const, label: "Bitbucket" },
+  { name: "github" as const },
+  { name: "gitlab" as const },
+  { name: "bitbucket" as const },
 ];
 
 export function EveryForgeOffered() {

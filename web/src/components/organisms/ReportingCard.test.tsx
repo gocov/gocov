@@ -29,7 +29,6 @@ function show(props: Partial<Parameters<typeof ReportingCard>[0]> = {}) {
     <MemoryRouter>
       <ReportingCard
         forge="github"
-        forgeLabel="GitHub"
         reporting={reporting()}
         owner
         repoCount={8}
@@ -46,7 +45,6 @@ test("renders nothing where the deployment cannot connect this forge", () => {
     <MemoryRouter>
       <ReportingCard
         forge="gitlab"
-        forgeLabel="GitLab"
         reporting={reporting({ available: false, connect_url: "" })}
         owner
         repoCount={2}
@@ -71,7 +69,6 @@ test("a connected GitHub workspace posts as the bot and can be managed on GitHub
 test("a disconnected GitLab workspace is offered the grant, in GitLab's words", () => {
   show({
     forge: "gitlab",
-    forgeLabel: "GitLab",
     reporting: reporting({ state: "off", connect_url: "/workspace-settings/gitlab/acme/connect" }),
   });
   expect(screen.getByText("Not connected")).toBeInTheDocument();
@@ -86,7 +83,6 @@ test("a disconnected GitLab workspace is offered the grant, in GitLab's words", 
 test("a broken Bitbucket grant explains itself and offers it again", () => {
   show({
     forge: "bitbucket",
-    forgeLabel: "Bitbucket",
     reporting: reporting({ state: "broken", account: "omer", connect_url: "/workspace-settings/bitbucket/acme/connect" }),
   });
   expect(screen.getByText("Reconnect needed")).toBeInTheDocument();
@@ -99,7 +95,6 @@ test("a broken Bitbucket grant explains itself and offers it again", () => {
 test("a broken GitHub install is called an install, not a grant", () => {
   show({
     forge: "github",
-    forgeLabel: "GitHub",
     reporting: reporting({ state: "broken", account: "", connect_url: "https://github.com/apps/gocov/installations/new" }),
   });
   expect(screen.getByRole("alert")).toHaveTextContent("The app install stopped working — it was removed or suspended on GitHub.");

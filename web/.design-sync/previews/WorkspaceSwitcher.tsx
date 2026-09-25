@@ -4,7 +4,6 @@ import { LinkButton, PageHeader, WorkspaceSwitcher } from "gocov-web";
 const group = (over) => ({
   forge: "github",
   prefix: "acme",
-  forge_name: "GitHub",
   repo_count: 12,
   coverage: 74.6,
   current: false,
@@ -13,8 +12,8 @@ const group = (over) => ({
 });
 
 const acme = group({ current: true });
-const labs = group({ forge: "gitlab", prefix: "acme-labs", forge_name: "GitLab", repo_count: 4, coverage: null });
-const platform = group({ forge: "bitbucket", prefix: "acme-platform", forge_name: "Bitbucket", repo_count: 7, coverage: 61.2 });
+const labs = group({ forge: "gitlab", prefix: "acme-labs", repo_count: 4, coverage: null });
+const platform = group({ forge: "bitbucket", prefix: "acme-platform", repo_count: 7, coverage: 61.2 });
 const globex = group({ prefix: "globex", repo_count: 3, coverage: 88.1 });
 
 /**
@@ -74,9 +73,9 @@ export function OpenAndSearchable() {
     platform,
     globex,
     group({ prefix: "acme-infra", repo_count: 5, coverage: 69.3 }),
-    group({ forge: "gitlab", prefix: "acme-data", forge_name: "GitLab", repo_count: 2, coverage: 55.8 }),
+    group({ forge: "gitlab", prefix: "acme-data", repo_count: 2, coverage: 55.8 }),
     group({ prefix: "acme-docs", repo_count: 1, coverage: null }),
-    group({ forge: "bitbucket", prefix: "initech", forge_name: "Bitbucket", repo_count: 6, coverage: 80.0 }),
+    group({ forge: "bitbucket", prefix: "initech", repo_count: 6, coverage: 80.0 }),
   ];
   return (
     <Opened>

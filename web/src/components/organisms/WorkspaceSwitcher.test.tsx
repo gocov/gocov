@@ -7,7 +7,6 @@ import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 const group = (over: Partial<WorkspaceGroup> = {}): WorkspaceGroup => ({
   forge: "github",
   prefix: "acme",
-  forge_name: "GitHub",
   repo_count: 4,
   coverage: 74.6,
   current: false,
@@ -16,7 +15,7 @@ const group = (over: Partial<WorkspaceGroup> = {}): WorkspaceGroup => ({
 });
 
 const acme = group({ current: true });
-const labs = group({ forge: "gitlab", prefix: "acme-labs", forge_name: "GitLab", coverage: null });
+const labs = group({ forge: "gitlab", prefix: "acme-labs", coverage: null });
 
 test("a single workspace is a plain title", () => {
   renderPage(<WorkspaceSwitcher current={acme} groups={[acme]} canOnboard />);
