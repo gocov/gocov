@@ -117,3 +117,29 @@ func TestWorkspaceGrantStaysOnItsForge(t *testing.T) {
 		t.Errorf("grant = %+v, want covbot untouched", got.Grant)
 	}
 }
+
+func TestUploadFileReadsOneFile(t *testing.T) {
+	ctx := context.Background()
+	s := New()
+	u := &store.Upload{RepoID: 1, CommitSHA: "c1"}
+	files := []*store.UploadFile{{Path: "a.go", Pct: 50}, {Path: "b.go", Pct: 100}}
+	if err := s.CreateUpload(ctx, u, files); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.UploadFile(ctx, u.ID, "b.go")
+	if err != nil || got.Path != "b.go" || got.Pct != 100 {
+		t.Errorf("UploadFile(b.go) = %+v, %v", got, err)
+	}
+	got.Pct = 0 // a caller's copy never reaches the stored row
+	if again, _ := s.UploadFile(ctx, u.ID, "b.go"); again.Pct != 100 {
+		t.Errorf("stored file changed through a returned copy: %+v", again)
+	}
+	for _, tc := range []struct {
+		id   int64
+		path string
+	}{{u.ID, "c.go"}, {u.ID + 1, "a.go"}} {
+		if _, err := s.UploadFile(ctx, tc.id, tc.path); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("UploadFile(%d, %s) = %v, want ErrNotFound", tc.id, tc.path, err)
+		}
+	}
+}
