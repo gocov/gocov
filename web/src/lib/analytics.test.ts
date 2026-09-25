@@ -31,8 +31,14 @@ function arrive(ph = fakePostHog()) {
   return ph;
 }
 
+// Moves jsdom's own URL: location itself can't be stubbed in a VM context.
+function visit(url: string) {
+  history.replaceState(null, "", url);
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
+  visit("/");
   document.head.querySelectorAll('script[src*="array.js"]').forEach((s) => s.remove());
 });
 
@@ -84,7 +90,7 @@ test("init keeps the narrow options app.js used, and identifies by id", async ()
 });
 
 test("the dashboard is never recorded: it names private repositories", async () => {
-  vi.stubGlobal("location", { pathname: "/", search: "?ws=github%2Facme" });
+  visit("/?ws=github%2Facme");
   const a = await fresh();
   a.initAnalytics(config);
   const ph = arrive();
@@ -94,7 +100,7 @@ test("the dashboard is never recorded: it names private repositories", async () 
 test.each(["/repos/github/acme/api", "/w/github/acme", "/workspace-settings/github/acme"])(
   "session replay is off on %s, outside the setup pages",
   async (pathname) => {
-    vi.stubGlobal("location", { pathname, search: "" });
+    visit(pathname);
     const a = await fresh();
     a.initAnalytics(config);
     const ph = arrive();
@@ -105,7 +111,7 @@ test.each(["/repos/github/acme/api", "/w/github/acme", "/workspace-settings/gith
 test.each(["/onboarding", "/workspace-setup/github/acme", "/workspace-setup/gitlab/grp/sub"])(
   "session replay is on for %s, where someone is being set up",
   async (pathname) => {
-    vi.stubGlobal("location", { pathname, search: "" });
+    visit(pathname);
     const a = await fresh();
     a.initAnalytics(config);
     const ph = arrive();
