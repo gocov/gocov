@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { Chip, LinkButton, Mono } from "@/components/atoms";
 import { Card, KeyValue, KeyValueList } from "@/components/molecules";
 import type { Provenance } from "@/lib/api/types";
-import { timeAgo } from "@/lib/format";
+import { ciLabel, duration, humanBytes, plural, timeAgo, uploaderKindLabel } from "@/lib/format";
 import "./ProvenanceCard.css";
 
 /** "5 Sep 2026, 14:02" — the full moment, beside the relative one. */
@@ -16,6 +16,10 @@ const received = (iso: string) => {
 export function ProvenanceCard({ provenance, downloadUrl }: { provenance: Provenance; downloadUrl: string | null }) {
   const p = provenance;
   const rows: { label: string; value: ReactNode }[] = [];
+  const ci = ciLabel(p.ci_provider);
+  const kind = uploaderKindLabel(p.uploader_kind);
+  const partsNote = p.parts > 1 ? `merged from ${p.parts} parts` : "single profile, no merge";
+  const ignored = p.ignored_files > 0 ? `${plural(p.ignored_files, "file")} ignored` : "";
 
   if (p.received_at !== "") {
     rows.push({
@@ -33,17 +37,17 @@ export function ProvenanceCard({ provenance, downloadUrl }: { provenance: Proven
       value: (
         <>
           <Mono>{p.profile_name}</Mono> {p.format !== "" && <Chip tone="plain">{p.format}</Chip>}
-          {p.profile_size !== "" && <span className="muted small"> &middot; {p.profile_size}</span>}
+          {p.profile_bytes > 0 && <span className="muted small"> &middot; {humanBytes(p.profile_bytes)}</span>}
         </>
       ),
     });
   }
-  if (p.ci_label !== "") {
+  if (ci !== "") {
     rows.push({
       label: "CI run",
       value: (
         <>
-          {p.ci_label}
+          {ci}
           {p.ci_run_url !== "" && (
             <>
               {" "}
@@ -63,27 +67,26 @@ export function ProvenanceCard({ provenance, downloadUrl }: { provenance: Proven
       value: (
         <>
           <Mono>{p.uploader}</Mono>
-          {p.uploader_kind !== "" && <span className="muted small"> &middot; {p.uploader_kind}</span>}
+          {kind !== "" && <span className="muted small"> &middot; {kind}</span>}
         </>
       ),
     });
   }
-  if (p.part !== "" || p.parts_note !== "" || p.ignored !== "") {
-    rows.push({
-      label: "Flags",
-      value: (
-        <>
-          {p.part !== "" && <Mono>{p.part}</Mono>}
-          <span className="muted small">
-            {p.part !== "" && p.parts_note !== "" && <> &middot; </>}
-            {p.parts_note}
-            {p.ignored !== "" && <> &middot; {p.ignored}</>}
-          </span>
-        </>
-      ),
-    });
-  }
-  if (p.processed !== "") rows.push({ label: "Processed in", value: p.processed });
+  // Every upload has something to say here: how the commit's parts merged.
+  rows.push({
+    label: "Flags",
+    value: (
+      <>
+        {p.part !== "" && <Mono>{p.part}</Mono>}
+        <span className="muted small">
+          {p.part !== "" && <> &middot; </>}
+          {partsNote}
+          {ignored !== "" && <> &middot; {ignored}</>}
+        </span>
+      </>
+    ),
+  });
+  if (p.process_ms > 0) rows.push({ label: "Processed in", value: duration(p.process_ms) });
 
   const half = Math.ceil(rows.length / 2);
   const columns = [rows.slice(0, half), rows.slice(half)];

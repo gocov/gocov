@@ -1,0 +1,21 @@
+{
+  "_comment": "Presentation rules both the server and the web app apply. internal/server/presentation_test.go and web/src/lib/presentation.test.ts each check their side against this file, so a change to one side fails until the other follows.",
+  "coverage_levels": [
+    { "pct": 0, "level": "bad" },
+    { "pct": 49.9, "level": "bad" },
+    { "pct": 50, "level": "warn" },
+    { "pct": 75, "level": "warn" },
+    { "pct": 75.1, "level": "good" },
+    { "pct": 100, "level": "good" }
+  ],
+  "deltas": [
+    { "delta": 0, "moved": false },
+    { "delta": 0.049, "moved": false },
+    { "delta": 0.05, "moved": true },
+    { "delta": -0.049, "moved": false },
+    { "delta": -0.05, "moved": true },
+    { "delta": 12.3, "moved": true }
+  ],
+  "forge_names": { "github": "GitHub", "gitlab": "GitLab", "bitbucket": "Bitbucket" },
+  "app_account": "gocov[bot]"
+}

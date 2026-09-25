@@ -20,10 +20,42 @@ export const humanInt = (n: number) => n.toLocaleString("en-US");
 
 export const plural = (n: number, one: string, many = one + "s") => `${n} ${n === 1 ? one : many}`;
 
+// The coverage thresholds, the trend's dead band, the forge names and the
+// app's posting identity are the server's too (badge colours, the files
+// card, OIDC refusals, the dashboard): internal/server/testdata/
+// presentation.json pins both sides (presentation.test.ts here).
+
 const forgeLabels: Record<string, string> = { github: "GitHub", gitlab: "GitLab", bitbucket: "Bitbucket" };
+
+/** Who the GitHub App's statuses and comments appear as. */
+export const appAccount = "gocov[bot]";
 
 /** A forge's proper name — "GitHub", "GitLab", "Bitbucket" — or the name capitalized for one it does not know. */
 export const forgeLabel = (forge: string) => forgeLabels[forge] ?? forge.charAt(0).toUpperCase() + forge.slice(1);
+
+const ciLabels: Record<string, string> = {
+  github: "GitHub Actions",
+  gitlab: "GitLab CI",
+  bitbucket: "Bitbucket Pipelines",
+};
+
+/** The CI service an upload came from, by the provider code the API sends; "" for one it does not know. */
+export const ciLabel = (provider: string) => ciLabels[provider] ?? "";
+
+const uploaderKinds: Record<string, string> = { cli: "CLI", action: "Action" };
+
+/** "CLI" or "Action", by the uploader kind the API sends; "" for one it does not know. */
+export const uploaderKindLabel = (kind: string) => uploaderKinds[kind] ?? "";
+
+/** A byte count as a compact size: "999 B", "2 KB" (whole KB), "3.5 MB". */
+export function humanBytes(n: number): string {
+  if (n >= 1 << 20) return (n / (1 << 20)).toFixed(1) + " MB";
+  if (n >= 1 << 10) return Math.round(n / (1 << 10)) + " KB";
+  return n + " B";
+}
+
+/** A processing time: "412 ms" under a second, "1.5 s" from one on. */
+export const duration = (ms: number) => (ms >= 1000 ? (ms / 1000).toFixed(1) + " s" : `${ms} ms`);
 
 export type Trend = "up" | "down" | "flat";
 

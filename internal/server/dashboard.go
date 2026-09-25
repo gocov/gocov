@@ -377,7 +377,7 @@ func dashReporting(ws *store.Workspace) (state, as string) {
 	state, account := reportingState(ws)
 	if state == "on" {
 		// The GitHub App has no granting account; it posts as its bot.
-		as = cmp.Or(account, "gocov[bot]")
+		as = cmp.Or(account, appAccount)
 	}
 	return reportingStates[state], as
 }

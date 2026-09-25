@@ -1,4 +1,16 @@
-import { deltaText, forgeLabel, gateSummary, level, splitPath, timeAgo, trend } from "./format";
+import {
+  ciLabel,
+  deltaText,
+  duration,
+  forgeLabel,
+  gateSummary,
+  humanBytes,
+  level,
+  splitPath,
+  timeAgo,
+  trend,
+  uploaderKindLabel,
+} from "./format";
 
 test("forge names are spelled the forge's way", () => {
   expect(["github", "gitlab", "bitbucket", "gitea"].map(forgeLabel)).toEqual(["GitHub", "GitLab", "Bitbucket", "Gitea"]);
@@ -27,4 +39,28 @@ test("gate summary and path split", () => {
   expect(gateSummary({ min_coverage: 80, min_diff_coverage: null, max_coverage_drop: 1.5 })).toBe("total ≥ 80%, drop ≤ 1.5%");
   expect(splitPath("internal/server/api.go")).toEqual(["internal/server/", "api.go"]);
   expect(splitPath("main.go")).toEqual(["", "main.go"]);
+});
+
+test("sizes round to whole KB and one decimal of MB", () => {
+  expect([0, 999, 1 << 10, 1536, (1 << 20) - 1, 1 << 20, 3 * (1 << 20) + (1 << 19)].map(humanBytes)).toEqual([
+    "0 B",
+    "999 B",
+    "1 KB",
+    "2 KB",
+    "1024 KB",
+    "1.0 MB",
+    "3.5 MB",
+  ]);
+});
+
+test("processing time, CI service and uploader kind read as words", () => {
+  expect([412, 999, 1000, 1540].map(duration)).toEqual(["412 ms", "999 ms", "1.0 s", "1.5 s"]);
+  expect(["github", "gitlab", "bitbucket", "jenkins", ""].map(ciLabel)).toEqual([
+    "GitHub Actions",
+    "GitLab CI",
+    "Bitbucket Pipelines",
+    "",
+    "",
+  ]);
+  expect(["cli", "action", "hacker"].map(uploaderKindLabel)).toEqual(["CLI", "Action", ""]);
 });

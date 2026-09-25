@@ -19,7 +19,7 @@ import { UploadsTable } from "@/components/organisms/UploadsTable";
 import { VerdictCard } from "@/components/organisms/VerdictCard";
 import { repoQuery, repoUploadsQuery } from "@/lib/api/queries";
 import type { RepoPage as RepoPageData } from "@/lib/api/types";
-import { gateSummary, humanInt, pct, shortSha, timeAgo } from "@/lib/format";
+import { ciLabel, gateSummary, humanInt, pct, shortSha, timeAgo } from "@/lib/format";
 import { usePageTitle } from "@/lib/title";
 import { routes } from "@/lib/urls";
 import "./RepoPage.css";
@@ -226,7 +226,7 @@ function Summary({ data, summary }: { data: RepoPageData; summary: NonNullable<R
               <span className="RepoPage__stat">{timeAgo(summary.last_upload.at)}</span>
             )
           }
-          hint={summary.last_upload?.ci_label || undefined}
+          hint={ciLabel(summary.last_upload?.ci_provider ?? "") || undefined}
         />
       </StatRow>
     </div>

@@ -85,7 +85,7 @@ func reportsPostedMsg(ws *store.Workspace) string {
 	case !connected:
 		return ""
 	case account == "":
-		return "Commit status posted as gocov[bot]."
+		return "Commit status posted as " + appAccount + "."
 	}
 	return "Commit status posted as @" + account + "."
 }
