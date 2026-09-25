@@ -62,7 +62,7 @@ func run(args []string) error {
 	commit := fs.String("commit", "", "commit SHA (default: auto-detect)")
 	branch := fs.String("branch", "", "branch name (default: auto-detect)")
 	pr := fs.String("pr", "", "pull request id (default: auto-detect)")
-	format := fs.String("format", "", "coverage profile format: go, lcov, jacoco, cobertura, clover or simplecov (default: detect from content)")
+	format := fs.String("format", "", "coverage profile format: "+strings.Join(profile.Names(), ", ")+" (default: detect from content)")
 	pathPrefix := fs.String("path-prefix", "", "prefix mapping profile paths to repo paths, e.g. the Go module path (default: from go.mod)")
 	part := fs.String("part", cfg.Part, "name this slice of the commit's coverage (e.g. backend, frontend) when uploading from separate CI jobs (or $GOCOV_PART)")
 	ignorePats := patternList{patterns: ignore.Parse(cfg.Ignore)}
@@ -139,7 +139,7 @@ func run(args []string) error {
 		resolvedFormat = profile.Detect(profileData)
 	}
 	if resolvedFormat == "" {
-		return fmt.Errorf("could not detect the coverage format of %s: pass -format go|lcov|jacoco|cobertura|clover|simplecov", profilePath)
+		return fmt.Errorf("could not detect the coverage format of %s: pass -format %s", profilePath, strings.Join(profile.Names(), "|"))
 	}
 	prefix := *pathPrefix
 	if prefix == "" && resolvedFormat == "go" {

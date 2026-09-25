@@ -12,6 +12,9 @@ func TestEveryDetectableFormatIsRegistered(t *testing.T) {
 			t.Errorf("Lookup(%q) = %+v, %v; want a registered parser", name, f, ok)
 		}
 	}
+	if got := Names(); len(got) != len(formats) || got[0] != "go" {
+		t.Errorf("Names() = %v", got)
+	}
 	if _, ok := Lookup("opencover"); ok {
 		t.Error("Lookup found an unknown format")
 	}
