@@ -188,13 +188,13 @@ func Compute(files []FileBlocks, added map[string][]int, pathPrefix string) *Res
 			continue
 		}
 
-		// executable[l] exists if changed line l is inside any block;
-		// value true if any such block has Count > 0. Lines are looked up
-		// in merged block spans rather than expanding each block line by
-		// line: block ranges come from the uploader and may claim millions
-		// of lines.
-		all := MergedSpans(fb.Blocks, func(profile.Block) bool { return true })
-		ran := MergedSpans(fb.Blocks, func(b profile.Block) bool { return b.Count > 0 })
+		// executable[l] exists if changed line l is inside a statement
+		// block; value true if such a block ran (Statement, Ran). Lines are
+		// looked up in merged block spans rather than expanding each block
+		// line by line: block ranges come from the uploader and may claim
+		// millions of lines.
+		all := MergedSpans(fb.Blocks, Statement)
+		ran := MergedSpans(fb.Blocks, Ran)
 		executable := map[int]bool{}
 		for _, l := range lines {
 			if inSpans(all, l) {
@@ -230,6 +230,64 @@ func (sp Span) String() string {
 		return strconv.Itoa(sp.Start)
 	}
 	return fmt.Sprintf("%d-%d", sp.Start, sp.End)
+}
+
+// A line's coverage, by the one rule every view of it uses — diff
+// coverage, the source view, the files card's uncovered and newly
+// uncovered ranges: a line is executable when a statement block spans it,
+// and covered when such a block over it ran. A block without statements
+// (Go's empty bodies) is not code a test can miss, just as it carries no
+// weight in the statement-based total.
+
+// Statement reports whether a block holds statements, so spans lines that
+// are executable.
+func Statement(b profile.Block) bool { return b.NumStmts > 0 }
+
+// Ran reports whether a block holds statements and ran, so covers the
+// lines it spans.
+func Ran(b profile.Block) bool { return b.NumStmts > 0 && b.Count > 0 }
+
+// MissedSpans returns the executable lines no block ran over.
+func MissedSpans(blocks []profile.Block) []Span {
+	return SubtractSpans(MergedSpans(blocks, Statement), MergedSpans(blocks, Ran))
+}
+
+// SubtractSpans returns the lines of a not in b; both sorted and merged.
+func SubtractSpans(a, b []Span) []Span {
+	var out []Span
+	j := 0
+	for _, sp := range a {
+		start := sp.Start
+		for j < len(b) && b[j].End < start {
+			j++
+		}
+		for k := j; k < len(b) && b[k].Start <= sp.End; k++ {
+			if b[k].Start > start {
+				out = append(out, Span{Start: start, End: b[k].Start - 1})
+			}
+			start = max(start, b[k].End+1)
+		}
+		if start <= sp.End {
+			out = append(out, Span{Start: start, End: sp.End})
+		}
+	}
+	return out
+}
+
+// IntersectSpans returns the lines in both a and b; both sorted and merged.
+func IntersectSpans(a, b []Span) []Span {
+	var out []Span
+	for i, j := 0, 0; i < len(a) && j < len(b); {
+		if start, end := max(a[i].Start, b[j].Start), min(a[i].End, b[j].End); start <= end {
+			out = append(out, Span{Start: start, End: end})
+		}
+		if a[i].End < b[j].End {
+			i++
+		} else {
+			j++
+		}
+	}
+	return out
 }
 
 // MergedSpans returns the lines spanned by the blocks keep accepts, as sorted

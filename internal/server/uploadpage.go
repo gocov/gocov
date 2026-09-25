@@ -323,10 +323,10 @@ func (s *Server) uploadProvenance(ctx context.Context, u *store.Upload) provenan
 // maxUncoveredRanges caps the ranges shown per file in the table.
 const maxUncoveredRanges = 6
 
-// uncoveredRanges formats the line ranges of never-executed blocks,
-// e.g. "45-52, 88 +3 more".
+// uncoveredRanges formats the ranges of executable lines nothing ran over
+// (diffcov.MissedSpans), e.g. "45-52, 88 +3 more".
 func uncoveredRanges(blocks []profile.Block) string {
-	merged := diffcov.MergedSpans(blocks, func(b profile.Block) bool { return b.Count == 0 && b.NumStmts > 0 })
+	merged := diffcov.MissedSpans(blocks)
 	if len(merged) == 0 {
 		return ""
 	}
@@ -342,9 +342,10 @@ func uncoveredRanges(blocks []profile.Block) string {
 	return strings.Join(parts, ", ")
 }
 
-// lineCounts maps each line the blocks span, from line 1 up to at most
-// limit, to the highest count of a block over it: a key means the line is
-// executable, a positive value that it ran. The source view overlays this.
+// lineCounts maps each line a statement block spans, from line 1 up to at
+// most limit, to the highest count of such a block over it: a key means
+// the line is executable, a positive value that it ran — diffcov's line
+// rule, line by line. The source view overlays this.
 // limit is the length of a file whose content is at hand: block ranges
 // come from uploaders and may claim millions of lines, so there is no
 // unbounded mode — code without a file length works on merged spans
@@ -352,6 +353,9 @@ func uncoveredRanges(blocks []profile.Block) string {
 func lineCounts(blocks []profile.Block, limit int) map[int]int {
 	counts := map[int]int{}
 	for _, b := range blocks {
+		if !diffcov.Statement(b) {
+			continue
+		}
 		for l := max(b.StartLine, 1); l <= min(b.EndLine, limit); l++ {
 			counts[l] = max(counts[l], b.Count)
 		}
@@ -359,56 +363,14 @@ func lineCounts(blocks []profile.Block, limit int) map[int]int {
 	return counts
 }
 
-// subtractSpans returns the lines of a not in b; both sorted and merged.
-func subtractSpans(a, b []diffcov.Span) []diffcov.Span {
-	var out []diffcov.Span
-	j := 0
-	for _, sp := range a {
-		start := sp.Start
-		for j < len(b) && b[j].End < start {
-			j++
-		}
-		for k := j; k < len(b) && b[k].Start <= sp.End; k++ {
-			if b[k].Start > start {
-				out = append(out, diffcov.Span{Start: start, End: b[k].Start - 1})
-			}
-			start = max(start, b[k].End+1)
-		}
-		if start <= sp.End {
-			out = append(out, diffcov.Span{Start: start, End: sp.End})
-		}
-	}
-	return out
-}
-
-// intersectSpans returns the lines in both a and b; both sorted and merged.
-func intersectSpans(a, b []diffcov.Span) []diffcov.Span {
-	var out []diffcov.Span
-	for i, j := 0, 0; i < len(a) && j < len(b); {
-		if start, end := max(a[i].Start, b[j].Start), min(a[i].End, b[j].End); start <= end {
-			out = append(out, diffcov.Span{Start: start, End: end})
-		}
-		if a[i].End < b[j].End {
-			i++
-		} else {
-			j++
-		}
-	}
-	return out
-}
-
 // newlyUncovered lists the lines a file executes-but-misses now that were hit
 // at the baseline — the regressions this upload introduced, matched by line
 // number. Best effort without a line-level diff, the same basis the source
-// view uses to flag newly uncovered lines. A line is executable when a
-// statement block spans it and hit when any such block ran; it works on
-// spans rather than lines, since this renders on anonymous report pages
+// view uses to flag newly uncovered lines, and diffcov's line rule. It works
+// on spans rather than lines, since this renders on anonymous report pages
 // from uploader-declared ranges.
 func newlyUncovered(cur, base []profile.Block) string {
-	stmts := func(b profile.Block) bool { return b.NumStmts > 0 }
-	ran := func(b profile.Block) bool { return b.NumStmts > 0 && b.Count > 0 }
-	missed := subtractSpans(diffcov.MergedSpans(cur, stmts), diffcov.MergedSpans(cur, ran))
-	regressed := intersectSpans(missed, diffcov.MergedSpans(base, ran))
+	regressed := diffcov.IntersectSpans(diffcov.MissedSpans(cur), diffcov.MergedSpans(base, diffcov.Ran))
 	parts := make([]string, len(regressed))
 	for i, sp := range regressed {
 		parts[i] = sp.String()

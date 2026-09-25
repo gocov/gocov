@@ -459,3 +459,74 @@ func TestFailingNoticeQuotesTheMinimumOnlyWhenItFailed(t *testing.T) {
 		t.Errorf("notice quotes a %v%% minimum; 70%% is above it — the drop rule failed", *got)
 	}
 }
+
+// Every view of a file's lines applies diffcov's one rule: diff coverage,
+// the source view's counts and the files card's uncovered ranges must
+// agree, line for line, on which lines are executable and which ran —
+// over overlapping blocks, blocks without statements and repeated ones.
+func TestLineViewsAgree(t *testing.T) {
+	rng := rand.New(rand.NewPCG(3, 4))
+	const length = 30
+	for round := range 2000 {
+		blocks := make([]profile.Block, rng.IntN(8))
+		for i := range blocks {
+			start := 1 + rng.IntN(length)
+			blocks[i] = profile.Block{
+				StartLine: start, EndLine: min(length, start+rng.IntN(4)),
+				NumStmts: rng.IntN(3), // zero: an empty body
+				Count:    rng.IntN(2) * rng.IntN(5),
+			}
+		}
+		counts := lineCounts(blocks, length)
+		missed := map[int]bool{}
+		for _, sp := range diffcov.MissedSpans(blocks) {
+			for l := sp.Start; l <= sp.End; l++ {
+				missed[l] = true
+			}
+		}
+		all := make([]int, length)
+		for i := range all {
+			all[i] = i + 1
+		}
+		dc := diffcov.Compute([]diffcov.FileBlocks{{Path: "a.go", Blocks: blocks}}, map[string][]int{"a.go": all}, "")
+		diffMissed, diffTotal := map[int]bool{}, int64(0)
+		if len(dc.Files) == 1 {
+			diffTotal = dc.Files[0].TotalLines
+			for _, l := range dc.Files[0].UncoveredLines {
+				diffMissed[l] = true
+			}
+		}
+		if int64(len(counts)) != diffTotal {
+			t.Fatalf("round %d: source view has %d executable lines, diff coverage %d; blocks %+v", round, len(counts), diffTotal, blocks)
+		}
+		for l := 1; l <= length; l++ {
+			n, executable := counts[l]
+			sourceMissed := executable && n == 0
+			if sourceMissed != missed[l] || sourceMissed != diffMissed[l] {
+				t.Fatalf("round %d: line %d missed — source view %v, files card %v, diff coverage %v; blocks %+v",
+					round, l, sourceMissed, missed[l], diffMissed[l], blocks)
+			}
+		}
+	}
+}
+
+// The two Go shapes the views used to disagree on: a line holding two
+// blocks of which one ran is covered, and an empty body is not code.
+func TestLineRuleOnGoShapes(t *testing.T) {
+	blocks := []profile.Block{
+		{StartLine: 1, EndLine: 1, NumStmts: 1, Count: 0}, // `if x { return }`: the branch never taken…
+		{StartLine: 1, EndLine: 1, NumStmts: 1, Count: 5}, // …on a line whose condition ran
+		{StartLine: 3, EndLine: 3, NumStmts: 0, Count: 0}, // func noop() {}
+		{StartLine: 5, EndLine: 5, NumStmts: 2, Count: 0},
+	}
+	if got := uncoveredRanges(blocks); got != "5" {
+		t.Errorf("uncovered ranges = %q, want only line 5", got)
+	}
+	if counts := lineCounts(blocks, 5); counts[1] != 5 || len(counts) != 2 {
+		t.Errorf("source counts = %v, want line 1 ran (5) and line 5 executable, line 3 not code", counts)
+	}
+	dc := diffcov.Compute([]diffcov.FileBlocks{{Path: "a.go", Blocks: blocks}}, map[string][]int{"a.go": {1, 3, 5}}, "")
+	if len(dc.Files) != 1 || dc.Files[0].TotalLines != 2 || !slices.Equal(dc.Files[0].UncoveredLines, []int{5}) {
+		t.Errorf("diff coverage = %+v, want lines 1 and 5 measured, 5 uncovered", dc.Files)
+	}
+}

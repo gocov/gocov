@@ -10,6 +10,11 @@ covered over total. A file with 300 statements moves the number thirty times as 
 well-tested small package can land and the total barely twitches. A report with no statements at all reads 0%, not
 100%.
 
+Where coverage is shown line by line — diff coverage, the source view, a file's uncovered and newly uncovered ranges —
+one rule applies everywhere: a line is executable when a statement spans it, and covered when a statement on it ran. A
+line holding two blocks, one of which ran, is covered; an empty body (Go's `func noop() {}`) is not code a test can
+miss, just as it carries no weight in the total.
+
 ## What it is compared against
 
 The delta beside the percentage — and the `Compared to` line on the repo page — is not the previous commit. It is the
