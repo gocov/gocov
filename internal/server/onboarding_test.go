@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -146,4 +147,36 @@ func TestAPIWorkspaceSetupAccess(t *testing.T) {
 	// Signed out, the app is told to sign in rather than redirected.
 	wantStatus(t, get(f, path), "signed-out setup", http.StatusUnauthorized)
 	wantStatus(t, get(f, strings.Replace(path, "/workspace-setup/", "/workspace-setup-status/", 1)), "signed-out status", http.StatusUnauthorized)
+}
+
+// The setup screen shows the newest report among the workspace's repos,
+// whichever repo it landed in.
+func TestLatestReportIsTheNewest(t *testing.T) {
+	f := newFixture(t, nil)
+	ctx := t.Context()
+	other := &store.Repo{Forge: "bitbucket", Slug: "acme/zeta", Token: "tok-z", DefaultBranch: "main"}
+	if err := f.store.CreateRepo(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	for _, cr := range []*store.CommitReport{
+		{RepoID: other.ID, CommitSHA: "z1", Branch: "main", PartCount: 1},
+		{RepoID: f.repo.ID, CommitSHA: "w1", Branch: "main", PartCount: 1},
+		{RepoID: other.ID, CommitSHA: "z2", Branch: "main", PartCount: 1},
+	} {
+		if err := f.store.UpsertCommitReport(ctx, cr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	repos, err := f.store.ListWorkspaceRepos(ctx, "bitbucket", "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	repo, rep := f.srv.latestReport(r, repos)
+	if repo == nil || repo.Slug != "acme/zeta" || rep.CommitSHA != "z2" {
+		t.Errorf("latestReport = %v / %v, want acme/zeta's z2", repo, rep)
+	}
+	if repo, rep := f.srv.latestReport(r, nil); repo != nil || rep != nil {
+		t.Errorf("no repos: %v / %v, want nils", repo, rep)
+	}
 }

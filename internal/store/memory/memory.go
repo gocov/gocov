@@ -248,6 +248,20 @@ func (s *Store) ListRepos(_ context.Context) ([]*store.Repo, error) {
 	return out, nil
 }
 
+func (s *Store) ListWorkspaceRepos(_ context.Context, forge, prefix string) ([]*store.Repo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ws := &store.Workspace{Forge: forge, Prefix: prefix}
+	var out []*store.Repo
+	for _, r := range s.repos {
+		if ws.Owns(r) {
+			out = append(out, copyRepo(r))
+		}
+	}
+	slices.SortFunc(out, byForgeSlug)
+	return out, nil
+}
+
 func (s *Store) CreateWorkspace(_ context.Context, w *store.Workspace) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -699,6 +713,26 @@ func (s *Store) commitReportLocked(repoID int64, commitSHA string) *store.Commit
 
 func (s *Store) LatestCommitReport(_ context.Context, repoID int64, branch string) (*store.CommitReport, error) {
 	return s.latestCommitReport(repoID, branch, "", false, false)
+}
+
+func (s *Store) LatestDefaultBranchReports(ctx context.Context, repoIDs []int64) (map[int64]*store.CommitReport, error) {
+	out := map[int64]*store.CommitReport{}
+	for _, id := range repoIDs {
+		s.mu.Lock()
+		repo, ok := s.repos[id]
+		branch := ""
+		if ok {
+			branch = repo.DefaultBranch
+		}
+		s.mu.Unlock()
+		if !ok {
+			continue
+		}
+		if cr, err := s.LatestCommitReport(ctx, id, branch); err == nil {
+			out[id] = cr
+		}
+	}
+	return out, nil
 }
 
 func (s *Store) LatestNonPRCommitReport(_ context.Context, repoID int64, branch string) (*store.CommitReport, error) {

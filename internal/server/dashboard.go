@@ -134,7 +134,7 @@ func (s *Server) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
 // derived from it, both resolved once by the handler.
 func (s *Server) buildDashboard(r *http.Request, dto *dashboardDTO, selected string, scope repoScope, tracked []*store.Workspace) error {
 	ctx := r.Context()
-	repos, err := s.store.ListRepos(ctx)
+	repos, err := s.visibleRepos(ctx, scope)
 	if err != nil {
 		return err
 	}
@@ -184,8 +184,21 @@ func (s *Server) buildDashboard(r *http.Request, dto *dashboardDTO, selected str
 		cur = groups[order[0]]
 	}
 
+	// Every group previews its coverage from its repos' latest reports,
+	// read for all of them at once.
+	var ids []int64
+	for _, g := range groups {
+		for _, repo := range g.repos {
+			ids = append(ids, repo.ID)
+		}
+	}
+	latest, err := s.store.LatestDefaultBranchReports(ctx, ids)
+	if err != nil {
+		// The previews are decoration; the page still works without them.
+		s.log.Warn("loading dashboard previews", "err", err)
+	}
 	for _, k := range order {
-		g := s.groupDTO(ctx, groups[k])
+		g := groupDTO(groups[k], latest)
 		g.Current = groups[k] == cur
 		dto.Switcher = append(dto.Switcher, g)
 		if g.Current {
@@ -194,6 +207,34 @@ func (s *Server) buildDashboard(r *http.Request, dto *dashboardDTO, selected str
 	}
 	s.fillCurrent(r, dto, cur)
 	return nil
+}
+
+// visibleRepos lists the repos the scope admits. A scoped viewer reads only
+// their workspaces' repos, not every tenant's; nested GitLab memberships
+// can list a project twice, so the union is de-duplicated, then ordered
+// like ListRepos.
+func (s *Server) visibleRepos(ctx context.Context, scope repoScope) ([]*store.Repo, error) {
+	if !scope.scoped {
+		return s.store.ListRepos(ctx)
+	}
+	seen := map[int64]bool{}
+	var out []*store.Repo
+	for k := range scope.prefixes {
+		repos, err := s.store.ListWorkspaceRepos(ctx, k.forge, k.prefix)
+		if err != nil {
+			return nil, err
+		}
+		for _, repo := range repos {
+			if !seen[repo.ID] {
+				seen[repo.ID] = true
+				out = append(out, repo)
+			}
+		}
+	}
+	slices.SortFunc(out, func(a, b *store.Repo) int {
+		return cmp.Or(cmp.Compare(a.Forge, b.Forge), cmp.Compare(a.Slug, b.Slug))
+	})
+	return out, nil
 }
 
 // viewerWorkspaces lists the workspaces the switcher may offer: the signed-in
@@ -221,18 +262,15 @@ func (s *Server) groupPrefix(repo *store.Repo, tracked []*store.Workspace) strin
 }
 
 // groupDTO is a group's switcher entry: its identity, a repo count, and a
-// weighted-coverage rollup over its repos' latest default-branch reports,
-// so the picker previews each workspace's health. This runs for every
-// group, so it stays to one report lookup per repo.
-func (s *Server) groupDTO(ctx context.Context, g *dashGroup) wsGroupDTO {
+// weighted-coverage rollup over its repos' latest default-branch reports
+// (latest, by repo id), so the picker previews each workspace's health.
+func groupDTO(g *dashGroup, latest map[int64]*store.CommitReport) wsGroupDTO {
 	var covered, total int64
 	for _, repo := range g.repos {
-		latest, err := s.store.LatestCommitReport(ctx, repo.ID, repo.DefaultBranch)
-		if err != nil || latest == nil {
-			continue
+		if cr := latest[repo.ID]; cr != nil {
+			covered += cr.CoveredStmts
+			total += cr.TotalStmts
 		}
-		covered += latest.CoveredStmts
-		total += latest.TotalStmts
 	}
 	return wsGroupDTO{
 		Forge:     g.key.forge,

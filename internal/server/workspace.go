@@ -424,15 +424,5 @@ func (s *Server) handleAPIWorkspaceDelete(w http.ResponseWriter, r *http.Request
 
 // workspaceRepos lists the repos under the workspace's prefix.
 func (s *Server) workspaceRepos(r *http.Request, ws *store.Workspace) ([]*store.Repo, error) {
-	repos, err := s.store.ListRepos(r.Context())
-	if err != nil {
-		return nil, err
-	}
-	var out []*store.Repo
-	for _, repo := range repos {
-		if ws.Owns(repo) {
-			out = append(out, repo)
-		}
-	}
-	return out, nil
+	return s.store.ListWorkspaceRepos(r.Context(), ws.Forge, ws.Prefix)
 }
