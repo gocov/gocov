@@ -187,11 +187,28 @@ func run(args []string) error {
 // printResult writes the upload's outcome to the CI log, one line per
 // fact the server reported.
 func printResult(w io.Writer, resp *uploadResponse) {
-	fmt.Fprintf(w, "uploaded: %.1f%% (%d/%d statements)", resp.TotalPct, resp.CoveredStmts, resp.TotalStmts)
+	// The totals are the commit's merged report, not this upload's. With
+	// one default part the two are the same; with named parts, say which
+	// parts the figure covers so a total read before the last part lands
+	// isn't mistaken for the commit's.
+	parted := resp.Part != "" && !(resp.Part == "default" && len(resp.Parts) <= 1)
+	if parted {
+		fmt.Fprintf(w, "uploaded part: %s\n", resp.Part)
+		fmt.Fprintf(w, "commit coverage: %.1f%% (%d/%d statements)", resp.TotalPct, resp.CoveredStmts, resp.TotalStmts)
+	} else {
+		fmt.Fprintf(w, "uploaded: %.1f%% (%d/%d statements)", resp.TotalPct, resp.CoveredStmts, resp.TotalStmts)
+	}
 	if resp.DeltaPct != nil {
 		fmt.Fprintf(w, ", delta %+.1f%%", *resp.DeltaPct)
 	}
 	fmt.Fprintln(w)
+	if parted && len(resp.Parts) > 0 {
+		noun := "parts"
+		if len(resp.Parts) == 1 {
+			noun = "part"
+		}
+		fmt.Fprintf(w, "merged from %d %s so far: %s\n", len(resp.Parts), noun, strings.Join(resp.Parts, ", "))
+	}
 	for _, warning := range resp.Warnings {
 		fmt.Fprintf(w, "warning: %s\n", warning)
 	}

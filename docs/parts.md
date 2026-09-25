@@ -26,7 +26,9 @@ equals the upload.
 
 Parts are merged as they arrive, in place. gocov does **not** wait for a fixed set of parts: while the jobs are still
 uploading, the merged report reflects only the parts received so far, so its total can read low and the gate can fail
-until the last part lands, then correct itself. If a reviewer merges inside that window they may see an interim gate —
+until the last part lands, then correct itself. Each upload step's log says which parts its figure covers
+(`merged from 1 part so far: web`), so an interim total is easy to tell apart — see
+[CLI output](cli.md#output-and-exit-code). If a reviewer merges inside that window they may see an interim gate —
 sequence the gate check after all coverage jobs, or wait for the final status. A future
 `expected_parts` setting will let a repo hold status until every part is in; until then the self-healing behaviour above
 is the model.

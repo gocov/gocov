@@ -45,6 +45,9 @@ func TestMergedReportAcrossParts(t *testing.T) {
 	if sr.TotalPct != cr.TotalPct {
 		t.Errorf("response %.1f != merged report %.1f", sr.TotalPct, cr.TotalPct)
 	}
+	if sr.Part != "default" || strings.Join(sr.Parts, ",") != "default" {
+		t.Errorf("single-upload response part %q parts %v, want default of [default]", sr.Part, sr.Parts)
+	}
 
 	// Backend part first: the merged report is backend alone, 8/8 = 100%.
 	back := doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "part": "backend"}, backendPart)
@@ -55,6 +58,11 @@ func TestMergedReportAcrossParts(t *testing.T) {
 	if br.TotalPct != 100 || br.CoveredStmts != 8 || br.TotalStmts != 8 {
 		t.Errorf("backend-only response = %.1f%% %d/%d, want 100%% 8/8", br.TotalPct, br.CoveredStmts, br.TotalStmts)
 	}
+	// The response names the parts behind its totals, so the uploader can
+	// tell a total read before the other parts land from the commit's.
+	if br.Part != "backend" || strings.Join(br.Parts, ",") != "backend" {
+		t.Errorf("backend-only response part %q parts %v, want backend of [backend]", br.Part, br.Parts)
+	}
 
 	// Frontend part lands: the merged report now spans both, 8/10 = 80%.
 	front := doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "part": "frontend"}, frontendPart)
@@ -64,6 +72,9 @@ func TestMergedReportAcrossParts(t *testing.T) {
 	}
 	if fr.TotalPct != 80 || fr.CoveredStmts != 8 || fr.TotalStmts != 10 {
 		t.Errorf("merged response = %.1f%% %d/%d, want 80%% 8/10", fr.TotalPct, fr.CoveredStmts, fr.TotalStmts)
+	}
+	if fr.Part != "frontend" || strings.Join(fr.Parts, ",") != "backend,frontend" {
+		t.Errorf("merged response part %q parts %v, want frontend of [backend frontend]", fr.Part, fr.Parts)
 	}
 	cr, err = f.store.CommitReport(ctx, f.repo.ID, "c1")
 	if err != nil {
