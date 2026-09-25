@@ -11,7 +11,6 @@ import (
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
 	forgefake "github.com/gocov/gocov/internal/forge/fake"
 	"github.com/gocov/gocov/internal/hosted"
-	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
 )
@@ -50,7 +49,6 @@ func newWorkspaceFixtureAs(t *testing.T, withRepo bool, id *auth.Identity) (*fix
 		srv: New(Config{
 			Store:   st,
 			Blobs:   blobmem.New(),
-			Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
 			BaseURL: "https://gocov.example",
 			Auths:   []auth.Provider{&fakeProvider{identity: id}},
 		}),
@@ -249,7 +247,6 @@ func TestAPIWorkspaceSetupSnippetInputs(t *testing.T) {
 			srv: New(Config{
 				Store:       st,
 				Blobs:       blobmem.New(),
-				Parsers:     map[string]profile.Parser{"go": profile.GoParser{}},
 				BaseURL:     baseURL,
 				Auths:       []auth.Provider{gl},
 				OIDCIssuers: issuers,
@@ -319,7 +316,6 @@ func TestGitLabSubgroupWorkspace(t *testing.T) {
 		srv: New(Config{
 			Store:   st,
 			Blobs:   blobmem.New(),
-			Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
 			BaseURL: "https://gocov.example",
 			Auths: []auth.Provider{&fakeProvider{name: "gitlab", identity: &auth.Identity{
 				ForgeUUID:   "12345",

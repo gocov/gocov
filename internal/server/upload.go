@@ -390,12 +390,12 @@ func (s *Server) readUploadRequest(w http.ResponseWriter, r *http.Request, authe
 			req.format = "go"
 		}
 	}
-	parser, ok := s.parsers[req.format]
+	format, ok := profile.Lookup(req.format)
 	if !ok {
 		httpError(w, http.StatusBadRequest, "unsupported format %q", req.format)
 		return nil, false
 	}
-	if req.prof, err = parser.Parse(bytes.NewReader(req.raw)); err != nil {
+	if req.prof, err = format.Parser.Parse(bytes.NewReader(req.raw)); err != nil {
 		httpError(w, http.StatusUnprocessableEntity, "parsing %s profile: %v", req.format, err)
 		return nil, false
 	}

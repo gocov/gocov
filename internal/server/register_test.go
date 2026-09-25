@@ -10,7 +10,6 @@ import (
 
 	"github.com/gocov/gocov/internal/auth"
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
-	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
 )
@@ -23,7 +22,6 @@ func newHostedFixture(t *testing.T, provider auth.Provider) *fixture {
 	srv := New(Config{
 		Store:   st,
 		Blobs:   blobmem.New(),
-		Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
 		BaseURL: "https://gocov.example",
 		Auths:   []auth.Provider{provider},
 		Hosted:  true,

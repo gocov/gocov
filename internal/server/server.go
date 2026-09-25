@@ -18,7 +18,6 @@ import (
 	"github.com/gocov/gocov/internal/blobstore"
 	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/oidc"
-	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -30,8 +29,7 @@ var staticFS embed.FS
 type Config struct {
 	Store   store.Store
 	Blobs   blobstore.Store
-	Parsers map[string]profile.Parser // by format name, e.g. "go"
-	BaseURL string                    // public URL of this server, for links in build statuses
+	BaseURL string // public URL of this server, for links in build statuses
 	Logger  *slog.Logger
 	// Health is probed by GET /healthz (e.g. a database ping).
 	// When nil, /healthz always reports healthy.
@@ -102,7 +100,6 @@ type (
 type Server struct {
 	store         store.Store
 	blobs         blobstore.Store
-	parsers       map[string]profile.Parser
 	baseURL       string
 	log           *slog.Logger
 	mux           *http.ServeMux
@@ -182,7 +179,6 @@ func New(cfg Config) *Server {
 	s := &Server{
 		store:         cfg.Store,
 		blobs:         cfg.Blobs,
-		parsers:       cfg.Parsers,
 		baseURL:       strings.TrimSuffix(cfg.BaseURL, "/"),
 		log:           log,
 		mux:           http.NewServeMux(),

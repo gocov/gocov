@@ -11,7 +11,6 @@ import (
 
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
 	forgefake "github.com/gocov/gocov/internal/forge/fake"
-	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
 )
@@ -34,7 +33,6 @@ func webhookServer(t *testing.T) (*Server, *storemem.Store, *forgefake.Forge) {
 	srv := New(Config{
 		Store:               st,
 		Blobs:               blobmem.New(),
-		Parsers:             map[string]profile.Parser{"go": profile.GoParser{}},
 		GitHubApp:           &fakeGitHubApp{appForge: ff},
 		GitHubWebhookSecret: webhookSecret,
 	})
@@ -225,9 +223,8 @@ func TestWebhookRepositoryVisibilityChange(t *testing.T) {
 func TestWebhookRouteAbsentWithoutSecret(t *testing.T) {
 	st := storemem.New()
 	srv := New(Config{
-		Store:   st,
-		Blobs:   blobmem.New(),
-		Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
+		Store: st,
+		Blobs: blobmem.New(),
 		// No GitHubWebhookSecret.
 	})
 	body := `{"action":"purchased"}`

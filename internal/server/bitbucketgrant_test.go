@@ -13,7 +13,6 @@ import (
 	"github.com/gocov/gocov/internal/forge"
 	"github.com/gocov/gocov/internal/forge/bitbucket"
 	forgefake "github.com/gocov/gocov/internal/forge/fake"
-	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
 )
@@ -76,7 +75,6 @@ func newBBConnectFixture(t *testing.T) (*bbConnectFixture, *http.Cookie) {
 			srv: New(Config{
 				Store:            st,
 				Blobs:            blobmem.New(),
-				Parsers:          map[string]profile.Parser{"go": profile.GoParser{}},
 				BaseURL:          "https://gocov.example",
 				Hosted:           true,
 				Auths:            []auth.Provider{&fakeProvider{identity: memberIdentity()}},

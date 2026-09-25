@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
-	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/server"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
@@ -22,7 +21,6 @@ func TestUploadEndToEnd(t *testing.T) {
 	srv := httptest.NewServer(server.New(server.Config{
 		Store:   st,
 		Blobs:   blobmem.New(),
-		Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
 		BaseURL: "http://example",
 	}))
 	defer srv.Close()

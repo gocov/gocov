@@ -11,7 +11,6 @@ import (
 
 	"github.com/gocov/gocov/internal/auth"
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
-	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
 )
@@ -88,7 +87,6 @@ func newMultiAuthFixture(t *testing.T, providers []auth.Provider, allowed []stri
 	srv := New(Config{
 		Store:             st,
 		Blobs:             blobmem.New(),
-		Parsers:           map[string]profile.Parser{"go": profile.GoParser{}},
 		BaseURL:           "https://gocov.example",
 		Auths:             providers,
 		AllowedWorkspaces: allowed,

@@ -45,7 +45,6 @@ func newPublicFixture(t *testing.T, visibility string, instanceOn bool) *fixture
 	srv := New(Config{
 		Store:         st,
 		Blobs:         blobs,
-		Parsers:       map[string]profile.Parser{"go": profile.GoParser{}},
 		BaseURL:       "https://gocov.example",
 		Auths:         []auth.Provider{&fakeProvider{identity: memberIdentity()}},
 		PublicReports: instanceOn,
@@ -244,7 +243,6 @@ func TestSignedInNonMemberGetsReadOnlyPublicView(t *testing.T) {
 	srv := New(Config{
 		Store:         st,
 		Blobs:         blobmem.New(),
-		Parsers:       map[string]profile.Parser{"go": profile.GoParser{}},
 		BaseURL:       "https://gocov.example",
 		Auths:         []auth.Provider{&fakeProvider{identity: outsider}},
 		PublicReports: true,
@@ -403,7 +401,6 @@ func TestStalePublicAnswerIsReverifiedWhenServed(t *testing.T) {
 	srv := New(Config{
 		Store:            st,
 		Blobs:            blobs,
-		Parsers:          map[string]profile.Parser{"go": profile.GoParser{}},
 		BaseURL:          "https://gocov.example",
 		Auths:            []auth.Provider{&fakeProvider{identity: memberIdentity()}},
 		PublicReports:    true,
