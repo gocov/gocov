@@ -8,8 +8,8 @@ import { SettingsLayout, type SettingsNavItem } from "@/components/templates/Set
 import { Chip, InlineCode, Mono, Notice, Select, TextInput } from "@/components/atoms";
 import { Card, FormField, PageHeader, QueryBoundary, SaveFooter } from "@/components/molecules";
 import { apiPost, errorMessage } from "@/lib/api/client";
-import { workspaceSettingsPath, workspaceSettingsQuery } from "@/lib/api/queries";
-import type { TokenReveal, WorkspaceSettings, WorkspaceSettingsInput } from "@/lib/api/types";
+import { postToken, workspaceSettingsPath, workspaceSettingsQuery } from "@/lib/api/queries";
+import type { WorkspaceSettings, WorkspaceSettingsInput } from "@/lib/api/types";
 import { forgeLabel, plural } from "@/lib/format";
 import { useUrlNotice } from "@/lib/notice";
 import { useSectionSave } from "@/lib/sectionSave";
@@ -140,13 +140,13 @@ function WorkspaceSettingsView({ forge, prefix, settings }: { forge: string; pre
           serverUrl={settings.server_url}
           tokenMasked={settings.token_masked}
           owner={owner}
-          onReveal={() => apiPost<TokenReveal>(path("reveal-token")).then((r) => r.token)}
+          onReveal={() => postToken(path("reveal-token"))}
           onRotate={() =>
-            apiPost<TokenReveal>(path("rotate-token")).then((r) => {
+            postToken(path("rotate-token")).then((token) => {
               // The masked form in the cache is the old one now; the token
               // itself stays out of the cache.
               void client.invalidateQueries({ queryKey: key });
-              return r.token;
+              return token;
             })
           }
         />

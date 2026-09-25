@@ -7,9 +7,8 @@ import { AttentionList } from "@/components/organisms/AttentionList";
 import { ReposTable } from "@/components/organisms/ReposTable";
 import { SetupChecklist } from "@/components/organisms/SetupChecklist";
 import { WorkspaceSwitcher } from "@/components/organisms/WorkspaceSwitcher";
-import { apiPost } from "@/lib/api/client";
-import { dashboardQuery, setupQuery, setupStatusQuery, workspaceSettingsPath } from "@/lib/api/queries";
-import type { Dashboard, DashStats, TokenReveal, WorkspaceGroup } from "@/lib/api/types";
+import { dashboardQuery, postToken, setupQuery, setupStatusQuery, workspaceSettingsPath } from "@/lib/api/queries";
+import type { Dashboard, DashStats, WorkspaceGroup } from "@/lib/api/types";
 import { pct, plural } from "@/lib/format";
 import { useUrlNotice } from "@/lib/notice";
 import { readStored, writeStored } from "@/lib/storage";
@@ -93,10 +92,7 @@ function SetupSection({ ws, hasReports }: { ws: WorkspaceGroup; hasReports: bool
       info={info}
       status={live}
       listeningSince={listeningSince}
-      onReveal={async () => {
-        const { token } = await apiPost<TokenReveal>(workspaceSettingsPath(ws.forge, ws.prefix, "reveal-token"));
-        return token;
-      }}
+      onReveal={() => postToken(workspaceSettingsPath(ws.forge, ws.prefix, "reveal-token"))}
       onCopied={() => {
         if (listeningSince !== null) return;
         const now = Date.now();

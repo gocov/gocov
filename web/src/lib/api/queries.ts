@@ -1,7 +1,8 @@
 import { queryOptions } from "@tanstack/react-query";
-import { apiGet } from "./client";
+import { apiGet, apiPost } from "./client";
 import type {
-  Dashboard, LoginInfo, OnboardingInfo, RepoPage, RepoSettings, Session, SetupInfo, SetupStatus, SourcePage, UploadPage, WorkspaceSettings,
+  Dashboard, LoginInfo, OnboardingInfo, RepoPage, RepoSettings, Session, SetupInfo, SetupStatus, SourcePage, TokenReveal, UploadPage,
+  WorkspaceSettings,
 } from "./types";
 
 // One factory per endpoint: pages pass these to useQuery, tests and
@@ -56,6 +57,9 @@ export const workspaceSettingsQuery = (forge: string, prefix: string) =>
     queryKey: ["workspace-settings", forge, prefix],
     queryFn: () => apiGet<WorkspaceSettings>(workspaceSettingsPath(forge, prefix)),
   });
+
+/** POSTs a reveal-token or rotate-token path and yields the token — the one value that never enters the query cache. */
+export const postToken = (path: string) => apiPost<TokenReveal>(path).then((r) => r.token);
 
 /** action "" = the settings document itself; the verb rides before the slug. */
 export const repoSettingsPath = (forge: string, slug: string, action = "") =>

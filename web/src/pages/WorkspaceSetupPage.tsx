@@ -4,10 +4,9 @@ import { Link, useParams } from "react-router";
 import { Notice } from "@/components/atoms";
 import { Breadcrumbs, Card, PageHeader, QueryBoundary } from "@/components/molecules";
 import { SnippetPanel } from "@/components/organisms/SnippetPanel";
-import { apiPost } from "@/lib/api/client";
-import { setupQuery, setupStatusQuery, workspaceSettingsPath } from "@/lib/api/queries";
+import { postToken, setupQuery, setupStatusQuery, workspaceSettingsPath } from "@/lib/api/queries";
 import { track } from "@/lib/analytics";
-import type { SetupInfo, TokenReveal } from "@/lib/api/types";
+import type { SetupInfo } from "@/lib/api/types";
 import { usePageTitle } from "@/lib/title";
 import { routes } from "@/lib/urls";
 import "./WorkspaceSetupPage.css";
@@ -45,10 +44,7 @@ function Setup({ info }: { info: SetupInfo }) {
         <Card.Body>
           <SnippetPanel
             info={info}
-            onReveal={async () => {
-              const { token } = await apiPost<TokenReveal>(workspaceSettingsPath(forge, prefix, "reveal-token"));
-              return token;
-            }}
+            onReveal={() => postToken(workspaceSettingsPath(forge, prefix, "reveal-token"))}
           />
         </Card.Body>
       </Card>
