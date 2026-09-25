@@ -1037,6 +1037,7 @@ func (s *Store) LatestDefaultBranchReports(ctx context.Context, repoIDs []int64)
 	rows, err := s.pool.Query(ctx, `
 		SELECT DISTINCT ON (repo_id) `+commitReportCols+` FROM commit_reports
 		WHERE (repo_id, branch) IN (SELECT id, default_branch FROM repos WHERE id = ANY($1))
+		  AND pr_id = ''
 		ORDER BY repo_id, id DESC`, repoIDs)
 	if err != nil {
 		return nil, err
@@ -1050,13 +1051,6 @@ func (s *Store) LatestDefaultBranchReports(ctx context.Context, repoIDs []int64)
 		out[cr.RepoID] = cr
 	}
 	return out, nil
-}
-
-func (s *Store) LatestNonPRCommitReport(ctx context.Context, repoID int64, branch string) (*store.CommitReport, error) {
-	return s.scanCommitReport(s.pool.QueryRow(ctx,
-		`SELECT `+commitReportCols+` FROM commit_reports
-		 WHERE repo_id = $1 AND branch = $2 AND pr_id = '' ORDER BY id DESC LIMIT 1`,
-		repoID, branch))
 }
 
 func (s *Store) LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*store.CommitReport, error) {
@@ -1138,7 +1132,9 @@ func (s *Store) ReleaseTokenlessUpload(ctx context.Context, repoID, runID, runAt
 func (s *Store) ListBranchCommitReports(ctx context.Context, repoID int64, branch string, limit int) ([]*store.CommitReport, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT `+commitReportCols+` FROM commit_reports
-		 WHERE repo_id = $1 AND branch = $2 ORDER BY id DESC LIMIT $3`,
+		 WHERE repo_id = $1 AND branch = $2
+		   AND (pr_id = '' OR $2 <> (SELECT default_branch FROM repos WHERE id = $1))
+		 ORDER BY id DESC LIMIT $3`,
 		repoID, branch, limitArg(limit))
 	if err != nil {
 		return nil, err

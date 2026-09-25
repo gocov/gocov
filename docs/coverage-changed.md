@@ -21,6 +21,10 @@ failure into the new reference point, and a PR cannot walk coverage down one tol
 **max drop** rule goes further and always measures against the default branch's latest passing report, whatever branch
 the upload is on.
 
+Pull-request builds are never the default branch's own history. A PR opened from a fork's `main` uploads under the
+branch name `main`, but the badge, the dashboard, the repo page's trend and verdict for `main`, and every baseline keep
+reading the repository's own `main` builds. On a feature branch, the PR's builds are that branch's history.
+
 The gate verdict's explanation follows the gate, not the delta: on a feature branch it reports the drop against the
 default branch, so the two can point different ways — the delta down against the branch's last build, the verdict
 passing because coverage still holds against the default branch. Uploads judged before gocov recorded that comparison
