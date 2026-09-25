@@ -5,16 +5,11 @@ name: release-please
 # snippet pins, and nothing is tagged until it is merged — so a mistake is
 # a PR comment rather than a tag that has to be burned.
 #
-# Versions are not inferred here. This repo writes commit subjects as
-# English sentences rather than `feat:`/`fix:` prefixes, which
-# release-please cannot read, so it is used as a pull-request, CHANGELOG
-# and pin machine and the version is stated outright when a release is
-# wanted:
+# Versions are inferred from the conventional commit subjects on main
+# (feat: → minor while pre-1.0, fix:/perf: → patch); pr-title.yml keeps
+# every squash subject readable. To state a version instead:
 #
 #   git commit --allow-empty -m "chore: release 0.13.0" -m "Release-As: 0.13.0"
-#
-# Without such a commit no release PR appears, which is the intended
-# behaviour: releases happen when they are asked for.
 #
 # The pins live in the CI recipe docs (gitlab-ci.md, ci-other.md), the
 # onboarding template and the PinnedCLIVersion constant, wrapped in

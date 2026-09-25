@@ -31,8 +31,9 @@ approval clicks** (the release PR's CI run, and the production deploy):
 4. `gitlab-component` — merge its bump PR; that *is* its release (tags next minor, GitHub
    release, mirror push to gitlab.com whose pipeline publishes the CI/CD Catalog release).
 
-Version numbers are **stated, never inferred** — commit subjects here are English
-sentences, not `feat:`/`fix:`, so release-please only does PR/CHANGELOG/pin work.
+Commit subjects on main are conventional (`feat:`, `fix:`, `perf:`, …; the `pr-title`
+check enforces it on every PR title), so release-please infers the version and writes the
+CHANGELOG. A `Release-As:` commit is only for overriding the version it inferred.
 
 ## Step 0 — Preflight
 

@@ -29,6 +29,10 @@ The web UI is a single-page app in `web/` (Vite, React, TypeScript), embedded in
 
 CI (`.github/workflows/ci.yml`) runs vet + tests with a Postgres service, tests and builds the web UI, and builds the docs site strictly; there is no separate linter.
 
+## Commits and PR titles
+
+main is squash-merged, so the PR title becomes the commit subject, and release-please builds the version and CHANGELOG from it. Every PR title (and commit subject) is a Conventional Commit: `feat:` (minor), `fix:` / `perf:` (patch), or `refactor:` `docs:` `test:` `ci:` `build:` `chore:` `style:` `revert:` (no release) — optional scope `fix(web): …`, `!` for breaking. The `pr-title` workflow refuses anything else; `docs/development.md` § Commit subjects has the table.
+
 ## Architecture
 
 Three binaries in `cmd/`:

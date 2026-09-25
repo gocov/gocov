@@ -91,28 +91,39 @@ release; [gocov-action](https://github.com/gocov/gocov-action) pins the CLI vers
 [upload-pipe](https://github.com/gocov/upload-pipe) bakes the same version into the Bitbucket pipe image; and
 [gitlab-component](https://github.com/gocov/gitlab-component) pins it in the GitLab CI/CD Catalog component.
 
+### Commit subjects
+
+main takes squash merges, so each pull request's title becomes one commit subject there, and release-please reads
+those subjects to choose the next version and write the CHANGELOG. Titles are therefore
+[Conventional Commits](https://www.conventionalcommits.org/): a type, an optional scope, then an English sentence.
+
+| Type | Use it for | Release effect |
+|---|---|---|
+| `feat:` | new user-visible behaviour | minor bump, listed under Features |
+| `fix:` | a bug fixed | patch bump, listed under Bug Fixes |
+| `perf:` | the same behaviour, faster | patch bump, listed under Performance Improvements |
+| `refactor:` `docs:` `test:` `ci:` `build:` `chore:` `style:` `revert:` | everything else | none on its own, not listed |
+
+A scope narrows it (`fix(web): …`), and a `!` before the colon (`feat!: …`) marks a breaking change, spelled out in a
+`BREAKING CHANGE:` footer. The `pr-title` check refuses any other title, because a subject without a type is silently
+left out of both the version and the CHANGELOG.
+
 ### Cutting one
 
-Say which version you want, as an empty commit whose message carries a `Release-As:` footer — main only takes pull
-requests, so it goes in as one (keep the footer in the squash message when merging):
+[release-please](https://github.com/googleapis/release-please) keeps a release pull request open on main as soon as a
+`feat:`, `fix:` or `perf:` lands, holding the inferred version, the CHANGELOG entry and the bumped install-snippet
+pins, and refreshes it on every merge. Read it, then merge it: merging tags the version, and the tag's build
+publishes the ten binaries and `checksums.txt`, each with a build provenance attestation. The release body also
+carries GitHub's generated pull-request list underneath the CHANGELOG entry.
+
+To override the inferred version, state it in an empty commit whose message carries a `Release-As:` footer — main
+only takes pull requests, so it goes in as one (keep the footer in the squash message when merging):
 
 ```sh
 git checkout -b release-0.14.0
 git commit --allow-empty -m "chore: release 0.14.0" -m "Release-As: 0.14.0"
 git push -u origin release-0.14.0
 ```
-
-[release-please](https://github.com/googleapis/release-please) picks that up and opens a release pull request
-holding the version, the CHANGELOG entry and the bumped install-snippet pins. Read it, then merge it: merging tags
-`v0.13.0`, and the tag's build publishes the ten binaries and `checksums.txt`, each with a build provenance attestation.
-
-The version is stated rather than inferred on purpose. release-please normally derives it from `feat:`/`fix:`
-commit prefixes, and this repo writes commit subjects as English sentences instead — a convention worth more than
-the inference is. So it runs as a pull-request, CHANGELOG and pin machine, and nothing happens until a
-`Release-As:` commit asks for it. The cost of that trade is a thin CHANGELOG: with no conventional prefixes to
-read, release-please has little to put under the version heading. The release body makes up for it — the build
-appends GitHub's generated pull-request list underneath whatever the CHANGELOG said, so the notes stay at least as
-full as they were before any of this was automated, and anything written by hand stays on top of them.
 
 The pull request is the point. Until it is merged nothing is tagged, so a wrong version or a bad note is a comment
 on a PR rather than a tag that has to be burned.

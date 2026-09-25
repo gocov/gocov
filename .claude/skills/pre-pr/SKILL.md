@@ -65,8 +65,9 @@ Do not run the same pass twice in one invocation. If the user already ran
 
 - User-visible behaviour changed: the matching page under `docs/` changed too, and no
   user page mentions an environment variable or deployment.
-- Commit subjects are conventional (`feat:`, `fix:`, `chore:`, `refactor:`, `docs:`).
-  release-please reads them: `feat`/`fix` make a release, `chore` does not. Say which
+- The PR title and commit subjects are conventional (`feat:`, `fix:`, `perf:`, `refactor:`,
+  `docs:`, `chore:`, …; the `pr-title` check refuses anything else). release-please reads
+  them: `feat`/`fix`/`perf` make a release, the rest do not. Say which
   kind this PR is.
 - No commit carries an AI attribution trailer (a hook refuses them, but check
   `git log <base>..HEAD --format=%B`).
