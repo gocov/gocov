@@ -98,6 +98,10 @@ pr comment: posted
 gate: passed
 ```
 
+When the server built the commit's merged report with a caveat — two [parts](parts.md) that disagree on a PR's
+changed lines, whose diff coverage is then merged as a safe lower bound — a `warning:` line under the totals says so.
+A warning never fails the step.
+
 The exit code is non-zero on any upload error, and — only with `-fail-on-gate` — on a failed gate, which is how a
 pipeline step turns the gate into a hard failure even without [forge-side merge blocking](coverage-gate.md).
 

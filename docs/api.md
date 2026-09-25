@@ -20,7 +20,8 @@ anything they don't cover.
 | `ignore`      | optional, repeatable; a glob pattern (or a comma/newline-separated list) for files to leave out of this upload, applied on top of the repo's own patterns. At most 100 patterns of 200 characters; an invalid one is a `400`. See [Ignoring files](ignoring-files.md)                |
 
 Returns `201` with `{id, total_pct, covered_stmts, total_stmts,
-delta_pct, build_status}`, plus `ignored_files` when ignore patterns dropped any. Uploads carrying a `pr_id` additionally get
+delta_pct, build_status}`, plus `ignored_files` when ignore patterns dropped any and `warnings`, a list of
+sentences, when the commit's merged report was built with a caveat. Uploads carrying a `pr_id` additionally get
 `diff_pct`, `diff_covered_lines`, `diff_total_lines`, `diff_status` and
 `pr_comment` when the repo's workspace is [connected to its forge](connecting.md).
 

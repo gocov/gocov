@@ -46,6 +46,9 @@ type uploadResponse struct {
 	RepoCreated  bool     `json:"repo_created"`
 	IgnoredFiles int      `json:"ignored_files"`
 	Gate         string   `json:"gate"`
+	// Warnings are the server's non-fatal notices about how the commit's
+	// merged report was built; an older server sends none.
+	Warnings []string `json:"warnings"`
 
 	DiffPct          *float64 `json:"diff_pct"`
 	DiffCoveredLines *int64   `json:"diff_covered_lines"`
