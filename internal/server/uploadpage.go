@@ -64,7 +64,7 @@ func (s *Server) buildUploadPage(w http.ResponseWriter, r *http.Request) (*uploa
 			CommitAuthor:  u.Meta.CommitAuthor,
 			Tokenless:     u.Meta.Tokenless,
 		},
-		Verdict:      gateVerdict("This upload", u.TotalPct, u.DiffCoverage, u.GateFailed, repo.Gate, u.GateBasePct),
+		Verdict:      gateVerdict("This upload", u.TotalPct, u.DiffCoverage, u.GateFailed, store.JudgedGate(u.Gate, repo.Gate), u.GateBasePct),
 		CoveredStmts: u.CoveredStmts,
 		TotalStmts:   u.TotalStmts,
 		Files:        files,
@@ -242,22 +242,31 @@ func (s *Server) buildFilesView(ctx context.Context, upload *store.Upload, base 
 // it a file reads as unchanged rather than as a rounded-away "+0.0%".
 const deltaEpsilon = 0.05
 
-// gateVerdict states a coverage standing against the repo's gate, once at
-// the top of the upload page (for that upload) and of the repo page (for
-// the branch's newest merged report). The headline pass/fail follows the
-// stored gate result; the reason narrates each configured rule against
-// the values measured, so a reader sees why it stands. dropBase is the
-// drop baseline the gate was judged against (GateBasePct), so the reason
-// narrates the comparison the gate made rather than the page's own
-// baseline; subject is how the reason names what was measured ("This
-// upload").
-func gateVerdict(subject string, totalPct float64, diff *diffcov.Result, gateFailed bool, gate store.Gate, dropBase *float64) verdictDTO {
-	v := verdictDTO{State: "pass", Coverage: totalPct}
+// gateState is a judged gate's outcome in one word: none when no rule
+// was set, otherwise pass or fail.
+func gateState(g store.Gate, failed bool) string {
 	switch {
-	case !gate.Configured():
-		v.State = "neutral"
-	case gateFailed:
-		v.State = "fail"
+	case !g.Configured():
+		return "none"
+	case failed:
+		return "fail"
+	}
+	return "pass"
+}
+
+// gateVerdict states a coverage standing against the gate it was judged
+// by (store.JudgedGate), once at the top of the upload page (for that
+// upload) and of the repo page (for the branch's newest merged report).
+// The headline pass/fail follows the stored gate result; the reason
+// narrates each rule against the values measured, so a reader sees why it
+// stands. dropBase is the drop baseline the gate was judged against
+// (GateBasePct), so the reason narrates the comparison the gate made
+// rather than the page's own baseline; subject is how the reason names
+// what was measured ("This upload").
+func gateVerdict(subject string, totalPct float64, diff *diffcov.Result, gateFailed bool, gate store.Gate, dropBase *float64) verdictDTO {
+	v := verdictDTO{State: gateState(gate, gateFailed), Coverage: totalPct}
+	if v.State == "none" {
+		v.State = "neutral" // the verdict card's word for it
 	}
 	v.Reason = core.GateReason(totalPct, diff, gate, dropBase, subject)
 	return v

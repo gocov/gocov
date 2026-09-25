@@ -747,13 +747,17 @@ func (s *Store) CreateUpload(ctx context.Context, u *store.Upload, files []*stor
 	if err != nil {
 		return err
 	}
+	gate, err := marshalGate(u.Gate)
+	if err != nil {
+		return err
+	}
 	err = tx.QueryRow(ctx, `
 		INSERT INTO uploads (repo_id, commit_sha, branch, pr_id, format,
-			total_pct, covered_stmts, total_stmts, raw_blob_key, diff_coverage, gate_failed, gate_base_pct, path_prefix, part, meta)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+			total_pct, covered_stmts, total_stmts, raw_blob_key, diff_coverage, gate_failed, gate_base_pct, gate, path_prefix, part, meta)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		RETURNING id, created_at`,
 		u.RepoID, u.CommitSHA, u.Branch, u.PRID, u.Format,
-		u.TotalPct, u.CoveredStmts, u.TotalStmts, u.RawBlobKey, diffCov, u.GateFailed, u.GateBasePct, u.PathPrefix, u.Part, meta,
+		u.TotalPct, u.CoveredStmts, u.TotalStmts, u.RawBlobKey, diffCov, u.GateFailed, u.GateBasePct, gate, u.PathPrefix, u.Part, meta,
 	).Scan(&u.ID, &u.CreatedAt)
 	if err != nil {
 		return err
@@ -781,7 +785,7 @@ func (s *Store) CreateUpload(ctx context.Context, u *store.Upload, files []*stor
 }
 
 const uploadCols = `id, repo_id, commit_sha, branch, pr_id, format,
-	total_pct, covered_stmts, total_stmts, raw_blob_key, diff_coverage, gate_failed, gate_base_pct, path_prefix, part, created_at, meta`
+	total_pct, covered_stmts, total_stmts, raw_blob_key, diff_coverage, gate_failed, gate_base_pct, gate, path_prefix, part, created_at, meta`
 
 // marshalUploadMeta encodes upload provenance for storage, returning nil
 // (SQL NULL) when nothing was captured so empty uploads stay compact.
@@ -820,9 +824,9 @@ func (s *Store) ListBranchUploads(ctx context.Context, repoID int64, branch stri
 
 func (s *Store) scanUpload(row rowScanner) (*store.Upload, error) {
 	var u store.Upload
-	var diffCov, meta []byte
+	var diffCov, meta, gate []byte
 	err := row.Scan(&u.ID, &u.RepoID, &u.CommitSHA, &u.Branch, &u.PRID, &u.Format,
-		&u.TotalPct, &u.CoveredStmts, &u.TotalStmts, &u.RawBlobKey, &diffCov, &u.GateFailed, &u.GateBasePct, &u.PathPrefix, &u.Part, &u.CreatedAt, &meta)
+		&u.TotalPct, &u.CoveredStmts, &u.TotalStmts, &u.RawBlobKey, &diffCov, &u.GateFailed, &u.GateBasePct, &gate, &u.PathPrefix, &u.Part, &u.CreatedAt, &meta)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -838,6 +842,9 @@ func (s *Store) scanUpload(row rowScanner) (*store.Upload, error) {
 		if err := json.Unmarshal(meta, &u.Meta); err != nil {
 			return nil, fmt.Errorf("upload %d: bad meta: %w", u.ID, err)
 		}
+	}
+	if u.Gate, err = unmarshalGate(gate); err != nil {
+		return nil, fmt.Errorf("upload %d: bad gate: %w", u.ID, err)
 	}
 	return &u, nil
 }
@@ -982,7 +989,7 @@ func advisoryKey(namespace string, id int64, name string) int64 {
 }
 
 const commitReportCols = `id, repo_id, commit_sha, branch, pr_id, total_pct,
-	covered_stmts, total_stmts, gate_failed, gate_base_pct, diff_coverage, part_count, upload_id, created_at, updated_at`
+	covered_stmts, total_stmts, gate_failed, gate_base_pct, gate, diff_coverage, part_count, upload_id, created_at, updated_at`
 
 func (s *Store) UpsertCommitReport(ctx context.Context, cr *store.CommitReport) error {
 	return s.upsertCommitReport(ctx, s.pool, cr)
@@ -996,12 +1003,16 @@ func (s *Store) upsertCommitReport(ctx context.Context, q querier, cr *store.Com
 			return err
 		}
 	}
+	gate, err := marshalGate(cr.Gate)
+	if err != nil {
+		return err
+	}
 	// The first-seen created_at survives the conflict update; only the
 	// derived fields and updated_at move.
 	return q.QueryRow(ctx, `
 		INSERT INTO commit_reports (repo_id, commit_sha, branch, pr_id, total_pct,
-			covered_stmts, total_stmts, gate_failed, gate_base_pct, diff_coverage, part_count, upload_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			covered_stmts, total_stmts, gate_failed, gate_base_pct, gate, diff_coverage, part_count, upload_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		ON CONFLICT (repo_id, commit_sha) DO UPDATE SET
 			branch = EXCLUDED.branch,
 			pr_id = EXCLUDED.pr_id,
@@ -1010,13 +1021,14 @@ func (s *Store) upsertCommitReport(ctx context.Context, q querier, cr *store.Com
 			total_stmts = EXCLUDED.total_stmts,
 			gate_failed = EXCLUDED.gate_failed,
 			gate_base_pct = EXCLUDED.gate_base_pct,
+			gate = EXCLUDED.gate,
 			diff_coverage = EXCLUDED.diff_coverage,
 			part_count = EXCLUDED.part_count,
 			upload_id = EXCLUDED.upload_id,
 			updated_at = now()
 		RETURNING id, created_at, updated_at`,
 		cr.RepoID, cr.CommitSHA, cr.Branch, cr.PRID, cr.TotalPct,
-		cr.CoveredStmts, cr.TotalStmts, cr.GateFailed, cr.GateBasePct, diffCov, cr.PartCount, cr.UploadID,
+		cr.CoveredStmts, cr.TotalStmts, cr.GateFailed, cr.GateBasePct, gate, diffCov, cr.PartCount, cr.UploadID,
 	).Scan(&cr.ID, &cr.CreatedAt, &cr.UpdatedAt)
 }
 
@@ -1171,10 +1183,10 @@ func (s *Store) DefaultBranchReports(ctx context.Context, repoIDs []int64, limit
 
 func (s *Store) scanCommitReport(row rowScanner) (*store.CommitReport, error) {
 	var cr store.CommitReport
-	var diffCov []byte
+	var diffCov, gate []byte
 	var uploadID *int64
 	err := row.Scan(&cr.ID, &cr.RepoID, &cr.CommitSHA, &cr.Branch, &cr.PRID, &cr.TotalPct,
-		&cr.CoveredStmts, &cr.TotalStmts, &cr.GateFailed, &cr.GateBasePct, &diffCov, &cr.PartCount, &uploadID, &cr.CreatedAt, &cr.UpdatedAt)
+		&cr.CoveredStmts, &cr.TotalStmts, &cr.GateFailed, &cr.GateBasePct, &gate, &diffCov, &cr.PartCount, &uploadID, &cr.CreatedAt, &cr.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -1189,7 +1201,37 @@ func (s *Store) scanCommitReport(row rowScanner) (*store.CommitReport, error) {
 			return nil, fmt.Errorf("commit report %d: bad diff_coverage: %w", cr.ID, err)
 		}
 	}
+	if cr.Gate, err = unmarshalGate(gate); err != nil {
+		return nil, fmt.Errorf("commit report %d: bad gate: %w", cr.ID, err)
+	}
 	return &cr, nil
+}
+
+// gateJSON is a judged gate as the gate columns store it, spelled apart
+// from store.Gate's Go field names so renaming one never breaks the rows.
+type gateJSON struct {
+	MinCoverage     *float64 `json:"min_coverage"`
+	MinDiffCoverage *float64 `json:"min_diff_coverage"`
+	MaxCoverageDrop *float64 `json:"max_coverage_drop"`
+}
+
+// marshalGate encodes a judged gate, or NULL when none was recorded.
+func marshalGate(g *store.Gate) ([]byte, error) {
+	if g == nil {
+		return nil, nil
+	}
+	return json.Marshal(gateJSON{MinCoverage: g.MinCoverage, MinDiffCoverage: g.MinDiffCoverage, MaxCoverageDrop: g.MaxCoverageDrop})
+}
+
+func unmarshalGate(b []byte) (*store.Gate, error) {
+	if len(b) == 0 {
+		return nil, nil
+	}
+	var g gateJSON
+	if err := json.Unmarshal(b, &g); err != nil {
+		return nil, err
+	}
+	return &store.Gate{MinCoverage: g.MinCoverage, MinDiffCoverage: g.MinDiffCoverage, MaxCoverageDrop: g.MaxCoverageDrop}, nil
 }
 
 // ensure interface compliance

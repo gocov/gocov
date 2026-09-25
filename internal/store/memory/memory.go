@@ -566,6 +566,7 @@ func copyUpload(u *store.Upload) *store.Upload {
 	if u.GateBasePct != nil {
 		cp.GateBasePct = new(*u.GateBasePct)
 	}
+	cp.Gate = copyGate(u.Gate)
 	return cp
 }
 
@@ -875,5 +876,26 @@ func copyCommitReport(cr *store.CommitReport) *store.CommitReport {
 	if cr.GateBasePct != nil {
 		cp.GateBasePct = new(*cr.GateBasePct)
 	}
+	cp.Gate = copyGate(cr.Gate)
 	return cp
+}
+
+// copyGate deep-copies a judged gate, so a stored row never shares its
+// thresholds with the caller's.
+func copyGate(g *store.Gate) *store.Gate {
+	if g == nil {
+		return nil
+	}
+	cp := store.Gate{}
+	for _, f := range []struct {
+		dst **float64
+		src *float64
+	}{
+		{&cp.MinCoverage, g.MinCoverage}, {&cp.MinDiffCoverage, g.MinDiffCoverage}, {&cp.MaxCoverageDrop, g.MaxCoverageDrop},
+	} {
+		if f.src != nil {
+			*f.dst = new(*f.src)
+		}
+	}
+	return &cp
 }

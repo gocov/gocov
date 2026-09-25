@@ -395,3 +395,67 @@ func TestVerdictReasonNarratesTheGatesDropBaseline(t *testing.T) {
 		t.Errorf("upload GateBasePct = %v, want the default branch's 50", up.GateBasePct)
 	}
 }
+
+// Pages describe an upload against the gate it was judged by: editing or
+// removing the gate afterwards does not rewrite its verdict, its reason,
+// its row in the history or the dashboard's notice.
+func TestVerdictsKeepTheGateTheyWereJudgedBy(t *testing.T) {
+	f := newFixture(t, nil)
+	setGate := func(g store.Gate) {
+		t.Helper()
+		f.repo.Gate = g
+		if err := f.store.UpdateRepo(t.Context(), f.repo); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setGate(store.Gate{MinCoverage: new(float64(90))})
+	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile) // 80%: fails 90
+
+	for _, later := range []store.Gate{{MinCoverage: new(float64(50))}, {}} {
+		setGate(later) // 80% would pass the first, and the second has no rules at all
+		upload := decodeJSON[uploadPageDTO](t, get(f, "/api/ui/uploads/1"))
+		repo := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets"))
+		for name, v := range map[string]verdictDTO{"upload page": upload.Verdict, "repo page": repo.Summary.Verdict} {
+			if v.State != "fail" || !strings.Contains(v.Reason, "below the minimum of 90%") {
+				t.Errorf("gate now %+v, %s verdict = %q / %q; want fail, below the minimum of 90%%", later, name, v.State, v.Reason)
+			}
+		}
+		if got := repo.Uploads[0].Gate; got != "fail" {
+			t.Errorf("gate now %+v, history row gate = %q, want fail", later, got)
+		}
+		dash := decodeJSON[dashboardDTO](t, get(f, "/api/ui/dashboard"))
+		if len(dash.Repos) != 1 || dash.Repos[0].Gate != "fail" {
+			t.Errorf("gate now %+v, dashboard row = %+v, want fail", later, dash.Repos)
+		}
+		if len(dash.Attention) != 1 || dash.Attention[0].MinCoverage == nil || *dash.Attention[0].MinCoverage != 90 {
+			t.Errorf("gate now %+v, notice = %+v, want failing below the judged 90%% minimum", later, dash.Attention)
+		}
+	}
+
+	// An upload judged with no gate set is not "passed".
+	doUpload(t, f, "secret-token", map[string]string{"commit": "c2", "branch": "main"}, testProfile)
+	if got := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets")).Uploads[0].Gate; got != "none" {
+		t.Errorf("ungated upload's row gate = %q, want none", got)
+	}
+}
+
+// A gate that failed on another rule does not claim the total was below
+// the minimum.
+func TestFailingNoticeQuotesTheMinimumOnlyWhenItFailed(t *testing.T) {
+	f := newFixture(t, nil)
+	f.repo.Gate = store.Gate{MinCoverage: new(float64(50)), MaxCoverageDrop: new(float64(1))}
+	if err := f.store.UpdateRepo(t.Context(), f.repo); err != nil {
+		t.Fatal(err)
+	}
+	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile) // 80%
+	doUpload(t, f, "secret-token", map[string]string{"commit": "c2", "branch": "main"},
+		"mode: set\nexample.com/m/a.go:1.1,5.2 7 1\nexample.com/m/a.go:7.1,9.2 3 0\n") // 70%: a 10-point drop
+
+	dash := decodeJSON[dashboardDTO](t, get(f, "/api/ui/dashboard"))
+	if len(dash.Attention) != 1 || dash.Attention[0].Kind != "failing" {
+		t.Fatalf("notices = %+v, want one failing", dash.Attention)
+	}
+	if got := dash.Attention[0].MinCoverage; got != nil {
+		t.Errorf("notice quotes a %v%% minimum; 70%% is above it — the drop rule failed", *got)
+	}
+}

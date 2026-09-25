@@ -302,12 +302,7 @@ func (s *Server) fillCurrent(r *http.Request, dto *dashboardDTO, cur *dashGroup)
 			row.Stale = time.Since(latest.CreatedAt) > dashStaleAfter
 			covered += latest.CoveredStmts
 			total += latest.TotalStmts
-			if repo.Gate.Configured() {
-				row.Gate = "pass"
-				if latest.GateFailed {
-					row.Gate = "fail"
-				}
-			}
+			row.Gate = gateState(store.JudgedGate(latest.Gate, repo.Gate), latest.GateFailed)
 		}
 		if base != nil {
 			row.Delta = new(latest.TotalPct - base.TotalPct)
@@ -340,7 +335,12 @@ func attention(repo *store.Repo, row dashRepoDTO, latest *store.CommitReport) []
 	}
 	if row.Gate == "fail" {
 		a := item("failing")
-		a.MinCoverage = repo.Gate.MinCoverage
+		// Quote the minimum only when that is the rule that failed, at the
+		// threshold it was judged by; a diff-coverage or drop failure
+		// leaves it out, and the app says only that the gate failed.
+		if g := store.JudgedGate(latest.Gate, repo.Gate); core.MinCoverageFailed(g, latest.TotalPct) {
+			a.MinCoverage = g.MinCoverage
+		}
 		out = append(out, a)
 	}
 	if row.Stale {

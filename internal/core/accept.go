@@ -248,6 +248,7 @@ func (sub Submission) rows(blobKey string, diff *diffcov.Result, gate Verdict, g
 		DiffCoverage: diff,
 		GateFailed:   gate.Failed(),
 		GateBasePct:  gateBase,
+		Gate:         new(sub.Repo.Gate),
 		PathPrefix:   sub.PathPrefix,
 		Part:         sub.Part,
 		Meta:         sub.Meta,

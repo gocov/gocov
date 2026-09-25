@@ -7,6 +7,12 @@ import { shortSha, timeAgo } from "@/lib/format";
 import { routes } from "@/lib/urls";
 import "./UploadsTable.css";
 
+const gateChip: Record<UploadRow["gate"], ReactNode> = {
+  pass: <Chip tone="good">Passed</Chip>,
+  fail: <Chip tone="bad">Failed</Chip>,
+  none: <Chip>No gate</Chip>,
+};
+
 /** A repository's upload history, newest first. */
 export function UploadsTable({ uploads, empty = "No uploads yet." }: { uploads: UploadRow[]; empty?: ReactNode }) {
   return (
@@ -41,7 +47,7 @@ export function UploadsTable({ uploads, empty = "No uploads yet." }: { uploads: 
                   <td>
                     <CoverageBar value={upload.coverage} />
                   </td>
-                  <td>{upload.gate_failed ? <Chip tone="bad">Failed</Chip> : <Chip tone="good">Passed</Chip>}</td>
+                  <td>{gateChip[upload.gate]}</td>
                   <td className="muted small hide-sm">{timeAgo(upload.at)}</td>
                 </tr>
               ))}

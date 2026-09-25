@@ -4,8 +4,8 @@ import type { UploadRow } from "@/lib/api/types";
 import { UploadsTable } from "./UploadsTable";
 
 const uploads: UploadRow[] = [
-  { id: 412, sha: "a1b2c3d4e5f67890", branch: "main", pr_id: "", coverage: 82.3, gate_failed: false, at: new Date().toISOString() },
-  { id: 411, sha: "9f2c41d8a7b30000", branch: "fix/upload", pr_id: "128", coverage: 61, gate_failed: true, at: new Date().toISOString() },
+  { id: 412, sha: "a1b2c3d4e5f67890", branch: "main", pr_id: "", coverage: 82.3, gate: "pass", at: new Date().toISOString() },
+  { id: 411, sha: "9f2c41d8a7b30000", branch: "fix/upload", pr_id: "128", coverage: 61, gate: "fail", at: new Date().toISOString() },
 ];
 
 const draw = (rows = uploads, empty?: string) =>
@@ -21,6 +21,12 @@ test("each upload links to its report and says how the gate went", () => {
   expect(screen.getByText("Passed")).toBeInTheDocument();
   expect(screen.getByText("Failed")).toBeInTheDocument();
   expect(screen.getAllByText("just now")).toHaveLength(2);
+});
+
+test("an upload judged with no gate set says so rather than passing", () => {
+  draw([{ ...uploads[0]!, gate: "none" }]);
+  expect(screen.getByText("No gate")).toBeInTheDocument();
+  expect(screen.queryByText("Passed")).not.toBeInTheDocument();
 });
 
 test("a pull request upload carries its number under the sha", () => {
