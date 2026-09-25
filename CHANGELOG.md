@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.1](https://github.com/gocov/gocov/compare/v0.26.0...v0.26.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* list every part's files on the repo page, not only the last part's ([819fd33](https://github.com/gocov/gocov/commit/819fd3342e7ecffe20ef3c0ef62c2dedd74c39b0))
+
 ## [0.26.0](https://github.com/gocov/gocov/compare/v0.25.0...v0.26.0) (2026-09-25)
 
 
