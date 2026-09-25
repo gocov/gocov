@@ -272,7 +272,7 @@ const prCommentMaxFiles = 20
 
 func (p *Pipeline) prCommentBody(u *store.Upload, deltaPct *float64, gate Verdict) string {
 	var sb strings.Builder
-	short := u.CommitSHA[:min(12, len(u.CommitSHA))]
+	short := ShortSHA(u.CommitSHA)
 	fmt.Fprintf(&sb, "**gocov** report for `%s`\n\n", short)
 	fmt.Fprintf(&sb, "- Total coverage: **%.1f%%**", u.TotalPct)
 	if deltaPct != nil {

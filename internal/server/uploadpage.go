@@ -441,7 +441,7 @@ func (s *Server) handleUploadProfile(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "loading raw profile", err)
 		return
 	}
-	name := fmt.Sprintf("%s-%s", shortSHA(upload.CommitSHA), profileFilename(upload.Format))
+	name := fmt.Sprintf("%s-%s", core.ShortSHA(upload.CommitSHA), profileFilename(upload.Format))
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))

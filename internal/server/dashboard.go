@@ -254,10 +254,7 @@ func (s *Server) groupPrefix(repo *store.Repo, tracked []*store.Workspace) strin
 	if ws := owningWorkspace(repo, tracked); ws != nil {
 		return ws.Prefix
 	}
-	if i := strings.IndexByte(repo.Slug, '/'); i >= 0 {
-		return repo.Slug[:i]
-	}
-	return repo.Slug
+	return ownerOf(repo.Slug)
 }
 
 // groupDTO is a group's switcher entry: its identity, a repo count, and a

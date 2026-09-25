@@ -46,8 +46,8 @@ func (s *Server) handleGitHubSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := strconv.ParseInt(r.FormValue("installation_id"), 10, 64)
-	if err != nil || id <= 0 {
+	id, err := positiveInt(r.FormValue("installation_id"))
+	if err != nil {
 		s.connectOutcome(w, r, "no_installation", "", 0)
 		return
 	}

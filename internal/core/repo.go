@@ -305,6 +305,10 @@ func (p *Pipeline) claimVisibilityRecheck(repoID int64) bool {
 	return true
 }
 
+// ShortSHA abbreviates a commit SHA to the twelve characters gocov shows
+// wherever a commit is named.
+func ShortSHA(sha string) string { return sha[:min(12, len(sha))] }
+
 // NewToken generates a token: 24 random bytes in hex. Repo and workspace
 // tokens are the same shape, and only their hash is ever compared, so one
 // generator serves both.
