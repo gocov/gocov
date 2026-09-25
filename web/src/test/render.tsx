@@ -6,11 +6,15 @@ import { RouterProvider, createMemoryRouter } from "react-router";
 /**
  * Renders a page the way the app does — inside a router and a query client —
  * at `path`, matched against `route` (e.g. "repos/:forge/*"). Stub the network
- * with mockApi() first.
+ * with mockApi() first. Every other path lands on an empty route, so a test
+ * can follow a page's navigation away (router.state.location) without the
+ * router logging a 404 through its default error boundary.
  */
 export function renderPage(element: ReactElement, { route = "*", path = "/" }: { route?: string; path?: string } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-  const router = createMemoryRouter([{ path: route, element }], { initialEntries: [path] });
+  const router = createMemoryRouter([{ path: route, element }, { path: "*", element: null }], {
+    initialEntries: [path],
+  });
   return { router, ...render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>) };
 }
 

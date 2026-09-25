@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import type { Session } from "@/lib/api/types";
 import { mockApi, renderPage } from "@/test/render";
 import { AppShell } from "./AppShell";
@@ -18,7 +18,7 @@ test("a signed-out viewer is offered sign-in, in the app, with the page to come 
   expect(link).toHaveAttribute("href", "/login?next=%2Frepos%2Fgithub%2Facme%2Fapi%3Fbranch%3Dmain");
 
   // A route, not a page load: the router handles the click itself.
-  link.click();
+  fireEvent.click(link);
   expect(router.state.location.pathname).toBe("/login");
 });
 
