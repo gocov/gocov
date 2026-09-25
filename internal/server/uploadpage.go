@@ -11,7 +11,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"iter"
 	"net/http"
 	"slices"
 	"strings"
@@ -338,31 +337,19 @@ func uncoveredRanges(blocks []profile.Block) string {
 	return strings.Join(parts, ", ")
 }
 
-// blockLines yields every line the blocks span, paired with the block
-// spanning it, from line 1 up to at most limit — the length of a file whose
-// content is at hand. Block ranges come from uploaders and may claim
-// millions of lines, so there is no unbounded mode: code without a file
-// length works on merged spans instead (diffcov.MergedSpans).
-func blockLines(blocks []profile.Block, limit int) iter.Seq2[int, profile.Block] {
-	return func(yield func(int, profile.Block) bool) {
-		for _, b := range blocks {
-			end := min(b.EndLine, limit)
-			for l := max(b.StartLine, 1); l <= end; l++ {
-				if !yield(l, b) {
-					return
-				}
-			}
-		}
-	}
-}
-
-// lineCounts maps each line the blocks span, within the first limit lines,
-// to the highest count of a block over it: a key means the line is
+// lineCounts maps each line the blocks span, from line 1 up to at most
+// limit, to the highest count of a block over it: a key means the line is
 // executable, a positive value that it ran. The source view overlays this.
+// limit is the length of a file whose content is at hand: block ranges
+// come from uploaders and may claim millions of lines, so there is no
+// unbounded mode — code without a file length works on merged spans
+// instead (diffcov.MergedSpans).
 func lineCounts(blocks []profile.Block, limit int) map[int]int {
 	counts := map[int]int{}
-	for l, b := range blockLines(blocks, limit) {
-		counts[l] = max(counts[l], b.Count)
+	for _, b := range blocks {
+		for l := max(b.StartLine, 1); l <= min(b.EndLine, limit); l++ {
+			counts[l] = max(counts[l], b.Count)
+		}
 	}
 	return counts
 }
