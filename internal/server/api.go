@@ -188,9 +188,12 @@ type fileRowDTO struct {
 // page, the latest upload of the commit whose parts it merges), and
 // whether there was a baseline to compare them against.
 type filesViewDTO struct {
-	UploadID int64        `json:"upload_id"`
-	HasBase  bool         `json:"has_base"`
-	Files    []fileRowDTO `json:"files"`
+	UploadID int64 `json:"upload_id"`
+	// Merged marks rows that merge every part of the commit (the repo
+	// page), so a file's source view merges them too (?parts=merged).
+	Merged  bool         `json:"merged"`
+	HasBase bool         `json:"has_base"`
+	Files   []fileRowDTO `json:"files"`
 }
 
 // optPct is a percentage the app must be able to tell apart from zero:

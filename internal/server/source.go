@@ -44,9 +44,21 @@ func (s *Server) buildSourcePage(w http.ResponseWriter, r *http.Request) (*sourc
 		return nil, false
 	}
 	path := r.PathValue("path")
+	// ?parts=merged is the repo page's files card: the file as the commit's
+	// parts merged report it, against the baseline commit's parts merged
+	// alike, so the view agrees with the row it was opened from.
+	merged := r.FormValue("parts") == "merged"
 	// Access was settled before this per-file lookup, so a signed-out
 	// probe cannot tell a missing file from a missing upload.
-	file, err := s.store.UploadFile(r.Context(), upload.ID, path)
+	var (
+		file *store.UploadFile
+		err  error
+	)
+	if merged {
+		file, err = s.commitFile(r.Context(), repo.ID, upload.CommitSHA, path)
+	} else {
+		file, err = s.store.UploadFile(r.Context(), upload.ID, path)
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		httpError(w, http.StatusNotFound, "not found")
 		return nil, false
@@ -65,7 +77,13 @@ func (s *Server) buildSourcePage(w http.ResponseWriter, r *http.Request) (*sourc
 		base        *store.UploadFile
 	)
 	wg.Go(func() { source, unavailable = s.fetchSource(r, repo, upload, file) })
-	wg.Go(func() { base = s.baseFileFor(r.Context(), repo, upload, file.Path) })
+	wg.Go(func() {
+		if merged {
+			base = s.commitBaseFileFor(r.Context(), repo, upload, file.Path)
+		} else {
+			base = s.baseFileFor(r.Context(), repo, upload, file.Path)
+		}
+	})
 	wg.Wait()
 	dto := &sourcePageDTO{
 		Repo:   newRepoRefDTO(repo),
@@ -359,6 +377,21 @@ func (s *Server) baseFileFor(ctx context.Context, repo *store.Repo, u *store.Upl
 		return nil
 	}
 	f, err := s.store.UploadFile(ctx, base.ID, path)
+	if err != nil {
+		return nil
+	}
+	return f
+}
+
+// commitBaseFileFor is baseFileFor for the merged view: the same file at
+// the commit the upload's commit is measured against (core.CommitBaseline),
+// merged across that commit's parts.
+func (s *Server) commitBaseFileFor(ctx context.Context, repo *store.Repo, u *store.Upload, path string) *store.UploadFile {
+	base := core.CommitBaseline(ctx, s.store, repo, u.Branch, u.CommitSHA)
+	if base == nil {
+		return nil
+	}
+	f, err := s.commitFile(ctx, repo.ID, base.CommitSHA, path)
 	if err != nil {
 		return nil
 	}

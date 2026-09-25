@@ -149,6 +149,8 @@ export interface FileRow {
 
 export interface FilesView {
   upload_id: number;
+  /** The rows merge every part of the commit (the repo page); their source views merge them too. */
+  merged: boolean;
   has_base: boolean;
   files: FileRow[];
 }

@@ -185,12 +185,14 @@ func TestAPIRepoFilesMergeEveryPart(t *testing.T) {
 	}
 	up("c1", "backend", "mode: set\nexample.com/m/back.go:1.1,5.2 8 1\n")
 	up("c1", "frontend", "mode: set\nexample.com/m/front.go:1.1,5.2 2 0\n")
-	back := up("c2", "backend", "mode: set\nexample.com/m/back.go:1.1,5.2 8 0\nexample.com/m/shared.go:1.1,2.2 2 0\n")
-	front := up("c2", "frontend", "mode: set\nexample.com/m/front.go:1.1,5.2 2 1\nexample.com/m/shared.go:1.1,2.2 2 1\n")
+	// shared.go is covered by the older part only, so the newer part's own
+	// view of it would read 0%.
+	back := up("c2", "backend", "mode: set\nexample.com/m/back.go:1.1,5.2 8 0\nexample.com/m/shared.go:1.1,2.2 2 1\n")
+	front := up("c2", "frontend", "mode: set\nexample.com/m/front.go:1.1,5.2 2 1\nexample.com/m/shared.go:1.1,2.2 2 0\n")
 
 	got := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets"))
-	if got.Files == nil || !got.Files.HasBase {
-		t.Fatalf("files = %+v, want the commit's files against a baseline", got.Files)
+	if got.Files == nil || !got.Files.HasBase || !got.Files.Merged {
+		t.Fatalf("files = %+v, want the commit's merged files against a baseline", got.Files)
 	}
 	rows := map[string]fileRowDTO{}
 	for _, r := range got.Files.Files {
@@ -220,6 +222,21 @@ func TestAPIRepoFilesMergeEveryPart(t *testing.T) {
 		if (r.Before == nil) != (w.before == nil) || (r.Before != nil && *r.Before != *w.before) {
 			t.Errorf("%s before = %v, want %v", w.path, r.Before, w.before)
 		}
+	}
+
+	// The merged source view agrees with the row it opens from; the
+	// upload's own view still reads that upload alone.
+	src := fmt.Sprintf("/api/ui/uploads/%d/files/example.com/m/shared.go", front)
+	if m := decodeJSON[sourcePageDTO](t, get(f, src+"?parts=merged")); m.File.Coverage != 100 {
+		t.Errorf("merged source view = %.1f%%, want the row's 100%%", m.File.Coverage)
+	}
+	if own := decodeJSON[sourcePageDTO](t, get(f, src)); own.File.Coverage != 0 {
+		t.Errorf("upload's own source view = %.1f%%, want its own 0%%", own.File.Coverage)
+	}
+	// A file only another part carries is found through the merge too.
+	backSrc := fmt.Sprintf("/api/ui/uploads/%d/files/example.com/m/back.go?parts=merged", front)
+	if m := decodeJSON[sourcePageDTO](t, get(f, backSrc)); m.File.TotalStmts != 8 {
+		t.Errorf("merged source view of back.go = %+v, want the backend part's file", m.File)
 	}
 }
 

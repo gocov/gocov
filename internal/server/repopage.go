@@ -7,6 +7,7 @@ package server
 import (
 	"cmp"
 	"context"
+	"errors"
 	"net/http"
 	"slices"
 	"strconv"
@@ -209,7 +210,35 @@ func (s *Server) loadCommitFilesView(ctx context.Context, repo *store.Repo, late
 	if err != nil {
 		return nil, err
 	}
-	return buildFilesView(latest.UploadID, latest.DiffCoverage, uploads, files, baseFiles != nil, baseFiles), nil
+	view := buildFilesView(latest.UploadID, latest.DiffCoverage, uploads, files, baseFiles != nil, baseFiles)
+	view.Merged = true
+	return view, nil
+}
+
+// commitFile reads one file of a commit merged across its parts — the
+// source view's read behind a merged files card, which needs a single
+// file of parts that may carry thousands. store.ErrNotFound when no part
+// reports the path.
+func (s *Server) commitFile(ctx context.Context, repoID int64, commitSHA, path string) (*store.UploadFile, error) {
+	parts, err := s.store.LatestUploadsPerPart(ctx, repoID, commitSHA)
+	if err != nil {
+		return nil, err
+	}
+	var found []*store.UploadFile
+	for _, p := range parts {
+		f, err := s.store.UploadFile(ctx, p.ID, path)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		found = append(found, f)
+	}
+	if len(found) == 0 {
+		return nil, store.ErrNotFound
+	}
+	return mergePartFiles(found)[0], nil
 }
 
 // commitFiles reads a commit's merged files — the files of the latest

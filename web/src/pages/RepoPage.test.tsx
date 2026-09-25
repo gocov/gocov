@@ -36,6 +36,7 @@ const repo = (over: Partial<RepoPageData> = {}): RepoPageData => ({
   ],
   files: {
     upload_id: 412,
+    merged: true,
     has_base: true,
     files: [
       {

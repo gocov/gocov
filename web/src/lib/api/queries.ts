@@ -43,10 +43,11 @@ export const repoUploadsQuery = (forge: string, slug: string, branch: string, pa
 export const uploadQuery = (id: string) =>
   queryOptions({ queryKey: ["upload", id], queryFn: () => apiGet<UploadPage>(`/uploads/${encodeURIComponent(id)}`) });
 
-export const sourceQuery = (id: string, path: string) =>
+export const sourceQuery = (id: string, path: string, merged = false) =>
   queryOptions({
-    queryKey: ["source", id, path],
-    queryFn: () => apiGet<SourcePage>(`/uploads/${encodeURIComponent(id)}/files/${segs(path)}`),
+    queryKey: ["source", id, path, merged],
+    queryFn: () =>
+      apiGet<SourcePage>(`/uploads/${encodeURIComponent(id)}/files/${segs(path)}` + qs({ parts: merged ? "merged" : "" })),
   });
 
 /**

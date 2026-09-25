@@ -23,6 +23,7 @@ const file = (path: string, over: Partial<FileRow> = {}): FileRow => ({
 
 const withBase: FilesView = {
   upload_id: 412,
+  merged: false,
   has_base: true,
   files: [
     file("internal/server/api.go", { before: 62, before_covered_stmts: 31, before_total_stmts: 50, coverage: 80, source_changed: true, coverage_changed: true, newly_uncovered: "44-46" }),
@@ -34,6 +35,7 @@ const withBase: FilesView = {
 
 const noBase: FilesView = {
   upload_id: 7,
+  merged: false,
   has_base: false,
   files: [file("cmd/gocov/main.go", { upload_id: 7, covered_stmts: 3, total_stmts: 8 }), file("doc.go", { upload_id: 7 })],
 };
@@ -61,9 +63,11 @@ test("the tree rolls directories up and files link to their source", () => {
 });
 
 test("a file from another part links to the upload that carried it", () => {
-  draw({ upload_id: 412, has_base: false, files: [file("web/src/main.tsx", { upload_id: 411 }), file("main.go")] });
-  expect(screen.getByRole("link", { name: "main.tsx" })).toHaveAttribute("href", "/uploads/411/files/web/src/main.tsx");
-  expect(screen.getByRole("link", { name: "main.go" })).toHaveAttribute("href", "/uploads/412/files/main.go");
+  draw({ upload_id: 412, merged: true, has_base: false, files: [file("web/src/main.tsx", { upload_id: 411 }), file("main.go")] });
+  // A merged card's source views merge the commit's parts too, so they
+  // agree with the row they were opened from.
+  expect(screen.getByRole("link", { name: "main.tsx" })).toHaveAttribute("href", "/uploads/411/files/web/src/main.tsx?parts=merged");
+  expect(screen.getByRole("link", { name: "main.go" })).toHaveAttribute("href", "/uploads/412/files/main.go?parts=merged");
 });
 
 test("a directory collapses and takes its files with it", async () => {
@@ -139,6 +143,6 @@ test("without a baseline the table counts statements instead", () => {
 });
 
 test("an upload with no per-file data says so", () => {
-  draw({ upload_id: 9, has_base: false, files: [] });
+  draw({ upload_id: 9, merged: false, has_base: false, files: [] });
   expect(screen.getByText("No per-file data.")).toBeInTheDocument();
 });
