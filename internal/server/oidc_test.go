@@ -20,7 +20,6 @@ import (
 	"github.com/gocov/gocov/internal/forge"
 	forgefake "github.com/gocov/gocov/internal/forge/fake"
 	"github.com/gocov/gocov/internal/oidc"
-	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
 )
@@ -154,7 +153,6 @@ func newOIDCFixture(t *testing.T) (*fixture, *oidcIssuer) {
 	srv := New(Config{
 		Store:        st,
 		Blobs:        blobs,
-		Parsers:      map[string]profile.Parser{"go": profile.GoParser{}},
 		BaseURL:      "https://gocov.example",
 		GitHubApp:    app,
 		OIDCVerifier: verifier,
@@ -366,9 +364,8 @@ func assertErrorContains(t *testing.T, rec *httptest.ResponseRecorder, want stri
 // are unavailable rather than panicking at construction.
 func TestOIDCUnavailableWithoutBaseURL(t *testing.T) {
 	srv := New(Config{
-		Store:   storemem.New(),
-		Blobs:   blobmem.New(),
-		Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
+		Store: storemem.New(),
+		Blobs: blobmem.New(),
 	})
 	if srv.oidc != nil {
 		t.Fatal("verifier built without a BaseURL")

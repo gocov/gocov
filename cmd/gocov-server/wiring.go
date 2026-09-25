@@ -17,7 +17,6 @@ import (
 	"github.com/gocov/gocov/internal/forge/bitbucket"
 	"github.com/gocov/gocov/internal/forge/github"
 	"github.com/gocov/gocov/internal/forge/gitlab"
-	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/server"
 	"github.com/gocov/gocov/internal/store"
 )
@@ -51,7 +50,6 @@ func buildServerConfig(cfg config.Server, d deps, log *slog.Logger) (server.Conf
 	srvCfg := server.Config{
 		Store:   d.Store,
 		Blobs:   d.Blobs,
-		Parsers: parsers(),
 		BaseURL: cfg.BaseURL,
 		Logger:  log,
 		Health:  d.Health,
@@ -96,19 +94,6 @@ func buildServerConfig(cfg config.Server, d deps, log *slog.Logger) (server.Conf
 		log.Info("GOCOV_SECRET_KEY not set; GitLab workspace connect stays disabled")
 	}
 	return srvCfg, nil
-}
-
-// parsers is the set of coverage formats this build understands, keyed
-// by the format name the upload API and CLI use.
-func parsers() map[string]profile.Parser {
-	return map[string]profile.Parser{
-		"go":        profile.GoParser{},
-		"lcov":      profile.LCOVParser{},
-		"jacoco":    profile.JaCoCoParser{},
-		"cobertura": profile.CoberturaParser{},
-		"clover":    profile.CloverParser{},
-		"simplecov": profile.SimpleCovParser{},
-	}
 }
 
 // authProviders builds one sign-in provider per forge with a complete

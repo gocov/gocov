@@ -11,7 +11,6 @@ import (
 
 	"github.com/gocov/gocov/internal/auth"
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
-	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
 )
@@ -177,7 +176,6 @@ func TestAPINeverLeaksTokens(t *testing.T) {
 		srv: New(Config{
 			Store:   st,
 			Blobs:   blobs,
-			Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
 			BaseURL: "https://gocov.example",
 			Auths:   []auth.Provider{&fakeProvider{identity: memberIdentity()}},
 		}),

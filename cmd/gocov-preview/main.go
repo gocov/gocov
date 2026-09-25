@@ -314,7 +314,6 @@ func main() {
 	}
 	srv := server.New(server.Config{
 		Store: st, Blobs: blobs,
-		Parsers:          map[string]profile.Parser{"go": profile.GoParser{}},
 		BaseURL:          "http://localhost:" + cfg.Port,
 		Auths:            auths,
 		Hosted:           hosted,

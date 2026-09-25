@@ -11,7 +11,6 @@ import (
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
 	forgefake "github.com/gocov/gocov/internal/forge/fake"
 	"github.com/gocov/gocov/internal/oidc"
-	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
 )
@@ -75,7 +74,6 @@ func newBitbucketOIDCFixture(t *testing.T, forgeUUID string) (*fixture, *oidcIss
 	srv := New(Config{
 		Store:            st,
 		Blobs:            blobs,
-		Parsers:          map[string]profile.Parser{"go": profile.GoParser{}},
 		BaseURL:          "https://gocov.example",
 		BitbucketConnect: &fakeBBConnect{grantForge: ff},
 		OIDCVerifier:     verifier,

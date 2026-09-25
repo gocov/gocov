@@ -12,7 +12,6 @@ import (
 
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
 	forgefake "github.com/gocov/gocov/internal/forge/fake"
-	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
 )
@@ -56,16 +55,8 @@ func newFixture(t *testing.T, connected map[string]string) *fixture {
 	blobs := blobmem.New()
 	ff := forgefake.New()
 	cfg := Config{
-		Store: st,
-		Blobs: blobs,
-		Parsers: map[string]profile.Parser{
-			"go":        profile.GoParser{},
-			"lcov":      profile.LCOVParser{},
-			"jacoco":    profile.JaCoCoParser{},
-			"cobertura": profile.CoberturaParser{},
-			"clover":    profile.CloverParser{},
-			"simplecov": profile.SimpleCovParser{},
-		},
+		Store:   st,
+		Blobs:   blobs,
 		BaseURL: "https://gocov.example",
 	}
 	if connected != nil {
@@ -133,9 +124,8 @@ func TestHealthz(t *testing.T) {
 		return rec
 	}
 	base := Config{
-		Store:   storemem.New(),
-		Blobs:   blobmem.New(),
-		Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
+		Store: storemem.New(),
+		Blobs: blobmem.New(),
 	}
 
 	t.Run("no probe configured", func(t *testing.T) {

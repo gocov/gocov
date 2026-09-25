@@ -145,15 +145,6 @@ func (p *Pipeline) Accept(ctx context.Context, sub Submission) (*Result, error) 
 	}, nil
 }
 
-// sourceExts maps a profile format to the extensions of source files whose
-// absence from the coverage report is worth flagging in diff coverage.
-var sourceExts = map[string][]string{
-	"go":        {".go"},
-	"lcov":      {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte"},
-	"jacoco":    {".java", ".kt", ".kts", ".scala", ".groovy"},
-	"cobertura": {".py", ".cs", ".php", ".cpp", ".cc", ".c"},
-}
-
 // diffCoverage fetches the PR diff from the forge and intersects it
 // with the parsed profile. Best effort: any failure is reported in the
 // returned status, never as an upload error.
@@ -188,7 +179,8 @@ func (p *Pipeline) diffCoverage(ctx context.Context, fg forge.Forge, fgErr error
 	// docs, configs etc. are expected to be absent from the profile. So
 	// are ignored files — they were dropped from the profile above, and
 	// flagging them as untested would count them against the PR after all.
-	exts := sourceExts[format]
+	f, _ := profile.Lookup(format)
+	exts := f.SourceExts
 	result.UnmatchedFiles = slices.DeleteFunc(result.UnmatchedFiles, func(p string) bool {
 		if ignored.Match(p, "") { // diff paths are repo-relative already
 			return true

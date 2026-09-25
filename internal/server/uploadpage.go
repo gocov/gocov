@@ -475,18 +475,11 @@ func (s *Server) handleUploadProfile(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// profileFilenames maps a profile format to the conventional filename of the
-// raw report, used for the download's Content-Disposition.
-var profileFilenames = map[string]string{
-	"go":        "coverage.out",
-	"lcov":      "lcov.info",
-	"jacoco":    "jacoco.xml",
-	"cobertura": "cobertura.xml",
-}
-
+// profileFilename is the conventional filename of an upload's raw report,
+// used for the download's Content-Disposition.
 func profileFilename(format string) string {
-	if n, ok := profileFilenames[format]; ok {
-		return n
+	if f, ok := profile.Lookup(format); ok && f.Filename != "" {
+		return f.Filename
 	}
 	if format == "" {
 		return "coverage.txt"

@@ -12,7 +12,6 @@ import (
 	"github.com/gocov/gocov/internal/forge"
 	forgefake "github.com/gocov/gocov/internal/forge/fake"
 	"github.com/gocov/gocov/internal/forge/github"
-	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/server"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
@@ -110,7 +109,6 @@ func newTokenlessServer(t *testing.T) *httptest.Server {
 	srv := httptest.NewServer(server.New(server.Config{
 		Store:     st,
 		Blobs:     blobmem.New(),
-		Parsers:   map[string]profile.Parser{"go": profile.GoParser{}},
 		BaseURL:   "http://example",
 		GitHubApp: fakeApp{fg: forgefake.New()},
 	}))

@@ -13,7 +13,6 @@ import (
 	"github.com/gocov/gocov/internal/forge"
 	forgefake "github.com/gocov/gocov/internal/forge/fake"
 	"github.com/gocov/gocov/internal/forge/gitlab"
-	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
 )
@@ -79,7 +78,6 @@ func newGLConnectFixture(t *testing.T) (*glConnectFixture, *http.Cookie) {
 			srv: New(Config{
 				Store:   st,
 				Blobs:   blobmem.New(),
-				Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
 				BaseURL: "https://gocov.example",
 				Hosted:  true,
 				Auths: []auth.Provider{&fakeProvider{name: "gitlab", identity: &auth.Identity{
@@ -223,7 +221,6 @@ func TestGitLabConnectRequiresFeature(t *testing.T) {
 	f := &fixture{srv: New(Config{
 		Store:   storemem.New(),
 		Blobs:   blobmem.New(),
-		Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
 		BaseURL: "https://gocov.example",
 		Auths:   []auth.Provider{&fakeProvider{name: "gitlab", identity: &auth.Identity{ForgeUUID: "1", Workspaces: []string{"grp"}}}},
 		Hosted:  true,

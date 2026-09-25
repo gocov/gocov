@@ -10,7 +10,6 @@ import (
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
 	"github.com/gocov/gocov/internal/forge"
 	forgefake "github.com/gocov/gocov/internal/forge/fake"
-	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
 )
@@ -29,7 +28,6 @@ func TestWorkspaceTokenUpload(t *testing.T) {
 		cfg := Config{
 			Store:   st,
 			Blobs:   blobmem.New(),
-			Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
 			BaseURL: "https://gocov.example",
 		}
 		// A one-click Bitbucket connection is what makes the forge askable
@@ -203,7 +201,6 @@ func TestGitLabNestedWorkspaceUpload(t *testing.T) {
 		cfg := Config{
 			Store:   st,
 			Blobs:   blobmem.New(),
-			Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
 			BaseURL: "https://gocov.example",
 		}
 		return &fixture{srv: New(cfg), store: st, forge: ff}

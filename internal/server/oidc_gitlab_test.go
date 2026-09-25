@@ -9,7 +9,6 @@ import (
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
 	forgefake "github.com/gocov/gocov/internal/forge/fake"
 	"github.com/gocov/gocov/internal/oidc"
-	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
 )
@@ -57,7 +56,6 @@ func newGitLabOIDCFixture(t *testing.T, issuer string, extraIssuers []string) (*
 	srv := New(Config{
 		Store:         st,
 		Blobs:         blobs,
-		Parsers:       map[string]profile.Parser{"go": profile.GoParser{}},
 		BaseURL:       "https://gocov.example",
 		GitLabConnect: &fakeGLConnect{grantForge: ff},
 		OIDCVerifier:  verifier,
@@ -154,7 +152,6 @@ func TestGitLabOIDCConfigReplacesGitlabDotCom(t *testing.T) {
 	srv := New(Config{
 		Store:       st,
 		Blobs:       blobmem.New(),
-		Parsers:     map[string]profile.Parser{"go": profile.GoParser{}},
 		BaseURL:     "https://gocov.example",
 		OIDCIssuers: []string{selfManaged},
 	})

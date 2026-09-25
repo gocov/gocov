@@ -12,7 +12,6 @@ import (
 	"github.com/gocov/gocov/internal/forge"
 	forgefake "github.com/gocov/gocov/internal/forge/fake"
 	"github.com/gocov/gocov/internal/forge/github"
-	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
 )
@@ -39,7 +38,6 @@ func newTokenlessFixture(t *testing.T) (*fixture, *fakeGitHubApp, *store.Workspa
 	srv := New(Config{
 		Store:     st,
 		Blobs:     blobs,
-		Parsers:   map[string]profile.Parser{"go": profile.GoParser{}},
 		BaseURL:   "https://gocov.example",
 		GitHubApp: app,
 	})

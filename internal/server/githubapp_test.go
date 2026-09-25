@@ -15,7 +15,6 @@ import (
 	"github.com/gocov/gocov/internal/forge"
 	forgefake "github.com/gocov/gocov/internal/forge/fake"
 	"github.com/gocov/gocov/internal/forge/github"
-	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
 )
@@ -103,7 +102,6 @@ func newGitHubAppFixture(t *testing.T, hosted, withWorkspace bool) (*githubAppFi
 			srv: New(Config{
 				Store:     st,
 				Blobs:     blobmem.New(),
-				Parsers:   map[string]profile.Parser{"go": profile.GoParser{}},
 				BaseURL:   "https://gocov.example",
 				Auths:     []auth.Provider{provider},
 				Hosted:    hosted,

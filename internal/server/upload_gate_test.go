@@ -14,7 +14,6 @@ import (
 
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
 	"github.com/gocov/gocov/internal/forge"
-	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
 )
@@ -182,9 +181,8 @@ func TestWorkspaceGateInheritedByAutoCreatedRepos(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := New(Config{
-		Store:   st,
-		Blobs:   blobmem.New(),
-		Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
+		Store: st,
+		Blobs: blobmem.New(),
 	})
 	f := &fixture{srv: srv, store: st}
 	rec := doUpload(t, f, "ws-token", map[string]string{"repo": "acme/newrepo", "commit": "c"}, testProfile)

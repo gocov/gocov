@@ -217,16 +217,6 @@ func TestWebhookSecretAndHostedModeReachTheServer(t *testing.T) {
 	}
 }
 
-func TestParsersCoverEveryUploadFormat(t *testing.T) {
-	// The upload API dispatches on these names; dropping one silently
-	// turns every upload of that format into a 400.
-	for _, format := range []string{"go", "lcov", "jacoco", "cobertura", "clover", "simplecov"} {
-		if _, ok := parsers()[format]; !ok {
-			t.Errorf("no parser registered for %q", format)
-		}
-	}
-}
-
 // testPEM returns a freshly generated PKCS#1 RSA private key in PEM
 // form — the shape GitHub hands out for a GitHub App.
 func testPEM(t *testing.T) []byte {
