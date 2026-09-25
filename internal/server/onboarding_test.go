@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gocov/gocov/internal/auth"
+	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
 	"github.com/gocov/gocov/internal/hosted"
 	"github.com/gocov/gocov/internal/store"
 )
@@ -115,6 +117,20 @@ func TestAPIWorkspaceSetup(t *testing.T) {
 	if !strings.Contains(st.ReportsPosted, "@acme-ci") {
 		t.Errorf("reports posted = %q, want it to name the connected account", st.ReportsPosted)
 	}
+	// A grant on record is not enough on a deployment that cannot use it:
+	// the upload endpoint would refuse the OIDC upload, so the snippet
+	// must not offer it.
+	if got = decodeJSON[setupInfoDTO](t, get(f, path, sess)); got.Tokenless {
+		t.Error("setup offers OIDC on a deployment without Bitbucket connect")
+	}
+	// The same instance with Bitbucket connect configured.
+	f.srv = New(Config{
+		Store:            f.store,
+		Blobs:            blobmem.New(),
+		BaseURL:          "https://gocov.example",
+		Auths:            []auth.Provider{&fakeProvider{identity: memberIdentity()}},
+		BitbucketConnect: &fakeBBConnect{grantForge: f.forge},
+	})
 	got = decodeJSON[setupInfoDTO](t, get(f, path, sess))
 	if !got.Tokenless || got.Status.FirstReport == nil || got.Reporting.State != "on" {
 		t.Errorf("setup after connecting = tokenless %v, status %+v, reporting %+v",

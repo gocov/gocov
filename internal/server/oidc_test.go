@@ -371,3 +371,61 @@ func TestOIDCUnavailableWithoutBaseURL(t *testing.T) {
 		t.Fatal("verifier built without a BaseURL")
 	}
 }
+
+// OIDC uploads need the workspace connected on every forge, with a
+// connection that still works — the same rule the setup screen offers the
+// tokenless snippet by. Uploads are refused, and nothing lands, when it
+// is not.
+func TestOIDCNeedsAWorkingConnection(t *testing.T) {
+	disconnect := func(t *testing.T, f *fixture, forgeName string, set func(*store.Workspace) error) {
+		t.Helper()
+		ws, err := f.store.WorkspaceByPrefix(t.Context(), forgeName, "acme")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := set(ws); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T) (*fixture, string)
+		want  string
+	}{
+		{"github without the app installed", func(t *testing.T) (*fixture, string) {
+			f, is := newOIDCFixture(t)
+			disconnect(t, f, "github", func(ws *store.Workspace) error {
+				ws.GitHubInstallationID = 0
+				return f.store.UpdateWorkspace(t.Context(), ws)
+			})
+			return f, is.mint(t, githubClaims("https://gocov.example"))
+		}, "need its workspace connected to GitHub"},
+		{"github with the app install broken", func(t *testing.T) (*fixture, string) {
+			f, is := newOIDCFixture(t)
+			disconnect(t, f, "github", func(ws *store.Workspace) error {
+				ws.GitHubAppBroken = true
+				return f.store.UpdateWorkspace(t.Context(), ws)
+			})
+			return f, is.mint(t, githubClaims("https://gocov.example"))
+		}, "no longer works"},
+		{"gitlab without a grant", func(t *testing.T) (*fixture, string) {
+			f, is := newGitLabOIDCFixture(t, gitLabDotComIssuer, nil)
+			disconnect(t, f, "gitlab", func(ws *store.Workspace) error {
+				return f.store.SetWorkspaceGrant(t.Context(), ws.ID, "gitlab", store.Grant{})
+			})
+			return f, is.mint(t, glClaims(gitLabDotComIssuer, "acme/widgets", "https://gocov.example"))
+		}, "need its workspace connected to GitLab"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, tok := tc.setup(t)
+			rec := doOIDCUpload(t, f, tok, nil)
+			if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "oidc_not_connected") ||
+				!strings.Contains(rec.Body.String(), tc.want) {
+				t.Errorf("status = %d, body = %s; want 403 oidc_not_connected saying %q", rec.Code, rec.Body, tc.want)
+			}
+			if ups, _ := f.store.ListUploads(t.Context(), f.repo.ID, 0); len(ups) != 0 {
+				t.Errorf("%d uploads landed; a refused upload lands nothing", len(ups))
+			}
+		})
+	}
+}

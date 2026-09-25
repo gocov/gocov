@@ -30,7 +30,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gocov/gocov/internal/forge"
 	"github.com/gocov/gocov/internal/oidc"
 	"github.com/gocov/gocov/internal/store"
 )
@@ -234,14 +233,12 @@ func (s *Server) oidcResolveBitbucket(w http.ResponseWriter, r *http.Request, to
 	// An untracked slug is verified through the workspace it would be
 	// registered under — and registered only once the binding holds, so a
 	// token replayed with a victim's slug cannot leave a repo row behind.
-	var fg forge.Forge
-	if repo != nil {
-		fg = s.forges.For(ctx, repo)
-	} else {
-		fg = s.forges.Connected(ctx, ws, "bitbucket")
-	}
+	fg := s.forges.Connected(ctx, ws, "bitbucket")
 	if fg == nil {
-		httpError(w, http.StatusForbidden, "OIDC uploads for %s need its workspace connected to Bitbucket; a workspace owner can connect it from the workspace settings", ownerOf(slug))
+		// Connected on paper (oidcLookup checked) but no client: the grant
+		// failed to refresh just now, and was marked broken if revoked.
+		httpError(w, http.StatusForbidden, "oidc_not_connected: the connection of workspace %s to Bitbucket no longer works; "+
+			"a workspace owner can reconnect it from the workspace settings, or upload with the token", ownerOf(slug))
 		return nil, false
 	}
 	gotUUID, err := fg.GetRepoID(ctx, slug)
@@ -263,35 +260,46 @@ func (s *Server) oidcResolveBitbucket(w http.ResponseWriter, r *http.Request, to
 	return repo, true
 }
 
-// oidcLookup resolves a slug to what an OIDC upload may target: the repo
-// when it is tracked on the token's forge (ws is then nil — the caller
-// has no use for it), or the registered workspace the slug falls under
-// when it is not (repo is then nil, and the caller registers it once its
-// own checks pass). A slug under no registered workspace is the one
-// thing OIDC cannot create; that 404 is written here.
+// oidcLookup resolves a slug to what an OIDC upload may target: the
+// registered workspace the slug falls under, and the repo when it is
+// already tracked on the token's forge (nil when not — the caller
+// registers it once its own checks pass). The workspace must be connected
+// to its forge (oidcAvailable), whatever the forge. A slug under no
+// registered workspace is the one thing OIDC cannot create. Refusals are
+// written here.
 func (s *Server) oidcLookup(w http.ResponseWriter, r *http.Request, slug, forgeName string) (repo *store.Repo, ws *store.Workspace, ok bool) {
 	ctx := r.Context()
 	repo, err := s.store.RepoBySlug(ctx, forgeName, slug)
-	switch {
-	case err == nil:
-		return repo, nil, true
-	case !errors.Is(err, store.ErrNotFound):
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.internalError(w, "looking up repo", err)
 		return nil, nil, false
 	}
-
 	ws, err = s.forges.LookupWorkspace(ctx, slug, forgeName)
 	if err != nil {
 		s.internalError(w, "looking up workspace", err)
 		return nil, nil, false
 	}
-	if ws == nil {
+	if ws == nil && repo == nil {
 		httpError(w, http.StatusNotFound, "repo %q is not tracked on this server and its workspace is not registered here; "+
 			"an OIDC upload registers the repo by itself once a workspace owner has registered %s", slug, ownerOf(slug))
 		return nil, nil, false
 	}
-	return nil, ws, true
+	if !s.oidcAvailable(ws) {
+		name := oidcForgeNames[forgeName]
+		if ws != nil && connectionBroken(ws) {
+			httpError(w, http.StatusForbidden, "oidc_not_connected: the connection of workspace %s to %s no longer works; "+
+				"a workspace owner can reconnect it from the workspace settings, or upload with the token", ownerOf(slug), name)
+		} else {
+			httpError(w, http.StatusForbidden, "oidc_not_connected: OIDC uploads for %s need its workspace connected to %s; "+
+				"a workspace owner can connect it from the workspace settings, or upload with the token", ownerOf(slug), name)
+		}
+		return nil, nil, false
+	}
+	return repo, ws, true
 }
+
+// oidcForgeNames spells the forges in the refusals the CLI prints.
+var oidcForgeNames = map[string]string{"github": "GitHub", "gitlab": "GitLab", "bitbucket": "Bitbucket"}
 
 // oidcRegisterRepo registers a forge-verified slug under its workspace,
 // with the same naming rules and forge existence check a workspace
