@@ -210,7 +210,7 @@ func (f *Forges) Capable(forgeName string) bool {
 
 // Connected returns the workspace's one-click-connected client —
 // GitHub App installation, Bitbucket grant or GitLab grant — or nil,
-// the top link of the credential chain (D4/D7).
+// the top link of the credential chain.
 func (f *Forges) Connected(ctx context.Context, ws *store.Workspace, forgeName string) forge.Forge {
 	if fg := f.installationForge(ctx, ws, forgeName); fg != nil {
 		return fg
@@ -254,9 +254,9 @@ func (f *Forges) LookupWorkspace(ctx context.Context, slug, forgeName string) (*
 
 // installationForge returns the App-backed client when the workspace is
 // connected to a GitHub App installation — the top link of the credential
-// chain (D4), which also makes check runs first-class (the App is never
+// chain, which also makes check runs first-class (the App is never
 // hit by the classic-PAT 403). A refused mint marks the connection broken
-// (lazy uninstall detection, D3) and returns nil, so the upload degrades
+// (lazy uninstall detection) and returns nil, so the upload degrades
 // exactly like missing credentials: skipped, never failed, with stored
 // tokens still honored further down the chain. A transient mint failure
 // only logs and falls through the same way.
@@ -288,7 +288,7 @@ func (f *Forges) installationForge(ctx context.Context, ws *store.Workspace, for
 // VerifyGitHubRunClaim verifies a tokenless upload's workflow-run claim
 // through the workspace's installation. Connection upkeep matches
 // installationForge: a refused mint marks the connection broken (lazy
-// uninstall detection, D3) — the caller still sees the error, because
+// uninstall detection) — the caller still sees the error, because
 // unlike a forge push, tokenless authentication cannot degrade.
 func (f *Forges) VerifyGitHubRunClaim(ctx context.Context, ws *store.Workspace, claim github.RunClaim) error {
 	err := f.GitHubApp.VerifyRunClaim(ctx, ws.GitHubInstallationID, claim)
@@ -299,7 +299,7 @@ func (f *Forges) VerifyGitHubRunClaim(ctx context.Context, ws *store.Workspace, 
 }
 
 // markAppBroken records that the workspace's installation stopped
-// working so the settings page can show "reconnect" (D3). The id is
+// working so the settings page can show "reconnect". The id is
 // kept — only flagged — since a reinstall arrives through the setup
 // redirect and overwrites it anyway.
 func (f *Forges) markAppBroken(ctx context.Context, ws *store.Workspace, cause error) {
@@ -316,7 +316,7 @@ func (f *Forges) markAppBroken(ctx context.Context, ws *store.Workspace, cause e
 
 // InstallURL resolves the app's public install page, best effort: a
 // GitHub hiccup must not take a settings page down with it. Empty string
-// when unavailable; templates then render the state without a link.
+// when unavailable; the app then shows the state without a link.
 func (f *Forges) InstallURL(ctx context.Context) string {
 	if f.GitHubApp == nil {
 		return ""
@@ -331,8 +331,8 @@ func (f *Forges) InstallURL(ctx context.Context) string {
 
 // grantForge returns the grant-backed client when the workspace is
 // connected through a Bitbucket or GitLab grant — the top link of the
-// credential chain (D4/D7). A revoked grant marks the connection broken
-// (lazy detection, D7: the connecting member leaving revokes it) and
+// credential chain. A revoked grant marks the connection broken
+// (lazy detection: the connecting member leaving revokes it) and
 // returns nil, so the upload degrades exactly like missing credentials;
 // transient trouble only logs and falls through the same way.
 func (f *Forges) grantForge(ctx context.Context, ws *store.Workspace, forgeName string) forge.Forge {
@@ -404,7 +404,7 @@ func (f *Forges) accessToken(ctx context.Context, g *grant, ws *store.Workspace)
 }
 
 // markGrantBroken records the revoked grant so the settings page shows
-// "reconnect" (D7). The account name is kept — it says who to replace.
+// "reconnect". The account name is kept — it says who to replace.
 func (f *Forges) markGrantBroken(ctx context.Context, g *grant, ws *store.Workspace, cause error) {
 	stored := ws.Grant
 	f.Log.Warn(g.forge+" grant revoked", "workspace", ws.Prefix,

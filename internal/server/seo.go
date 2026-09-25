@@ -25,7 +25,7 @@ const noindexHead = `<meta name="robots" content="noindex, follow">`
 // lists, the description under it and the canonical URL, so the branch
 // and page query parameters do not split one page into many. Handlers
 // build it only after the access decision passed — the slug is the one
-// thing a refused visitor must not read back (D3).
+// thing a refused visitor must not read back.
 func (s *Server) repoPageHead(repo *store.Repo) appHead {
 	slug := template.HTMLEscapeString(repo.Slug)
 	return appHead{

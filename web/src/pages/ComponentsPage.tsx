@@ -25,7 +25,6 @@ import {
   type IconName,
 } from "@/components/atoms";
 import {
-  Banner,
   BeforeAfter,
   Breadcrumbs,
   Card,
@@ -789,19 +788,6 @@ export default function ComponentsPage() {
         </Spec>
         <Spec caption="last page" wide>
           <Pagination newer={{ to: "/_components" }} older={{ disabled: true }} />
-        </Spec>
-      </Demo>
-
-      <Demo title="Banner">
-        <Spec caption="neutral" wide>
-          <Banner action={<Button size="sm">Set it up</Button>}>
-            Sign-in is not configured: this instance is open to anyone who can reach it.
-          </Banner>
-        </Spec>
-        <Spec caption="warn, dismissible for the session" wide>
-          <Banner tone="warn" id="components-demo" dismissible>
-            Reporting to Bitbucket stopped working — statuses and comments are being skipped.
-          </Banner>
         </Spec>
       </Demo>
 

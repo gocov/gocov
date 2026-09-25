@@ -850,8 +850,8 @@ func TestUserLifecycle(t *testing.T) {
 		t.Fatalf("UpsertUser did not fill ID/CreatedAt/LastLoginAt: %+v", u)
 	}
 
-	// A second login by the same forge account refreshes the same row (R1),
-	// including the forge workspace snapshot (M3/D3).
+	// A second login by the same forge account refreshes the same row,
+	// including the forge workspace snapshot.
 	again := &store.User{Forge: "bitbucket", ForgeUUID: "{u1}", Email: "jane@new.example", DisplayName: "Jane Renamed",
 		ForgeWorkspaces: []string{"acme", "newco"}, ForgeOwnedWorkspaces: []string{"acme", "newco"}}
 	if err := st.UpsertUser(ctx, again); err != nil {
@@ -877,7 +877,7 @@ func TestUserLifecycle(t *testing.T) {
 		t.Errorf("last_login_at went backwards: %v < %v", got.LastLoginAt, u.LastLoginAt)
 	}
 
-	// Same UUID under another forge must not collide (R1).
+	// Same UUID under another forge must not collide.
 	other := &store.User{Forge: "github", ForgeUUID: "{u1}", Email: "x@example.com", DisplayName: "X"}
 	if err := st.UpsertUser(ctx, other); err != nil {
 		t.Fatal(err)
@@ -923,7 +923,7 @@ func TestSessionLifecycle(t *testing.T) {
 		t.Fatalf("UserBySession = %v, %v", got, err)
 	}
 
-	// R2: a session past expiry never authenticates.
+	// A session past expiry never authenticates.
 	expired := &store.Session{TokenHash: "hash-expired", UserID: u.ID, ExpiresAt: time.Now().Add(-time.Minute)}
 	if err := st.CreateSession(ctx, expired); err != nil {
 		t.Fatal(err)
@@ -932,7 +932,7 @@ func TestSessionLifecycle(t *testing.T) {
 		t.Errorf("expired session authenticated: %v", err)
 	}
 
-	// R2: logout invalidates server-side immediately.
+	// Logout invalidates server-side immediately.
 	if err := st.DeleteSession(ctx, "hash-live"); err != nil {
 		t.Fatal(err)
 	}
@@ -943,7 +943,7 @@ func TestSessionLifecycle(t *testing.T) {
 		t.Errorf("second delete = %v, want ErrNotFound", err)
 	}
 
-	// R2: deleting a user deletes their sessions.
+	// Deleting a user deletes their sessions.
 	sess2 := &store.Session{TokenHash: "hash-cascade", UserID: u.ID, ExpiresAt: time.Now().Add(time.Hour)}
 	if err := st.CreateSession(ctx, sess2); err != nil {
 		t.Fatal(err)
@@ -1903,5 +1903,42 @@ func TestLatestPassedUploadAndRecentBranches(t *testing.T) {
 	// Only the newest scan uploads count: z1 and m3.
 	if branches, err = st.RecentBranches(ctx, repo.ID, 2); err != nil || !slices.Equal(branches, []string{"Zeta", "main"}) {
 		t.Errorf("branches of the newest two = %v, %v; want Zeta, main", branches, err)
+	}
+}
+
+// The two stores agree on the edges: an upload without files — or no
+// upload at all — lists no files rather than failing, files come back
+// ordered by path, and a membership needs its workspace to exist.
+func TestStoreContractEdges(t *testing.T) {
+	st := newTestStore(t)
+	ctx := t.Context()
+	repo := &store.Repo{Forge: "github", Slug: "acme/edges", Token: "tok-edges", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	bare := &store.Upload{RepoID: repo.ID, CommitSHA: "c1", Branch: "main", Format: "go"}
+	if err := st.CreateUpload(ctx, bare, nil); err != nil {
+		t.Fatal(err)
+	}
+	withFiles := &store.Upload{RepoID: repo.ID, CommitSHA: "c2", Branch: "main", Format: "go"}
+	if err := st.CreateUpload(ctx, withFiles, []*store.UploadFile{{Path: "b.go"}, {Path: "a.go"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{bare.ID, 999999} {
+		if files, err := st.UploadFiles(ctx, id); err != nil || len(files) != 0 {
+			t.Errorf("UploadFiles(%d) = %v, %v; want no files and no error", id, files, err)
+		}
+	}
+	files, err := st.UploadFiles(ctx, withFiles.ID)
+	if err != nil || len(files) != 2 || files[0].Path != "a.go" || files[1].Path != "b.go" {
+		t.Errorf("UploadFiles = %v, %v; want a.go then b.go", files, err)
+	}
+
+	u := &store.User{Forge: "github", ForgeUUID: "edge-user", DisplayName: "Edge"}
+	if err := st.UpsertUser(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetUserMemberships(ctx, u.ID, []store.Membership{{WorkspaceID: 999999, Role: store.RoleMember}}); err == nil {
+		t.Error("a membership in a workspace that does not exist was accepted")
 	}
 }

@@ -126,7 +126,7 @@ func connect(ctx context.Context, cfg config.Server) (*storepg.Store, error) {
 		return nil, fmt.Errorf("connecting to postgres: %w", err)
 	}
 	st := storepg.New(pool)
-	// The at-rest cipher for stored grant tokens (One-Click Connect D6).
+	// The at-rest cipher for stored grant tokens (One-Click Connect).
 	if cfg.SecretKey != "" {
 		box, err := secretbox.New(cfg.SecretKey)
 		if err != nil {

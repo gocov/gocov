@@ -161,8 +161,6 @@ export interface RepoPage {
     can_settings: boolean;
   };
   branches: string[];
-  /** The ?branch filter, "" = all branches. */
-  branch: string;
   /** Branch the summary, trend and files describe. */
   trend_branch: string;
   summary: RepoSummary | null;
@@ -191,7 +189,6 @@ export interface TrendPoint {
 /** One page of the repo page's upload history, newest first. */
 export interface RepoUploads {
   uploads: UploadRow[];
-  page: number;
   has_older: boolean;
 }
 

@@ -133,9 +133,6 @@ func (c *Client) UpdatePRComment(ctx context.Context, repoSlug, prID, commentID,
 	return c.api().Send(ctx, http.MethodPut, path, map[string]string{"body": body})
 }
 
-// maxDiffBytes bounds MR diffs; larger diffs error instead of truncating.
-const maxDiffBytes = 32 << 20
-
 // GetPRDiff fetches the MR's changes via
 // GET /projects/{id}/merge_requests/{iid}/changes and reassembles them
 // into a unified diff (the changes API returns per-file hunks without
@@ -143,7 +140,7 @@ const maxDiffBytes = 32 << 20
 // diff and silently wrong coverage numbers, so it errors instead.
 // GitLab has deprecated /changes in favor of the paginated /diffs
 // endpoint; it still serves API v4, and switching to /diffs (which also
-// lifts the overflow ceiling) is planned as a P1 follow-up.
+// lifts the overflow ceiling) is a planned follow-up.
 func (c *Client) GetPRDiff(ctx context.Context, repoSlug, prID string) (string, error) {
 	path := fmt.Sprintf("/projects/%s/merge_requests/%s/changes", projectID(repoSlug), url.PathEscape(prID))
 	// Read through Do rather than Get: the changes document is a diff
@@ -162,7 +159,7 @@ func (c *Client) GetPRDiff(ctx context.Context, repoSlug, prID string) (string, 
 			Diff        string `json:"diff"`
 		} `json:"changes"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxDiffBytes)).Decode(&body); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, forge.MaxDiffBytes)).Decode(&body); err != nil {
 		return "", fmt.Errorf("gitlab: decoding MR changes: %w", err)
 	}
 	if body.Overflow {
@@ -234,16 +231,13 @@ func (c *Client) GetRepoID(ctx context.Context, repoSlug string) (string, error)
 	return "", forge.ErrNotImplemented
 }
 
-// maxFileBytes bounds source files fetched for the source view.
-const maxFileBytes = 2 << 20
-
 // GetFileContent reads a file at a commit via
 // GET /projects/{id}/repository/files/{path}/raw?ref={sha}. The file path
 // is URL-encoded into a single segment, same as the project path.
 func (c *Client) GetFileContent(ctx context.Context, repoSlug, commitSHA, path string) ([]byte, error) {
 	reqPath := fmt.Sprintf("/projects/%s/repository/files/%s/raw?ref=%s",
 		projectID(repoSlug), url.PathEscape(path), url.QueryEscape(commitSHA))
-	data, err := c.api().GetBytes(ctx, reqPath, "", maxFileBytes)
+	data, err := c.api().GetBytes(ctx, reqPath, "", forge.MaxFileBytes)
 	if rest.Status(err) == http.StatusNotFound {
 		return nil, forge.FileNotFound(path, commitSHA)
 	}

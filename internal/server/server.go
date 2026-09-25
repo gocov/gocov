@@ -42,18 +42,18 @@ type Config struct {
 	// AllowedWorkspaces overrides the derived "tracked workspaces" set
 	// that gates who may sign in. Empty means derive from the store.
 	AllowedWorkspaces []string
-	// Hosted switches the instance to self-service mode (M3/D1): any
+	// Hosted switches the instance to self-service mode: any
 	// forge account may sign in, and users without a tracked-workspace
 	// membership are routed to the registration page instead of being
 	// denied. False keeps today's private behavior exactly.
 	Hosted bool
 	// GitHubApp is the deployment's GitHub App identity (One-Click
-	// Connect P1), implemented by forge/github.App. Nil when the
+	// Connect), implemented by forge/github.App. Nil when the
 	// deployment has none; the credential chain then starts at repo
 	// credentials exactly as before.
 	GitHubApp GitHubApp
 	// BitbucketConnect is the OAuth consumer powering the Bitbucket
-	// workspace-connect grant (One-Click Connect P2), implemented by
+	// workspace-connect grant (One-Click Connect), implemented by
 	// forge/bitbucket.Consumer. Nil disables the feature; requires
 	// GOCOV_SECRET_KEY at the store for the at-rest token encryption.
 	BitbucketConnect GrantConnect
@@ -254,7 +254,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /workspaces/{forge}/{prefix}/setup", s.handleLegacyWorkspacePage)
 	s.mux.HandleFunc("GET /repo-settings/{forge}/{slug...}", s.handleAppPage)
 	// The report pages settle their own access before serving the shell,
-	// so a hidden repo answers exactly as it did (D3).
+	// so a hidden repo answers exactly as it did.
 	s.mux.HandleFunc("GET /repos/{forge}/{slug...}", s.handleRepo)
 	s.mux.HandleFunc("GET /uploads/{id}", s.handleUploadPage)
 	s.mux.HandleFunc("GET /uploads/{id}/files/{path...}", s.handleSource)

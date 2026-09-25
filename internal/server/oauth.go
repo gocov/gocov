@@ -34,7 +34,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A refused sign-in says so in the status too, and only in private
-	// mode (M3/D1): a hosted instance never denies one, so ?denied=1 must
+	// mode: a hosted instance never denies one, so ?denied=1 must
 	// not be reachable by URL there either.
 	status := http.StatusOK
 	if r.FormValue("denied") == "1" && !s.hosted {
@@ -201,7 +201,7 @@ func (s *Server) verifyCallback(w http.ResponseWriter, r *http.Request, forge st
 
 // admitSignIn applies the membership gate: a private instance only admits
 // accounts that belong to a tracked workspace. The gate is private-mode
-// only (M3/D1); a hosted instance admits any forge account and routes the
+// only; a hosted instance admits any forge account and routes the
 // workspace question to the registration page instead.
 func (s *Server) admitSignIn(w http.ResponseWriter, r *http.Request, forge string, id *auth.Identity) bool {
 	if s.hosted {
@@ -217,7 +217,7 @@ func (s *Server) admitSignIn(w http.ResponseWriter, r *http.Request, forge strin
 			return true
 		}
 	}
-	// No user row, no session (R3): denial must leave nothing behind.
+	// No user row, no session: denial must leave nothing behind.
 	// Both sides of the failed intersection are logged so an operator
 	// can see at a glance whether the fix is a missing registration,
 	// a stale GOCOV_ALLOWED_WORKSPACES or a slug mismatch.
@@ -236,8 +236,8 @@ func (s *Server) provisionUser(w http.ResponseWriter, r *http.Request, forge str
 		ForgeUUID:   id.ForgeUUID,
 		Email:       id.Email,
 		DisplayName: id.DisplayName,
-		// The workspace snapshot the registration page renders from
-		// (M3/D3); refreshed on every login, stale in between.
+		// The workspace snapshot the registration page renders from;
+		// refreshed on every login, stale in between.
 		ForgeWorkspaces:      id.Workspaces,
 		ForgeOwnedWorkspaces: id.OwnedWorkspaces,
 	}
@@ -271,7 +271,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, u *store.U
 	return true
 }
 
-// syncMemberships persists the user's workspace memberships (M2/D2): the
+// syncMemberships persists the user's workspace memberships: the
 // tracked workspaces on this forge whose prefix the forge reports the user
 // belongs to, each with the role the forge's own role maps to. It runs on
 // every sign-in with full-sync semantics, so a membership the forge no

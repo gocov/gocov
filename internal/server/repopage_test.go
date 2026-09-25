@@ -33,8 +33,8 @@ func TestAPIRepoUploadsPaginationPastRecentFetch(t *testing.T) {
 	}
 
 	got := decodeJSON[repoUploadsDTO](t, get(f, fmt.Sprintf("/api/ui/repo-uploads/bitbucket/acme/widgets?page=%d", page)))
-	if got.Page != page || !got.HasOlder || len(got.Uploads) != uploadsPageSize {
-		t.Errorf("page %d reported older=%v, want older uploads still to come", got.Page, got.HasOlder)
+	if !got.HasOlder || len(got.Uploads) != uploadsPageSize {
+		t.Errorf("page %d = %d uploads, older=%v; want a full page with older uploads still to come", page, len(got.Uploads), got.HasOlder)
 	}
 }
 
@@ -119,8 +119,8 @@ func TestAPIRepoPage(t *testing.T) {
 	if !slices.Equal(got.Branches, []string{"feat", "main"}) {
 		t.Errorf("branches = %v", got.Branches)
 	}
-	if got.Branch != "" || got.TrendBranch != "main" {
-		t.Errorf("branch = %q, trend branch = %q", got.Branch, got.TrendBranch)
+	if got.TrendBranch != "main" {
+		t.Errorf("trend branch = %q, want main for all branches", got.TrendBranch)
 	}
 	if got.Summary == nil {
 		t.Fatal("no summary for a branch with reports")
@@ -159,7 +159,7 @@ func TestAPIRepoPage(t *testing.T) {
 	}
 	// The branch filter moves the summary, trend and files with it.
 	feat := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets?branch=feat"))
-	if feat.Branch != "feat" || feat.TrendBranch != "feat" {
+	if feat.TrendBranch != "feat" {
 		t.Errorf("branch-filtered page = %+v", feat)
 	}
 	if len(feat.Trend) != 1 {
@@ -196,8 +196,8 @@ func TestAPIRepoUploads(t *testing.T) {
 	if shas := uploadSHAs(all.Uploads); !slices.Equal(shas, []string{"c2", "f1", "c1"}) {
 		t.Errorf("history = %v, want every upload newest first", shas)
 	}
-	if all.Page != 0 || all.HasOlder {
-		t.Errorf("paging = page %d, older %v", all.Page, all.HasOlder)
+	if all.HasOlder {
+		t.Error("three uploads report older ones")
 	}
 	feat := decodeJSON[repoUploadsDTO](t, get(f, "/api/ui/repo-uploads/bitbucket/acme/widgets?branch=feat"))
 	if shas := uploadSHAs(feat.Uploads); !slices.Equal(shas, []string{"f1"}) {

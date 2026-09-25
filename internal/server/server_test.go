@@ -267,7 +267,7 @@ func TestNotFoundPage(t *testing.T) {
 			t.Errorf("content-type = %q, want text/html", ct)
 		}
 		// The requested path is never echoed back: a 404 must read the same
-		// for a mistyped URL and for a repo the viewer may not see (D3).
+		// for a mistyped URL and for a repo the viewer may not see.
 		if strings.Contains(rec.Body.String(), "/does/not/exist") {
 			t.Errorf("the 404 echoes the requested path:\n%s", rec.Body)
 		}

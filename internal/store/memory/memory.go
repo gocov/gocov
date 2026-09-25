@@ -392,6 +392,10 @@ func (s *Store) SetUserMemberships(_ context.Context, userID int64, memberships 
 	}
 	set := make(map[int64]store.Role, len(memberships))
 	for _, m := range memberships {
+		// Mirror postgres: the membership row references the workspace.
+		if _, ok := s.workspaces[m.WorkspaceID]; !ok {
+			return fmt.Errorf("memory: membership in unknown workspace %d", m.WorkspaceID)
+		}
 		set[m.WorkspaceID] = m.Role
 	}
 	s.members[userID] = set
@@ -622,14 +626,13 @@ func (s *Store) newestUploads(offset, limit int, keep func(*store.Upload) bool) 
 func (s *Store) UploadFiles(_ context.Context, uploadID int64) ([]*store.UploadFile, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	fs, ok := s.files[uploadID]
-	if !ok {
-		return nil, store.ErrNotFound
-	}
-	out := make([]*store.UploadFile, 0, len(fs))
-	for _, f := range fs {
+	// Mirror postgres: an upload without files — or no such upload —
+	// reads as an empty list, ordered by path like every file listing.
+	out := make([]*store.UploadFile, 0, len(s.files[uploadID]))
+	for _, f := range s.files[uploadID] {
 		out = append(out, new(*f))
 	}
+	slices.SortFunc(out, func(a, b *store.UploadFile) int { return cmp.Compare(a.Path, b.Path) })
 	return out, nil
 }
 

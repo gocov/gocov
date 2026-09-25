@@ -16,7 +16,9 @@ import (
 	"github.com/gocov/gocov/internal/store"
 )
 
-// maxSourceBytes bounds source files rendered by the source view.
+// maxSourceBytes bounds source files rendered by the source view. The
+// forge clients fetch up to forge.MaxFileBytes, above this, so a file just
+// past it is refused with a reason rather than a failed fetch.
 const maxSourceBytes = 1 << 20
 
 // handleSource implements GET /uploads/{id}/files/{path...} — the file's

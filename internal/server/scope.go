@@ -18,10 +18,9 @@ import (
 )
 
 // userScope resolves the request user's workspace membership into a scope.
-// Auth off → unscoped, so an open-mode instance behaves exactly as before
-// M2. Auth on → the user's workspace prefixes; a missing user (which should
-// not occur behind requireAuth) yields a deny-all scope rather than an open
-// one.
+// Auth off → unscoped, so an open-mode instance sees every repo. Auth on →
+// the user's workspace prefixes; a missing user (which should not occur
+// behind requireAuth) yields a deny-all scope rather than an open one.
 func (s *Server) userScope(r *http.Request) (repoScope, error) {
 	if !s.authEnabled() {
 		return repoScope{scoped: false}, nil
@@ -77,8 +76,8 @@ func owningWorkspace(repo *store.Repo, candidates []*store.Workspace) *store.Wor
 	return nil
 }
 
-// repoScope captures which repos a request may see (M2/R3). When scoped is
-// false the instance runs in open mode (D5) and every repo is visible;
+// repoScope captures which repos a request may see. When scoped is
+// false the instance runs in open mode and every repo is visible;
 // otherwise a repo is visible only when its workspace prefix, on its
 // forge, is a member prefix.
 type repoScope struct {
@@ -102,7 +101,7 @@ func (rs repoScope) allows(repo *store.Repo) bool {
 }
 
 // canView reports whether the request may see the given repo. Callers
-// that fail the check 404 (D3: a non-member must not learn a repo exists).
+// that fail the check 404 (a non-member must not learn a repo exists).
 func (s *Server) canView(r *http.Request, repo *store.Repo) (bool, error) {
 	scope, err := s.userScope(r)
 	if err != nil {
@@ -118,7 +117,7 @@ func (s *Server) canView(r *http.Request, repo *store.Repo) (bool, error) {
 // repo's "Public reports" switch is on and the instance allows it
 // (GOCOV_PUBLIC_REPORTS). A refused visitor gets reportNotFound's answer —
 // the login redirect when signed out, the 404 page for a signed-in
-// non-member of a non-public repo (D3) — so nothing about the repo leaks.
+// non-member of a non-public repo — so nothing about the repo leaks.
 //
 // ok is false when the refusal has been written. member reports whether
 // the viewer passed by membership (or the instance being open) rather than
@@ -227,7 +226,7 @@ func (s *Server) reportNotFound(w http.ResponseWriter, r *http.Request) {
 	s.serveApp(w, r, http.StatusNotFound, appHead{})
 }
 
-// allowedWorkspaceSet is the D3 authorization rule: the operator's explicit
+// allowedWorkspaceSet is the sign-in authorization rule: the operator's explicit
 // GOCOV_ALLOWED_WORKSPACES list when set (plain names, forge ""), otherwise
 // the workspaces this instance tracks — registered workspace prefixes plus
 // the workspace part of every registered repo slug, each on its forge.

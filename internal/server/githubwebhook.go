@@ -21,8 +21,8 @@ import (
 //
 // The listing on GitHub Marketplace requires this endpoint: GitHub
 // delivers marketplace_purchase events here on plan changes. The free
-// listing has nothing to provision, so those are logged for now — M4
-// billing attaches real handling. installation events are used to flip
+// listing has nothing to provision, so those are logged for now — billing,
+// when it comes, attaches real handling. installation events are used to flip
 // the workspace's github_app_broken flag eagerly, instead of waiting for
 // the next upload to discover a revoked install lazily (githubapp.go).
 // repository events flip a tracked repo's cached visibility the moment
@@ -80,7 +80,7 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 			"account", p.MarketplacePurchase.Account.Login,
 			"account_type", p.MarketplacePurchase.Account.Type,
 			"plan", p.MarketplacePurchase.Plan.Name)
-		// Free listing: nothing to provision. M4 billing attaches here.
+		// Free listing: nothing to provision. Billing attaches here.
 	case "installation":
 		s.handleInstallationEvent(r.Context(), &p)
 	case "repository":

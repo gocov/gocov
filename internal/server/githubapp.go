@@ -13,7 +13,7 @@ import (
 	"github.com/gocov/gocov/internal/store"
 )
 
-// GitHub App connect flow (One-Click Connect P1/D3). The app's Setup URL
+// GitHub App connect flow (One-Click Connect). The app's Setup URL
 // points at /github/setup: after an install GitHub redirects the
 // installing browser here with ?installation_id=…. There is no webhook
 // endpoint in v1 — the redirect is the only install signal, and uninstall
@@ -23,7 +23,7 @@ import (
 // number in it. What the handler believes is (a) the GitHub API's answer,
 // via app-JWT auth, about which account the installation lives on, and
 // (b) the signed-in user's own membership/forge-workspace state, exactly
-// the rules the M3 register flow enforces.
+// the rules the registration flow enforces.
 
 // handleGitHubSetup implements GET /github/setup.
 func (s *Server) handleGitHubSetup(w http.ResponseWriter, r *http.Request) {
@@ -71,7 +71,7 @@ func (s *Server) handleGitHubSetup(w http.ResponseWriter, r *http.Request) {
 
 // connectExisting links the installation to an already-registered
 // workspace. An owner's seat is required — with the register-flow
-// concession (M3/D2): a user whose forge workspace list contains the
+// concession: a user whose forge workspace list contains the
 // prefix is seated on the spot, in the role the snapshot grants, instead
 // of waiting for the next login sync. Installing the App is an org
 // admin's move on GitHub too, so an owner arriving here is the normal
@@ -113,7 +113,7 @@ func (s *Server) connectExisting(w http.ResponseWriter, r *http.Request, u *stor
 }
 
 // connectNew is the install-first path: the account has no workspace here
-// yet, so the M3 claim rules apply — only accounts the user's forge list
+// yet, so the registration claim rules apply — only accounts the user's forge list
 // vouches for, and, since claiming creates the tenant and mints its
 // token, only ones it says the user administers. The workspace is
 // registered with the installation already linked, then the user lands
@@ -168,7 +168,7 @@ func (s *Server) githubDisconnect(ctx context.Context, ws *store.Workspace, acto
 
 // inForgeWorkspaces reports whether the login is in the user's stored
 // forge workspace snapshot — the same server-side rule the register flow
-// enforces (M3/D2).
+// enforces.
 func inForgeWorkspaces(u *store.User, login string) bool {
 	if u.Forge != "github" {
 		return false
@@ -184,7 +184,7 @@ func inForgeWorkspaces(u *store.User, login string) bool {
 // its escape hatches, the org's OAuth-app policy page and a fresh
 // sign-in that returns here (a brand-new org is missing from the sign-in
 // snapshot the claim gate checks, since the OAuth token is dropped at
-// login (D3); re-auth refreshes it and the claim then goes through).
+// login; re-auth refreshes it and the claim then goes through).
 func (s *Server) connectOutcome(w http.ResponseWriter, r *http.Request, outcome, login string, installationID int64) {
 	q := url.Values{"connect": {outcome}}
 	if login != "" {

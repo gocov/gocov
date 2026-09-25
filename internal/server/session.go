@@ -17,7 +17,7 @@ import (
 	"github.com/gocov/gocov/internal/store"
 )
 
-// Session lifetime is fixed (no sliding renewal in M1); logout revokes
+// Session lifetime is fixed (no sliding renewal); logout revokes
 // server-side immediately, and dropped forge membership is re-checked at
 // each sign-in.
 const sessionTTL = 30 * 24 * time.Hour

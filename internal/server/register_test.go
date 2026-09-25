@@ -14,7 +14,7 @@ import (
 	storemem "github.com/gocov/gocov/internal/store/memory"
 )
 
-// newHostedFixture builds a hosted-mode server (M3/D1) with an empty
+// newHostedFixture builds a hosted-mode server with an empty
 // store: no tracked workspaces, like a fresh SaaS instance.
 func newHostedFixture(t *testing.T, provider auth.Provider) *fixture {
 	t.Helper()
@@ -62,7 +62,7 @@ func TestHostedAdmitsNonMemberAndRoutesToRegistration(t *testing.T) {
 
 	sess := hostedSignIn(t, f, "/", "/onboarding")
 
-	// The user exists with the login-time workspace snapshot (D3).
+	// The user exists with the login-time workspace snapshot.
 	users, err := f.store.ListUsers(t.Context())
 	if err != nil || len(users) != 1 {
 		t.Fatalf("users = %v, %v", users, err)
@@ -138,14 +138,14 @@ func TestRegisterCreatesWorkspaceAndSeatsTheFounder(t *testing.T) {
 	if ws.Forge != "bitbucket" || ws.Token == "" || ws.DefaultBranch != "main" {
 		t.Errorf("workspace = %+v", ws)
 	}
-	// The setup screen hands the founder the token to paste into CI (D6).
+	// The setup screen hands the founder the token to paste into CI.
 	reveal := postJSON(t, f, "/api/ui/workspace-settings/reveal-token/bitbucket/personal", nil, sess)
 	wantStatus(t, reveal, "reveal token", http.StatusOK)
 	if got := decodeJSON[tokenRevealDTO](t, reveal).Token; got != ws.Token {
 		t.Errorf("revealed token = %q, want the workspace's", got)
 	}
 
-	// Registration made the user a member atomically (R2), as the owner...
+	// Registration made the user a member atomically, as the owner...
 	users, _ := f.store.ListUsers(ctx)
 	wss, err := f.store.ListWorkspacesForUser(ctx, users[0].ID)
 	if err != nil || len(wss) != 1 || wss[0].Prefix != "personal" {
@@ -183,7 +183,7 @@ func TestRegisterSameNameOnAnotherForgeIsItsOwnWorkspace(t *testing.T) {
 
 func TestRegisterAlreadyRegisteredJoins(t *testing.T) {
 	// A colleague registered "acme" after this user's login sync; claiming
-	// it is a non-event (D2): membership is granted, no new workspace.
+	// it is a non-event: membership is granted, no new workspace.
 	// Joining is open to plain members — only creating takes an owner.
 	f := newHostedFixture(t, &fakeProvider{identity: plainMemberIdentity()})
 	sess := hostedSignIn(t, f, "/", "/onboarding")

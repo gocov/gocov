@@ -145,8 +145,8 @@ const (
 
 // groups lists the full paths of the groups the account belongs to at
 // minAccess or above (GET /groups?min_access_level=N), subgroups included
-// — a workspace can be registered at any level of the namespace tree
-// (D2), so every path the user belongs to is a candidate. Follows
+// — a workspace can be registered at any level of the namespace tree,
+// so every path the user belongs to is a candidate. Follows
 // Link-header pagination.
 func (p *Provider) groups(ctx context.Context, token string, minAccess int) ([]string, error) {
 	type group struct {

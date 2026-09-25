@@ -16,7 +16,7 @@ import (
 	"github.com/gocov/gocov/internal/store"
 )
 
-// handleRepo implements GET /repos/{forge}/{workspace}/{repo}. The page
+// handleRepo implements GET /repos/{forge}/{slug...}. The page
 // answer is the access decision plus the head tags a crawler reads; the
 // numbers behind it come from the UI API's twin of this route, so the
 // page itself loads only the repo row the decision needs.
@@ -122,7 +122,6 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 			CanSettings:   canSettings,
 		},
 		Branches:    branches,
-		Branch:      branch,
 		TrendBranch: trendBranch,
 		Trend:       []trendPointDTO{},
 	}
@@ -175,7 +174,6 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 type repoPageDTO struct {
 	Repo        repoHeadDTO     `json:"repo"`
 	Branches    []string        `json:"branches"`
-	Branch      string          `json:"branch"`
 	TrendBranch string          `json:"trend_branch"`
 	Summary     *repoSummaryDTO `json:"summary"`
 	Trend       []trendPointDTO `json:"trend"`
@@ -245,7 +243,6 @@ func (s *Server) handleAPIRepo(w http.ResponseWriter, r *http.Request) {
 // repoUploadsDTO is one page of the repo page's upload history.
 type repoUploadsDTO struct {
 	Uploads  []uploadRowDTO `json:"uploads"`
-	Page     int            `json:"page"`
 	HasOlder bool           `json:"has_older"`
 }
 
@@ -282,7 +279,6 @@ func (s *Server) handleAPIRepoUploads(w http.ResponseWriter, r *http.Request) {
 	shown := fetched[:min(len(fetched), uploadsPageSize)]
 	dto := &repoUploadsDTO{
 		Uploads:  make([]uploadRowDTO, 0, len(shown)),
-		Page:     page,
 		HasOlder: len(fetched) > uploadsPageSize,
 	}
 	for _, u := range shown {

@@ -15,7 +15,6 @@ const repo = (over: Partial<RepoPageData> = {}): RepoPageData => ({
     can_settings: true,
   },
   branches: ["main", "fix/upload"],
-  branch: "",
   trend_branch: "main",
   summary: {
     verdict: {
@@ -62,7 +61,6 @@ const history = (over: Partial<RepoUploads> = {}): RepoUploads => ({
   uploads: [
     { id: 412, sha: "a1b2c3d4e5f67890", branch: "main", pr_id: "", coverage: 82.3, gate: "pass", at: now },
   ],
-  page: 0,
   has_older: true,
   ...over,
 });
@@ -122,7 +120,7 @@ test("a reader with no settings access reads the report without the settings lin
 });
 
 test("choosing a branch asks the API for that branch and starts again at page one", async () => {
-  const fetchMock = show(repo({ branch: "" }), "/repos/github/acme/api?page=2");
+  const fetchMock = show(repo(), "/repos/github/acme/api?page=2");
   await screen.findByRole("heading", { level: 1, name: "acme/api" });
   expect(urls(fetchMock).some((url) => url.includes("/repo-uploads/") && url.includes("page=2"))).toBe(true);
 
@@ -145,7 +143,7 @@ test("turning a page reads only the history", async () => {
 });
 
 test("paging keeps the branch in the link", async () => {
-  show(repo({ branch: "main" }), "/repos/github/acme/api?branch=main&page=1");
+  show(repo({ trend_branch: "main" }), "/repos/github/acme/api?branch=main&page=1");
 
   const pagination = await screen.findByRole("navigation", { name: "Pagination" });
   expect(within(pagination).getByRole("link", { name: "Newer" })).toHaveAttribute(

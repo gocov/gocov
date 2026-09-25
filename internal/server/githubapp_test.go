@@ -251,7 +251,7 @@ func TestGitHubSetupWithoutApp404s(t *testing.T) {
 func TestGitHubSetupClaimsWorkspaceHosted(t *testing.T) {
 	// Install-first onboarding: no workspace registered yet; the account
 	// is vouched for by the user's forge list, so hosted mode claims it
-	// with the installation already linked (M3 claim rules).
+	// with the installation already linked (the registration claim rules).
 	f, sess := newGitHubAppFixture(t, true, false)
 	f.app.accounts[7] = "janedev"
 
@@ -401,7 +401,7 @@ func uploadResp(t *testing.T, rec *httptest.ResponseRecorder) uploadResponse {
 }
 
 func TestUploadUsesInstallation(t *testing.T) {
-	// D4: the check-run path runs as the App where one is connected.
+	// The check-run path runs as the App where one is connected.
 	f, _ := newGitHubAppFixture(t, false, true)
 	f.connectWorkspace(t, 42)
 	f.uploadRepo(t)
@@ -423,7 +423,7 @@ func TestUploadUsesInstallation(t *testing.T) {
 }
 
 func TestUploadRevokedInstallationDegrades(t *testing.T) {
-	// Uninstall, detected lazily (D3): the mint fails, the workspace is
+	// Uninstall, detected lazily: the mint fails, the workspace is
 	// flagged, and the upload degrades exactly like missing credentials.
 	f, _ := newGitHubAppFixture(t, false, true)
 	f.connectWorkspace(t, 42)

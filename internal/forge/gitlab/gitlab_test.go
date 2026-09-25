@@ -342,7 +342,7 @@ func TestGetFileContentNotFound(t *testing.T) {
 }
 
 func TestPublishReportNotImplemented(t *testing.T) {
-	// No check-run equivalent on GitLab (D3): the upload flow reports the
+	// No check-run equivalent on GitLab: the upload flow reports the
 	// sentinel as "skipped" and the MR note carries the diff table.
 	c := &Client{BaseURL: "http://unused", Token: "tok"}
 	err := c.PublishReport(t.Context(), "a/b", "sha", forge.Report{Title: "t"}, nil)

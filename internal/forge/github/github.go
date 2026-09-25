@@ -123,14 +123,11 @@ func (c *Client) UpdatePRComment(ctx context.Context, repoSlug, prID, commentID,
 	return c.api().Send(ctx, http.MethodPatch, path, map[string]string{"body": body})
 }
 
-// maxDiffBytes bounds PR diffs; larger diffs error instead of truncating.
-const maxDiffBytes = 32 << 20
-
 // GetPRDiff fetches the unified diff of a pull request via
 // GET /repos/{slug}/pulls/{n} with the diff media type.
 func (c *Client) GetPRDiff(ctx context.Context, repoSlug, prID string) (string, error) {
 	path := fmt.Sprintf("/repos/%s/pulls/%s", repoSlug, url.PathEscape(prID))
-	body, err := c.api().GetBytes(ctx, path, "application/vnd.github.v3.diff", maxDiffBytes)
+	body, err := c.api().GetBytes(ctx, path, "application/vnd.github.v3.diff", forge.MaxDiffBytes)
 	if err != nil {
 		return "", err
 	}
@@ -182,15 +179,12 @@ func (c *Client) GetRepoID(ctx context.Context, repoSlug string) (string, error)
 	return "", forge.ErrNotImplemented
 }
 
-// maxFileBytes bounds source files fetched for the source view.
-const maxFileBytes = 2 << 20
-
 // GetFileContent reads a file at a commit via
 // GET /repos/{slug}/contents/{path}?ref={sha} with the raw media type.
 func (c *Client) GetFileContent(ctx context.Context, repoSlug, commitSHA, path string) ([]byte, error) {
 	reqPath := fmt.Sprintf("/repos/%s/contents/%s?ref=%s",
 		repoSlug, rest.EscapePath(path), url.QueryEscape(commitSHA))
-	data, err := c.api().GetBytes(ctx, reqPath, "application/vnd.github.raw+json", maxFileBytes)
+	data, err := c.api().GetBytes(ctx, reqPath, "application/vnd.github.raw+json", forge.MaxFileBytes)
 	if rest.Status(err) == http.StatusNotFound {
 		return nil, forge.FileNotFound(path, commitSHA)
 	}

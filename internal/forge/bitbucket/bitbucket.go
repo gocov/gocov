@@ -19,7 +19,7 @@ const DefaultBaseURL = "https://api.bitbucket.org/2.0"
 // Client implements forge.Forge against the Bitbucket Cloud API using an
 // app password (or scoped API token) for authentication — or, when
 // AccessToken is set, an OAuth access token from the workspace's
-// connect grant (One-Click Connect P2).
+// connect grant (One-Click Connect).
 type Client struct {
 	BaseURL     string
 	Username    string
@@ -168,15 +168,12 @@ func (c *Client) UpdatePRComment(ctx context.Context, repoSlug, prID, commentID,
 func (c *Client) GetPRDiff(ctx context.Context, repoSlug, prID string) (string, error) {
 	path := fmt.Sprintf("/repositories/%s/pullrequests/%s/diff",
 		repoSlug, url.PathEscape(prID))
-	body, err := c.api().GetBytes(ctx, path, "", maxDiffBytes)
+	body, err := c.api().GetBytes(ctx, path, "", forge.MaxDiffBytes)
 	if err != nil {
 		return "", err
 	}
 	return string(body), nil
 }
-
-// maxDiffBytes bounds PR diffs; larger diffs error instead of truncating.
-const maxDiffBytes = 32 << 20
 
 // fetchRepository GETs the repository resource (GET /repositories/{slug})
 // and decodes it into out — the request/status/decode plumbing
@@ -237,15 +234,12 @@ func (c *Client) GetRepoID(ctx context.Context, repoSlug string) (string, error)
 	return body.UUID, nil
 }
 
-// maxFileBytes bounds source files fetched for the source view.
-const maxFileBytes = 2 << 20
-
 // GetFileContent reads a file at a commit via
 // GET /repositories/{slug}/src/{commit}/{path}.
 func (c *Client) GetFileContent(ctx context.Context, repoSlug, commitSHA, path string) ([]byte, error) {
 	reqPath := fmt.Sprintf("/repositories/%s/src/%s/%s",
 		repoSlug, url.PathEscape(commitSHA), rest.EscapePath(path))
-	data, err := c.api().GetBytes(ctx, reqPath, "", maxFileBytes)
+	data, err := c.api().GetBytes(ctx, reqPath, "", forge.MaxFileBytes)
 	if rest.Status(err) == http.StatusNotFound {
 		return nil, forge.FileNotFound(path, commitSHA)
 	}

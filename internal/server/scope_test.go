@@ -46,14 +46,14 @@ func seedRepoUpload(t *testing.T, f *fixture, slug string) (*store.Repo, *store.
 
 // TestTwoTenantIsolation is the demo the milestone exists for: two users in
 // different workspaces on one instance see disjoint repos, and a non-member
-// deep link 404s rather than leaking existence (D3).
+// deep link 404s rather than leaking existence.
 
 func TestTwoTenantIsolation(t *testing.T) {
 	prov := &fakeProvider{identity: memberIdentity()}
 	f := newAuthFixture(t, prov, nil) // already tracks acme/widgets
 	ctx := t.Context()
 
-	// Workspace rows are the membership anchor (D6). acme covers the
+	// Workspace rows are the membership anchor. acme covers the
 	// fixture's repo; beta is the second tenant.
 	acme := &store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "tok-acme"}
 	beta := &store.Workspace{Forge: "bitbucket", Prefix: "beta", Token: "tok-beta"}
@@ -86,7 +86,7 @@ func TestTwoTenantIsolation(t *testing.T) {
 		t.Errorf("tenant B dashboard = %v, want only beta/gizmos", got)
 	}
 
-	// Non-member deep links 404 (D3: 404, not 403 — existence stays hidden).
+	// Non-member deep links 404 (404, not 403 — existence stays hidden).
 	for _, path := range []string{
 		"/repos/bitbucket/beta/gizmos",
 		fmt.Sprintf("/uploads/%d", betaUp.ID),
@@ -112,7 +112,7 @@ func TestTwoTenantIsolation(t *testing.T) {
 	}
 }
 
-// TestOpenModeIgnoresScoping locks in D5: with no sign-in configured the UI
+// TestOpenModeIgnoresScoping locks in open mode: with no sign-in configured the UI
 // stays fully open — every repo listed, every deep link reachable.
 
 func TestOpenModeIgnoresScoping(t *testing.T) {

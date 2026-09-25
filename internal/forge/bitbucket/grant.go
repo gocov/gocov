@@ -11,7 +11,7 @@ import (
 	"github.com/gocov/gocov/internal/rest"
 )
 
-// Workspace-connect OAuth grant (One-Click Connect P2/D6). Consumer is
+// Workspace-connect OAuth grant (One-Click Connect). Consumer is
 // the deployment's Bitbucket OAuth consumer — the same one that powers
 // sign-in — used here for the bigger "Connect workspace" grant whose
 // refresh token is stored on the workspace.
@@ -37,7 +37,7 @@ type Consumer struct {
 }
 
 // Grant is one issued (or refreshed) token set. Account is the granting
-// Bitbucket account — comments will visibly post as it (D8) — and TTL
+// Bitbucket account — comments will visibly post as it — and TTL
 // is two hours on live Bitbucket.
 type Grant = forge.Grant
 
@@ -66,7 +66,7 @@ func (c *Consumer) AuthorizeURL(state, redirectURI string) string {
 }
 
 // Exchange trades the authorization code for the grant and resolves the
-// granting account's username (D8: the identity comments will carry).
+// granting account's username (the identity comments will carry).
 func (c *Consumer) Exchange(ctx context.Context, code, redirectURI string) (*Grant, error) {
 	grant, err := c.token(ctx, url.Values{
 		"grant_type":   {"authorization_code"},

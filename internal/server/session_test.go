@@ -82,7 +82,7 @@ func TestLogoutKillsSessionServerSide(t *testing.T) {
 		t.Fatalf("logout: %d -> %q", rec.Code, rec.Header().Get("Location"))
 	}
 
-	// A saved copy of the cookie must not restore access (R3).
+	// A saved copy of the cookie must not restore access.
 	if rec := get(f, "/", sess); rec.Code != http.StatusFound {
 		t.Errorf("old session cookie still works after logout: status = %d", rec.Code)
 	}
