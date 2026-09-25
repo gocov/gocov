@@ -966,7 +966,7 @@ func (c *commitReportTx) LatestUploadsPerPart(ctx context.Context, repoID int64,
 func (c *commitReportTx) PartFiles(ctx context.Context, uploadIDs []int64) ([]*store.UploadFile, error) {
 	return queryUploadFiles(ctx, c.tx, `
 		SELECT upload_id, path, pct, covered_stmts, total_stmts, blocks
-		FROM upload_files WHERE upload_id = ANY($1) ORDER BY upload_id, path`, uploadIDs)
+		FROM upload_files WHERE upload_id = ANY($1)`, uploadIDs)
 }
 
 func (c *commitReportTx) LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*store.CommitReport, error) {
