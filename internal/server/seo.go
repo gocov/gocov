@@ -32,7 +32,7 @@ func (s *Server) repoPageHead(repo *store.Repo) appHead {
 		Extra: `<meta name="description" content="Code coverage for ` + slug +
 			`, tracked by gocov: current total, coverage trend and where coverage is missing.">` +
 			"\n" + `<link rel="canonical" href="` +
-			template.HTMLEscapeString(strings.TrimSuffix(s.baseURL, "/")+repoURL(repo)) + `">`,
+			template.HTMLEscapeString(s.baseURL+repoURL(repo)) + `">`,
 	}
 }
 
@@ -66,7 +66,7 @@ func (s *Server) handleRobots(w http.ResponseWriter, r *http.Request) {
 	sb.WriteString("Disallow: /uploads/*/profile\n")
 	sb.WriteString("Disallow: /api/\n")
 	if s.publicReports {
-		sb.WriteString("\nSitemap: " + strings.TrimSuffix(s.baseURL, "/") + "/sitemap.xml\n")
+		sb.WriteString("\nSitemap: " + s.baseURL + "/sitemap.xml\n")
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=3600")
@@ -100,7 +100,7 @@ func (s *Server) handleSitemap(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "listing public repos for sitemap", err)
 		return
 	}
-	base := strings.TrimSuffix(s.baseURL, "/")
+	base := s.baseURL
 	sm := sitemap{Xmlns: "http://www.sitemaps.org/schemas/sitemap/0.9"}
 	for _, ref := range refs {
 		sm.URLs = append(sm.URLs, sitemapURL{Loc: base + repoPath(ref.Forge, ref.Slug)})

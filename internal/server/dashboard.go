@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -159,11 +160,12 @@ func (s *Server) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
 		Repos:      []dashRepoDTO{},
 		Attention:  []attentionDTO{},
 	}
-	scope, err := s.userScope(r)
+	tracked, err := s.viewerWorkspaces(r)
 	if err != nil {
 		s.internalError(w, "scoping repos", err)
 		return
 	}
+	scope := s.scopeFor(tracked)
 	// A hosted user without a single workspace membership would see a
 	// permanently empty dashboard; onboarding is the only useful screen
 	// for them (M3/R1), and the app routes itself there.
@@ -172,7 +174,7 @@ func (s *Server) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, dto)
 		return
 	}
-	dash, err := s.buildDashboard(r, strings.TrimSpace(r.FormValue("ws")))
+	dash, err := s.buildDashboard(r, strings.TrimSpace(r.FormValue("ws")), scope, tracked)
 	if err != nil {
 		s.internalError(w, "building dashboard", err)
 		return
@@ -244,13 +246,10 @@ func newWSGroupDTO(g *wsGroup) wsGroupDTO {
 
 // buildDashboard assembles the dashboard for the given ?ws selection. Returns a
 // nil view when the viewer has no repos and no tracked workspaces at all (the
-// template then shows the empty state).
-func (s *Server) buildDashboard(r *http.Request, selected string) (*dashboardView, error) {
+// template then shows the empty state). tracked is viewerWorkspaces and scope
+// is derived from it, both resolved once by the handler.
+func (s *Server) buildDashboard(r *http.Request, selected string, scope repoScope, tracked []*store.Workspace) (*dashboardView, error) {
 	ctx := r.Context()
-	scope, err := s.userScope(r)
-	if err != nil {
-		return nil, err
-	}
 	repos, err := s.store.ListRepos(ctx)
 	if err != nil {
 		return nil, err
@@ -259,10 +258,6 @@ func (s *Server) buildDashboard(r *http.Request, selected string) (*dashboardVie
 	// Seed groups from the viewer's tracked workspaces so a workspace with no
 	// uploads yet still appears in the switcher; then bucket every visible repo,
 	// creating an untracked group for any prefix that has no workspace row.
-	tracked, err := s.viewerWorkspaces(r)
-	if err != nil {
-		return nil, err
-	}
 	// Groups are keyed by wsKey: the GitHub org and the GitLab group of
 	// one name are two workspaces, and the switcher lists both.
 	groups := map[wsKey]*wsGroup{}
@@ -358,7 +353,7 @@ func (s *Server) fillGroupMeta(ctx context.Context, g *wsGroup) {
 	}
 	if total > 0 {
 		g.HasCov = true
-		g.Pct = 100 * float64(covered) / float64(total)
+		g.Pct = profile.Percent(covered, total)
 	}
 }
 
@@ -433,7 +428,7 @@ func (s *Server) fillCurrent(r *http.Request, dv *dashboardView) {
 	}
 	if total > 0 {
 		dv.Stats.HasCoverage = true
-		dv.Stats.CoveragePct = 100 * float64(covered) / float64(total)
+		dv.Stats.CoveragePct = profile.Percent(covered, total)
 	}
 	for _, row := range dv.Repos {
 		if row.Gate == "" {

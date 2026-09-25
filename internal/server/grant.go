@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"time"
 
 	"github.com/gocov/gocov/internal/store"
 )
@@ -88,15 +87,7 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "generating connect state", err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     g.cookie,
-		Value:    state + "|" + ws.Prefix,
-		Path:     "/",
-		MaxAge:   int((10 * time.Minute).Seconds()),
-		HttpOnly: true,
-		Secure:   s.secureCookies,
-		SameSite: http.SameSiteLaxMode,
-	})
+	setCookie(w, g.cookie, state+"|"+ws.Prefix, stateCookieTTL, s.secureCookies)
 	http.Redirect(w, r, connector.AuthorizeURL(state, s.redirectURI(g.forge)), http.StatusFound)
 }
 

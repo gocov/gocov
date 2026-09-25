@@ -183,7 +183,7 @@ func New(cfg Config) *Server {
 		store:         cfg.Store,
 		blobs:         cfg.Blobs,
 		parsers:       cfg.Parsers,
-		baseURL:       cfg.BaseURL,
+		baseURL:       strings.TrimSuffix(cfg.BaseURL, "/"),
 		log:           log,
 		mux:           http.NewServeMux(),
 		health:        cfg.Health,

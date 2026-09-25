@@ -4,11 +4,11 @@
 package bitbucket
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net/http"
 	"net/url"
-	"time"
 
 	"github.com/gocov/gocov/internal/auth"
 	"github.com/gocov/gocov/internal/rest"
@@ -41,31 +41,21 @@ func New(key, secret string) *Provider {
 	return &Provider{
 		Key:        key,
 		Secret:     secret,
-		HTTPClient: &http.Client{Timeout: 15 * time.Second},
+		HTTPClient: rest.NewHTTPClient(),
 	}
 }
 
 func (p *Provider) Name() string { return "bitbucket" }
 
-func (p *Provider) authBase() string {
-	if p.AuthBaseURL != "" {
-		return p.AuthBaseURL
-	}
-	return DefaultAuthBaseURL
-}
+func (p *Provider) authBase() string { return cmp.Or(p.AuthBaseURL, DefaultAuthBaseURL) }
 
-func (p *Provider) apiBase() string {
-	if p.APIBaseURL != "" {
-		return p.APIBaseURL
-	}
-	return DefaultAPIBaseURL
-}
+func (p *Provider) apiBase() string { return cmp.Or(p.APIBaseURL, DefaultAPIBaseURL) }
 
 func (p *Provider) client() *http.Client {
 	if p.HTTPClient != nil {
 		return p.HTTPClient
 	}
-	return &http.Client{Timeout: 15 * time.Second}
+	return rest.NewHTTPClient()
 }
 
 func (p *Provider) AuthorizeURL(state, redirectURI string) string {

@@ -169,14 +169,23 @@ func hashToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func clearCookie(w http.ResponseWriter, name string, secure bool) {
+// setCookie writes one of gocov's own cookies: site-wide, script-proof and
+// held back from cross-site subrequests. A negative maxAge deletes it.
+func setCookie(w http.ResponseWriter, name, value string, maxAge time.Duration, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     name,
-		Value:    "",
+		Value:    value,
 		Path:     "/",
-		MaxAge:   -1,
+		MaxAge:   int(maxAge.Seconds()),
 		HttpOnly: true,
 		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 	})
 }
+
+func clearCookie(w http.ResponseWriter, name string, secure bool) {
+	setCookie(w, name, "", -time.Second, secure)
+}
+
+// stateCookieTTL bounds how long an OAuth round trip may take.
+const stateCookieTTL = 10 * time.Minute

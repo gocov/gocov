@@ -74,7 +74,7 @@ func (s *Server) ownerRepo(w http.ResponseWriter, r *http.Request) (*store.Repo,
 // README reader can open, for a private one the login wall answers as it
 // always did.
 func (s *Server) badgeMarkdown(repo *store.Repo) string {
-	base := strings.TrimSuffix(s.baseURL, "/")
+	base := s.baseURL
 	return fmt.Sprintf("[![coverage](%s%s)](%s%s?ref=badge)", base, badgeURL(repo), base, repoURL(repo))
 }
 

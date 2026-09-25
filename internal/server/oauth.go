@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/gocov/gocov/internal/auth"
+	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -137,19 +138,11 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "generating oauth state", err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name: stateCookie,
-		// Percent-encoded, because a cookie value is not a place for an
-		// arbitrary path: net/http drops every byte SetCookie considers
-		// invalid — anything non-ASCII, '"', ';' — so an unencoded
-		// "/repos/acme/wörk" would come back as "/repos/acme/wrk".
-		Value:    state + "|" + url.QueryEscape(sanitizeNext(r.FormValue("next"))),
-		Path:     "/",
-		MaxAge:   int((10 * time.Minute).Seconds()),
-		HttpOnly: true,
-		Secure:   s.secureCookies,
-		SameSite: http.SameSiteLaxMode,
-	})
+	// The next path is percent-encoded, because a cookie value is not a
+	// place for an arbitrary path: net/http drops every byte SetCookie
+	// considers invalid — anything non-ASCII, '"', ';' — so an unencoded
+	// "/repos/acme/wörk" would come back as "/repos/acme/wrk".
+	setCookie(w, stateCookie, state+"|"+url.QueryEscape(sanitizeNext(r.FormValue("next"))), stateCookieTTL, s.secureCookies)
 	http.Redirect(w, r, provider.AuthorizeURL(state, s.redirectURI(provider.Name())), http.StatusFound)
 }
 
@@ -300,15 +293,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, u *store.U
 		s.internalError(w, "creating session", err)
 		return false
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookie,
-		Value:    token,
-		Path:     "/",
-		MaxAge:   int(sessionTTL.Seconds()),
-		HttpOnly: true,
-		Secure:   s.secureCookies,
-		SameSite: http.SameSiteLaxMode,
-	})
+	setCookie(w, sessionCookie, token, sessionTTL, s.secureCookies)
 	return true
 }
 
@@ -346,7 +331,7 @@ func forgeRole(u *store.User, prefix string) store.Role {
 }
 
 func (s *Server) redirectURI(forge string) string {
-	return strings.TrimSuffix(s.baseURL, "/") + "/oauth/" + forge + "/callback"
+	return core.RedirectURI(s.baseURL, forge)
 }
 
 // newState returns 256 random bits hex-encoded, used for both the OAuth

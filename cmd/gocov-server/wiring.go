@@ -13,6 +13,7 @@ import (
 	authgl "github.com/gocov/gocov/internal/auth/gitlab"
 	"github.com/gocov/gocov/internal/blobstore"
 	"github.com/gocov/gocov/internal/config"
+	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/forge/bitbucket"
 	"github.com/gocov/gocov/internal/forge/github"
 	"github.com/gocov/gocov/internal/forge/gitlab"
@@ -115,9 +116,6 @@ func parsers() map[string]profile.Parser {
 // with on the forge side — the setting operators most often get wrong,
 // and the one they cannot discover from the UI.
 func authProviders(cfg config.Server, log *slog.Logger) []auth.Provider {
-	callback := func(forge string) string {
-		return strings.TrimSuffix(cfg.BaseURL, "/") + "/oauth/" + forge + "/callback"
-	}
 	var providers []auth.Provider
 	for _, p := range []struct {
 		forge string
@@ -130,7 +128,7 @@ func authProviders(cfg config.Server, log *slog.Logger) []auth.Provider {
 	} {
 		if p.app.Configured() {
 			providers = append(providers, p.new(p.app.Key, p.app.Secret))
-			log.Info(p.forge+" sign-in enabled", "callback", callback(p.forge))
+			log.Info(p.forge+" sign-in enabled", "callback", core.RedirectURI(cfg.BaseURL, p.forge))
 		}
 	}
 	if len(providers) == 0 {

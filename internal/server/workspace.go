@@ -122,37 +122,35 @@ func ownersOnly(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, msg, http.StatusForbidden)
 }
 
+// forgeConnection reads the workspace's per-forge connection columns:
+// whether a connection is recorded (a GitHub App installation or a stored
+// grant), whether it is flagged broken, and the account its posts carry
+// (empty for the GitHub App, which posts as gocov[bot]). It is the one
+// place that knows which columns belong to which forge.
+func forgeConnection(ws *store.Workspace) (connected, broken bool, account string) {
+	switch ws.Forge {
+	case "github":
+		return ws.GitHubInstallationID != 0, ws.GitHubAppBroken, ""
+	case "bitbucket":
+		return ws.BitbucketGrantAccount != "", ws.BitbucketGrantBroken, ws.BitbucketGrantAccount
+	case "gitlab":
+		return ws.GitLabGrantAccount != "", ws.GitLabGrantBroken, ws.GitLabGrantAccount
+	}
+	return false, false, ""
+}
+
 // reportingState is the workspace's connection as one word — on, off or
 // broken — with the account its posts carry (empty for the GitHub App,
 // which posts as gocov[bot]).
 func reportingState(ws *store.Workspace) (state, account string) {
-	state = "off"
-	switch ws.Forge {
-	case "github":
-		switch {
-		case ws.GitHubAppBroken:
-			state = "broken"
-		case ws.GitHubInstallationID != 0:
-			state = "on"
-		}
-	case "bitbucket":
-		account = ws.BitbucketGrantAccount
-		switch {
-		case ws.BitbucketGrantBroken:
-			state = "broken"
-		case ws.BitbucketGrantAccount != "":
-			state = "on"
-		}
-	case "gitlab":
-		account = ws.GitLabGrantAccount
-		switch {
-		case ws.GitLabGrantBroken:
-			state = "broken"
-		case ws.GitLabGrantAccount != "":
-			state = "on"
-		}
+	connected, broken, account := forgeConnection(ws)
+	switch {
+	case broken:
+		return "broken", account
+	case connected:
+		return "on", account
 	}
-	return state, account
+	return "off", account
 }
 
 // reportingAvailable reports whether this deployment has a one-click
@@ -297,7 +295,7 @@ func (s *Server) newWorkspaceSettingsDTO(r *http.Request, ws *store.Workspace, o
 		Owner:     owner,
 		Reporting: s.newReportingDTO(r, ws),
 	}
-	if server := strings.TrimSuffix(s.baseURL, "/"); server != hosted.DefaultServer {
+	if server := s.baseURL; server != hosted.DefaultServer {
 		dto.ServerURL = new(server)
 	}
 	if owner {

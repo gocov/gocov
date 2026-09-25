@@ -7,7 +7,7 @@ import { TokenCard } from "@/components/organisms/TokenCard";
 import { SettingsLayout, type SettingsNavItem } from "@/components/templates/SettingsLayout";
 import { Chip, InlineCode, Mono, Notice, Select, TextInput } from "@/components/atoms";
 import { Card, FormField, PageHeader, QueryBoundary, SaveFooter } from "@/components/molecules";
-import { ApiError, apiPost } from "@/lib/api/client";
+import { apiPost, errorMessage } from "@/lib/api/client";
 import { workspaceSettingsPath, workspaceSettingsQuery } from "@/lib/api/queries";
 import type { TokenReveal, WorkspaceSettings, WorkspaceSettingsInput } from "@/lib/api/types";
 import { plural } from "@/lib/format";
@@ -114,7 +114,7 @@ function WorkspaceSettingsView({ forge, prefix, settings }: { forge: string; pre
           at every sign-in.
         </Notice>
       )}
-      {error !== null && <Notice tone="bad">{error instanceof ApiError ? error.message : "The settings could not be saved."}</Notice>}
+      {error !== null && <Notice tone="bad">{errorMessage(error, "The settings could not be saved.")}</Notice>}
 
       {settings.reporting.available && (
         <SettingsLayout.Section id="reporting">
