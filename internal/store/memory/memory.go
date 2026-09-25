@@ -595,6 +595,20 @@ func (s *Store) UploadFiles(_ context.Context, uploadID int64) ([]*store.UploadF
 	return out, nil
 }
 
+// PartFiles is the CommitTx read of every given upload's files at once.
+// Uploads without files contribute nothing.
+func (s *Store) PartFiles(_ context.Context, uploadIDs []int64) ([]*store.UploadFile, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []*store.UploadFile
+	for _, id := range uploadIDs {
+		for _, f := range s.files[id] {
+			out = append(out, new(*f))
+		}
+	}
+	return out, nil
+}
+
 func (s *Store) LatestUploadsPerPart(_ context.Context, repoID int64, commitSHA string) ([]*store.Upload, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

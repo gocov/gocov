@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"testing"
@@ -114,5 +115,58 @@ func TestRecomputeEvaluatesTheGateOnTheMergedTotal(t *testing.T) {
 	}
 	if !merged.Verdict.Configured {
 		t.Error("Configured = false for a repo with a gate")
+	}
+}
+
+// countingStore counts the part-file reads a recompute makes.
+type countingStore struct {
+	*storemem.Store
+	reads, ids int
+}
+
+func (c *countingStore) WithCommitReportTx(ctx context.Context, repoID int64, commitSHA string, fn func(context.Context, store.CommitTx) error) error {
+	return c.Store.WithCommitReportTx(ctx, repoID, commitSHA, func(ctx context.Context, tx store.CommitTx) error {
+		return fn(ctx, &countingTx{CommitTx: tx, c: c})
+	})
+}
+
+type countingTx struct {
+	store.CommitTx
+	c *countingStore
+}
+
+func (t *countingTx) PartFiles(ctx context.Context, uploadIDs []int64) ([]*store.UploadFile, error) {
+	t.c.reads++
+	t.c.ids += len(uploadIDs)
+	return t.CommitTx.PartFiles(ctx, uploadIDs)
+}
+
+func TestRecomputeReadsPartFilesOnlyToMerge(t *testing.T) {
+	p, st, repo := newPipeline(t, store.Gate{})
+	counting := &countingStore{Store: st}
+	p.Store = counting
+	ctx := t.Context()
+
+	// A lone part is its own merge: its upload row has the totals.
+	back := addPart(t, st, repo, "c1", "backend", 6, 10)
+	if _, err := p.Recompute(ctx, repo, back); err != nil {
+		t.Fatal(err)
+	}
+	if counting.reads != 0 {
+		t.Errorf("single part: %d part-file reads, want none", counting.reads)
+	}
+
+	// Three parts are read together, once.
+	addPart(t, st, repo, "c1", "frontend", 9, 10)
+	e2e := addPart(t, st, repo, "c1", "e2e", 1, 10)
+	merged, err := p.Recompute(ctx, repo, e2e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counting.reads != 1 || counting.ids != 3 {
+		t.Errorf("three parts: %d reads of %d uploads, want 1 read of 3", counting.reads, counting.ids)
+	}
+	if merged.Upload.CoveredStmts != 16 || merged.Upload.TotalStmts != 30 {
+		t.Errorf("merged = %d/%d, want 16/30", merged.Upload.CoveredStmts, merged.Upload.TotalStmts)
 	}
 }

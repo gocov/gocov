@@ -2,6 +2,7 @@ package profile
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -116,4 +117,43 @@ func TestMerge(t *testing.T) {
 			t.Errorf("empty merge = %+v, want no files", m.Files)
 		}
 	})
+}
+
+// Merging a single parsed profile must not change its coverage: every
+// parser already collapses repeated blocks and files, and the commit
+// recompute relies on it to skip reading a lone part's files, taking the
+// totals its upload row recorded instead.
+func TestMergeOfOneParsedProfileKeepsItsCoverage(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		parser Parser
+		input  string
+	}{
+		// -coverpkg runs repeat every block once per test binary.
+		{"go", GoParser{}, "mode: count\n" +
+			"m/a.go:1.1,2.2 1 0\nm/a.go:1.1,2.2 1 3\nm/a.go:4.1,5.2 2 0\n" +
+			"m/b.go:1.1,1.5 2 0\nm/a.go:4.1,5.2 2 0\n"},
+		// The same source file in two records, overlapping on line 2.
+		{"lcov", LCOVParser{}, "SF:a.go\nDA:1,0\nDA:2,1\nend_of_record\nSF:a.go\nDA:2,0\nDA:3,4\nend_of_record\n"},
+		{"cobertura", CoberturaParser{}, coberturaSample},
+		{"jacoco", JaCoCoParser{}, jacocoSample},
+		{"clover phpunit", CloverParser{}, cloverPHPUnitSample},
+		{"clover istanbul", CloverParser{}, cloverIstanbulSample},
+		{"simplecov", SimpleCovParser{}, simplecovModernSample},
+		{"simplecov legacy", SimpleCovParser{}, simplecovLegacySample},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := tc.parser.Parse(strings.NewReader(tc.input))
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantCov, wantTotal := p.Coverage()
+			if wantTotal == 0 {
+				t.Fatal("fixture has no statements")
+			}
+			if cov, total := Merge(p).Coverage(); cov != wantCov || total != wantTotal {
+				t.Errorf("Merge(p) = %d/%d, want p's own %d/%d", cov, total, wantCov, wantTotal)
+			}
+		})
+	}
 }

@@ -11,4 +11,4 @@ paths:
 
 The package imports neither `net/http` nor `html/template` and `TestCoreImportsNoTransport` fails the build if that changes: anything needing a request or a template belongs on the other side of the line, in `internal/server`.
 
-Every upload re-reads and re-merges all parts for the commit under a lock — see `maxPartsPerCommit` in `internal/server/upload.go` before changing the merge path.
+Every upload of a multi-part commit re-reads (in one query) and re-merges all parts under a lock; a single-part commit takes its totals from the upload row — see `maxPartsPerCommit` in `internal/server/upload.go` before changing the merge path.
