@@ -318,7 +318,7 @@ func (s *Server) uploadProvenance(ctx context.Context, u *store.Upload) provenan
 	if m.ProfileBytes > 0 {
 		p.ProfileSize = humanBytes(m.ProfileBytes)
 	}
-	if u.Part != "" && u.Part != "default" {
+	if u.Part != "" && u.Part != core.DefaultPart {
 		p.Part = u.Part
 	}
 	switch n := m.IgnoredFiles; {
