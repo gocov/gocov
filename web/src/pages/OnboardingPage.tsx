@@ -3,7 +3,7 @@ import { useNavigate } from "react-router";
 import { LinkButton, Notice } from "@/components/atoms";
 import { QueryBoundary } from "@/components/molecules";
 import { WorkspacePicker } from "@/components/organisms/WorkspacePicker";
-import { ApiError, apiPost } from "@/lib/api/client";
+import { apiPost, errorMessage } from "@/lib/api/client";
 import { onboardingQuery } from "@/lib/api/queries";
 import type { OnboardingInfo, RegisterInput, RegisterResult } from "@/lib/api/types";
 import { connectOutcome, type ConnectOutcome } from "@/lib/connect";
@@ -86,7 +86,7 @@ function ChooseWorkspace({ info }: { info: OnboardingInfo }) {
     <div className="stack">
       {register.isError && (
         <Notice tone="bad">
-          {register.error instanceof ApiError ? register.error.message : "The workspace could not be registered."}
+          {errorMessage(register.error, "The workspace could not be registered.")}
         </Notice>
       )}
       <WorkspacePicker

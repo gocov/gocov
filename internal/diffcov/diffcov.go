@@ -222,6 +222,14 @@ func Compute(files []FileBlocks, added map[string][]int, pathPrefix string) *Res
 // Span is an inclusive run of line numbers.
 type Span struct{ Start, End int }
 
+// String renders the span as "N" for a single line or "N-M" for a range.
+func (sp Span) String() string {
+	if sp.Start == sp.End {
+		return strconv.Itoa(sp.Start)
+	}
+	return fmt.Sprintf("%d-%d", sp.Start, sp.End)
+}
+
 // MergedSpans returns the lines spanned by the blocks keep accepts, as sorted
 // spans with overlapping and adjacent ones joined. Lines below 1 are dropped.
 // The cost follows the number of blocks, never the lines they claim: block
@@ -315,26 +323,15 @@ func Ranges(lines []int) string {
 	if len(lines) == 0 {
 		return ""
 	}
-	var sb strings.Builder
-	start, prev := lines[0], lines[0]
-	flush := func() {
-		if sb.Len() > 0 {
-			sb.WriteString(", ")
-		}
-		if start == prev {
-			fmt.Fprintf(&sb, "%d", start)
-		} else {
-			fmt.Fprintf(&sb, "%d-%d", start, prev)
-		}
-	}
+	var parts []string
+	sp := Span{lines[0], lines[0]}
 	for _, l := range lines[1:] {
-		if l == prev || l == prev+1 {
-			prev = l
+		if l == sp.End || l == sp.End+1 {
+			sp.End = l
 			continue
 		}
-		flush()
-		start, prev = l, l
+		parts = append(parts, sp.String())
+		sp = Span{l, l}
 	}
-	flush()
-	return sb.String()
+	return strings.Join(append(parts, sp.String()), ", ")
 }

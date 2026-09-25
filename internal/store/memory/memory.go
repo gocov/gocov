@@ -189,20 +189,22 @@ func (s *Store) DeleteRepo(_ context.Context, id int64) error {
 	if _, ok := s.repos[id]; !ok {
 		return store.ErrNotFound
 	}
-	delete(s.repos, id)
-	s.deleteUploadsLocked(id)
+	s.deleteRepoLocked(id)
 	return nil
 }
 
-// deleteUploadsLocked drops a repo's uploads with their files, the
-// uploads(repo_id) ON DELETE CASCADE chain. Callers hold s.mu.
-func (s *Store) deleteUploadsLocked(repoID int64) {
+// deleteRepoLocked drops a repo with its uploads, upload files and commit
+// reports — the ON DELETE CASCADE chain hanging off repos(id) in postgres.
+// Callers hold s.mu.
+func (s *Store) deleteRepoLocked(id int64) {
 	for uid, u := range s.uploads {
-		if u.RepoID == repoID {
+		if u.RepoID == id {
 			delete(s.uploads, uid)
 			delete(s.files, uid)
 		}
 	}
+	maps.DeleteFunc(s.reports, func(_ int64, cr *store.CommitReport) bool { return cr.RepoID == id })
+	delete(s.repos, id)
 }
 
 func (s *Store) RepoByID(_ context.Context, id int64) (*store.Repo, error) {
@@ -341,12 +343,9 @@ func (s *Store) DeleteWorkspace(_ context.Context, id int64) error {
 	// Cascade repos under the prefix along with their uploads, upload
 	// files and reports — mirroring the postgres ON DELETE CASCADE chain.
 	for rid, r := range s.repos {
-		if !ws.Owns(r) {
-			continue
+		if ws.Owns(r) {
+			s.deleteRepoLocked(rid)
 		}
-		s.deleteUploadsLocked(rid)
-		maps.DeleteFunc(s.reports, func(_ int64, cr *store.CommitReport) bool { return cr.RepoID == rid })
-		delete(s.repos, rid)
 	}
 	delete(s.workspaces, id)
 	for _, m := range s.members {

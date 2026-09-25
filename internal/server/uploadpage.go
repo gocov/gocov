@@ -14,7 +14,6 @@ import (
 	"iter"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -444,11 +443,7 @@ func uncoveredRanges(blocks []profile.Block) string {
 			parts = append(parts, fmt.Sprintf("+%d more", len(merged)-maxUncoveredRanges))
 			break
 		}
-		if sp.Start == sp.End {
-			parts = append(parts, strconv.Itoa(sp.Start))
-		} else {
-			parts = append(parts, fmt.Sprintf("%d-%d", sp.Start, sp.End))
-		}
+		parts = append(parts, sp.String())
 	}
 	return strings.Join(parts, ", ")
 }
@@ -534,11 +529,7 @@ func newlyUncovered(cur, base []profile.Block) string {
 	regressed := intersectSpans(missed, diffcov.MergedSpans(base, ran))
 	parts := make([]string, len(regressed))
 	for i, sp := range regressed {
-		if sp.Start == sp.End {
-			parts[i] = strconv.Itoa(sp.Start)
-		} else {
-			parts[i] = fmt.Sprintf("%d-%d", sp.Start, sp.End)
-		}
+		parts[i] = sp.String()
 	}
 	return strings.Join(parts, ", ")
 }

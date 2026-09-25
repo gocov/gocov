@@ -6,8 +6,6 @@ package server
 
 import (
 	"cmp"
-	"context"
-	"errors"
 	"maps"
 	"net/http"
 	"slices"
@@ -22,16 +20,8 @@ import (
 // numbers behind it come from the UI API's twin of this route, so the
 // page itself loads only the repo row the decision needs.
 func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
-	repo, err := s.store.RepoBySlug(r.Context(), r.PathValue("forge"), r.PathValue("slug"))
-	if errors.Is(err, store.ErrNotFound) {
-		s.reportNotFound(w, r)
-		return
-	}
-	if err != nil {
-		s.internalError(w, "loading repo", err)
-		return
-	}
-	if _, ok := s.authorizeReport(w, r, repo); !ok {
+	repo, _, ok := s.reportRepo(w, r)
+	if !ok {
 		return
 	}
 	// Only past the access decision may the response name the repo.
@@ -54,7 +44,6 @@ type repoPageData struct {
 	Base         *store.CommitReport
 	Verdict      *verdictView
 	LastUpload   *store.Upload
-	LastProv     *provView
 	FilesView    *filesViewData
 	TrendReports []*store.CommitReport
 	Settings     bool
@@ -67,16 +56,7 @@ type repoPageData struct {
 // answer — a not-found, a refusal or an internal error — is already
 // written.
 func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPageData, bool) {
-	repo, err := s.store.RepoBySlug(r.Context(), r.PathValue("forge"), r.PathValue("slug"))
-	if errors.Is(err, store.ErrNotFound) {
-		s.reportNotFound(w, r)
-		return nil, false
-	}
-	if err != nil {
-		s.internalError(w, "loading repo", err)
-		return nil, false
-	}
-	member, ok := s.authorizeReport(w, r, repo)
+	repo, member, ok := s.reportRepo(w, r)
 	if !ok {
 		return nil, false
 	}
@@ -134,13 +114,9 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 	// selected branch's current standing (the default branch when "All
 	// branches" is chosen); they ride inside the branch-filtered region so the
 	// selector moves them together with the trend and history.
-	var latest *store.CommitReport
-	if l, err := s.store.LatestCommitReport(r.Context(), repo.ID, trendBranch); err == nil {
-		latest = l
-	} else if !errors.Is(err, store.ErrNotFound) {
-		s.internalError(w, "loading latest report", err)
-		return nil, false
-	}
+	// trendReports come newest first, so they carry the latest report and,
+	// within the last 50, the baseline it is measured against.
+	latest, base := reportBaseline(trendReports[:min(baselineLookback, len(trendReports))])
 
 	d := &repoPageData{
 		Repo:         repo,
@@ -154,7 +130,6 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 		HasOlder:     hasOlder,
 	}
 	if latest != nil {
-		_, base := s.branchBaseReport(r.Context(), repo.ID, trendBranch)
 		d.Base = base
 		var baseTotal *float64
 		if base != nil {
@@ -162,8 +137,7 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 		}
 		d.Verdict = new(gateVerdict("The latest commit", latest.TotalPct, latest.DiffCoverage, latest.GateFailed, repo.Gate, baseTotal))
 		if lu, err := s.store.Upload(r.Context(), latest.UploadID); err == nil {
-			p := s.uploadProvenance(r.Context(), lu)
-			d.LastUpload, d.LastProv = lu, &p
+			d.LastUpload = lu
 			baseUpload, baseFiles := s.baselineUpload(r.Context(), repo, lu)
 			if fv, err := s.buildFilesViewData(r.Context(), lu, baseUpload, baseFiles); err == nil {
 				d.FilesView = &fv
@@ -324,7 +298,7 @@ func (s *Server) handleAPIRepo(w http.ResponseWriter, r *http.Request) {
 			summary.Verdict.Base = &baseRefDTO{UploadID: d.Base.UploadID, SHA: d.Base.CommitSHA, Coverage: d.Base.TotalPct}
 		}
 		if d.LastUpload != nil {
-			summary.LastUpload = &lastUploadDTO{At: d.LastUpload.CreatedAt, CILabel: d.LastProv.CILabel}
+			summary.LastUpload = &lastUploadDTO{At: d.LastUpload.CreatedAt, CILabel: ciLabels[d.LastUpload.Meta.CIProvider]}
 		}
 		dto.Summary = summary
 	}
@@ -339,6 +313,9 @@ const (
 	// trendReportLimit bounds the branch history behind the coverage trend
 	// and the dashboard's sparklines.
 	trendReportLimit = 60
+	// baselineLookback bounds the search for a comparison baseline; a
+	// branch whose last 50 reports all failed shows no delta.
+	baselineLookback = 50
 )
 
 // reportBaseline pairs a branch's newest merged report (reports come newest
@@ -355,15 +332,4 @@ func reportBaseline(reports []*store.CommitReport) (current, base *store.CommitR
 		base = reports[1+i]
 	}
 	return reports[0], base
-}
-
-// branchBaseReport reads a branch's recent reports and pairs the newest with
-// its baseline. Lookback is bounded; a branch whose last 50 reports all
-// failed shows no delta.
-func (s *Server) branchBaseReport(ctx context.Context, repoID int64, branch string) (current, base *store.CommitReport) {
-	reports, err := s.store.ListBranchCommitReports(ctx, repoID, branch, 50)
-	if err != nil {
-		return nil, nil
-	}
-	return reportBaseline(reports)
 }

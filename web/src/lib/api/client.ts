@@ -1,3 +1,4 @@
+import { routes } from "../urls";
 import type { ApiErrorBody } from "./types";
 
 /** A non-2xx answer from /api/ui. `status` drives what the UI does next. */
@@ -9,6 +10,11 @@ export class ApiError extends Error {
     super(message);
     this.name = "ApiError";
   }
+}
+
+/** The server's sentence for a failed call, or `fallback` for anything else (a network failure, a bug). */
+export function errorMessage(e: unknown, fallback: string): string {
+  return e instanceof ApiError ? e.message : fallback;
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -37,5 +43,5 @@ export const apiPost = <T>(path: string, body?: unknown) => request<T>("POST", p
  */
 export function redirectToLogin(): void {
   const next = window.location.pathname + window.location.search;
-  window.location.assign("/login?next=" + encodeURIComponent(next));
+  window.location.assign(routes.login(next));
 }

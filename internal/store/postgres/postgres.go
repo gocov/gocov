@@ -151,7 +151,7 @@ func (s *Store) CreateRepo(ctx context.Context, r *store.Repo) error {
 // able to revert a concurrent refresh (a private repo would reopen to
 // anonymous visitors).
 func (s *Store) UpdateRepo(ctx context.Context, r *store.Repo) error {
-	tag, err := s.pool.Exec(ctx, `
+	return affected(s.pool.Exec(ctx, `
 		UPDATE repos SET forge = $2, slug = $3, token = $4,
 			default_branch = $5,
 			min_coverage = $6, min_diff_coverage = $7, max_coverage_drop = $8,
@@ -159,39 +159,18 @@ func (s *Store) UpdateRepo(ctx context.Context, r *store.Repo) error {
 		WHERE id = $1`,
 		r.ID, r.Forge, r.Slug, r.Token, r.DefaultBranch,
 		r.Gate.MinCoverage, r.Gate.MinDiffCoverage, r.Gate.MaxCoverageDrop,
-		r.PublicReportsDisabled, textArray(r.IgnorePaths))
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return store.ErrNotFound
-	}
-	return nil
+		r.PublicReportsDisabled, textArray(r.IgnorePaths)))
 }
 
 func (s *Store) PublicRepoRefs(ctx context.Context, limit int) ([]store.RepoRef, error) {
-	q := `SELECT forge, slug FROM repos
+	rows, err := s.pool.Query(ctx, `SELECT forge, slug FROM repos
 		WHERE visibility = 'public' AND NOT public_reports_disabled
-		ORDER BY forge, slug`
-	var args []any
-	if limit > 0 {
-		q += ` LIMIT $1`
-		args = append(args, limit)
-	}
-	rows, err := s.pool.Query(ctx, q, args...)
+		ORDER BY forge, slug LIMIT $1`, limitArg(limit))
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []store.RepoRef
-	for rows.Next() {
-		var ref store.RepoRef
-		if err := rows.Scan(&ref.Forge, &ref.Slug); err != nil {
-			return nil, err
-		}
-		out = append(out, ref)
-	}
-	return out, rows.Err()
+	// AppendRows onto nil (not CollectRows) keeps "no rows" as a nil slice.
+	return pgx.AppendRows([]store.RepoRef(nil), rows, pgx.RowToStructByPos[store.RepoRef])
 }
 
 // SetRepoVisibility stamps checkedAt as given (the app clock, the same
@@ -235,14 +214,7 @@ func textArray(s []string) []string {
 }
 
 func (s *Store) DeleteRepo(ctx context.Context, id int64) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM repos WHERE id = $1`, id)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return store.ErrNotFound
-	}
-	return nil
+	return affected(s.pool.Exec(ctx, `DELETE FROM repos WHERE id = $1`, id))
 }
 
 func (s *Store) RepoByID(ctx context.Context, id int64) (*store.Repo, error) {
@@ -266,6 +238,27 @@ func (s *Store) ListRepos(ctx context.Context) ([]*store.Repo, error) {
 		return nil, err
 	}
 	return collect(rows, s.scanRepo)
+}
+
+// affected turns an UPDATE or DELETE result into the Store contract: the
+// statement's own error, else store.ErrNotFound when it touched no row.
+func affected(tag pgconn.CommandTag, err error) error {
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+// limitArg binds a list limit: a non-positive n becomes NULL, and LIMIT
+// NULL means no limit in Postgres.
+func limitArg(n int) any {
+	if n <= 0 {
+		return nil
+	}
+	return n
 }
 
 type rowScanner interface {
@@ -328,12 +321,7 @@ func (s *Store) CreateWorkspace(ctx context.Context, w *store.Workspace) error {
 	return s.createWorkspace(ctx, s.pool, w)
 }
 
-// execer is the subset of pgx querying shared by pools and transactions.
-type execer interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}
-
-func (s *Store) createWorkspace(ctx context.Context, db execer, w *store.Workspace) error {
+func (s *Store) createWorkspace(ctx context.Context, db querier, w *store.Workspace) error {
 	sealed, err := s.sealToken(w.BitbucketRefreshToken)
 	if err != nil {
 		return err
@@ -382,21 +370,14 @@ func (s *Store) RegisterWorkspace(ctx context.Context, w *store.Workspace, userI
 // write from an earlier read would resurrect an already-invalidated
 // token.
 func (s *Store) UpdateWorkspace(ctx context.Context, w *store.Workspace) error {
-	tag, err := s.pool.Exec(ctx, `
+	return affected(s.pool.Exec(ctx, `
 		UPDATE workspaces SET forge = $2, prefix = $3, token = $4, default_branch = $5,
 			min_coverage = $6, min_diff_coverage = $7, max_coverage_drop = $8,
 			report_retention_days = $9, github_installation_id = $10, github_app_broken = $11
 		WHERE id = $1`,
 		w.ID, w.Forge, w.Prefix, w.Token, w.DefaultBranch,
 		w.Gate.MinCoverage, w.Gate.MinDiffCoverage, w.Gate.MaxCoverageDrop,
-		w.ReportRetentionDays, w.GitHubInstallationID, w.GitHubAppBroken)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return store.ErrNotFound
-	}
-	return nil
+		w.ReportRetentionDays, w.GitHubInstallationID, w.GitHubAppBroken))
 }
 
 func (s *Store) SetWorkspaceBitbucketGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
@@ -425,14 +406,7 @@ func (s *Store) setWorkspaceGrant(ctx context.Context, q querier, sql string, wo
 	if err != nil {
 		return err
 	}
-	tag, err := q.Exec(ctx, sql, workspaceID, account, sealed, broken)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return store.ErrNotFound
-	}
-	return nil
+	return affected(q.Exec(ctx, sql, workspaceID, account, sealed, broken))
 }
 
 func (s *Store) DeleteWorkspace(ctx context.Context, id int64) error {
@@ -491,15 +465,24 @@ func (s *Store) workspaceByPrefix(ctx context.Context, q querier, forge, prefix 
 // (see WithCommitReportTx). The lock is released when the transaction
 // ends, on commit or rollback.
 func (s *Store) WithGrantLock(ctx context.Context, workspaceID int64, fn func(context.Context, store.GrantTx) error) error {
+	return s.withAdvisoryLock(ctx, advisoryKey("grant", workspaceID, ""), func(tx pgx.Tx) error {
+		return fn(ctx, &grantTx{s: s, tx: tx})
+	})
+}
+
+// withAdvisoryLock runs fn in a transaction that first takes the
+// transaction-scoped advisory lock key, committing when fn returns nil and
+// rolling back otherwise. The lock is released when the transaction ends.
+func (s *Store) withAdvisoryLock(ctx context.Context, key int64, fn func(pgx.Tx) error) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
-	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", advisoryKey("grant", workspaceID, "")); err != nil {
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", key); err != nil {
 		return err
 	}
-	if err := fn(ctx, &grantTx{s: s, tx: tx}); err != nil {
+	if err := fn(tx); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -604,29 +587,14 @@ func (s *Store) ListMembershipsForUser(ctx context.Context, userID int64) ([]sto
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []store.Membership
-	for rows.Next() {
-		var m store.Membership
-		if err := rows.Scan(&m.WorkspaceID, &m.Role); err != nil {
-			return nil, err
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
+	return pgx.AppendRows([]store.Membership(nil), rows, pgx.RowToStructByPos[store.Membership])
 }
 
 func (s *Store) ListWorkspacesForUser(ctx context.Context, userID int64) ([]*store.Workspace, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT w.id, w.forge, w.prefix, w.token, w.default_branch,
-			w.min_coverage, w.min_diff_coverage, w.max_coverage_drop, w.report_retention_days,
-			w.github_installation_id, w.github_app_broken,
-			w.bitbucket_grant_account, w.bitbucket_refresh_token, w.bitbucket_grant_broken,
-			w.gitlab_grant_account, w.gitlab_refresh_token, w.gitlab_grant_broken, w.created_at
-		FROM workspaces w
-		JOIN workspace_members m ON m.workspace_id = w.id
-		WHERE m.user_id = $1
-		ORDER BY w.forge, w.prefix`, userID)
+		SELECT `+workspaceCols+` FROM workspaces
+		WHERE id IN (SELECT workspace_id FROM workspace_members WHERE user_id = $1)
+		ORDER BY forge, prefix`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -685,14 +653,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]*store.User, error) {
 
 func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 	// Sessions go with the user via ON DELETE CASCADE.
-	tag, err := s.pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, id)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return store.ErrNotFound
-	}
-	return nil
+	return affected(s.pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, id))
 }
 
 func (s *Store) scanUser(row rowScanner) (*store.User, error) {
@@ -737,11 +698,8 @@ func (s *Store) UserBySession(ctx context.Context, tokenHash string) (*store.Use
 	// Expired sessions are simply never matched; rows are cleaned up lazily
 	// when the same token is presented again.
 	u, err := s.scanUser(s.pool.QueryRow(ctx, `
-		SELECT u.id, u.forge, u.forge_uuid, u.email, u.display_name,
-			COALESCE(u.forge_workspaces, 'null'::jsonb), COALESCE(u.forge_owned_workspaces, 'null'::jsonb),
-			u.created_at, u.last_login_at
-		FROM users u JOIN sessions s ON s.user_id = u.id
-		WHERE s.token_hash = $1 AND s.expires_at > now()`,
+		SELECT `+userCols+` FROM users
+		WHERE id = (SELECT user_id FROM sessions WHERE token_hash = $1 AND expires_at > now())`,
 		tokenHash))
 	if errors.Is(err, store.ErrNotFound) {
 		_, _ = s.pool.Exec(ctx,
@@ -751,14 +709,7 @@ func (s *Store) UserBySession(ctx context.Context, tokenHash string) (*store.Use
 }
 
 func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE token_hash = $1`, tokenHash)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return store.ErrNotFound
-	}
-	return nil
+	return affected(s.pool.Exec(ctx, `DELETE FROM sessions WHERE token_hash = $1`, tokenHash))
 }
 
 func (s *Store) CreateUpload(ctx context.Context, u *store.Upload, files []*store.UploadFile) error {
@@ -790,17 +741,21 @@ func (s *Store) CreateUpload(ctx context.Context, u *store.Upload, files []*stor
 		return err
 	}
 
+	// One COPY for all files instead of an INSERT round trip per file. The
+	// marshalled blocks bind as raw JSON bytes, as they did with INSERT.
+	rowsIn := make([][]any, 0, len(files))
 	for _, f := range files {
 		f.UploadID = u.ID
 		blocks, err := json.Marshal(f.Blocks)
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `
-			INSERT INTO upload_files (upload_id, path, pct, covered_stmts, total_stmts, blocks)
-			VALUES ($1, $2, $3, $4, $5, $6)`,
-			f.UploadID, f.Path, f.Pct, f.CoveredStmts, f.TotalStmts, blocks)
-		if err != nil {
+		rowsIn = append(rowsIn, []any{f.UploadID, f.Path, f.Pct, f.CoveredStmts, f.TotalStmts, blocks})
+	}
+	if len(rowsIn) > 0 {
+		if _, err := tx.CopyFrom(ctx, pgx.Identifier{"upload_files"},
+			[]string{"upload_id", "path", "pct", "covered_stmts", "total_stmts", "blocks"},
+			pgx.CopyFromRows(rowsIn)); err != nil {
 			return err
 		}
 	}
@@ -825,14 +780,9 @@ func (s *Store) Upload(ctx context.Context, id int64) (*store.Upload, error) {
 }
 
 func (s *Store) ListUploads(ctx context.Context, repoID int64, limit int) ([]*store.Upload, error) {
-	// LIMIT NULL means no limit in Postgres.
-	var lim any
-	if limit > 0 {
-		lim = limit
-	}
 	rows, err := s.pool.Query(ctx,
 		`SELECT `+uploadCols+` FROM uploads WHERE repo_id = $1 ORDER BY id DESC LIMIT $2`,
-		repoID, lim)
+		repoID, limitArg(limit))
 	if err != nil {
 		return nil, err
 	}
@@ -840,14 +790,10 @@ func (s *Store) ListUploads(ctx context.Context, repoID int64, limit int) ([]*st
 }
 
 func (s *Store) ListBranchUploads(ctx context.Context, repoID int64, branch string, limit int) ([]*store.Upload, error) {
-	var lim any
-	if limit > 0 {
-		lim = limit
-	}
 	rows, err := s.pool.Query(ctx,
 		`SELECT `+uploadCols+` FROM uploads
 		 WHERE repo_id = $1 AND branch = $2 ORDER BY id DESC LIMIT $3`,
-		repoID, branch, lim)
+		repoID, branch, limitArg(limit))
 	if err != nil {
 		return nil, err
 	}
@@ -930,16 +876,7 @@ func (s *Store) CommitParts(ctx context.Context, repoID int64, commitSHA string)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var p string
-		if err := rows.Scan(&p); err != nil {
-			return nil, err
-		}
-		out = append(out, p)
-	}
-	return out, rows.Err()
+	return pgx.AppendRows([]string(nil), rows, pgx.RowTo[string])
 }
 
 func (s *Store) latestUploadsPerPart(ctx context.Context, q querier, repoID int64, commitSHA string) ([]*store.Upload, error) {
@@ -966,18 +903,9 @@ func (s *Store) latestUploadsPerPart(ctx context.Context, q querier, repoID int6
 // different keys and never contend (a collision only costs an occasional
 // extra wait, never correctness).
 func (s *Store) WithCommitReportTx(ctx context.Context, repoID int64, commitSHA string, fn func(context.Context, store.CommitTx) error) error {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
-	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", advisoryKey("recompute", repoID, commitSHA)); err != nil {
-		return err
-	}
-	if err := fn(ctx, &commitReportTx{s: s, tx: tx}); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+	return s.withAdvisoryLock(ctx, advisoryKey("recompute", repoID, commitSHA), func(tx pgx.Tx) error {
+		return fn(ctx, &commitReportTx{s: s, tx: tx})
+	})
 }
 
 // commitReportTx binds the recompute's reads and upsert to one locked
@@ -1098,36 +1026,35 @@ func (s *Store) latestPassedCommitReport(ctx context.Context, q querier, repoID 
 // ctx; it performs the forge HTTP itself. When no report row exists yet
 // there is nothing to attach a status to and push does not run.
 func (s *Store) TryPushStatus(ctx context.Context, repoID int64, commitSHA string, version int64, push func(context.Context) error) (bool, error) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return false, err
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
-	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", advisoryKey("status", repoID, commitSHA)); err != nil {
-		return false, err
-	}
-	var cur int64
-	err = tx.QueryRow(ctx,
-		"SELECT status_pushed_version FROM commit_reports WHERE repo_id = $1 AND commit_sha = $2",
-		repoID, commitSHA).Scan(&cur)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil // no report to attach a status to
-	}
-	if err != nil {
-		return false, err
-	}
-	if version < cur {
-		return false, nil // a newer push already owns the status
-	}
-	if err := push(ctx); err != nil {
-		return false, err // rolled back: version not advanced, so a retry can push
-	}
-	if _, err := tx.Exec(ctx,
-		"UPDATE commit_reports SET status_pushed_version = $3 WHERE repo_id = $1 AND commit_sha = $2",
-		repoID, commitSHA, version); err != nil {
-		return false, err
-	}
-	return true, tx.Commit(ctx)
+	var pushed bool
+	err := s.withAdvisoryLock(ctx, advisoryKey("status", repoID, commitSHA), func(tx pgx.Tx) error {
+		var cur int64
+		err := tx.QueryRow(ctx,
+			"SELECT status_pushed_version FROM commit_reports WHERE repo_id = $1 AND commit_sha = $2",
+			repoID, commitSHA).Scan(&cur)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil // no report to attach a status to
+		}
+		if err != nil {
+			return err
+		}
+		if version < cur {
+			return nil // a newer push already owns the status
+		}
+		if err := push(ctx); err != nil {
+			return err // rolled back: version not advanced, so a retry can push
+		}
+		if _, err := tx.Exec(ctx,
+			"UPDATE commit_reports SET status_pushed_version = $3 WHERE repo_id = $1 AND commit_sha = $2",
+			repoID, commitSHA, version); err != nil {
+			return err
+		}
+		pushed = true
+		return nil
+	})
+	// pushed is set only once the version is advanced, so a failed commit
+	// reports (true, err) exactly as before: push ran, the stamp did not land.
+	return pushed, err
 }
 
 func (s *Store) ClaimTokenlessUpload(ctx context.Context, repoID, runID, runAttempt int64, part string) (bool, error) {
@@ -1150,14 +1077,10 @@ func (s *Store) ReleaseTokenlessUpload(ctx context.Context, repoID, runID, runAt
 }
 
 func (s *Store) ListBranchCommitReports(ctx context.Context, repoID int64, branch string, limit int) ([]*store.CommitReport, error) {
-	var lim any
-	if limit > 0 {
-		lim = limit
-	}
 	rows, err := s.pool.Query(ctx,
 		`SELECT `+commitReportCols+` FROM commit_reports
 		 WHERE repo_id = $1 AND branch = $2 ORDER BY id DESC LIMIT $3`,
-		repoID, branch, lim)
+		repoID, branch, limitArg(limit))
 	if err != nil {
 		return nil, err
 	}

@@ -5,6 +5,7 @@
 // out directories-first, each side alphabetical.
 
 import type { FileRow } from "./api/types";
+import { splitPath } from "./format";
 
 export interface TreeStats {
   /** The full path — a directory's is its deepest segment after collapsing. */
@@ -141,14 +142,14 @@ function nodesOf(dir: Building, depth: number): { nodes: TreeNode[]; roll: Roll 
     });
   }
 
-  const files = [...dir.files].sort((a, b) => byName(baseName(a.path), baseName(b.path)));
+  const files = [...dir.files].sort((a, b) => byName(splitPath(a.path)[1], splitPath(b.path)[1]));
   for (const row of files) {
     const one = fileRoll(row);
     absorb(roll, one);
     nodes.push({
       kind: "file",
       path: row.path,
-      name: baseName(row.path),
+      name: splitPath(row.path)[1],
       depth,
       coveredStmts: row.covered_stmts,
       totalStmts: row.total_stmts,
@@ -163,8 +164,6 @@ function nodesOf(dir: Building, depth: number): { nodes: TreeNode[]; roll: Roll 
 
   return { nodes, roll };
 }
-
-const baseName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 
 /** The tree behind a flat list of files, top level first. */
 export function buildFileTree(files: FileRow[]): TreeNode[] {

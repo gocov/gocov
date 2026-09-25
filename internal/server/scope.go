@@ -26,17 +26,24 @@ func (s *Server) userScope(r *http.Request) (repoScope, error) {
 	if !s.authEnabled() {
 		return repoScope{scoped: false}, nil
 	}
-	prefixes := map[wsKey]bool{}
-	if u := currentUser(r); u != nil {
-		wss, err := s.store.ListWorkspacesForUser(r.Context(), u.ID)
-		if err != nil {
-			return repoScope{}, err
-		}
-		for _, ws := range wss {
-			prefixes[wsKey{ws.Forge, ws.Prefix}] = true
-		}
+	wss, err := s.viewerWorkspaces(r)
+	if err != nil {
+		return repoScope{}, err
 	}
-	return repoScope{scoped: true, prefixes: prefixes}, nil
+	return s.scopeFor(wss), nil
+}
+
+// scopeFor is userScope over memberships the caller has already listed
+// through viewerWorkspaces, so a handler needing both reads them once.
+func (s *Server) scopeFor(memberships []*store.Workspace) repoScope {
+	if !s.authEnabled() {
+		return repoScope{scoped: false}
+	}
+	prefixes := map[wsKey]bool{}
+	for _, ws := range memberships {
+		prefixes[wsKey{ws.Forge, ws.Prefix}] = true
+	}
+	return repoScope{scoped: true, prefixes: prefixes}
 }
 
 // wsKey names a workspace the way the store does: prefix on a forge. A
@@ -147,6 +154,23 @@ func (s *Server) authorizeReport(w http.ResponseWriter, r *http.Request, repo *s
 	}
 	s.reportNotFound(w, r)
 	return false, false
+}
+
+// reportRepo resolves the repo named by the {forge} and {slug} path
+// values, then runs authorizeReport — the prelude of the repo page and its
+// UI API twin. ok is false when the answer has been written.
+func (s *Server) reportRepo(w http.ResponseWriter, r *http.Request) (repo *store.Repo, member, ok bool) {
+	repo, err := s.store.RepoBySlug(r.Context(), r.PathValue("forge"), r.PathValue("slug"))
+	if errors.Is(err, store.ErrNotFound) {
+		s.reportNotFound(w, r)
+		return nil, false, false
+	}
+	if err != nil {
+		s.internalError(w, "loading repo", err)
+		return nil, false, false
+	}
+	member, ok = s.authorizeReport(w, r, repo)
+	return repo, member, ok
 }
 
 // reportUpload resolves the upload named by the {id} path value and its

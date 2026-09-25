@@ -6,7 +6,7 @@ import { TokenCard } from "@/components/organisms/TokenCard";
 import { SettingsLayout, type SettingsNavItem } from "@/components/templates/SettingsLayout";
 import { Checkbox, Chip, InlineCode, Mono, Notice, TextInput, Textarea } from "@/components/atoms";
 import { Breadcrumbs, Card, CopyField, FormField, PageHeader, QueryBoundary, SaveFooter } from "@/components/molecules";
-import { ApiError, apiPost } from "@/lib/api/client";
+import { apiPost, errorMessage } from "@/lib/api/client";
 import { repoSettingsPath, repoSettingsQuery } from "@/lib/api/queries";
 import type { RepoSettings, RepoSettingsInput, TokenReveal } from "@/lib/api/types";
 import { useSectionSave } from "@/lib/sectionSave";
@@ -95,7 +95,7 @@ function RepoSettingsView({ forge, slug, settings }: { forge: string; slug: stri
           refresh at every sign-in.
         </Notice>
       )}
-      {error !== null && <Notice tone="bad">{error instanceof ApiError ? error.message : "The settings could not be saved."}</Notice>}
+      {error !== null && <Notice tone="bad">{errorMessage(error, "The settings could not be saved.")}</Notice>}
 
       <SettingsLayout.Section id="general">
         <Card>

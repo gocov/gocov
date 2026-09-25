@@ -36,29 +36,15 @@ func splitConnectState(v string) (state, prefix string) {
 // connection has to work, since it is what the server verifies the
 // token's repository against — a broken grant refuses those uploads.
 func oidcReady(ws *store.Workspace) bool {
-	switch ws.Forge {
-	case "github":
-		return ws.GitHubInstallationID != 0 && !ws.GitHubAppBroken
-	case "bitbucket":
-		return ws.BitbucketGrantAccount != "" && !ws.BitbucketGrantBroken
-	case "gitlab":
-		return ws.GitLabGrantAccount != "" && !ws.GitLabGrantBroken
-	}
-	return false
+	connected, broken, _ := forgeConnection(ws)
+	return connected && !broken
 }
 
 // connectionBroken reports a forge connection that exists but no longer
 // works, so the wizard can point at the reconnect rather than at Connect.
 func connectionBroken(ws *store.Workspace) bool {
-	switch ws.Forge {
-	case "github":
-		return ws.GitHubInstallationID != 0 && ws.GitHubAppBroken
-	case "bitbucket":
-		return ws.BitbucketGrantAccount != "" && ws.BitbucketGrantBroken
-	case "gitlab":
-		return ws.GitLabGrantAccount != "" && ws.GitLabGrantBroken
-	}
-	return false
+	connected, broken, _ := forgeConnection(ws)
+	return connected && broken
 }
 
 // latestReport returns the newest report among the workspace's repos with
@@ -79,21 +65,14 @@ func (s *Server) latestReport(r *http.Request, repos []*store.Repo) (*store.Repo
 // first upload had a reporting surface to post to — no per-upload log
 // needed. Empty means nothing was posted back.
 func reportsPostedMsg(ws *store.Workspace) string {
-	switch ws.Forge {
-	case "github":
-		if ws.GitHubInstallationID != 0 {
-			return "Commit status posted as gocov[bot]."
-		}
-	case "bitbucket":
-		if ws.BitbucketGrantAccount != "" {
-			return "Commit status posted as @" + ws.BitbucketGrantAccount + "."
-		}
-	case "gitlab":
-		if ws.GitLabGrantAccount != "" {
-			return "Commit status posted as @" + ws.GitLabGrantAccount + "."
-		}
+	connected, _, account := forgeConnection(ws)
+	switch {
+	case !connected:
+		return ""
+	case account == "":
+		return "Commit status posted as gocov[bot]."
 	}
-	return ""
+	return "Commit status posted as @" + account + "."
 }
 
 // The onboarding endpoints of the UI API (/api/ui/) — the app's side of
@@ -253,7 +232,7 @@ func (s *Server) handleAPIWorkspaceSetup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	owner := role == store.RoleOwner
-	baseURL := strings.TrimSuffix(s.baseURL, "/")
+	baseURL := s.baseURL
 	dto := setupInfoDTO{
 		Workspace: setupWorkspaceDTO{
 			workspaceRefDTO: workspaceRefDTO{Forge: ws.Forge, Prefix: ws.Prefix},
