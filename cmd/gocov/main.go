@@ -14,6 +14,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -176,40 +177,49 @@ func run(args []string) error {
 		return err
 	}
 
-	fmt.Printf("uploaded: %.1f%% (%d/%d statements)", resp.TotalPct, resp.CoveredStmts, resp.TotalStmts)
-	if resp.DeltaPct != nil {
-		fmt.Printf(", delta %+.1f%%", *resp.DeltaPct)
+	printResult(os.Stdout, resp)
+	if *failOnGate && strings.HasPrefix(resp.Gate, "failed") {
+		return fmt.Errorf("coverage gate %s", resp.Gate)
 	}
-	fmt.Println()
+	return nil
+}
+
+// printResult writes the upload's outcome to the CI log, one line per
+// fact the server reported.
+func printResult(w io.Writer, resp *uploadResponse) {
+	fmt.Fprintf(w, "uploaded: %.1f%% (%d/%d statements)", resp.TotalPct, resp.CoveredStmts, resp.TotalStmts)
+	if resp.DeltaPct != nil {
+		fmt.Fprintf(w, ", delta %+.1f%%", *resp.DeltaPct)
+	}
+	fmt.Fprintln(w)
+	for _, warning := range resp.Warnings {
+		fmt.Fprintf(w, "warning: %s\n", warning)
+	}
 	if resp.RepoCreated {
-		fmt.Println("repo registered on first upload")
+		fmt.Fprintln(w, "repo registered on first upload")
 	}
 	switch n := resp.IgnoredFiles; {
 	case n == 1:
-		fmt.Println("ignored: 1 file")
+		fmt.Fprintln(w, "ignored: 1 file")
 	case n > 1:
-		fmt.Printf("ignored: %d files\n", n)
+		fmt.Fprintf(w, "ignored: %d files\n", n)
 	}
 	if resp.DiffPct != nil && resp.DiffCoveredLines != nil && resp.DiffTotalLines != nil {
-		fmt.Printf("diff coverage: %.1f%% (%d/%d changed lines)\n",
+		fmt.Fprintf(w, "diff coverage: %.1f%% (%d/%d changed lines)\n",
 			*resp.DiffPct, *resp.DiffCoveredLines, *resp.DiffTotalLines)
 	} else if resp.DiffStatus != "" {
-		fmt.Printf("diff coverage: %s\n", resp.DiffStatus)
+		fmt.Fprintf(w, "diff coverage: %s\n", resp.DiffStatus)
 	}
-	fmt.Printf("build status: %s\n", resp.BuildStatus)
+	fmt.Fprintf(w, "build status: %s\n", resp.BuildStatus)
 	if resp.CodeInsights != "" { // empty when talking to an older server
-		fmt.Printf("code insights: %s\n", resp.CodeInsights)
+		fmt.Fprintf(w, "code insights: %s\n", resp.CodeInsights)
 	}
 	if resp.PRComment != "" {
-		fmt.Printf("pr comment: %s\n", resp.PRComment)
+		fmt.Fprintf(w, "pr comment: %s\n", resp.PRComment)
 	}
 	if resp.Gate != "" {
-		fmt.Printf("gate: %s\n", resp.Gate)
-		if *failOnGate && strings.HasPrefix(resp.Gate, "failed") {
-			return fmt.Errorf("coverage gate %s", resp.Gate)
-		}
+		fmt.Fprintf(w, "gate: %s\n", resp.Gate)
 	}
-	return nil
 }
 
 func osEnv(key string) string { return os.Getenv(key) }

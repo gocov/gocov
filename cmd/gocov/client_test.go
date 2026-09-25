@@ -1,7 +1,9 @@
 package main
 
 import (
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
@@ -62,5 +64,34 @@ func TestUploadEndToEnd(t *testing.T) {
 		Build: buildInfo{Commit: "abc"},
 	}); err == nil {
 		t.Error("want error with invalid token")
+	}
+}
+
+// The server's non-fatal notices reach the CI log, right under the
+// headline they qualify.
+func TestUploadPrintsServerWarnings(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id": 7, "total_pct": 80, "covered_stmts": 4, "total_stmts": 5,
+			"build_status": "posted", "code_insights": "posted",
+			"warnings": ["diff coverage merged conservatively for 1 changed file(s)"]}`))
+	}))
+	defer srv.Close()
+
+	resp, err := upload(uploadRequest{
+		Server: srv.URL, Token: "tok", Format: "go", ProfileData: []byte("mode: set\n"),
+		Build: buildInfo{Commit: "abc"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	printResult(&out, resp)
+	want := "uploaded: 80.0% (4/5 statements)\n" +
+		"warning: diff coverage merged conservatively for 1 changed file(s)\n" +
+		"build status: posted\n" +
+		"code insights: posted\n"
+	if out.String() != want {
+		t.Errorf("output:\n%s\nwant:\n%s", out.String(), want)
 	}
 }
