@@ -217,22 +217,16 @@ func insightsAnnotations(dc *diffcov.Result) (anns []forge.Annotation, dropped i
 		})
 	}
 	for _, f := range dc.Files {
-		lines := f.UncoveredLines
-		for i := 0; i < len(lines); {
-			j := i
-			for j+1 < len(lines) && lines[j+1] == lines[j]+1 {
-				j++
-			}
+		for _, sp := range diffcov.LineSpans(f.UncoveredLines) {
 			if len(anns) == insightsMaxAnnotations {
 				dropped++
-			} else {
-				summary := fmt.Sprintf("Line %d of this change is not covered by tests", lines[i])
-				if j > i {
-					summary = fmt.Sprintf("Lines %d–%d of this change are not covered by tests", lines[i], lines[j])
-				}
-				anns = append(anns, forge.Annotation{Path: f.Path, Line: lines[i], EndLine: lines[j], Summary: summary})
+				continue
 			}
-			i = j + 1
+			summary := fmt.Sprintf("Line %d of this change is not covered by tests", sp.Start)
+			if sp.End > sp.Start {
+				summary = fmt.Sprintf("Lines %d–%d of this change are not covered by tests", sp.Start, sp.End)
+			}
+			anns = append(anns, forge.Annotation{Path: f.Path, Line: sp.Start, EndLine: sp.End, Summary: summary})
 		}
 	}
 	return anns, dropped
