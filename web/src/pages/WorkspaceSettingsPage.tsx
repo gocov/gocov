@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate, useParams } from "react-router";
+import { Link, useParams } from "react-router";
 import { DangerCard } from "@/components/organisms/DangerCard";
 import { GatesCard } from "@/components/organisms/GatesCard";
 import { ReportingCard } from "@/components/organisms/ReportingCard";
@@ -8,11 +8,11 @@ import { SettingsLayout, type SettingsNavItem } from "@/components/templates/Set
 import { Chip, InlineCode, Mono, Notice, Select, TextInput } from "@/components/atoms";
 import { Card, FormField, PageHeader, QueryBoundary, SaveFooter } from "@/components/molecules";
 import { apiPost, errorMessage } from "@/lib/api/client";
-import { postToken, workspaceSettingsPath, workspaceSettingsQuery } from "@/lib/api/queries";
-import type { WorkspaceSettings, WorkspaceSettingsInput } from "@/lib/api/types";
+import { workspaceSettingsPath, workspaceSettingsQuery } from "@/lib/api/queries";
+import type { WorkspaceSettings } from "@/lib/api/types";
 import { forgeLabel, plural } from "@/lib/format";
 import { useUrlNotice } from "@/lib/notice";
-import { useSectionSave } from "@/lib/sectionSave";
+import { useSettingsDoc } from "@/lib/sectionSave";
 import { retentionOptions, workspaceInput } from "@/lib/settings";
 import { usePageTitle } from "@/lib/title";
 import { routes } from "@/lib/urls";
@@ -41,7 +41,6 @@ export default function WorkspaceSettingsPage() {
 
 function WorkspaceSettingsView({ forge, prefix, settings }: { forge: string; prefix: string; settings: WorkspaceSettings }) {
   const client = useQueryClient();
-  const navigate = useNavigate();
   const key = workspaceSettingsQuery(forge, prefix).queryKey;
   const path = (action: string) => workspaceSettingsPath(forge, prefix, action);
 
@@ -52,26 +51,16 @@ function WorkspaceSettingsView({ forge, prefix, settings }: { forge: string; pre
 
   // Gates and Defaults are one document with two Save buttons: the form is
   // shared, and whichever button is pressed posts all of it.
-  const { form, update, section, error } = useSectionSave({
-    seed: () => workspaceInput(settings),
-    post: (input: WorkspaceSettingsInput) => apiPost<WorkspaceSettings>(path("save"), input),
-    onSaved: (next) => {
-      client.setQueryData(key, next);
-      return workspaceInput(next);
-    },
+  const { form, update, section, error, remove, revealToken, rotateToken } = useSettingsDoc({
+    doc: settings,
+    queryKey: key,
+    path,
+    toInput: workspaceInput,
   });
 
   const disconnect = useMutation({
     mutationFn: () => apiPost<WorkspaceSettings>(path("disconnect")),
     onSuccess: (next) => client.setQueryData(key, next),
-  });
-
-  const remove = useMutation({
-    mutationFn: () => apiPost<void>(path("delete")),
-    onSuccess: async () => {
-      await client.invalidateQueries({ queryKey: ["dashboard"] });
-      void navigate(routes.dashboard());
-    },
   });
 
   const saveFooter = (id: string, hint: string, ownerOnly: string) => (
@@ -140,15 +129,8 @@ function WorkspaceSettingsView({ forge, prefix, settings }: { forge: string; pre
           serverUrl={settings.server_url}
           tokenMasked={settings.token_masked}
           owner={owner}
-          onReveal={() => postToken(path("reveal-token"))}
-          onRotate={() =>
-            postToken(path("rotate-token")).then((token) => {
-              // The masked form in the cache is the old one now; the token
-              // itself stays out of the cache.
-              void client.invalidateQueries({ queryKey: key });
-              return token;
-            })
-          }
+          onReveal={revealToken}
+          onRotate={rotateToken}
         />
       </SettingsLayout.Section>
 
@@ -213,7 +195,7 @@ function WorkspaceSettingsView({ forge, prefix, settings }: { forge: string; pre
           ownerOnlyHint="Only a workspace owner can delete it."
           owner={owner}
           confirmText={`Delete ${prefix} and all of its coverage data? This cannot be undone.`}
-          onConfirm={() => remove.mutateAsync()}
+          onConfirm={remove}
         >
           <p>
             Removes <InlineCode>{prefix}</InlineCode>

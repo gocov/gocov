@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useDeferredValue, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { Link } from "react-router";
 import { CoverageBar, Delta, Icon, Mono, TextInput } from "@/components/atoms";
 import { BeforeAfter, Card, EmptyState, SectionHeader, SegmentedControl, Toolbar, UncoveredRanges } from "@/components/molecules";
@@ -55,7 +55,9 @@ export function FilesTable({ view, heading = "Files" }: { view: FilesView; headi
 
   // Filtering walks every file and rebuilds the tree, so it runs when the
   // search or the filter moves — not when a directory is opened or closed.
-  const needle = query.trim().toLowerCase();
+  // The search box updates at once; on a report with thousands of files
+  // the filtering follows a keystroke behind rather than holding it up.
+  const needle = useDeferredValue(query).trim().toLowerCase();
   const { matched, filtered } = useMemo(() => {
     const keep = (row: FileRow) => (needle === "" || row.path.toLowerCase().includes(needle)) && keeps[filter](row);
     return { matched: view.files.filter(keep), filtered: filterTree(tree, keep) };
