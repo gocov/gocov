@@ -136,7 +136,7 @@ func TestTokenlessUploadRejectedClaim(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "still in progress") {
 		t.Errorf("rejection reason not surfaced to the uploader: %s", rec.Body)
 	}
-	if ups, _ := f.store.ListUploads(t.Context(), f.repo.ID, 0); len(ups) != 0 {
+	if ups, _ := f.store.ListUploads(t.Context(), f.repo.ID, 0, 0); len(ups) != 0 {
 		t.Errorf("rejected upload was stored")
 	}
 }
@@ -191,7 +191,7 @@ func TestTokenlessUploadDuplicate(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("duplicate: status = %d, body = %s", rec.Code, rec.Body)
 	}
-	if ups, _ := f.store.ListUploads(t.Context(), f.repo.ID, 0); len(ups) != 1 {
+	if ups, _ := f.store.ListUploads(t.Context(), f.repo.ID, 0, 0); len(ups) != 1 {
 		t.Errorf("got %d stored uploads, want 1 (duplicate must not land)", len(ups))
 	}
 

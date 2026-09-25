@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gocov/gocov/internal/core"
@@ -45,9 +46,18 @@ func (s *Server) buildUploadPage(w http.ResponseWriter, r *http.Request) (*uploa
 
 	// The baseline is the newest earlier gate-passing upload on the same
 	// branch; its per-file coverage feeds the before → after column, and its
-	// total feeds the headline delta — the same baseline the source view uses.
-	base, baseFiles := s.baselineUpload(r.Context(), repo, u)
-	files, err := s.buildFilesView(r.Context(), u, base, baseFiles)
+	// total feeds the headline delta — the same baseline the source view
+	// uses. The files and the provenance card read independently.
+	var (
+		wg         sync.WaitGroup
+		files      *filesViewDTO
+		base       *store.Upload
+		err        error
+		provenance provenanceDTO
+	)
+	wg.Go(func() { files, base, err = s.loadFilesView(r.Context(), repo, u) })
+	wg.Go(func() { provenance = s.uploadProvenance(r.Context(), u) })
+	wg.Wait()
 	if err != nil {
 		s.internalError(w, "loading upload files", err)
 		return nil, false
@@ -68,7 +78,7 @@ func (s *Server) buildUploadPage(w http.ResponseWriter, r *http.Request) (*uploa
 		CoveredStmts: u.CoveredStmts,
 		TotalStmts:   u.TotalStmts,
 		Files:        files,
-		Provenance:   s.uploadProvenance(r.Context(), u),
+		Provenance:   provenance,
 	}
 	if base != nil {
 		dto.Verdict.against(base.ID, base.CommitSHA, base.TotalPct)
@@ -154,17 +164,35 @@ func (s *Server) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// buildFilesView loads an upload's files and pairs each with its coverage
-// at the baseline — the files card, shared by the upload page and the repo
-// page. The directory tree the card draws is the client's to build from
-// these rows. An upload without per-file data yields an empty card, not an
-// error.
-func (s *Server) buildFilesView(ctx context.Context, upload *store.Upload, base *store.Upload, baseFiles map[string]*store.UploadFile) (*filesViewDTO, error) {
-	files, err := s.store.UploadFiles(ctx, upload.ID)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return nil, err
+// loadFilesView reads an upload's files and, side by side, the baseline
+// they are measured against (baselineUpload), and builds the files card
+// from both — shared by the upload page and the repo page. base is the
+// baseline upload, nil when there is none. An upload without per-file data
+// yields an empty card, not an error.
+func (s *Server) loadFilesView(ctx context.Context, repo *store.Repo, upload *store.Upload) (view *filesViewDTO, base *store.Upload, err error) {
+	var (
+		wg        sync.WaitGroup
+		files     []*store.UploadFile
+		baseFiles map[string]*store.UploadFile
+	)
+	wg.Go(func() { base, baseFiles = s.baselineUpload(ctx, repo, upload) })
+	wg.Go(func() {
+		files, err = s.store.UploadFiles(ctx, upload.ID)
+		if errors.Is(err, store.ErrNotFound) {
+			err = nil
+		}
+	})
+	wg.Wait()
+	if err != nil {
+		return nil, nil, err
 	}
+	return buildFilesView(upload, files, base, baseFiles), base, nil
+}
 
+// buildFilesView pairs each of an upload's files with its coverage at the
+// baseline — the files card. The directory tree the card draws is the
+// client's to build from these rows.
+func buildFilesView(upload *store.Upload, files []*store.UploadFile, base *store.Upload, baseFiles map[string]*store.UploadFile) *filesViewDTO {
 	var diffPaths []string
 	if dc := upload.DiffCoverage; dc != nil {
 		for _, df := range dc.Files {
@@ -235,7 +263,7 @@ func (s *Server) buildFilesView(ctx context.Context, upload *store.Upload, base 
 	for i, row := range rows {
 		dto.Files[i] = row.fileRowDTO
 	}
-	return dto, nil
+	return dto
 }
 
 // deltaEpsilon is the smallest coverage move the UI shows as one: below

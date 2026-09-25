@@ -423,7 +423,7 @@ func TestOIDCNeedsAWorkingConnection(t *testing.T) {
 				!strings.Contains(rec.Body.String(), tc.want) {
 				t.Errorf("status = %d, body = %s; want 403 oidc_not_connected saying %q", rec.Code, rec.Body, tc.want)
 			}
-			if ups, _ := f.store.ListUploads(t.Context(), f.repo.ID, 0); len(ups) != 0 {
+			if ups, _ := f.store.ListUploads(t.Context(), f.repo.ID, 0, 0); len(ups) != 0 {
 				t.Errorf("%d uploads landed; a refused upload lands nothing", len(ups))
 			}
 		})

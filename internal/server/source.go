@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/gocov/gocov/internal/core"
@@ -53,7 +54,17 @@ func (s *Server) buildSourcePage(w http.ResponseWriter, r *http.Request) (*sourc
 		return nil, false
 	}
 
-	source, unavailable := s.fetchSource(r, repo, upload, file)
+	// The source (a forge round trip on a cache miss) and the file at the
+	// baseline commit are independent reads.
+	var (
+		wg          sync.WaitGroup
+		source      []byte
+		unavailable string
+		base        *store.UploadFile
+	)
+	wg.Go(func() { source, unavailable = s.fetchSource(r, repo, upload, file) })
+	wg.Go(func() { base = s.baseFileFor(r.Context(), repo, upload, file.Path) })
+	wg.Wait()
 	dto := &sourcePageDTO{
 		Repo:   newRepoRefDTO(repo),
 		Upload: sourceUploadDTO{ID: upload.ID, SHA: upload.CommitSHA},
@@ -71,7 +82,7 @@ func (s *Server) buildSourcePage(w http.ResponseWriter, r *http.Request) (*sourc
 		dto.Lines = renderSourceLines(source, file.Blocks)
 		// Compare against the file at the previous baseline commit to flag
 		// regressions and show a coverage delta.
-		if base := s.baseFileFor(r.Context(), repo, upload, file.Path); base != nil {
+		if base != nil {
 			markNewlyUncovered(dto.Lines, base.Blocks)
 			dto.Delta = new(file.Pct - base.Pct)
 		}

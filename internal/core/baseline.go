@@ -84,13 +84,10 @@ func ReportBaseline(reports []*store.CommitReport) (current, base *store.CommitR
 	return reports[0], base
 }
 
-// branchUploads is the one read UploadBaseline needs.
-type branchUploads interface {
-	ListBranchUploads(ctx context.Context, repoID int64, branch string, limit int) ([]*store.Upload, error)
+// passedUploads is the one read UploadBaseline needs.
+type passedUploads interface {
+	LatestPassedUpload(ctx context.Context, repoID int64, branch string, beforeID int64, excludeCommit string) (*store.Upload, error)
 }
-
-// uploadBaselineScan bounds how far back UploadBaseline reads uploads.
-const uploadBaselineScan = 60
 
 // UploadBaseline is deltaBase at upload granularity, for the pages that
 // compare one upload's files with an earlier one: the newest earlier
@@ -98,24 +95,13 @@ const uploadBaselineScan = 60
 // default branch's latest passing upload for PR and feature-branch builds.
 // nil when there is nothing to compare against, or the read fails — the
 // comparison is decoration, never worth failing a page over.
-func UploadBaseline(ctx context.Context, uploads branchUploads, repo *store.Repo, u *store.Upload) *store.Upload {
-	pick := func(branch string, ok func(*store.Upload) bool) *store.Upload {
-		ups, err := uploads.ListBranchUploads(ctx, repo.ID, branch, uploadBaselineScan)
-		if err != nil {
-			return nil
-		}
-		if i := slices.IndexFunc(ups, ok); i >= 0 {
-			return ups[i]
-		}
-		return nil
+func UploadBaseline(ctx context.Context, uploads passedUploads, repo *store.Repo, u *store.Upload) *store.Upload {
+	base, err := uploads.LatestPassedUpload(ctx, repo.ID, u.Branch, u.ID, "")
+	if err != nil && u.Branch != repo.DefaultBranch {
+		base, err = uploads.LatestPassedUpload(ctx, repo.ID, repo.DefaultBranch, 0, u.CommitSHA)
 	}
-	base := pick(u.Branch, func(prev *store.Upload) bool {
-		return prev.ID < u.ID && prev.PRID == "" && !prev.GateFailed
-	})
-	if base == nil && u.Branch != repo.DefaultBranch {
-		base = pick(repo.DefaultBranch, func(prev *store.Upload) bool {
-			return prev.CommitSHA != u.CommitSHA && prev.PRID == "" && !prev.GateFailed
-		})
+	if err != nil {
+		return nil
 	}
 	return base
 }
