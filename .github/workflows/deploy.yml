@@ -20,6 +20,12 @@ name: deploy
 # reviewer is the human approval every deploy waits for. The AWS side is
 # an OIDC role that may do only what a deploy needs: register a task
 # definition and update the one service. Setup is in deploy/README.md.
+#
+# Once the app is live on the tag, docs.gocov.dev follows it: the docs
+# job moves the docs-live branch to the tag, and Cloudflare Workers Builds
+# (production branch docs-live, not main) builds and publishes the site
+# from there. The docs never describe a release the app is not running
+# yet, and a rollback takes them back with it.
 
 on:
   workflow_call:
@@ -208,3 +214,34 @@ jobs:
             -commit "$(git rev-parse HEAD)" \
             -branch main \
             coverage.out
+
+  docs:
+    # After the rollout and smoke tests, so it rides the same approval. A
+    # job of its own: branch write access stays out of the job that holds
+    # the AWS role.
+    needs: deploy
+    runs-on: ubuntu-latest
+    concurrency:
+      group: docs-live
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Point docs-live at the tag
+        # Force-moved, not fast-forwarded: a rollback moves it backwards.
+        # Created on first use.
+        run: |
+          set -euo pipefail
+          sha=$(gh api "repos/$REPO/commits/$TAG" --jq .sha)
+          if gh api "repos/$REPO/git/ref/heads/docs-live" >/dev/null 2>&1; then
+            gh api -X PATCH "repos/$REPO/git/refs/heads/docs-live" \
+              -f sha="$sha" -F force=true --jq .object.sha
+          else
+            gh api -X POST "repos/$REPO/git/refs" \
+              -f ref=refs/heads/docs-live -f sha="$sha" --jq .object.sha
+          fi
+          echo "docs-live -> $TAG ($sha)"
