@@ -54,25 +54,16 @@ func (p *Pipeline) Recompute(ctx context.Context, repo *store.Repo, u *store.Upl
 			return fmt.Errorf("loading commit parts: %w", err)
 		}
 
-		profiles := make([]*profile.Profile, 0, len(parts))
 		diffs := make([]*diffcov.Result, 0, len(parts))
 		for _, p := range parts {
-			files, err := tx.UploadFiles(ctx, p.ID)
-			if err != nil {
-				return fmt.Errorf("loading part files: %w", err)
-			}
-			prof := &profile.Profile{Files: make([]profile.File, 0, len(files))}
-			for _, f := range files {
-				prof.Files = append(prof.Files, profile.File{Path: f.Path, Blocks: f.Blocks})
-			}
-			profiles = append(profiles, prof)
 			if p.DiffCoverage != nil {
 				diffs = append(diffs, p.DiffCoverage)
 			}
 		}
-
-		merged := profile.Merge(profiles...)
-		covered, total := merged.Coverage()
+		covered, total, err := mergedCoverage(ctx, tx, parts)
+		if err != nil {
+			return err
+		}
 		totalPct := profile.Percent(covered, total)
 		mergedDiff, diffConflicts := diffcov.Merge(diffs...)
 		var warnings []string
@@ -139,4 +130,30 @@ func (p *Pipeline) Recompute(ctx context.Context, repo *store.Repo, u *store.Upl
 		return nil, err
 	}
 	return result, nil
+}
+
+// mergedCoverage counts the covered and total statements of the parts
+// merged together. A lone part is its own merge: every parser keys blocks
+// by position and files by path, so merging one profile changes nothing,
+// and its upload row already carries the totals — the common single-part
+// commit reads no files at all. Several parts are read in one query and
+// merged, so a block two parts both report counts once.
+func mergedCoverage(ctx context.Context, tx store.CommitTx, parts []*store.Upload) (covered, total int64, err error) {
+	if len(parts) == 1 {
+		return parts[0].CoveredStmts, parts[0].TotalStmts, nil
+	}
+	ids := make([]int64, len(parts))
+	for i, p := range parts {
+		ids[i] = p.ID
+	}
+	files, err := tx.PartFiles(ctx, ids)
+	if err != nil {
+		return 0, 0, fmt.Errorf("loading part files: %w", err)
+	}
+	all := &profile.Profile{Files: make([]profile.File, 0, len(files))}
+	for _, f := range files {
+		all.Files = append(all.Files, profile.File{Path: f.Path, Blocks: f.Blocks})
+	}
+	covered, total = profile.Merge(all).Coverage()
+	return covered, total, nil
 }

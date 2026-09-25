@@ -838,9 +838,15 @@ func (s *Store) UploadFiles(ctx context.Context, uploadID int64) ([]*store.Uploa
 }
 
 func uploadFiles(ctx context.Context, q querier, uploadID int64) ([]*store.UploadFile, error) {
-	rows, err := q.Query(ctx, `
+	return queryUploadFiles(ctx, q, `
 		SELECT upload_id, path, pct, covered_stmts, total_stmts, blocks
 		FROM upload_files WHERE upload_id = $1 ORDER BY path`, uploadID)
+}
+
+// queryUploadFiles runs a query over upload_files' columns and decodes
+// every row's blocks.
+func queryUploadFiles(ctx context.Context, q querier, sql string, args ...any) ([]*store.UploadFile, error) {
+	rows, err := q.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -853,7 +859,7 @@ func uploadFiles(ctx context.Context, q querier, uploadID int64) ([]*store.Uploa
 			return nil, err
 		}
 		if err := json.Unmarshal(blocks, &f.Blocks); err != nil {
-			return nil, fmt.Errorf("upload %d file %s: bad blocks: %w", uploadID, f.Path, err)
+			return nil, fmt.Errorf("upload %d file %s: bad blocks: %w", f.UploadID, f.Path, err)
 		}
 		out = append(out, &f)
 	}
@@ -928,8 +934,10 @@ func (c *commitReportTx) LatestUploadsPerPart(ctx context.Context, repoID int64,
 	return c.s.latestUploadsPerPart(ctx, c.tx, repoID, commitSHA)
 }
 
-func (c *commitReportTx) UploadFiles(ctx context.Context, uploadID int64) ([]*store.UploadFile, error) {
-	return uploadFiles(ctx, c.tx, uploadID)
+func (c *commitReportTx) PartFiles(ctx context.Context, uploadIDs []int64) ([]*store.UploadFile, error) {
+	return queryUploadFiles(ctx, c.tx, `
+		SELECT upload_id, path, pct, covered_stmts, total_stmts, blocks
+		FROM upload_files WHERE upload_id = ANY($1) ORDER BY upload_id, path`, uploadIDs)
 }
 
 func (c *commitReportTx) LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*store.CommitReport, error) {

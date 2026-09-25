@@ -1532,3 +1532,50 @@ func TestWorkspaceGrantStaysOnItsForge(t *testing.T) {
 		t.Errorf("grant after refused writes = %+v, want it untouched", got.Grant)
 	}
 }
+
+func TestPartFilesReadsEveryPartAtOnce(t *testing.T) {
+	st := newTestStore(t)
+	ctx := t.Context()
+	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	block := []profile.Block{{StartLine: 1, EndLine: 2, NumStmts: 1, Count: 1}}
+	var ids []int64
+	for _, part := range []string{"backend", "frontend", "empty"} {
+		u := &store.Upload{RepoID: repo.ID, CommitSHA: "c1", Branch: "main", Format: "go", Part: part}
+		var files []*store.UploadFile
+		if part != "empty" {
+			files = []*store.UploadFile{
+				{Path: part + "/b.go", Blocks: block},
+				{Path: part + "/a.go", Blocks: block},
+			}
+		}
+		if err := st.CreateUpload(ctx, u, files); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, u.ID)
+	}
+
+	var got []string
+	err := st.WithCommitReportTx(ctx, repo.ID, "c1", func(ctx context.Context, tx store.CommitTx) error {
+		files, err := tx.PartFiles(ctx, ids)
+		for _, f := range files {
+			if len(f.Blocks) != 1 {
+				t.Errorf("%s: %d blocks, want 1", f.Path, len(f.Blocks))
+			}
+			got = append(got, fmt.Sprintf("%d:%s", f.UploadID, f.Path))
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		fmt.Sprintf("%d:backend/a.go", ids[0]), fmt.Sprintf("%d:backend/b.go", ids[0]),
+		fmt.Sprintf("%d:frontend/a.go", ids[1]), fmt.Sprintf("%d:frontend/b.go", ids[1]),
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("PartFiles = %v, want %v", got, want)
+	}
+}
