@@ -67,6 +67,37 @@ func TestAPIRepoTrendSkipsPRBuilds(t *testing.T) {
 	}
 }
 
+// On a feature branch the PR's builds are the branch's history: the trend
+// plots them with the branch's own pushes, and the summary reads the newest
+// of them. What it is measured against is still a build of the branch
+// itself — never a PR build, as for the pipeline's own delta and the files
+// card below it.
+func TestAPIRepoFeatureBranchCarriesItsPRBuilds(t *testing.T) {
+	f := newFixture(t, nil)
+	doUpload(t, f, "secret-token", map[string]string{"commit": "f1", "branch": "feat"}, testProfile) // push build
+	doUpload(t, f, "secret-token", map[string]string{"commit": "p1", "branch": "feat", "pr_id": "7"}, testProfile)
+	doUpload(t, f, "secret-token", map[string]string{"commit": "p2", "branch": "feat", "pr_id": "7"},
+		"mode: set\nexample.com/m/a.go:1.1,5.2 10 3\n") // 100%
+
+	got := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets?branch=feat"))
+	var trend []string
+	for _, p := range got.Trend {
+		trend = append(trend, p.SHA)
+	}
+	if !slices.Equal(trend, []string{"f1", "p1", "p2"}) {
+		t.Errorf("trend = %v, want the push and both PR builds oldest first", trend)
+	}
+	if got.Summary == nil || got.Summary.Commit.SHA != "p2" {
+		t.Fatalf("summary = %+v, want the newest build p2", got.Summary)
+	}
+	if base := got.Summary.Verdict.Base; base == nil || base.SHA != "f1" {
+		t.Errorf("compared to %+v, want the branch's own push build f1, not the PR build p1", base)
+	}
+	if got.Files == nil || !got.Files.HasBase {
+		t.Errorf("files = %+v, want them compared against a baseline too", got.Files)
+	}
+}
+
 func TestAPIRepoPage(t *testing.T) {
 	f := newFixture(t, nil)
 	f.repo.Gate = store.Gate{MinCoverage: new(float64(50))}

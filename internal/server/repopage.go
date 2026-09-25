@@ -135,12 +135,10 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 	if dto.Branches == nil {
 		dto.Branches = []string{}
 	}
-	// The trend reads oldest first and skips PR reports, the same series
-	// the chart plots.
+	// The trend reads oldest first. It is the branch's history as the store
+	// keeps it — the default branch's without PR builds, a feature branch's
+	// with its PR's builds — the same reports the summary above describes.
 	for _, report := range slices.Backward(trendReports) {
-		if report.PRID != "" {
-			continue
-		}
 		dto.Trend = append(dto.Trend, trendPointDTO{
 			UploadID:   report.UploadID,
 			SHA:        report.CommitSHA,

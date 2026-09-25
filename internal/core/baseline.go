@@ -11,7 +11,10 @@
 // falling back to the default branch for a branch with none yet
 // (deltaBase, UploadBaseline), or on a branch's trend its previous passing
 // report (ReportBaseline). Gate-failing rows never serve as a baseline, so
-// re-running CI cannot launder a failure into the comparison.
+// re-running CI cannot launder a failure into the comparison, and neither
+// do PR builds: a feature branch's history includes its PR's builds, but
+// what the branch is measured against is always a build of the branch
+// itself.
 
 package core
 
@@ -69,13 +72,13 @@ func deltaBase(ctx context.Context, reports passedReports, repo *store.Repo, bra
 
 // ReportBaseline pairs a branch's newest merged report (reports come newest
 // first) with the one it is compared against on the branch's trend: the
-// most recent gate-passing report before it. base is nil when none of the
-// given reports qualifies.
+// most recent gate-passing, non-PR report before it. base is nil when none
+// of the given reports qualifies.
 func ReportBaseline(reports []*store.CommitReport) (current, base *store.CommitReport) {
 	if len(reports) == 0 {
 		return nil, nil
 	}
-	if i := slices.IndexFunc(reports[1:], func(cr *store.CommitReport) bool { return !cr.GateFailed }); i >= 0 {
+	if i := slices.IndexFunc(reports[1:], func(cr *store.CommitReport) bool { return cr.PRID == "" && !cr.GateFailed }); i >= 0 {
 		base = reports[1+i]
 	}
 	return reports[0], base

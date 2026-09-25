@@ -389,17 +389,15 @@ func attnRank(cause string) int {
 	return 1
 }
 
-// sparkSeries is a repo's recent branch coverage, oldest first: the
-// points the dashboard plots as a sparkline and hands the app to draw its
-// own. PR reports are excluded — the series follows the branch's own
-// commits — and only the last dozen points are kept, since older ones
-// crowd the glyph. Never nil: a repo without reports plots an empty series.
+// sparkSeries is a repo's recent default-branch coverage, oldest first:
+// the points the dashboard plots as a sparkline and hands the app to draw
+// its own. The reports are DefaultBranchReports', so no PR build is among
+// them; only the last dozen points are kept, since older ones crowd the
+// glyph. Never nil: a repo without reports plots an empty series.
 func sparkSeries(reports []*store.CommitReport) []float64 {
 	series := []float64{}
 	for _, report := range slices.Backward(reports) {
-		if report.PRID == "" {
-			series = append(series, report.TotalPct)
-		}
+		series = append(series, report.TotalPct)
 	}
 	if len(series) > 12 {
 		series = series[len(series)-12:]
