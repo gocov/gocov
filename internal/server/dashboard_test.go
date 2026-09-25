@@ -202,3 +202,28 @@ func TestAPIDashboardEmpty(t *testing.T) {
 		t.Error("a signed-in user may register a workspace")
 	}
 }
+
+// A fork PR opened from the fork's "main" uploads with branch "main". It is
+// not the repo's main: the dashboard row, the repo page and the badge all
+// keep reading the repo's own last main build.
+func TestForkPRNamedLikeTheDefaultBranchIsNotItsHistory(t *testing.T) {
+	f := newFixture(t, nil)
+	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile) // 80%
+	doUpload(t, f, "secret-token", map[string]string{"commit": "p1", "branch": "main", "pr_id": "7"},
+		"mode: set\nexample.com/m/a.go:1.1,5.2 10 0\n") // 0%, from a fork's main
+
+	dash := decodeJSON[dashboardDTO](t, get(f, "/api/ui/dashboard"))
+	if len(dash.Repos) != 1 || dash.Repos[0].Coverage == nil || *dash.Repos[0].Coverage != 80 {
+		t.Errorf("dashboard row = %+v, want main's own 80%%", dash.Repos)
+	}
+	if dash.Current == nil || dash.Current.Coverage == nil || *dash.Current.Coverage != 80 {
+		t.Errorf("workspace rollup = %+v, want 80%%", dash.Current)
+	}
+	repo := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets"))
+	if repo.Summary == nil || repo.Summary.Commit.SHA != "c1" {
+		t.Errorf("repo page summary = %+v, want commit c1", repo.Summary)
+	}
+	if body := get(f, "/badge/bitbucket/acme/widgets.svg").Body.String(); !strings.Contains(body, "80.0%") {
+		t.Errorf("badge = %s, want 80.0%%", body)
+	}
+}

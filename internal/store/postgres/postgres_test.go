@@ -1417,10 +1417,12 @@ func TestTokenlessClaims(t *testing.T) {
 	}
 }
 
-// LatestNonPRCommitReport skips PR-build reports (the badge series), and
+// The default branch's history leaves PR-build reports out — in
+// LatestDefaultBranchReports (the badge, the dashboard) and
+// ListBranchCommitReports (the trend, the repo page) — and
 // LatestPassedCommitReport does the same for the delta/gate baseline: a
-// fork PR whose head branch is named like the default branch must not
-// feed either.
+// fork PR whose head branch is named like the default branch must feed
+// none of them. On a feature branch a PR's builds are its history.
 func TestCommitReportsExcludePRBuilds(t *testing.T) {
 	st := newTestStore(t)
 	ctx := t.Context()
@@ -1438,12 +1440,29 @@ func TestCommitReportsExcludePRBuilds(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := st.LatestNonPRCommitReport(ctx, repo.ID, "main")
+	latestMain, err := st.LatestDefaultBranchReports(ctx, []int64{repo.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.CommitSHA != "c1" {
-		t.Errorf("latest non-PR report = %s, want c1", got.CommitSHA)
+	if got := latestMain[repo.ID]; got == nil || got.CommitSHA != "c1" {
+		t.Errorf("latest default-branch report = %+v, want c1", got)
+	}
+	featReport := &store.CommitReport{RepoID: repo.ID, CommitSHA: "f1", Branch: "feat", PRID: "7", TotalPct: 50}
+	if err := st.UpsertCommitReport(ctx, featReport); err != nil {
+		t.Fatal(err)
+	}
+	for branch, want := range map[string][]string{"main": {"c1"}, "feat": {"f1"}} {
+		reports, err := st.ListBranchCommitReports(ctx, repo.ID, branch, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, cr := range reports {
+			got = append(got, cr.CommitSHA)
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("ListBranchCommitReports(%s) = %v, want %v", branch, got, want)
+		}
 	}
 	base, err := st.LatestPassedCommitReport(ctx, repo.ID, "main", "c3")
 	if err != nil {

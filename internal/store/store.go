@@ -433,17 +433,14 @@ type Store interface {
 	UpsertCommitReport(ctx context.Context, cr *CommitReport) error
 	// CommitReport returns the merged report for a commit, or ErrNotFound.
 	CommitReport(ctx context.Context, repoID int64, commitSHA string) (*CommitReport, error)
-	// LatestCommitReport returns the most recent merged report on a branch.
-	// LatestDefaultBranchReports is LatestCommitReport on each repo's own
-	// default branch, for many repos in one read. Repos without a report
-	// are absent from the map.
+	// LatestDefaultBranchReports returns each repo's newest merged report
+	// of its default branch's own history, for many repos in one read.
+	// Repos without one are absent from the map. PR-build reports never
+	// count: a PR can only reach the default branch's name from a fork (a
+	// fork's "main"), and it must not stand in for the repo's own branch.
 	LatestDefaultBranchReports(ctx context.Context, repoIDs []int64) (map[int64]*CommitReport, error)
+	// LatestCommitReport returns the most recent merged report on a branch.
 	LatestCommitReport(ctx context.Context, repoID int64, branch string) (*CommitReport, error)
-	// LatestNonPRCommitReport is LatestCommitReport restricted to reports
-	// that did not come from a pull request build. The badge reads it: a
-	// PR whose head branch shares the default branch's name — a fork's
-	// "main", say — must not take over the repo's headline number.
-	LatestNonPRCommitReport(ctx context.Context, repoID int64, branch string) (*CommitReport, error)
 	// LatestPassedCommitReport returns the most recent gate-passing merged
 	// report on a branch, skipping excludeCommit (the commit being uploaded,
 	// whose own in-progress report must not serve as its baseline). Used as
@@ -452,7 +449,10 @@ type Store interface {
 	// to carry the branch's name.
 	LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*CommitReport, error)
 	// ListBranchCommitReports returns merged reports on a branch newest
-	// first; limit <= 0 means all. Feeds the coverage trend.
+	// first; limit <= 0 means all. Feeds the coverage trend. On the repo's
+	// default branch PR-build reports are left out, as in
+	// LatestDefaultBranchReports; on any other branch a PR's builds are
+	// the branch's own history and stay.
 	ListBranchCommitReports(ctx context.Context, repoID int64, branch string, limit int) ([]*CommitReport, error)
 	// TryPushStatus serializes forge status/PR-comment pushes for one commit
 	// and runs push only if version is at least the last successfully pushed

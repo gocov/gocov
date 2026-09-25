@@ -216,3 +216,33 @@ func TestLatestDefaultBranchReports(t *testing.T) {
 		t.Errorf("LatestDefaultBranchReports = %v, want a2 for acme/a and b1 for acme/b only", got)
 	}
 }
+
+// Mirrors postgres: PR-build reports are not the default branch's history,
+// while a feature branch keeps its PR builds.
+func TestDefaultBranchHistoryExcludesPRBuilds(t *testing.T) {
+	ctx := context.Background()
+	s := New()
+	repo := &store.Repo{Forge: "github", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := s.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	for _, cr := range []*store.CommitReport{
+		{RepoID: repo.ID, CommitSHA: "c1", Branch: "main"},
+		{RepoID: repo.ID, CommitSHA: "p1", Branch: "main", PRID: "7"},
+		{RepoID: repo.ID, CommitSHA: "f1", Branch: "feat", PRID: "8"},
+	} {
+		if err := s.UpsertCommitReport(ctx, cr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	latest, _ := s.LatestDefaultBranchReports(ctx, []int64{repo.ID})
+	if got := latest[repo.ID]; got == nil || got.CommitSHA != "c1" {
+		t.Errorf("latest default-branch report = %+v, want c1", got)
+	}
+	for branch, want := range map[string]string{"main": "c1", "feat": "f1"} {
+		reports, _ := s.ListBranchCommitReports(ctx, repo.ID, branch, 0)
+		if len(reports) != 1 || reports[0].CommitSHA != want {
+			t.Errorf("ListBranchCommitReports(%s) = %v, want only %s", branch, reports, want)
+		}
+	}
+}

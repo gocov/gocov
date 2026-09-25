@@ -728,15 +728,11 @@ func (s *Store) LatestDefaultBranchReports(ctx context.Context, repoIDs []int64)
 		if !ok {
 			continue
 		}
-		if cr, err := s.LatestCommitReport(ctx, id, branch); err == nil {
+		if cr, err := s.latestCommitReport(id, branch, "", false, true); err == nil {
 			out[id] = cr
 		}
 	}
 	return out, nil
-}
-
-func (s *Store) LatestNonPRCommitReport(_ context.Context, repoID int64, branch string) (*store.CommitReport, error) {
-	return s.latestCommitReport(repoID, branch, "", false, true)
 }
 
 func (s *Store) LatestPassedCommitReport(_ context.Context, repoID int64, branch, excludeCommit string) (*store.CommitReport, error) {
@@ -814,9 +810,14 @@ func (s *Store) CommitParts(_ context.Context, repoID int64, commitSHA string) (
 func (s *Store) ListBranchCommitReports(_ context.Context, repoID int64, branch string, limit int) ([]*store.CommitReport, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Mirror postgres: the default branch's history has no PR builds.
+	defaultBranch := false
+	if repo, ok := s.repos[repoID]; ok {
+		defaultBranch = branch == repo.DefaultBranch
+	}
 	var out []*store.CommitReport
 	for _, cr := range s.reports {
-		if cr.RepoID == repoID && cr.Branch == branch {
+		if cr.RepoID == repoID && cr.Branch == branch && !(defaultBranch && cr.PRID != "") {
 			out = append(out, copyCommitReport(cr))
 		}
 	}
