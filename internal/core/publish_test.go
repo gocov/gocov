@@ -1,11 +1,17 @@
 package core
 
 import (
+	"context"
+	"io"
+	"log/slog"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/gocov/gocov/internal/diffcov"
 	"github.com/gocov/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/forge/fake"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -141,3 +147,50 @@ func TestInsightsFullyCoveredFilesClaimNoDataFields(t *testing.T) {
 
 // seedRepoUpload registers a repo and one upload with a single file, so the
 // repo, upload and source pages all have something to render.
+
+// barrierForge holds its build status and report publish until both are in
+// flight, so a push that ran the surfaces one after another would stall.
+type barrierForge struct {
+	*fake.Forge
+	arrived sync.WaitGroup
+}
+
+func (b *barrierForge) wait(ctx context.Context) error {
+	b.arrived.Done()
+	done := make(chan struct{})
+	go func() { b.arrived.Wait(); close(done) }()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (b *barrierForge) PostBuildStatus(ctx context.Context, repoSlug, commitSHA string, status forge.BuildStatus) error {
+	if err := b.wait(ctx); err != nil {
+		return err
+	}
+	return b.Forge.PostBuildStatus(ctx, repoSlug, commitSHA, status)
+}
+
+func (b *barrierForge) PublishReport(ctx context.Context, repoSlug, commitSHA string, report forge.Report, annotations []forge.Annotation) error {
+	if err := b.wait(ctx); err != nil {
+		return err
+	}
+	return b.Forge.PublishReport(ctx, repoSlug, commitSHA, report, annotations)
+}
+
+func TestPushSurfacesRunConcurrently(t *testing.T) {
+	fg := &barrierForge{Forge: &fake.Forge{}}
+	fg.arrived.Add(2)
+	p := &Pipeline{BaseURL: "https://cov.example.com", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	res := p.pushSurfaces(ctx, fg, nil, &store.Repo{Slug: "acme/api"},
+		&store.Upload{CommitSHA: "abc", PRID: "7", TotalPct: 80}, nil, Verdict{})
+	if res.BuildStatus != "posted" || res.CodeInsights != "posted" || res.PRComment != "posted" {
+		t.Fatalf("push result = %+v, want every surface posted", res)
+	}
+}
