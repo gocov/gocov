@@ -237,11 +237,7 @@ func (s *Server) oidcResolveBitbucket(w http.ResponseWriter, r *http.Request, to
 	// token replayed with a victim's slug cannot leave a repo row behind.
 	var fg forge.Forge
 	if repo != nil {
-		var err error
-		if fg, err = s.forges.For(ctx, repo); err != nil {
-			s.internalError(w, "resolving forge connection", err)
-			return nil, false
-		}
+		fg = s.forges.For(ctx, repo)
 	} else {
 		fg = s.forges.Connected(ctx, ws, "bitbucket")
 	}

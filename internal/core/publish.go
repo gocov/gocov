@@ -369,14 +369,14 @@ type PushResult struct {
 // not older than the last successful one, and records the version only
 // after the push succeeds — so a failed push doesn't burn the version and
 // a later part retries.
-func (p *Pipeline) Push(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, upload *store.Upload, rc *Merged) PushResult {
+func (p *Pipeline) Push(ctx context.Context, fg forge.Forge, repo *store.Repo, upload *store.Upload, rc *Merged) PushResult {
 	merged, mergedDelta, mergedGate := rc.Upload, rc.Delta, rc.Verdict
 	var res PushResult
 
 	pushCtx, cancel := context.WithTimeout(ctx, statusPushTimeout)
 	defer cancel()
 	pushed, err := p.Store.TryPushStatus(pushCtx, repo.ID, upload.CommitSHA, upload.ID, func(ctx context.Context) error {
-		res = p.pushSurfaces(ctx, fg, fgErr, repo, merged, mergedDelta, mergedGate)
+		res = p.pushSurfaces(ctx, fg, repo, merged, mergedDelta, mergedGate)
 		// The build status gates merges; if it didn't post, signal failure so
 		// the version isn't advanced and a later part retries. Insights and
 		// PR comment are best effort and don't hold back the version.
@@ -406,14 +406,10 @@ func (p *Pipeline) Push(ctx context.Context, fg forge.Forge, fgErr error, repo *
 // They are independent requests (forge clients hold no mutable state) and
 // each writes only its own result field, so they run concurrently: the
 // push, which holds the commit's status lock, takes as long as the slowest
-// surface rather than the sum of all three. Without one — the lookup failed, or the workspace has no connection —
-// no surface can do better than the lookup did, so all of them report
-// its outcome.
-func (p *Pipeline) pushSurfaces(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, u *store.Upload, deltaPct *float64, gate Verdict) PushResult {
-	switch {
-	case fgErr != nil:
-		return everySurface("error: "+fgErr.Error(), u.PRID != "")
-	case fg == nil:
+// surface rather than the sum of all three. Without a client — the
+// workspace has no working connection — every surface is skipped.
+func (p *Pipeline) pushSurfaces(ctx context.Context, fg forge.Forge, repo *store.Repo, u *store.Upload, deltaPct *float64, gate Verdict) PushResult {
+	if fg == nil {
 		p.Log.Debug("code insights skipped: no forge connection", "repo", repo.Slug)
 		return everySurface("skipped", u.PRID != "")
 	}

@@ -188,7 +188,7 @@ func TestPushSurfacesRunConcurrently(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
-	res := p.pushSurfaces(ctx, fg, nil, &store.Repo{Slug: "acme/api"},
+	res := p.pushSurfaces(ctx, fg, &store.Repo{Slug: "acme/api"},
 		&store.Upload{CommitSHA: "abc", PRID: "7", TotalPct: 80}, nil, Verdict{})
 	if res.BuildStatus != "posted" || res.CodeInsights != "posted" || res.PRComment != "posted" {
 		t.Fatalf("push result = %+v, want every surface posted", res)

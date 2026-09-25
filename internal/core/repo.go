@@ -231,8 +231,8 @@ func (p *Pipeline) endVisibilityRefresh(repoID int64) {
 // verified before they can open pages. Without a connection nothing
 // changes: the cached answer keeps its age.
 func (p *Pipeline) ReverifyVisibility(ctx context.Context, repo *store.Repo) {
-	fg, err := p.forgeFor(ctx, repo)
-	if err != nil || fg == nil {
+	fg := p.forgeFor(ctx, repo)
+	if fg == nil {
 		return
 	}
 	p.refreshVisibilityOnce(ctx, fg, repo)
