@@ -31,6 +31,7 @@ session cookie.
 cd web
 npm ci
 npm test           # unit tests
+npm run coverage   # the same, plus coverage/lcov.info (what CI uploads to gocov)
 npm run build      # typecheck, then bundle into internal/webui/dist
 ```
 

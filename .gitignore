@@ -30,3 +30,4 @@ deploy/certs/
 /web/.design-sync/.cache/
 /web/.design-sync/learnings/
 /web/.design-sync/node_modules
+/web/coverage/

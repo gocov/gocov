@@ -26,5 +26,20 @@ export default defineConfig(({ command }) => ({
   server: { proxy: Object.fromEntries(serverPaths.map((p) => [p, { target: backend, changeOrigin: false }])) },
   // vmThreads builds jsdom once per worker instead of once per test file,
   // while still giving each file a fresh module graph and globals.
-  test: { environment: "jsdom", pool: "vmThreads", globals: true, setupFiles: ["./src/test/setup.ts"], css: false },
+  test: {
+    environment: "jsdom",
+    pool: "vmThreads",
+    globals: true,
+    setupFiles: ["./src/test/setup.ts"],
+    css: false,
+    // `npm run coverage` (CI uploads it to gocov as the "web" part). LCOV
+    // paths are written relative to the repo root (web/src/...) so they
+    // match the forge's paths with no -path-prefix.
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: ["src/**/*.test.{ts,tsx}", "src/test/**"],
+      reporter: ["text-summary", ["lcov", { projectRoot: ".." }]],
+    },
+  },
 }));

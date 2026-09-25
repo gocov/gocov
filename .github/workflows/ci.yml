@@ -47,6 +47,8 @@ jobs:
         uses: gocov/gocov-action@v1
         with:
           files: coverage.out
+          # One part of the commit's report; the web job uploads the other.
+          part: go
           # No token: a push or same-repo PR uploads via OIDC (id-token
           # above); a fork PR, which gets no id-token, falls back to the
           # App-verified tokenless path automatically.
@@ -56,6 +58,10 @@ jobs:
   # embeds a placeholder and its tests still pass.
   web:
     runs-on: ubuntu-latest
+    # For the tokenless OIDC coverage upload, as in the test job.
+    permissions:
+      contents: read
+      id-token: write
     defaults:
       run:
         working-directory: web
@@ -67,8 +73,15 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
-      - name: Test
-        run: npm test
+      - name: Test (with coverage)
+        run: npm run coverage
+      # Merged with the Go job's part into one report per commit. The LCOV
+      # paths are already repo-relative (web/src/...), see vite.config.ts.
+      - name: Upload coverage to gocov
+        uses: gocov/gocov-action@v1
+        with:
+          files: web/coverage/lcov.info
+          part: web
       - name: Typecheck and build
         run: npm run build
 
