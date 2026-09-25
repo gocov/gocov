@@ -282,15 +282,23 @@ func groupDTO(g *dashGroup, latest map[int64]*store.CommitReport) wsGroupDTO {
 
 // fillCurrent builds the selected group's repo rows, the stat rollup and the
 // needs-attention list. Repos in the selected group get the full treatment
-// (delta + sparkline), reading each branch's recent reports once.
+// (delta + sparkline), from their default branches' recent reports, read
+// for the whole group at once.
 func (s *Server) fillCurrent(r *http.Request, dto *dashboardDTO, cur *dashGroup) {
-	ctx := r.Context()
+	ids := make([]int64, len(cur.repos))
+	for i, repo := range cur.repos {
+		ids[i] = repo.ID
+	}
+	history, err := s.store.DefaultBranchReports(r.Context(), ids, trendReportLimit)
+	if err != nil {
+		// Without history no row can be drawn, as when each repo's own
+		// read used to fail; the stats below still describe the group.
+		s.log.Warn("loading dashboard rows", "err", err)
+		cur = &dashGroup{key: cur.key, ws: cur.ws}
+	}
 	var covered, total int64
 	for _, repo := range cur.repos {
-		reports, err := s.store.ListBranchCommitReports(ctx, repo.ID, repo.DefaultBranch, trendReportLimit)
-		if err != nil {
-			continue
-		}
+		reports := history[repo.ID]
 		row := dashRepoDTO{
 			Forge:  repo.Forge,
 			Slug:   repo.Slug,

@@ -825,6 +825,30 @@ func (s *Store) ListBranchCommitReports(_ context.Context, repoID int64, branch 
 	return atMost(out, limit), nil
 }
 
+func (s *Store) DefaultBranchReports(ctx context.Context, repoIDs []int64, limit int) (map[int64][]*store.CommitReport, error) {
+	out := map[int64][]*store.CommitReport{}
+	for _, id := range repoIDs {
+		s.mu.Lock()
+		repo, ok := s.repos[id]
+		s.mu.Unlock()
+		if !ok {
+			continue
+		}
+		reports, err := s.ListBranchCommitReports(ctx, id, repo.DefaultBranch, limit)
+		if err != nil {
+			return nil, err
+		}
+		if len(reports) == 0 {
+			continue
+		}
+		for _, cr := range reports {
+			cr.DiffCoverage = nil // mirror postgres: not loaded
+		}
+		out[id] = reports
+	}
+	return out, nil
+}
+
 func (s *Store) ClaimTokenlessUpload(_ context.Context, repoID, runID, runAttempt int64, part string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

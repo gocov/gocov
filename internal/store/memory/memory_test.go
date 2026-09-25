@@ -7,6 +7,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/gocov/gocov/internal/diffcov"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -243,6 +244,63 @@ func TestDefaultBranchHistoryExcludesPRBuilds(t *testing.T) {
 		reports, _ := s.ListBranchCommitReports(ctx, repo.ID, branch, 0)
 		if len(reports) != 1 || reports[0].CommitSHA != want {
 			t.Errorf("ListBranchCommitReports(%s) = %v, want only %s", branch, reports, want)
+		}
+	}
+}
+
+// DefaultBranchReports reads each repo's default-branch history — no other
+// branch, no PR builds, newest first, capped per repo — in one call, and
+// leaves diff coverage unloaded.
+func TestDefaultBranchReports(t *testing.T) {
+	st := New()
+	ctx := context.Background()
+	a := &store.Repo{Forge: "github", Slug: "acme/a", Token: "ta", DefaultBranch: "main"}
+	b := &store.Repo{Forge: "github", Slug: "acme/b", Token: "tb", DefaultBranch: "trunk"}
+	c := &store.Repo{Forge: "github", Slug: "acme/c", Token: "tc", DefaultBranch: "main"}
+	for _, r := range []*store.Repo{a, b, c} {
+		if err := st.CreateRepo(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dc := &diffcov.Result{CoveredLines: 1, TotalLines: 2}
+	for _, cr := range []*store.CommitReport{
+		{RepoID: a.ID, CommitSHA: "a1", Branch: "main", DiffCoverage: dc},
+		{RepoID: a.ID, CommitSHA: "a2", Branch: "main"},
+		{RepoID: a.ID, CommitSHA: "a3", Branch: "main"},
+		{RepoID: a.ID, CommitSHA: "ap", Branch: "main", PRID: "7"},
+		{RepoID: a.ID, CommitSHA: "af", Branch: "feat"},
+		{RepoID: b.ID, CommitSHA: "b1", Branch: "trunk"},
+		{RepoID: c.ID, CommitSHA: "c1", Branch: "feat"},
+	} {
+		cr.PartCount = 1
+		if err := st.UpsertCommitReport(ctx, cr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	shas := func(reports []*store.CommitReport) []string {
+		var out []string
+		for _, cr := range reports {
+			out = append(out, cr.CommitSHA)
+		}
+		return out
+	}
+	got, err := st.DefaultBranchReports(ctx, []int64{a.ID, b.ID, c.ID, 999}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || !slices.Equal(shas(got[a.ID]), []string{"a3", "a2"}) || !slices.Equal(shas(got[b.ID]), []string{"b1"}) {
+		t.Errorf("DefaultBranchReports = a:%v b:%v (%d repos), want a3,a2 and b1 only", shas(got[a.ID]), shas(got[b.ID]), len(got))
+	}
+	all, err := st.DefaultBranchReports(ctx, []int64{a.ID}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(shas(all[a.ID]), []string{"a3", "a2", "a1"}) {
+		t.Errorf("uncapped = %v, want a3,a2,a1", shas(all[a.ID]))
+	}
+	for _, cr := range all[a.ID] {
+		if cr.DiffCoverage != nil {
+			t.Errorf("%s carries diff coverage; it is not loaded", cr.CommitSHA)
 		}
 	}
 }

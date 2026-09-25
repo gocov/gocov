@@ -1142,6 +1142,40 @@ func (s *Store) ListBranchCommitReports(ctx context.Context, repoID int64, branc
 	return collect(rows, s.scanCommitReport)
 }
 
+func (s *Store) DefaultBranchReports(ctx context.Context, repoIDs []int64, limit int) (map[int64][]*store.CommitReport, error) {
+	// One lateral index walk per repo, in one round trip. diff_coverage is
+	// the one heavy column and nothing here reads it.
+	var cols []string
+	for c := range strings.SplitSeq(commitReportCols, ",") {
+		c = strings.TrimSpace(c)
+		if c == "diff_coverage" {
+			cols = append(cols, "NULL::jsonb")
+		} else {
+			cols = append(cols, "cr."+c)
+		}
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT `+strings.Join(cols, ", ")+` FROM repos r CROSS JOIN LATERAL (
+			SELECT * FROM commit_reports
+			WHERE repo_id = r.id AND branch = r.default_branch AND pr_id = ''
+			ORDER BY id DESC LIMIT $2
+		) cr
+		WHERE r.id = ANY($1)
+		ORDER BY cr.repo_id, cr.id DESC`, repoIDs, limitArg(limit))
+	if err != nil {
+		return nil, err
+	}
+	reports, err := collect(rows, s.scanCommitReport)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int64][]*store.CommitReport)
+	for _, cr := range reports {
+		out[cr.RepoID] = append(out[cr.RepoID], cr)
+	}
+	return out, nil
+}
+
 func (s *Store) scanCommitReport(row rowScanner) (*store.CommitReport, error) {
 	var cr store.CommitReport
 	var diffCov []byte
