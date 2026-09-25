@@ -327,6 +327,10 @@ type Store interface {
 	RepoBySlug(ctx context.Context, forge, slug string) (*Repo, error)
 	RepoByToken(ctx context.Context, token string) (*Repo, error)
 	ListRepos(ctx context.Context) ([]*Repo, error)
+	// ListWorkspaceRepos lists the repos a workspace owns (Workspace.Owns):
+	// on the forge, with the slug under the prefix — projects of nested
+	// GitLab subgroups included. Ordered like ListRepos.
+	ListWorkspaceRepos(ctx context.Context, forge, prefix string) ([]*Repo, error)
 	// PublicRepoRefs returns the forge and slug of repos whose report
 	// pages are effectively public (forge-reported public, "Public
 	// reports" switch on), ordered by forge then slug and capped at
@@ -430,6 +434,10 @@ type Store interface {
 	// CommitReport returns the merged report for a commit, or ErrNotFound.
 	CommitReport(ctx context.Context, repoID int64, commitSHA string) (*CommitReport, error)
 	// LatestCommitReport returns the most recent merged report on a branch.
+	// LatestDefaultBranchReports is LatestCommitReport on each repo's own
+	// default branch, for many repos in one read. Repos without a report
+	// are absent from the map.
+	LatestDefaultBranchReports(ctx context.Context, repoIDs []int64) (map[int64]*CommitReport, error)
 	LatestCommitReport(ctx context.Context, repoID int64, branch string) (*CommitReport, error)
 	// LatestNonPRCommitReport is LatestCommitReport restricted to reports
 	// that did not come from a pull request build. The badge reads it: a

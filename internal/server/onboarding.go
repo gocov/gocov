@@ -51,14 +51,22 @@ func connectionBroken(ws *store.Workspace) bool {
 // the repo it belongs to, or nils when none has coverage yet. The page
 // and the app's poll both start from it.
 func (s *Server) latestReport(r *http.Request, repos []*store.Repo) (*store.Repo, *store.CommitReport) {
-	for _, repo := range repos {
-		rep, err := s.store.LatestCommitReport(r.Context(), repo.ID, repo.DefaultBranch)
-		if err != nil || rep == nil {
-			continue
-		}
-		return repo, rep
+	ids := make([]int64, len(repos))
+	for i, repo := range repos {
+		ids[i] = repo.ID
 	}
-	return nil, nil
+	latest, err := s.store.LatestDefaultBranchReports(r.Context(), ids)
+	if err != nil {
+		return nil, nil
+	}
+	var newest *store.Repo
+	var rep *store.CommitReport
+	for _, repo := range repos {
+		if cr := latest[repo.ID]; cr != nil && (rep == nil || cr.ID > rep.ID) {
+			newest, rep = repo, cr
+		}
+	}
+	return newest, rep
 }
 
 // reportsPostedMsg infers, from the workspace's connect state, whether the

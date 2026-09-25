@@ -1612,3 +1612,75 @@ func TestUploadFileReadsOneFile(t *testing.T) {
 		}
 	}
 }
+
+// ListWorkspaceRepos is Workspace.Owns as a query: the forge must match,
+// nested projects count, and LIKE metacharacters in a prefix are literal.
+func TestListWorkspaceRepos(t *testing.T) {
+	st := newTestStore(t)
+	ctx := t.Context()
+	for _, r := range []struct{ forge, slug string }{
+		{"gitlab", "acme/api"}, {"gitlab", "acme/team/web"}, {"gitlab", "acmeco/api"},
+		{"github", "acme/api"}, {"gitlab", "a_b/x"}, {"gitlab", "axb/x"},
+	} {
+		if err := st.CreateRepo(ctx, &store.Repo{Forge: r.forge, Slug: r.slug, Token: r.forge + r.slug, DefaultBranch: "main"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		forge, prefix string
+		want          []string
+	}{
+		{"gitlab", "acme", []string{"acme/api", "acme/team/web"}},
+		{"gitlab", "acme/team", []string{"acme/team/web"}},
+		{"github", "acme", []string{"acme/api"}},
+		{"gitlab", "a_b", []string{"a_b/x"}},
+		{"gitlab", "nobody", nil},
+	} {
+		repos, err := st.ListWorkspaceRepos(ctx, tc.forge, tc.prefix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, r := range repos {
+			got = append(got, r.Slug)
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("ListWorkspaceRepos(%s, %s) = %v, want %v", tc.forge, tc.prefix, got, tc.want)
+		}
+	}
+}
+
+// LatestDefaultBranchReports reads each repo's newest report on its own
+// default branch; a repo without one is simply absent.
+func TestLatestDefaultBranchReports(t *testing.T) {
+	st := newTestStore(t)
+	ctx := t.Context()
+	a := &store.Repo{Forge: "github", Slug: "acme/a", Token: "ta", DefaultBranch: "main"}
+	b := &store.Repo{Forge: "github", Slug: "acme/b", Token: "tb", DefaultBranch: "trunk"}
+	c := &store.Repo{Forge: "github", Slug: "acme/c", Token: "tc", DefaultBranch: "main"}
+	for _, r := range []*store.Repo{a, b, c} {
+		if err := st.CreateRepo(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, cr := range []*store.CommitReport{
+		{RepoID: a.ID, CommitSHA: "a1", Branch: "main", TotalPct: 10},
+		{RepoID: a.ID, CommitSHA: "a2", Branch: "main", TotalPct: 20},
+		{RepoID: a.ID, CommitSHA: "a3", Branch: "feat", TotalPct: 30},
+		{RepoID: b.ID, CommitSHA: "b1", Branch: "trunk", TotalPct: 40},
+		{RepoID: b.ID, CommitSHA: "b2", Branch: "main", TotalPct: 50},
+		{RepoID: c.ID, CommitSHA: "c1", Branch: "feat", TotalPct: 60},
+	} {
+		cr.PartCount = 1
+		if err := st.UpsertCommitReport(ctx, cr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := st.LatestDefaultBranchReports(ctx, []int64{a.ID, b.ID, c.ID, 999})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[a.ID] == nil || got[a.ID].CommitSHA != "a2" || got[b.ID] == nil || got[b.ID].CommitSHA != "b1" {
+		t.Errorf("LatestDefaultBranchReports = %v, want a2 for acme/a and b1 for acme/b only", got)
+	}
+}

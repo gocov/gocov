@@ -240,6 +240,15 @@ func (s *Store) ListRepos(ctx context.Context) ([]*store.Repo, error) {
 	return collect(rows, s.scanRepo)
 }
 
+func (s *Store) ListWorkspaceRepos(ctx context.Context, forge, prefix string) ([]*store.Repo, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+repoCols+` FROM repos
+		WHERE forge = $1 AND slug LIKE $2 ESCAPE '\' ORDER BY forge, slug`, forge, likePrefix(prefix)+`/%`)
+	if err != nil {
+		return nil, err
+	}
+	return collect(rows, s.scanRepo)
+}
+
 // affected turns an UPDATE or DELETE result into the Store contract: the
 // statement's own error, else store.ErrNotFound when it touched no row.
 func affected(tag pgconn.CommandTag, err error) error {
@@ -1022,6 +1031,25 @@ func (s *Store) LatestCommitReport(ctx context.Context, repoID int64, branch str
 		`SELECT `+commitReportCols+` FROM commit_reports
 		 WHERE repo_id = $1 AND branch = $2 ORDER BY id DESC LIMIT 1`,
 		repoID, branch))
+}
+
+func (s *Store) LatestDefaultBranchReports(ctx context.Context, repoIDs []int64) (map[int64]*store.CommitReport, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT ON (repo_id) `+commitReportCols+` FROM commit_reports
+		WHERE (repo_id, branch) IN (SELECT id, default_branch FROM repos WHERE id = ANY($1))
+		ORDER BY repo_id, id DESC`, repoIDs)
+	if err != nil {
+		return nil, err
+	}
+	reports, err := collect(rows, s.scanCommitReport)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int64]*store.CommitReport, len(reports))
+	for _, cr := range reports {
+		out[cr.RepoID] = cr
+	}
+	return out, nil
 }
 
 func (s *Store) LatestNonPRCommitReport(ctx context.Context, repoID int64, branch string) (*store.CommitReport, error) {
