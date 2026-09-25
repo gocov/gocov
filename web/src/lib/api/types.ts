@@ -78,9 +78,6 @@ export interface DashRepo {
 
 export interface DashStats {
   coverage: number | null;
-  gates_passing: number;
-  gates_total: number;
-  stale_count: number;
   reporting: "connected" | "not_connected" | "broken";
   /** "gocov[bot]" or the granting account; "" when not connected. */
   reporting_as: string;
@@ -220,8 +217,6 @@ export interface UploadPage {
   verdict: Verdict;
   covered_stmts: number;
   total_stmts: number;
-  file_count: number;
-  format: string;
   diff: { coverage: number; covered_lines: number; total_lines: number; changed_files: number; unmatched_files: number } | null;
   /** Always present; `files: []` when the upload has no per-file data. */
   files: FilesView;

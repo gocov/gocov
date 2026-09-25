@@ -315,11 +315,11 @@ func TestAPIUploadPage(t *testing.T) {
 	if got.Verdict.Base == nil || got.Verdict.Base.UploadID != 1 {
 		t.Errorf("base = %+v, want the first upload", got.Verdict.Base)
 	}
-	if got.CoveredStmts != 8 || got.TotalStmts != 10 || got.FileCount != 2 {
-		t.Errorf("totals = %d/%d over %d files", got.CoveredStmts, got.TotalStmts, got.FileCount)
+	if got.CoveredStmts != 8 || got.TotalStmts != 10 || len(got.Files.Files) != 2 {
+		t.Errorf("totals = %d/%d over %d files", got.CoveredStmts, got.TotalStmts, len(got.Files.Files))
 	}
-	if got.Format != "go" {
-		t.Errorf("format = %q", got.Format)
+	if got.Provenance.Format != "go" {
+		t.Errorf("format = %q", got.Provenance.Format)
 	}
 	if got.Diff != nil {
 		t.Errorf("diff = %+v, want none for a branch build", got.Diff)

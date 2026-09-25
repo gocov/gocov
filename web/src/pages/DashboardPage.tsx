@@ -7,15 +7,14 @@ import { AttentionList } from "@/components/organisms/AttentionList";
 import { ReposTable } from "@/components/organisms/ReposTable";
 import { SetupChecklist } from "@/components/organisms/SetupChecklist";
 import { WorkspaceSwitcher } from "@/components/organisms/WorkspaceSwitcher";
-import { apiPost } from "@/lib/api/client";
-import { dashboardQuery, setupQuery, setupStatusQuery, workspaceSettingsPath } from "@/lib/api/queries";
-import type { Dashboard, DashStats, TokenReveal, WorkspaceGroup } from "@/lib/api/types";
+import { dashboardQuery, postToken, setupQuery, setupStatusQuery, workspaceSettingsPath } from "@/lib/api/queries";
+import type { Dashboard, DashStats, WorkspaceGroup } from "@/lib/api/types";
 import { pct, plural } from "@/lib/format";
 import { useUrlNotice } from "@/lib/notice";
 import { readStored, writeStored } from "@/lib/storage";
 import { usePageTitle } from "@/lib/title";
 import { routes } from "@/lib/urls";
-import { attentionRows } from "@/lib/dashboard";
+import { attentionRows, repoCounts } from "@/lib/dashboard";
 
 /** The codes the connect redirects carry, said the way this page can act on them. */
 const connectNotices = {
@@ -93,10 +92,7 @@ function SetupSection({ ws, hasReports }: { ws: WorkspaceGroup; hasReports: bool
       info={info}
       status={live}
       listeningSince={listeningSince}
-      onReveal={async () => {
-        const { token } = await apiPost<TokenReveal>(workspaceSettingsPath(ws.forge, ws.prefix, "reveal-token"));
-        return token;
-      }}
+      onReveal={() => postToken(workspaceSettingsPath(ws.forge, ws.prefix, "reveal-token"))}
       onCopied={() => {
         if (listeningSince !== null) return;
         const now = Date.now();
@@ -139,6 +135,9 @@ function Workspace({ data, current }: { data: Dashboard; current: WorkspaceGroup
   const reporting = reportingStates[stats.reporting];
   const setup = setupRoute(current);
   const hasReports = repos.some((r) => r.coverage !== null);
+  // The tiles count the rows the filter tabs count: every gate is pass, fail or none.
+  const counts = repoCounts(repos);
+  const gated = counts.all - counts.nogate;
 
   return (
     <div className="stack stack-3">
@@ -175,8 +174,8 @@ function Workspace({ data, current }: { data: Dashboard; current: WorkspaceGroup
         />
         <StatTile
           label="Gates passing"
-          value={stats.gates_passing}
-          hint={`of ${stats.gates_total} with a gate${stats.stale_count > 0 ? ` · ${stats.stale_count} stale` : ""}`}
+          value={gated - counts.failing}
+          hint={`of ${gated} with a gate${counts.stale > 0 ? ` · ${counts.stale} stale` : ""}`}
         />
         <StatTile
           label="Reporting"

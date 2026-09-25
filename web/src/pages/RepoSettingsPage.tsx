@@ -7,8 +7,8 @@ import { SettingsLayout, type SettingsNavItem } from "@/components/templates/Set
 import { Checkbox, Chip, InlineCode, Mono, Notice, TextInput, Textarea } from "@/components/atoms";
 import { Breadcrumbs, Card, CopyField, FormField, PageHeader, QueryBoundary, SaveFooter } from "@/components/molecules";
 import { apiPost, errorMessage } from "@/lib/api/client";
-import { repoSettingsPath, repoSettingsQuery } from "@/lib/api/queries";
-import type { RepoSettings, RepoSettingsInput, TokenReveal } from "@/lib/api/types";
+import { postToken, repoSettingsPath, repoSettingsQuery } from "@/lib/api/queries";
+import type { RepoSettings, RepoSettingsInput } from "@/lib/api/types";
 import { useSectionSave } from "@/lib/sectionSave";
 import { ignorePatterns, patternLabel, repoInput } from "@/lib/settings";
 import { usePageTitle } from "@/lib/title";
@@ -228,12 +228,12 @@ function RepoSettingsView({ forge, slug, settings }: { forge: string; slug: stri
           serverUrl={null}
           tokenMasked={settings.token_masked}
           owner={owner}
-          onReveal={() => apiPost<TokenReveal>(repoSettingsPath(forge, slug, "reveal-token")).then((r) => r.token)}
+          onReveal={() => postToken(repoSettingsPath(forge, slug, "reveal-token"))}
           onRotate={() =>
-            apiPost<TokenReveal>(repoSettingsPath(forge, slug, "rotate-token")).then((r) => {
+            postToken(repoSettingsPath(forge, slug, "rotate-token")).then((token) => {
               // The cached masked form is the old token's now.
               void client.invalidateQueries({ queryKey: key });
-              return r.token;
+              return token;
             })
           }
         />

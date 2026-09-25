@@ -26,8 +26,6 @@ const upload = (over: Partial<UploadPageData> = {}): UploadPageData => ({
   },
   covered_stmts: 9236,
   total_stmts: 12481,
-  file_count: 2,
-  format: "go",
   diff: { coverage: 48, covered_lines: 12, total_lines: 25, changed_files: 3, unmatched_files: 1 },
   files: {
     upload_id: 412,

@@ -72,13 +72,12 @@ type dashRepoDTO struct {
 }
 
 // dashStatsDTO is the rollup above the tables.
+// Gate and staleness counts are not among them: the app counts its rows
+// for the filter tabs anyway (repoCounts), and the stat tiles read the same.
 type dashStatsDTO struct {
-	Coverage     *float64 `json:"coverage"`
-	GatesPassing int      `json:"gates_passing"`
-	GatesTotal   int      `json:"gates_total"`
-	StaleCount   int      `json:"stale_count"`
-	Reporting    string   `json:"reporting"` // connected / not_connected / broken
-	ReportingAs  string   `json:"reporting_as"`
+	Coverage    *float64 `json:"coverage"`
+	Reporting   string   `json:"reporting"` // connected / not_connected / broken
+	ReportingAs string   `json:"reporting_as"`
 }
 
 // attentionDTO is one needs-attention notice as data: which condition
@@ -317,20 +316,8 @@ func (s *Server) fillCurrent(r *http.Request, dto *dashboardDTO, cur *dashGroup)
 		dto.Attention = append(dto.Attention, attention(repo, row, latest)...)
 	}
 
-	// Default order: lowest coverage first (repos without a report sort last),
-	// so the rows needing work lead. The client re-sorts on the sort control.
-	slices.SortStableFunc(dto.Repos, func(a, b dashRepoDTO) int {
-		if (a.Coverage == nil) != (b.Coverage == nil) {
-			if a.Coverage != nil {
-				return -1
-			}
-			return 1
-		}
-		if a.Coverage == nil {
-			return cmp.Compare(a.Name, b.Name)
-		}
-		return cmp.Compare(*a.Coverage, *b.Coverage)
-	})
+	// Rows go out in slug order; the app sorts them (compareRepos), lowest
+	// coverage first by default.
 
 	// Attention reads most-severe first: failing, then stale, then no-gate.
 	slices.SortStableFunc(dto.Attention, func(a, b attentionDTO) int {
@@ -338,17 +325,6 @@ func (s *Server) fillCurrent(r *http.Request, dto *dashboardDTO, cur *dashGroup)
 	})
 
 	dto.Stats = dashStatsDTO{Coverage: optPct(total > 0, profile.Percent(covered, total))}
-	for _, row := range dto.Repos {
-		if row.Stale {
-			dto.Stats.StaleCount++
-		}
-		if row.Gate != "none" {
-			dto.Stats.GatesTotal++
-			if row.Gate == "pass" {
-				dto.Stats.GatesPassing++
-			}
-		}
-	}
 	dto.Stats.Reporting, dto.Stats.ReportingAs = dashReporting(cur.ws)
 }
 
