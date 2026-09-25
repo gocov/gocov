@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/gocov/gocov/internal/diffcov"
 	"github.com/gocov/gocov/internal/forge"
@@ -90,6 +91,20 @@ func (p *Pipeline) Accept(ctx context.Context, sub Submission) (*Result, error) 
 	covered, total := sub.Profile.Coverage()
 	totalPct := profile.Percent(covered, total)
 
+	// Diff coverage needs only the trimmed profile and a forge round trip,
+	// so the PR diff is fetched while the gate baseline is read and the raw
+	// profile is stored. An early return still waits for it, so the fetch
+	// never outlives the request.
+	var diffResult *diffcov.Result
+	var diffStatus string
+	var diffDone sync.WaitGroup
+	defer diffDone.Wait()
+	if sub.PRID != "" {
+		diffDone.Go(func() {
+			diffResult, diffStatus = p.diffCoverage(ctx, fg, fgErr, sub.Repo, sub.PRID, sub.Profile, sub.Format, sub.PathPrefix, rules)
+		})
+	}
+
 	dropDelta, err := gateDropDelta(ctx, p.Store, sub.Repo, sub.Commit, totalPct)
 	if err != nil {
 		return nil, err
@@ -98,12 +113,7 @@ func (p *Pipeline) Accept(ctx context.Context, sub Submission) (*Result, error) 
 	if err != nil {
 		return nil, fmt.Errorf("storing raw profile: %w", err)
 	}
-
-	var diffResult *diffcov.Result
-	var diffStatus string
-	if sub.PRID != "" {
-		diffResult, diffStatus = p.diffCoverage(ctx, fg, fgErr, sub.Repo, sub.PRID, sub.Profile, sub.Format, sub.PathPrefix, rules)
-	}
+	diffDone.Wait()
 
 	gate := EvaluateGate(sub.Repo.Gate, totalPct, dropDelta, diffResult)
 	upload, files := sub.rows(blobKey, diffResult, gate, covered, total)

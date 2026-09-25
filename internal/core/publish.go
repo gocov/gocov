@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gocov/gocov/internal/diffcov"
@@ -402,7 +403,10 @@ func (p *Pipeline) Push(ctx context.Context, fg forge.Forge, fgErr error, repo *
 }
 
 // pushSurfaces drives the three surfaces through the repo's forge client.
-// Without one — the lookup failed, or the workspace has no connection —
+// They are independent requests (forge clients hold no mutable state) and
+// each writes only its own result field, so they run concurrently: the
+// push, which holds the commit's status lock, takes as long as the slowest
+// surface rather than the sum of all three. Without one — the lookup failed, or the workspace has no connection —
 // no surface can do better than the lookup did, so all of them report
 // its outcome.
 func (p *Pipeline) pushSurfaces(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, u *store.Upload, deltaPct *float64, gate Verdict) PushResult {
@@ -414,9 +418,11 @@ func (p *Pipeline) pushSurfaces(ctx context.Context, fg forge.Forge, fgErr error
 		return everySurface("skipped", u.PRID != "")
 	}
 	var res PushResult
-	res.BuildStatus = p.pushBuildStatus(ctx, fg, repo, u, deltaPct, gate)
-	res.CodeInsights = p.pushCodeInsights(ctx, fg, repo, u, deltaPct, gate)
-	res.PRComment = p.pushPRComment(ctx, fg, repo, u, deltaPct, gate)
+	var wg sync.WaitGroup
+	wg.Go(func() { res.BuildStatus = p.pushBuildStatus(ctx, fg, repo, u, deltaPct, gate) })
+	wg.Go(func() { res.CodeInsights = p.pushCodeInsights(ctx, fg, repo, u, deltaPct, gate) })
+	wg.Go(func() { res.PRComment = p.pushPRComment(ctx, fg, repo, u, deltaPct, gate) })
+	wg.Wait()
 	return res
 }
 
