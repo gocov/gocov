@@ -100,8 +100,8 @@ func TestAPIDashboardDeltaSkipsGateFailedBaselines(t *testing.T) {
 	}
 }
 
-// sparkSeries is the sparkline the app plots: the branch's own commits,
-// oldest first, capped at the last dozen.
+// sparkSeries is the sparkline the app plots: the default branch's
+// reports, oldest first, capped at the last dozen.
 func TestSparkSeries(t *testing.T) {
 	report := func(id int64, pct float64, prID string) *store.CommitReport {
 		return &store.CommitReport{UploadID: id, CommitSHA: "sha", TotalPct: pct, PRID: prID}
@@ -110,11 +110,6 @@ func TestSparkSeries(t *testing.T) {
 	got := sparkSeries([]*store.CommitReport{report(2, 90, ""), report(1, 80, "")})
 	if !slices.Equal(got, []float64{80, 90}) {
 		t.Errorf("series = %v, want the two points oldest first", got)
-	}
-	// A PR report is not one of the branch's own commits.
-	got = sparkSeries([]*store.CommitReport{report(2, 90, "7"), report(1, 80, "")})
-	if !slices.Equal(got, []float64{80}) {
-		t.Errorf("series = %v, want the PR report excluded", got)
 	}
 	// Only the last dozen points survive: the first of thirteen drops off.
 	var many []*store.CommitReport
@@ -222,12 +217,18 @@ func TestForkPRNamedLikeTheDefaultBranchIsNotItsHistory(t *testing.T) {
 	if len(dash.Repos) != 1 || dash.Repos[0].Coverage == nil || *dash.Repos[0].Coverage != 80 {
 		t.Errorf("dashboard row = %+v, want main's own 80%%", dash.Repos)
 	}
+	if len(dash.Repos) == 1 && !slices.Equal(dash.Repos[0].Series, []float64{80}) {
+		t.Errorf("sparkline = %v, want main's own 80%% only", dash.Repos[0].Series)
+	}
 	if dash.Current == nil || dash.Current.Coverage == nil || *dash.Current.Coverage != 80 {
 		t.Errorf("workspace rollup = %+v, want 80%%", dash.Current)
 	}
 	repo := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets"))
 	if repo.Summary == nil || repo.Summary.Commit.SHA != "c1" {
 		t.Errorf("repo page summary = %+v, want commit c1", repo.Summary)
+	}
+	if len(repo.Trend) != 1 || repo.Trend[0].SHA != "c1" {
+		t.Errorf("repo page trend = %+v, want c1 alone", repo.Trend)
 	}
 	if body := get(f, "/badge/bitbucket/acme/widgets.svg").Body.String(); !strings.Contains(body, "80.0%") {
 		t.Errorf("badge = %s, want 80.0%%", body)

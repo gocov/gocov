@@ -28,7 +28,9 @@ the upload is on.
 
 Pull-request builds are never the default branch's own history. A PR opened from a fork's `main` uploads under the
 branch name `main`, but the badge, the dashboard, the repo page's trend and verdict for `main`, and every baseline keep
-reading the repository's own `main` builds. On a feature branch, the PR's builds are that branch's history.
+reading the repository's own `main` builds. On a feature branch, the PR's builds are that branch's history: its trend
+plots them and its latest one is the branch's current coverage. They are still never a baseline — a branch is always
+compared against a build of its own.
 
 The gate verdict's explanation follows the gate, not the delta: on a feature branch it reports the drop against the
 default branch, so the two can point different ways — the delta down against the branch's last build, the verdict
