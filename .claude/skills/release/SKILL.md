@@ -23,8 +23,9 @@ One release lands in four repositories and is, in the end, **four PR merges plus
 approval clicks** (the release PR's CI run, and the production deploy):
 
 1. `gocov` — a `Release-As:` PR states the version; release-please opens the real release
-   PR; merging it tags `vX.Y.Z` and the tag build publishes binaries, the GHCR image, and
-   the three wrapper bump PRs, then waits for the production deploy approval.
+   PR; merging it tags `vX.Y.Z` and the tag build publishes binaries and the GHCR image,
+   waits for the production deploy approval, and once the deploy is green opens the three
+   wrapper bump PRs.
 2. `gocov-action` — merge its bump PR; that *is* its release (tags next minor, moves `v1`).
 3. `upload-pipe` — merge its bump PR; that *is* its release (Docker Hub multi-arch + the
    Bitbucket mirror push).
@@ -124,7 +125,7 @@ One human gate in this run, the user's click:
   `/healthz` plus a real upload from `gocov/smoke`.
 
 The build publishes: 10 binaries + `checksums.txt` on the release, the GHCR server image
-(`vX.Y.Z`, `X.Y`, `latest`), and the three wrapper bump PRs.
+(`vX.Y.Z`, `X.Y`, `latest`), and — after the deploy is green — the three wrapper bump PRs.
 
 ## When the release contains a server-side feature the wrappers use
 
@@ -134,12 +135,12 @@ Two ordering rules, both learned on v0.16.0 (OIDC tokenless uploads):
   **before** the gocov release. They carry no `release` label, so merging them publishes
   nothing; the bump PR this release opens then tags a wrapper release containing both the
   feature and the new CLI pin, and no wrapper version ever ships the feature without it.
-- Merge those bump PRs **after the production deploy is green**, not before. A wrapper that
-  speaks the new protocol against a server still on the old version fails for real users;
-  the deploy is what makes the feature exist.
+- The bump PRs merge only **after the production deploy is green**. A wrapper that speaks
+  the new protocol against a server still on the old version fails for real users; the
+  deploy is what makes the feature exist. `bump-wrappers` runs behind the deploy, so the PRs
+  do not exist before then.
 
-Neither applies to an ordinary release — there, the bump PRs can be merged as soon as they
-appear.
+The first rule does not apply to an ordinary release.
 
 ## Step 4 — The wrappers
 
@@ -151,8 +152,8 @@ gh pr list --repo gocov/gitlab-component --label release
 
 Merging each one **is** that wrapper's release. Merge the action's first (its `v1` is what
 most users track), then the pipe's, then the component's. If a bump PR never appeared, the
-App token step in `release.yml` failed — read that job's log before opening anything by
-hand (the App must be installed on all three wrapper repos).
+deploy has not finished (or failed), or the App token step in `release.yml` failed — read
+that job's log before opening anything by hand (the App must be installed on all three wrapper repos).
 
 ## Step 5 — Verify
 
