@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.3](https://github.com/gocov/gocov/compare/v0.26.2...v0.26.3) (2026-09-26)
+
+
+### Bug Fixes
+
+* link forge surfaces to the merged report, and never compare against a later baseline ([#203](https://github.com/gocov/gocov/issues/203)) ([f9be02c](https://github.com/gocov/gocov/commit/f9be02cd3bafb8bf94f88a2594a34e28edc636d8))
+
 ## [0.26.2](https://github.com/gocov/gocov/compare/v0.26.1...v0.26.2) (2026-09-26)
 
 
