@@ -1,6 +1,6 @@
 # actionlint (the workflow lint in ci.yml's workflows job).
 paths:
-  .github/workflows/release.yml:
+  .github/workflows/{release,release-please}.yml:
     ignore:
       # actionlint's bundled metadata for actions/create-github-app-token@v3
       # predates its client-id input (app-id is its deprecated alias). Drop

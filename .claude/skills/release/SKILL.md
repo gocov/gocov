@@ -19,9 +19,9 @@ operational version of it. Read it if anything below disagrees with the repo.
 
 ## The shape of a release
 
-One release lands in four repositories and is, in the end, **one PR merge plus two
-approval clicks** (the release PR's CI run, and the production deploy); the three wrapper
-PRs merge themselves once their checks pass:
+One release lands in four repositories and is, in the end, **one PR merge plus one
+approval click** (the production deploy); the three wrapper PRs merge themselves once their
+checks pass:
 
 1. `gocov` — a `Release-As:` PR states the version; release-please opens the real release
    PR; merging it tags `vX.Y.Z` and the tag build publishes binaries and the GHCR image,
@@ -102,10 +102,12 @@ gh pr list --search "release" --limit 5
 gh pr diff <N>          # review the pins and the CHANGELOG with the user
 ```
 
-The PR's own `ci.yml` run sits behind **"Approve and run"** on the PR page — the bot never
-graduates out of `first_time_contributors`, so it asks every release, and the ruleset's
-required checks block the merge until that run has been approved and is green (`gh pr checks
-<N>` shows them pending until then). That click is the user's; point it out before the merge.
+release-please opens and updates the PR as the cross-repo App, so the PR's own `ci.yml`
+run starts by itself and the ruleset's required checks report on it (`gh pr checks <N>`).
+If the release-please run shows the warning "the cross-repo App is not installed on
+gocov/gocov", the PR fell back to GITHUB_TOKEN: its CI then sits behind **"Approve and
+run"** on the PR page (github-actions[bot] never graduates out of `first_time_contributors`),
+and that click is the user's — point it out before the merge.
 
 Until this is merged nothing is tagged — a wrong version is a PR comment, not a burnt tag.
 User merges it.
