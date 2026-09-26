@@ -8,9 +8,10 @@
 //
 // Everything a reader sees as "the change" asks "what moved since the last
 // good build here?": the branch's own previous gate-passing coverage,
-// falling back to the default branch for a branch with none yet
-// (deltaBase, UploadBaseline), or on a branch's trend its previous passing
-// report (ReportBaseline). Gate-failing rows never serve as a baseline, so
+// falling back to the default branch for a branch with none yet — among
+// what came before it, never after (deltaBase, CommitBaseline,
+// UploadBaseline) — or, on the dashboard's sparklines, a branch's previous
+// passing report within the history at hand (ReportBaseline). Gate-failing rows never serve as a baseline, so
 // re-running CI cannot launder a failure into the comparison, and neither
 // do PR builds: a feature branch's history includes its PR's builds, but
 // what the branch is measured against is always a build of the branch

@@ -75,12 +75,14 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 		// branch's current standing (the default branch when "All
 		// branches" is chosen); they ride inside the branch-filtered region
 		// so the selector moves them together with the trend and history.
-		// trendReports come newest first, so they carry the latest report
-		// and, within the last 50, the baseline it is measured against.
-		latest, base = core.ReportBaseline(trendReports[:min(baselineLookback, len(trendReports))])
-		if latest == nil {
+		// trendReports come newest first, so they carry the latest report;
+		// it is measured against the same baseline as its commit's merged
+		// upload page and source views (core.CommitBaseline).
+		if len(trendReports) == 0 {
 			return
 		}
+		latest = trendReports[0]
+		base = core.CommitBaseline(r.Context(), s.store, repo, latest)
 		var err error
 		if files, lastUpload, err = s.loadCommitFilesView(r.Context(), repo, latest, base); err != nil {
 			s.log.Warn("loading files for repo page", "commit", latest.CommitSHA, "err", err)
@@ -381,7 +383,4 @@ const (
 	// trendReportLimit bounds the branch history behind the coverage trend
 	// and the dashboard's sparklines.
 	trendReportLimit = 60
-	// baselineLookback bounds the search for a comparison baseline; a
-	// branch whose last 50 reports all failed shows no delta.
-	baselineLookback = 50
 )
