@@ -358,6 +358,50 @@ jobs:
             --body "gocov $TAG is released; this pins the CLI the component installs (was $old) and cuts $next. Merging this releases the component: $next is tagged, mirrored to gitlab.com/gocov/gocov, and its pipeline publishes the CI/CD Catalog release." \
             || echo "::notice::bump PR for $TAG already open"
 
+      - name: Queue the bump PRs for auto-merge
+        # Each wrapper's PR checks install the new CLI and upload with it
+        # (the action on every runner OS, the pipe and the component
+        # against a fake server on amd64 and arm64), and the server side
+        # was smoke-tested by the deploy this job waits for — so once
+        # those checks pass there is nothing left to decide, and the merge
+        # that releases the wrapper is GitHub's auto-merge.
+        #
+        # Only where the wrapper's main requires status checks: without
+        # them GitHub would merge on the spot, before any test ran, so such
+        # a PR is left for a human with a warning. Squash, as in all three
+        # repos: a bump PR is one commit, and main keeps one line per release.
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          set -euo pipefail
+          failed=0
+          for repo in gocov-action upload-pipe gitlab-component; do
+            state=$(gh pr view "bump-gocov-$TAG" --repo "gocov/$repo" \
+              --json state --jq .state 2>/dev/null || echo none)
+            if [ "$state" != OPEN ]; then
+              echo "$repo: no open bump PR for $TAG ($state)"; continue
+            fi
+            # Required checks come from a ruleset or from classic branch
+            # protection; the App's read access sees either.
+            required=$( {
+              gh api "repos/gocov/$repo/rules/branches/main" \
+                --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context' || true
+              gh api "repos/gocov/$repo/branches/main" \
+                --jq '.protection.required_status_checks.contexts[]?' || true
+            } | sort -u)
+            if [ -z "$required" ]; then
+              echo "::warning::gocov/$repo requires no status checks on main — its bump PR for $TAG is left for a human to merge"
+              continue
+            fi
+            echo "$repo: auto-merging once these pass:"
+            printf '%s\n' "$required" | sed 's/^/  /'
+            gh pr merge "bump-gocov-$TAG" --repo "gocov/$repo" --auto --squash || {
+              echo "::error::could not queue gocov/$repo's bump PR for auto-merge — is auto-merge allowed in its settings?"
+              failed=1
+            }
+          done
+          exit "$failed"
+
   # Deploying is a separate, reusable workflow so a rollback is the same
   # job dispatched by hand with an older tag. Its job carries
   # environment: production, so the run waits here for approval.

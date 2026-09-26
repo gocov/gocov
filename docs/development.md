@@ -138,8 +138,11 @@ carries the `release` label, and merging it **is** that wrapper's release: a `ta
 merge commit (the action and the component compute their next minor from their tags; the pipe reads its version from
 `pipe.yml`) and runs that repo's release workflow — the action's release moves `v1`, the pipe's builds the multi-arch
 image for Docker Hub, the component's mirrors the tag to gitlab.com, where the project's own pipeline creates the
-release the CI/CD Catalog lists. So a full release across all four repos is four PR merges and nothing else; between
-the gocov release and the wrapper merges, `verify-release` reports the wrappers as behind, which is true.
+release the CI/CD Catalog lists. The release build queues each bump PR for auto-merge, so it merges itself once the
+checks its repo's `main` requires have passed — each wrapper's checks install the new CLI and upload with it — and a
+wrapper whose `main` requires no checks is left for a human, with a warning. So a full release across all four repos
+is one PR merge and the deploy approval; between the gocov release and the wrapper merges, `verify-release` reports
+the wrappers as behind, which is true.
 
 The mirrors are the seams. The pipe's tag workflow pushes Bitbucket only when the
 `BITBUCKET_MIRROR_USERNAME`/`BITBUCKET_MIRROR_APP_PASSWORD` secrets are set, the component's pushes gitlab.com only
