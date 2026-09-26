@@ -286,16 +286,27 @@ jobs:
           cd action
           old=$(sed -n 's/^ *default: *\(v[0-9][0-9.]*\) *$/\1/p' action.yml)
           if [ "$old" = "$TAG" ]; then echo "action already pins $TAG"; exit 0; fi
+          # The wrapper's next version is the minor after its newest release
+          # tag (v-prefixed in the action), and it is written as the newest
+          # CHANGELOG.md heading: that heading is what the wrapper's
+          # tag-on-release-merge tags, the same way in all three.
+          latest=$(git tag --list | sed 's/^v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          [ -n "$latest" ] || { echo "no release tags found" >&2; exit 1; }
+          major=${latest%%.*}; rest=${latest#*.}; next="$major.$(( ${rest%%.*} + 1 )).0"
           sed -i "s|^\( *default: *\)$old\$|\1$TAG|" action.yml
+          { head -2 CHANGELOG.md
+            printf '## %s\n\n- Pin gocov CLI %s (was %s).\n\n' "$next" "$TAG" "$old"
+            tail -n +3 CHANGELOG.md
+          } > CHANGELOG.new && mv CHANGELOG.new CHANGELOG.md
           git config user.name "gocov-cross-repo-bump[bot]"
           git config user.email "gocov-cross-repo-bump[bot]@users.noreply.github.com"
           git checkout -q -b "bump-gocov-$TAG"
-          git commit -qam "Pin gocov CLI $TAG"
+          git commit -qam "Pin gocov CLI $TAG as v$next"
           git push -qf origin "bump-gocov-$TAG"
           gh pr create --repo gocov/gocov-action --base main \
             --head "bump-gocov-$TAG" --label release \
-            --title "Pin gocov CLI $TAG" \
-            --body "gocov $TAG is released; this pins the CLI the action installs (was $old). Merging this releases the action: the next minor is tagged, v1 moves to it." \
+            --title "Pin gocov CLI $TAG as v$next" \
+            --body "gocov $TAG is released; this pins the CLI the action installs (was $old) and cuts v$next. Merging this releases the action: v$next is tagged from CHANGELOG.md and v1 moves to it." \
             || echo "::notice::bump PR for $TAG already open"
 
       - name: Open the upload-pipe bump PR
@@ -307,11 +318,16 @@ jobs:
           cd pipe
           old=$(sed -n 's/^ARG GOCOV_VERSION=\(v[0-9][0-9.]*\) *$/\1/p' Dockerfile)
           if [ "$old" = "$TAG" ]; then echo "pipe already bakes $TAG"; exit 0; fi
-          cur=$(sed -n 's|^image: gocov/upload-pipe:\([0-9][0-9.]*\)$|\1|p' pipe.yml)
-          major=${cur%%.*}; rest=${cur#*.}
-          next="$major.$(( ${rest%%.*} + 1 )).0"
+          # The wrapper's next version is the minor after its newest release
+          # tag (v-prefixed in the action), and it is written as the newest
+          # CHANGELOG.md heading: that heading is what the wrapper's
+          # tag-on-release-merge tags, the same way in all three.
+          latest=$(git tag --list | sed 's/^v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          [ -n "$latest" ] || { echo "no release tags found" >&2; exit 1; }
+          major=${latest%%.*}; rest=${latest#*.}; next="$major.$(( ${rest%%.*} + 1 )).0"
           sed -i "s|^ARG GOCOV_VERSION=$old\$|ARG GOCOV_VERSION=$TAG|" Dockerfile
-          sed -i "s|^image: gocov/upload-pipe:$cur\$|image: gocov/upload-pipe:$next|" pipe.yml
+          # pipe.yml carries the version too, for the Atlassian catalog.
+          sed -i "s|^image: gocov/upload-pipe:[0-9][0-9.]*\$|image: gocov/upload-pipe:$next|" pipe.yml
           { head -2 CHANGELOG.md
             printf '## %s\n\n- Bake gocov CLI %s (was %s).\n\n' "$next" "$TAG" "$old"
             tail -n +3 CHANGELOG.md
@@ -324,7 +340,7 @@ jobs:
           gh pr create --repo gocov/upload-pipe --base main \
             --head "bump-gocov-$TAG" --label release \
             --title "Bake gocov CLI $TAG as $next" \
-            --body "gocov $TAG is released; this bakes it into the pipe image as $next (was $old). Merging this releases the pipe: $next is tagged from pipe.yml and the multi-arch image goes to Docker Hub." \
+            --body "gocov $TAG is released; this bakes it into the pipe image as $next (was $old). Merging this releases the pipe: $next is tagged from CHANGELOG.md, the multi-arch image goes to Docker Hub, and the GitHub release follows." \
             || echo "::notice::bump PR for $TAG already open"
 
       - name: Open the gitlab-component bump PR
@@ -336,11 +352,13 @@ jobs:
           cd component
           old=$(sed -n 's/^ *default: *\(v[0-9][0-9.]*\) *$/\1/p' templates/upload.yml)
           if [ "$old" = "$TAG" ]; then echo "component already pins $TAG"; exit 0; fi
-          # The component's own version is the next minor after its newest
-          # tag, exactly as tag-on-release-merge.yml over there will compute
-          # it; the CHANGELOG entry it insists on is written here.
-          latest=$(git tag --list '[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -1)
-          if [ -z "$latest" ]; then next=1.0.0; else major=${latest%%.*}; rest=${latest#*.}; next="$major.$(( ${rest%%.*} + 1 )).0"; fi
+          # The wrapper's next version is the minor after its newest release
+          # tag (v-prefixed in the action), and it is written as the newest
+          # CHANGELOG.md heading: that heading is what the wrapper's
+          # tag-on-release-merge tags, the same way in all three.
+          latest=$(git tag --list | sed 's/^v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          [ -n "$latest" ] || { echo "no release tags found" >&2; exit 1; }
+          major=${latest%%.*}; rest=${latest#*.}; next="$major.$(( ${rest%%.*} + 1 )).0"
           sed -i "s|^\( *default: *\)$old\$|\1$TAG|" templates/upload.yml
           sed -i "s|\`$old\`|\`$TAG\`|g" README.md
           { head -2 CHANGELOG.md
@@ -355,7 +373,7 @@ jobs:
           gh pr create --repo gocov/gitlab-component --base main \
             --head "bump-gocov-$TAG" --label release \
             --title "Install gocov CLI $TAG as $next" \
-            --body "gocov $TAG is released; this pins the CLI the component installs (was $old) and cuts $next. Merging this releases the component: $next is tagged, mirrored to gitlab.com/gocov/gocov, and its pipeline publishes the CI/CD Catalog release." \
+            --body "gocov $TAG is released; this pins the CLI the component installs (was $old) and cuts $next. Merging this releases the component: $next is tagged from CHANGELOG.md, mirrored to gitlab.com/gocov/gocov, and its pipeline publishes the CI/CD Catalog release." \
             || echo "::notice::bump PR for $TAG already open"
 
       - name: Queue the bump PRs for auto-merge

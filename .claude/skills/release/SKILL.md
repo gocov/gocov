@@ -187,8 +187,8 @@ the verify score.
   `gh run list --workflow release.yml` shows no new run — read
   `gh api repos/gocov/gocov/actions/runs/<release-please-run-id>/jobs` and
   `.../pending_deployments` instead. A run in status `waiting` is the deploy gate.
-- upload-pipe publishes plain git tags, not GitHub releases: `gh release list` there is
-  always empty; use `gh api repos/gocov/upload-pipe/tags`.
+- upload-pipe created GitHub releases only from 0.20.0 on; before that it published plain
+  git tags, so for older versions use `gh api repos/gocov/upload-pipe/tags`.
 
 - A tag pushed with GITHUB_TOKEN starts no workflow; that is why `release.yml` is called,
   not triggered. Never "fix" it by re-pushing the tag.
