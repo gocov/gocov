@@ -27,7 +27,7 @@ For eyeballing UI changes without Postgres or OAuth, run the dev harness: `go ru
 
 The web UI is a single-page app in `web/` (Vite, React, TypeScript), embedded into the server through `internal/webui`: Go serves its shell for every page route and answers its data under `/api/ui/`. It has its own toolchain — `cd web && npm ci && npm test && npm run build` — and Go builds and tests never depend on it (without a web build the server serves a placeholder shell).
 
-CI (`.github/workflows/ci.yml`) runs vet + tests with a Postgres service, tests and builds the web UI, and builds the docs site strictly; there is no separate linter.
+CI (`.github/workflows/ci.yml`) runs gofmt, vet and the tests under `-race` with a Postgres service, govulncheck, tests and builds the web UI, builds the docs site strictly, and checks the workflows themselves: actionlint, zizmor (settings in `.github/`), shellcheck on `scripts/`, and `scripts/bump-wrapper-test.sh`, which runs the release's wrapper bumps against the real wrappers. There is no separate Go linter.
 
 ## Commits and PR titles
 
