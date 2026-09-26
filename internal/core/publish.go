@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"sync"
@@ -31,6 +32,16 @@ const statusPushTimeout = 20 * time.Second
 // outcome.
 var errStatusPushFailed = errors.New("build status push failed")
 
+// DeltaText renders a coverage change in points to one decimal. A change
+// under 0.05 points rounds to zero and reads as flat "0.0%" rather than
+// "+0.0%" or "-0.0%", matching the web UI's deltaText.
+func DeltaText(delta float64) string {
+	if math.Abs(delta) < 0.05 {
+		return "0.0%"
+	}
+	return fmt.Sprintf("%+.1f%%", delta)
+}
+
 // pushBuildStatus posts a "coverage: X% (±Y)" build status to the repo's
 // forge; a failed coverage gate turns the state into FAILED so the forge
 // can block the merge. Best effort: push failures are reported in the
@@ -38,7 +49,7 @@ var errStatusPushFailed = errors.New("build status push failed")
 func (p *Pipeline) pushBuildStatus(ctx context.Context, fg forge.Forge, repo *store.Repo, u *store.Upload, deltaPct *float64, gate Verdict) string {
 	desc := fmt.Sprintf("coverage: %.1f%%", u.TotalPct)
 	if deltaPct != nil {
-		desc += fmt.Sprintf(" (%+.1f%%)", *deltaPct)
+		desc += " (" + DeltaText(*deltaPct) + ")"
 	}
 	state := forge.StateSuccessful
 	if gate.Failed() {
@@ -97,7 +108,7 @@ func (p *Pipeline) insightsReport(u *store.Upload, deltaPct *float64, gate Verdi
 	}
 	if deltaPct != nil {
 		data = append(data, forge.ReportData{
-			Title: "Change vs base", Type: forge.DataText, Value: fmt.Sprintf("%+.1f%%", *deltaPct)})
+			Title: "Change vs base", Type: forge.DataText, Value: DeltaText(*deltaPct)})
 	}
 
 	details := "Test coverage uploaded by gocov."
@@ -276,7 +287,7 @@ func (p *Pipeline) prCommentBody(u *store.Upload, deltaPct *float64, gate Verdic
 	fmt.Fprintf(&sb, "**gocov** report for `%s`\n\n", short)
 	fmt.Fprintf(&sb, "- Total coverage: **%.1f%%**", u.TotalPct)
 	if deltaPct != nil {
-		fmt.Fprintf(&sb, " (%+.1f%%)", *deltaPct)
+		sb.WriteString(" (" + DeltaText(*deltaPct) + ")")
 	}
 	sb.WriteString("\n")
 	if gate.Configured {

@@ -194,3 +194,23 @@ func TestPushSurfacesRunConcurrently(t *testing.T) {
 		t.Fatalf("push result = %+v, want every surface posted", res)
 	}
 }
+
+func TestDeltaText(t *testing.T) {
+	for _, tc := range []struct {
+		delta float64
+		want  string
+	}{
+		{0, "0.0%"},
+		{-0.004, "0.0%"}, // a sliver of a point must not read "-0.0%"
+		{0.049, "0.0%"},
+		{-0.049, "0.0%"},
+		{0.06, "+0.1%"},
+		{-0.06, "-0.1%"},
+		{2.34, "+2.3%"},
+		{-12.5, "-12.5%"},
+	} {
+		if got := DeltaText(tc.delta); got != tc.want {
+			t.Errorf("DeltaText(%v) = %q, want %q", tc.delta, got, tc.want)
+		}
+	}
+}
