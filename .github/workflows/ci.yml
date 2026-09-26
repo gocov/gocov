@@ -62,6 +62,21 @@ jobs:
           # above); a fork PR, which gets no id-token, falls back to the
           # App-verified tokenless path automatically.
 
+  # Known vulnerabilities the code actually reaches — in the standard
+  # library (fixed by bumping the go directive in go.mod) or in a
+  # dependency (fixed by bumping it). Dependabot bumps versions;
+  # govulncheck is what says a reachable call is affected. It reads
+  # vuln.go.dev, so a newly published advisory can turn this red on a PR
+  # that did not cause it: the fix is still the bump it names.
+  vulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+
   # The single-page web UI: typecheck, unit tests and a production build.
   # The Go job above does not depend on it — without a build the server
   # embeds a placeholder and its tests still pass.
