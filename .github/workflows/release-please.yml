@@ -86,10 +86,12 @@ jobs:
     # grants, so everything release.yml's jobs need is named here: the
     # release itself (contents), the GHCR push (packages), the deploy
     # role and the provenance signing (id-token), the provenance itself
-    # (attestations), the image's storage record (artifact-metadata). Same
-    # for secrets — without inherit, the deploy smoke test would run
-    # without its upload token.
-    secrets: inherit # zizmor: ignore[secrets-inherit] — this repo's own workflow, see above
+    # (attestations), the image's storage record (artifact-metadata). The
+    # secrets are named too: the App's, for the wrapper bumps. The deploy's
+    # smoke token is a production environment secret and needs no passing.
+    secrets:
+      CROSSBUMP_APP_ID: ${{ secrets.CROSSBUMP_APP_ID }}
+      CROSSBUMP_APP_PRIVATE_KEY: ${{ secrets.CROSSBUMP_APP_PRIVATE_KEY }}
     permissions:
       contents: write
       packages: write
