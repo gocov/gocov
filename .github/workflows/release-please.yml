@@ -34,11 +34,43 @@ jobs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
+      # Two runs of the action, two tokens. The tag and the GitHub release
+      # carry GITHUB_TOKEN, which starts no workflows: release.yml is
+      # called by the publish job below, and an App-pushed tag would start
+      # it a second time through its own `on: push: tags`.
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: release
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+          skip-github-pull-request: true
+
+      # The release PR is opened and updated as the cross-repo App, so its
+      # CI runs by itself; a PR pushed with GITHUB_TOKEN starts no
+      # workflows and waited on a hand-approved CI run. Until the App is
+      # installed on this repo the token step fails, and the PR falls back
+      # to GITHUB_TOKEN — the old behaviour, with a warning.
+      - uses: actions/create-github-app-token@v3
+        id: app
+        continue-on-error: true
+        with:
+          client-id: ${{ secrets.CROSSBUMP_APP_ID }}
+          private-key: ${{ secrets.CROSSBUMP_APP_PRIVATE_KEY }}
+          owner: gocov
+          repositories: gocov
+          # The release branch (contents) and the PR with its labels
+          # (pull-requests).
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Note the fallback
+        if: steps.app.outcome == 'failure'
+        run: echo "::warning title=release-please::the cross-repo App is not installed on gocov/gocov; the release PR is opened with GITHUB_TOKEN and its CI needs a manual run"
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          skip-github-release: true
+          token: ${{ steps.app.outputs.token || github.token }}
 
   # A tag pushed by the action carries GITHUB_TOKEN, and GitHub does not
   # start workflow runs from those — release.yml's own `on: push: tags`
