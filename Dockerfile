@@ -5,7 +5,7 @@
 # The web UI is built first and handed to the Go stage, which embeds it
 # (internal/webui). It is plain static output, so it builds once on the
 # build host whatever the target architecture.
-FROM --platform=$BUILDPLATFORM node:24-alpine AS web
+FROM --platform=$BUILDPLATFORM node:25-alpine AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
