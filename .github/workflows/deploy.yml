@@ -34,6 +34,9 @@ on:
         description: The release tag to deploy.
         required: true
         type: string
+    secrets:
+      GOCOV_SMOKE_TOKEN:
+        required: true
   workflow_dispatch:
     inputs:
       tag:
@@ -200,19 +203,22 @@ jobs:
         # CLI's default server URL is the hosted instance, which is
         # exactly the thing under test, so no -server flag.
         #
-        # GOCOV_TOKEN is a secret of the production environment, the smoke
-        # workspace's upload token, so only this approved job can read it.
-        # Without it the CLI falls back to a tokenless OIDC upload, which
-        # the server refuses for gocov/smoke (the token is gocov/gocov's)
+        # GOCOV_SMOKE_TOKEN is a repository secret, the smoke workspace's
+        # upload token, passed down from release-please.yml on the release
+        # path and read directly on a dispatch. (Not a production
+        # environment secret: those do not reach a job in a workflow called
+        # two levels deep — v0.26.3's deploy read one as empty.) Without a
+        # token the CLI falls back to a tokenless OIDC upload, which the
+        # server refuses for gocov/smoke (the OIDC token is gocov/gocov's)
         # and which the CLI reports with exit 0 by design: the step passed
         # for months uploading nothing. So a missing token fails here, and
         # the upload has to say it uploaded.
         env:
-          GOCOV_TOKEN: ${{ secrets.GOCOV_TOKEN }}
+          GOCOV_TOKEN: ${{ secrets.GOCOV_SMOKE_TOKEN }}
         run: |
           set -euo pipefail
           [ -n "$GOCOV_TOKEN" ] || {
-            echo "::error::GOCOV_TOKEN is not set in the production environment — the smoke upload cannot authenticate"
+            echo "::error::the GOCOV_SMOKE_TOKEN repository secret did not reach this job — the smoke upload cannot authenticate"
             exit 1; }
           curl -fsSL -o gocov \
             "https://github.com/gocov/gocov/releases/download/$TAG/gocov-linux-amd64"

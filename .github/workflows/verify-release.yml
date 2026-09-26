@@ -6,7 +6,7 @@ name: verify-release
 #
 # Three ways in:
 #
-#   workflow_call      — release.yml calls this once the wrapper bumps are
+#   workflow_call      — wrappers.yml calls this once the wrapper bumps are
 #     open, with wait: the bump PRs auto-merge and the wrappers release
 #     over the next few minutes, so the check retries for up to half an
 #     hour. Still failing then, something is stuck: a wrapper's checks, its

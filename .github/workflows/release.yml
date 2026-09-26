@@ -24,11 +24,14 @@ on:
         required: true
         type: string
     secrets:
-      # The cross-repo App, for the wrapper bumps. A pushed tag (the
-      # hand-cut path) reads them from the repository directly.
+      # The cross-repo App, for the wrapper bumps, and the deploy's smoke
+      # upload token. A pushed tag (the hand-cut path) reads them from the
+      # repository directly.
       CROSSBUMP_APP_ID:
         required: true
       CROSSBUMP_APP_PRIVATE_KEY:
+        required: true
+      GOCOV_SMOKE_TOKEN:
         required: true
 
 permissions:
@@ -257,166 +260,20 @@ jobs:
           docker compose -f docker-compose.yml -f .github/compose-smoke.yml logs || true
           docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env logs || true
 
-  # A release is not finished until the wrappers follow: this opens a bump
-  # PR in gocov-action (action.yml's pinned CLI), upload-pipe (Dockerfile
-  # ARG + pipe.yml + CHANGELOG) and gitlab-component (the template's
-  # version default + README + CHANGELOG), authored by the cross-repo
-  # App, which is installed on exactly those three repos. Merging a bump PR
-  # is that wrapper's release decision — its tag-on-release-merge workflow
-  # takes it from there.
-  #
-  # Behind the deploy, not beside the image build: a wrapper release puts
-  # the new CLI in front of every user of that wrapper, so the PRs open only
-  # after the same approval and smoke tests as app.gocov.dev (and
-  # docs.gocov.dev). A merged bump never sends a new CLI to a server that
-  # is still on the old release.
-  bump-wrappers:
+  # The wrappers follow the release, and the release checks itself:
+  # wrappers.yml opens the three bump PRs and then runs verify-release.
+  # Behind the deploy, so a wrapper never ships a CLI newer than the hosted
+  # server. Its own workflow so that, when a deploy fails after its
+  # rollout, the rest can be dispatched by hand for the tag instead of
+  # re-running a release.
+  wrappers:
     needs: deploy
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    env:
-      TAG: ${{ inputs.tag || github.ref_name }}
-    steps:
-      - uses: actions/create-github-app-token@v3
-        id: app
-        with:
-          client-id: ${{ secrets.CROSSBUMP_APP_ID }}
-          private-key: ${{ secrets.CROSSBUMP_APP_PRIVATE_KEY }}
-          owner: gocov
-          repositories: gocov-action,upload-pipe,gitlab-component
-          # Only what the steps below do: push the bump branch (contents),
-          # open, label and auto-merge the PR (pull-requests).
-          permission-contents: write
-          permission-pull-requests: write
-
-      # scripts/bump-wrapper.sh makes the edits — pin, next version,
-      # CHANGELOG.md entry — and is tested against the real wrappers on
-      # every CI run (scripts/bump-wrapper-test.sh); these steps only
-      # clone, commit and open the PR. From the workflow's own ref, like
-      # deploy.yml's task definition template.
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-          sparse-checkout: scripts
-
-      - name: Open the gocov-action bump PR
-        env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
-        run: |
-          set -euo pipefail
-          git clone -q "https://x-access-token:$GH_TOKEN@github.com/gocov/gocov-action" action
-          out=$(scripts/bump-wrapper.sh action action "$TAG")
-          if [ -z "$out" ]; then echo "gocov-action already pins $TAG"; exit 0; fi
-          read -r old next <<<"$out"
-          cd action
-          git config user.name "gocov-cross-repo-bump[bot]"
-          git config user.email "gocov-cross-repo-bump[bot]@users.noreply.github.com"
-          git checkout -q -b "bump-gocov-$TAG"
-          git commit -qam "Pin gocov CLI $TAG as v$next"
-          git push -qf origin "bump-gocov-$TAG"
-          gh pr create --repo gocov/gocov-action --base main \
-            --head "bump-gocov-$TAG" --label release \
-            --title "Pin gocov CLI $TAG as v$next" \
-            --body "gocov $TAG is released; this pins the CLI the action installs (was $old) and cuts v$next. Merging this releases the action: v$next is tagged from CHANGELOG.md and v1 moves to it." \
-            || echo "::notice::bump PR for $TAG already open"
-
-      - name: Open the upload-pipe bump PR
-        env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
-        run: |
-          set -euo pipefail
-          git clone -q "https://x-access-token:$GH_TOKEN@github.com/gocov/upload-pipe" pipe
-          out=$(scripts/bump-wrapper.sh pipe pipe "$TAG")
-          if [ -z "$out" ]; then echo "upload-pipe already pins $TAG"; exit 0; fi
-          read -r old next <<<"$out"
-          cd pipe
-          git config user.name "gocov-cross-repo-bump[bot]"
-          git config user.email "gocov-cross-repo-bump[bot]@users.noreply.github.com"
-          git checkout -q -b "bump-gocov-$TAG"
-          git commit -qam "Bake gocov CLI $TAG as $next"
-          git push -qf origin "bump-gocov-$TAG"
-          gh pr create --repo gocov/upload-pipe --base main \
-            --head "bump-gocov-$TAG" --label release \
-            --title "Bake gocov CLI $TAG as $next" \
-            --body "gocov $TAG is released; this bakes it into the pipe image as $next (was $old). Merging this releases the pipe: $next is tagged from CHANGELOG.md, the multi-arch image goes to Docker Hub, and the GitHub release follows." \
-            || echo "::notice::bump PR for $TAG already open"
-
-      - name: Open the gitlab-component bump PR
-        env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
-        run: |
-          set -euo pipefail
-          git clone -q "https://x-access-token:$GH_TOKEN@github.com/gocov/gitlab-component" component
-          out=$(scripts/bump-wrapper.sh component component "$TAG")
-          if [ -z "$out" ]; then echo "gitlab-component already pins $TAG"; exit 0; fi
-          read -r old next <<<"$out"
-          cd component
-          git config user.name "gocov-cross-repo-bump[bot]"
-          git config user.email "gocov-cross-repo-bump[bot]@users.noreply.github.com"
-          git checkout -q -b "bump-gocov-$TAG"
-          git commit -qam "Install gocov CLI $TAG as $next"
-          git push -qf origin "bump-gocov-$TAG"
-          gh pr create --repo gocov/gitlab-component --base main \
-            --head "bump-gocov-$TAG" --label release \
-            --title "Install gocov CLI $TAG as $next" \
-            --body "gocov $TAG is released; this pins the CLI the component installs (was $old) and cuts $next. Merging this releases the component: $next is tagged from CHANGELOG.md, mirrored to gitlab.com/gocov/gocov, and its pipeline publishes the CI/CD Catalog release." \
-            || echo "::notice::bump PR for $TAG already open"
-
-      - name: Queue the bump PRs for auto-merge
-        # Each wrapper's PR checks install the new CLI and upload with it
-        # (the action on every runner OS, the pipe and the component
-        # against a fake server on amd64 and arm64), and the server side
-        # was smoke-tested by the deploy this job waits for — so once
-        # those checks pass there is nothing left to decide, and the merge
-        # that releases the wrapper is GitHub's auto-merge.
-        #
-        # Only where the wrapper's main requires status checks: without
-        # them GitHub would merge on the spot, before any test ran, so such
-        # a PR is left for a human with a warning. Squash, as in all three
-        # repos: a bump PR is one commit, and main keeps one line per release.
-        env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
-        run: |
-          set -euo pipefail
-          failed=0
-          for repo in gocov-action upload-pipe gitlab-component; do
-            state=$(gh pr view "bump-gocov-$TAG" --repo "gocov/$repo" \
-              --json state --jq .state 2>/dev/null || echo none)
-            if [ "$state" != OPEN ]; then
-              echo "$repo: no open bump PR for $TAG ($state)"; continue
-            fi
-            # Required checks come from a ruleset or from classic branch
-            # protection; the App's read access sees either.
-            required=$( {
-              gh api "repos/gocov/$repo/rules/branches/main" \
-                --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context' || true
-              gh api "repos/gocov/$repo/branches/main" \
-                --jq '.protection.required_status_checks.contexts[]?' || true
-            } | sort -u)
-            if [ -z "$required" ]; then
-              echo "::warning::gocov/$repo requires no status checks on main — its bump PR for $TAG is left for a human to merge"
-              continue
-            fi
-            echo "$repo: auto-merging once these pass:"
-            printf '%s\n' "$required" | sed 's/^/  /'
-            gh pr merge "bump-gocov-$TAG" --repo "gocov/$repo" --auto --squash || {
-              echo "::error::could not queue gocov/$repo's bump PR for auto-merge — is auto-merge allowed in its settings?"
-              failed=1
-            }
-          done
-          exit "$failed"
-
-  # The release is finished when every wrapper has released the new CLI:
-  # verify-release checks all four repos and both registries, retrying
-  # while the bump PRs auto-merge and the wrappers publish. Red here means
-  # something did not land; the job summary says what and where.
-  verify:
-    needs: bump-wrappers
-    uses: ./.github/workflows/verify-release.yml
+    uses: ./.github/workflows/wrappers.yml
     with:
       tag: ${{ inputs.tag || github.ref_name }}
-      wait: true
+    secrets:
+      CROSSBUMP_APP_ID: ${{ secrets.CROSSBUMP_APP_ID }}
+      CROSSBUMP_APP_PRIVATE_KEY: ${{ secrets.CROSSBUMP_APP_PRIVATE_KEY }}
     permissions:
       contents: read
 
@@ -429,9 +286,11 @@ jobs:
     uses: ./.github/workflows/deploy.yml
     with:
       tag: ${{ inputs.tag || github.ref_name }}
-    # No secrets: the one deploy.yml uses, GOCOV_TOKEN for its smoke
-    # upload, is a production environment secret, which its job reads
-    # directly and a caller could not pass anyway.
+    # The smoke upload's token, a repository secret passed down the chain:
+    # a production environment secret does not reach a job in a workflow
+    # called two levels deep (v0.26.3's deploy read it as empty).
+    secrets:
+      GOCOV_SMOKE_TOKEN: ${{ secrets.GOCOV_SMOKE_TOKEN }}
     permissions:
       id-token: write
       contents: write
