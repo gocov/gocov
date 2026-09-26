@@ -19,18 +19,21 @@ operational version of it. Read it if anything below disagrees with the repo.
 
 ## The shape of a release
 
-One release lands in four repositories and is, in the end, **four PR merges plus two
-approval clicks** (the release PR's CI run, and the production deploy):
+One release lands in four repositories and is, in the end, **one PR merge plus two
+approval clicks** (the release PR's CI run, and the production deploy); the three wrapper
+PRs merge themselves once their checks pass:
 
 1. `gocov` — a `Release-As:` PR states the version; release-please opens the real release
    PR; merging it tags `vX.Y.Z` and the tag build publishes binaries and the GHCR image,
    waits for the production deploy approval, and once the deploy is green opens the three
    wrapper bump PRs.
-2. `gocov-action` — merge its bump PR; that *is* its release (tags next minor, moves `v1`).
-3. `upload-pipe` — merge its bump PR; that *is* its release (Docker Hub multi-arch + the
-   Bitbucket mirror push).
-4. `gitlab-component` — merge its bump PR; that *is* its release (tags next minor, GitHub
-   release, mirror push to gitlab.com whose pipeline publishes the CI/CD Catalog release).
+2. `gocov-action` — its bump PR auto-merges; that *is* its release (tags next minor, moves
+   `v1`).
+3. `upload-pipe` — its bump PR auto-merges; that *is* its release (Docker Hub multi-arch +
+   the Bitbucket mirror push).
+4. `gitlab-component` — its bump PR auto-merges; that *is* its release (tags next minor,
+   GitHub release, mirror push to gitlab.com whose pipeline publishes the CI/CD Catalog
+   release).
 
 Commit subjects on main are conventional (`feat:`, `fix:`, `perf:`, …; the `pr-title`
 check enforces it on every PR title), so release-please infers the version and writes the
@@ -150,10 +153,17 @@ gh pr list --repo gocov/upload-pipe      --label release
 gh pr list --repo gocov/gitlab-component --label release
 ```
 
-Merging each one **is** that wrapper's release. Merge the action's first (its `v1` is what
-most users track), then the pipe's, then the component's. If a bump PR never appeared, the
-deploy has not finished (or failed), or the App token step in `release.yml` failed — read
-that job's log before opening anything by hand (the App must be installed on all three wrapper repos).
+Merging each one **is** that wrapper's release, and `bump-wrappers` queues each for
+auto-merge: it merges itself once the checks its repo's `main` requires have passed — the
+action uploads with the new CLI on every runner OS, the pipe and the component against a
+fake server on amd64 and arm64. A wrapper whose `main` requires no checks is not queued (the
+job warns); merge that one by hand. A bump PR still open with red checks is a real failure of
+the new CLI in that wrapper: read the check, do not merge past it.
+
+If a bump PR never appeared, the deploy has not finished (or failed), or the App token step
+in `release.yml` failed — read that job's log before opening anything by hand (the App must
+be installed on all three wrapper repos). If one was not queued for auto-merge, the job's
+`Queue the bump PRs for auto-merge` step says why.
 
 ## Step 5 — Verify
 
