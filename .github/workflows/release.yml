@@ -368,15 +368,14 @@ jobs:
         #
         # Only where the wrapper's main requires status checks: without
         # them GitHub would merge on the spot, before any test ran, so such
-        # a PR is left for a human with a warning. The merge method is the
-        # one each repo uses for its own PRs.
+        # a PR is left for a human with a warning. Squash, as in all three
+        # repos: a bump PR is one commit, and main keeps one line per release.
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
         run: |
           set -euo pipefail
           failed=0
-          for spec in gocov-action:squash upload-pipe:squash gitlab-component:merge; do
-            repo=${spec%%:*} method=${spec#*:}
+          for repo in gocov-action upload-pipe gitlab-component; do
             state=$(gh pr view "bump-gocov-$TAG" --repo "gocov/$repo" \
               --json state --jq .state 2>/dev/null || echo none)
             if [ "$state" != OPEN ]; then
@@ -394,9 +393,9 @@ jobs:
               echo "::warning::gocov/$repo requires no status checks on main — its bump PR for $TAG is left for a human to merge"
               continue
             fi
-            echo "$repo: auto-merging ($method) once these pass:"
+            echo "$repo: auto-merging once these pass:"
             printf '%s\n' "$required" | sed 's/^/  /'
-            gh pr merge "bump-gocov-$TAG" --repo "gocov/$repo" --auto "--$method" || {
+            gh pr merge "bump-gocov-$TAG" --repo "gocov/$repo" --auto --squash || {
               echo "::error::could not queue gocov/$repo's bump PR for auto-merge — is auto-merge allowed in its settings?"
               failed=1
             }
