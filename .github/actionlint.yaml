@@ -1,0 +1,9 @@
+# actionlint (the workflow lint in ci.yml's workflows job).
+paths:
+  .github/workflows/release.yml:
+    ignore:
+      # actionlint's bundled metadata for actions/create-github-app-token@v3
+      # predates its client-id input (app-id is its deprecated alias). Drop
+      # these once actionlint knows the input.
+      - 'input "client-id" is not defined in action "actions/create-github-app-token@v3"'
+      - 'missing input "app-id" which is required by action "actions/create-github-app-token@v3"'

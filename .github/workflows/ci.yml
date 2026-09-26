@@ -39,7 +39,7 @@ jobs:
         run: ./scripts/check-pins.sh
       - name: gofmt
         run: |
-          unformatted=$(gofmt -l $(git ls-files '*.go'))
+          unformatted=$(git ls-files -z '*.go' | xargs -0 gofmt -l)
           [ -z "$unformatted" ] || {
             echo "::error::not gofmt-formatted — run gofmt -w on:"; echo "$unformatted"; exit 1; }
       - name: Vet
@@ -76,6 +76,30 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+
+  # The workflows are the most privileged code here: they hold the AWS
+  # deploy role, the cross-repo App and the release, and until now nothing
+  # checked them before a release ran them. actionlint catches mistakes
+  # (expressions, inputs, shellcheck on every run: block, warnings and up);
+  # zizmor catches security problems (injection, broad permissions,
+  # unpinned third-party actions, cache poisoning), failing on medium and
+  # up. Their settings: .github/actionlint.yaml, .github/zizmor.yml.
+  workflows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache: false
+      - name: actionlint
+        env:
+          SHELLCHECK_OPTS: --severity=warning
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: zizmor
+        run: pipx run zizmor==1.30.1 --offline --min-severity medium .github/workflows
 
   # The single-page web UI: typecheck, unit tests and a production build.
   # The Go job above does not depend on it — without a build the server

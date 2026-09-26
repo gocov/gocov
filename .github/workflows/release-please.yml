@@ -21,18 +21,20 @@ on:
   push:
     branches: [main]
 
-permissions:
-  contents: write
-  pull-requests: write
+permissions: {}
 
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    # The release PR and, on its merge, the tag and the GitHub release.
+    permissions:
+      contents: write
+      pull-requests: write
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - uses: googleapis/release-please-action@v5
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: release
         with:
           config-file: release-please-config.json
@@ -55,7 +57,7 @@ jobs:
     # (attestations), the image's storage record (artifact-metadata). Same
     # for secrets — without inherit, the deploy smoke test would run
     # without its upload token.
-    secrets: inherit
+    secrets: inherit # zizmor: ignore[secrets-inherit] — this repo's own workflow, see above
     permissions:
       contents: write
       packages: write
