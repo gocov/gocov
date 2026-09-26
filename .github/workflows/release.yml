@@ -254,10 +254,15 @@ jobs:
   # version default + README + CHANGELOG), authored by the cross-repo
   # App, which is installed on exactly those three repos. Merging a bump PR
   # is that wrapper's release decision — its tag-on-release-merge workflow
-  # takes it from there. Needs only the binaries, so it runs beside the
-  # image build, not behind the deploy.
+  # takes it from there.
+  #
+  # Behind the deploy, not beside the image build: a wrapper release puts
+  # the new CLI in front of every user of that wrapper, so the PRs open only
+  # after the same approval and smoke tests as app.gocov.dev (and
+  # docs.gocov.dev). A merged bump never sends a new CLI to a server that
+  # is still on the old release.
   bump-wrappers:
-    needs: release
+    needs: deploy
     runs-on: ubuntu-latest
     permissions:
       contents: read

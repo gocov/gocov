@@ -130,16 +130,16 @@ on a PR rather than a tag that has to be burned.
 
 ### The wrappers follow by themselves
 
-The release build also opens a bump PR in each wrapper, authored by the cross-repo App (installed on exactly those
-three repos): gocov-action's pins the CLI its `action.yml` installs; upload-pipe's bakes the CLI into the image and
-bumps `pipe.yml` and the CHANGELOG; gitlab-component's bumps the `version` default in `templates/upload.yml`, the
-README and the CHANGELOG. Each PR carries the `release` label, and merging it **is** that wrapper's release: a
-`tag-on-release-merge` workflow tags the merge commit (the action and the component compute their next minor from
-their tags; the pipe reads its version from `pipe.yml`) and runs that repo's release workflow — the action's release
-moves `v1`, the pipe's builds the multi-arch image for Docker Hub, the component's mirrors the tag to gitlab.com,
-where the project's own pipeline creates the release the CI/CD Catalog lists. So a full release across all four
-repos is four PR merges and nothing else; between the gocov release and the wrapper merges, `verify-release` reports
-the wrappers as behind, which is true.
+Once the production deploy is green, the release build opens a bump PR in each wrapper, authored by the cross-repo App
+(installed on exactly those three repos), so no wrapper ships a CLI newer than the hosted server: gocov-action's pins
+the CLI its `action.yml` installs; upload-pipe's bakes the CLI into the image and bumps `pipe.yml` and the CHANGELOG;
+gitlab-component's bumps the `version` default in `templates/upload.yml`, the README and the CHANGELOG. Each PR
+carries the `release` label, and merging it **is** that wrapper's release: a `tag-on-release-merge` workflow tags the
+merge commit (the action and the component compute their next minor from their tags; the pipe reads its version from
+`pipe.yml`) and runs that repo's release workflow — the action's release moves `v1`, the pipe's builds the multi-arch
+image for Docker Hub, the component's mirrors the tag to gitlab.com, where the project's own pipeline creates the
+release the CI/CD Catalog lists. So a full release across all four repos is four PR merges and nothing else; between
+the gocov release and the wrapper merges, `verify-release` reports the wrappers as behind, which is true.
 
 The mirrors are the seams. The pipe's tag workflow pushes Bitbucket only when the
 `BITBUCKET_MIRROR_USERNAME`/`BITBUCKET_MIRROR_APP_PASSWORD` secrets are set, the component's pushes gitlab.com only
