@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.2](https://github.com/gocov/gocov/compare/v0.26.1...v0.26.2) (2026-09-26)
+
+
+### Bug Fixes
+
+* bump golang.org/x/text for GO-2026-5970; add gofmt, race, govulncheck, workflow audit and a tested release bump ([#198](https://github.com/gocov/gocov/issues/198)) ([d592060](https://github.com/gocov/gocov/commit/d59206066d528686d48fbf908e2be7b39e4f46cb))
+
 ## [0.26.1](https://github.com/gocov/gocov/compare/v0.26.0...v0.26.1) (2026-09-25)
 
 
