@@ -68,6 +68,39 @@ contents() {
   gh api "repos/$1/contents/$2?ref=$3" --jq .content 2>/dev/null | base64 -d 2>/dev/null
 }
 
+# Prints the CPU architecture a binary inside an image variant was built
+# for (amd64 or arm64), read from its ELF header without running it — so
+# the arm64 variant can be checked on an amd64 machine. Prints nothing
+# when the variant or the file cannot be read.
+binary_arch() { # <image:ref> <linux/arch> <path in image>
+  local id arch
+  id=$(docker create --pull always --platform "$2" "$1" 2>/dev/null) || return 0
+  arch=$(docker cp "$id:$3" - 2>/dev/null | tar -xO 2>/dev/null | od -An -tx1 -j18 -N2 | tr -d ' \n')
+  docker rm -f "$id" >/dev/null 2>&1
+  case $arch in
+    3e00) echo amd64 ;;
+    b700) echo arm64 ;;
+    ?*) echo "unknown (e_machine $arch)" ;;
+  esac
+}
+
+# Checks each variant of a multi-arch image carries a binary built for
+# that variant's architecture. A multi-arch manifest proves only that both
+# variants exist: the 0.18.0 and 0.19.0 pipe images had both, and their
+# arm64 variant held the amd64 CLI.
+check_arches() { # <image:ref> <path in image>
+  local want got
+  for want in amd64 arm64; do
+    got=$(binary_arch "$1" "linux/$want" "$2")
+    if [ "$got" = "$want" ]; then
+      ok "$1 for linux/$want holds an $want binary"
+    else
+      bad "$1 for linux/$want holds a binary for ${got:-an unreadable architecture}, not $want" \
+        "on $want this image fails with an exec format error"
+    fi
+  done
+}
+
 # ---------------------------------------------------------------- CLI --
 head2 "$CLI_REPO @ $tag"
 
@@ -267,6 +300,7 @@ if command -v docker >/dev/null 2>&1 && docker version >/dev/null 2>&1; then
   else
     bad "$PIPE_IMAGE:0 reports gocov $baked, not $tag"
   fi
+  check_arches "$PIPE_IMAGE:0" /usr/local/bin/gocov
 else
   skip "did not open $PIPE_IMAGE:0 to check the baked CLI" "docker is not available here"
 fi
@@ -363,6 +397,7 @@ if command -v docker >/dev/null 2>&1 && docker version >/dev/null 2>&1; then
   else
     bad "ghcr.io/$SERVER_IMAGE:$tag reports $reported, not $tag"
   fi
+  check_arches "ghcr.io/$SERVER_IMAGE:$tag" /usr/local/bin/gocov-server
 else
   skip "did not open ghcr.io/$SERVER_IMAGE:$tag to check its version" "docker is not available here"
 fi
