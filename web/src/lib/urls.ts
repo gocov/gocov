@@ -8,7 +8,8 @@ export const routes = {
   /** `ws` is "forge/prefix"; without one the server picks the viewer's first workspace. */
   dashboard: (ws?: string) => (ws ? `/w/${ws}` : "/"),
   repo: (forge: string, slug: string) => `/repos/${forge}/${slug}`,
-  upload: (id: number | string) => `/uploads/${id}`,
+  /** `merged`: the upload's commit with every part merged, not this upload alone. */
+  upload: (id: number | string, merged = false) => `/uploads/${id}${merged ? "?parts=merged" : ""}`,
   /** `merged`: the file as every part of the upload's commit reports it, not this upload alone. */
   source: (id: number | string, path: string, merged = false) =>
     `/uploads/${id}/files/${path}${merged ? "?parts=merged" : ""}`,

@@ -162,3 +162,28 @@ test("a fork upload says it was not verified by a token, and why", async () => {
   expect(await screen.findByText("unverified contributor upload")).toBeInTheDocument();
   expect(screen.getByRole("tooltip")).toHaveTextContent(/authenticated by verifying the workflow run/);
 });
+
+test("a commit uploaded in parts links the upload alone to every part merged", async () => {
+  show(upload());
+  expect(await screen.findByText(/one of the 3 parts of its commit/)).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Every part merged" })).toHaveAttribute("href", "/uploads/412?parts=merged");
+});
+
+test("the merged view says so, links back, and keeps its base merged too", async () => {
+  mockApi({ "GET /uploads/412": upload({ files: { ...upload().files, merged: true } }) });
+  renderPage(<UploadPage />, { route: "uploads/:id", path: "/uploads/412?parts=merged" });
+
+  expect(await screen.findByText(/Every part of this commit merged, 3 in all/)).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "This upload alone" })).toHaveAttribute("href", "/uploads/412");
+  expect(screen.getAllByRole("link", { name: "0000aaaa1111" })[0]).toHaveAttribute(
+    "href",
+    "/uploads/410?parts=merged",
+  );
+  expect(screen.getByText(/every part merged\./)).toBeInTheDocument();
+});
+
+test("a single-part upload has no parts note", async () => {
+  show(upload({ provenance: { ...upload().provenance, part: "", parts: 1 } }));
+  expect(await screen.findByRole("heading", { name: "Upload" })).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: "Every part merged" })).not.toBeInTheDocument();
+});

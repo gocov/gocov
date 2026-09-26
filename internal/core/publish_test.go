@@ -63,7 +63,7 @@ func TestInsightsAnnotationsTruncate(t *testing.T) {
 	// The truncation is called out in the report details.
 	report, _ := p.insightsReport(&store.Upload{
 		TotalPct: 80, CoveredStmts: 8, TotalStmts: 10, DiffCoverage: dc,
-	}, nil, Verdict{})
+	}, "", nil, Verdict{})
 	if !strings.Contains(report.Details, "+5 more uncovered ranges") {
 		t.Errorf("details = %q, want truncation note", report.Details)
 	}
@@ -73,12 +73,12 @@ func TestPRCommentSignatureHostedOnly(t *testing.T) {
 	u := &store.Upload{CommitSHA: "abc123", TotalPct: 80}
 
 	selfHosted := &Pipeline{BaseURL: "https://cov.example.com"}
-	if body := selfHosted.prCommentBody(u, nil, Verdict{}); strings.Contains(body, "gocov.dev") {
+	if body := selfHosted.prCommentBody(u, "", nil, Verdict{}); strings.Contains(body, "gocov.dev") {
 		t.Errorf("self-hosted PR comment carries the signature line:\n%s", body)
 	}
 
 	hosted := &Pipeline{BaseURL: "https://cov.example.com", Hosted: true}
-	body := hosted.prCommentBody(u, nil, Verdict{})
+	body := hosted.prCommentBody(u, "", nil, Verdict{})
 	if !strings.Contains(body, "<sub>Coverage by [gocov](https://gocov.dev?ref=pr-comment) — free for public repos</sub>") {
 		t.Errorf("hosted PR comment misses the signature line:\n%s", body)
 	}
@@ -108,7 +108,7 @@ func TestInsightsPerFileDataBudget(t *testing.T) {
 	delta := 1.5
 	report, _ := p.insightsReport(&store.Upload{
 		TotalPct: 80, CoveredStmts: 8, TotalStmts: 10, DiffCoverage: dc,
-	}, &delta, Verdict{Configured: true})
+	}, "", &delta, Verdict{Configured: true})
 
 	if len(report.Data) != insightsMaxDataFields {
 		t.Fatalf("data fields = %d, want %d", len(report.Data), insightsMaxDataFields)
@@ -133,7 +133,7 @@ func TestInsightsFullyCoveredFilesClaimNoDataFields(t *testing.T) {
 	}
 	report, _ := p.insightsReport(&store.Upload{
 		TotalPct: 80, CoveredStmts: 8, TotalStmts: 10, DiffCoverage: dc,
-	}, nil, Verdict{})
+	}, "", nil, Verdict{})
 	for _, d := range report.Data {
 		if d.Title == "ok.go" {
 			t.Errorf("fully covered file claimed a data field: %+v", d)
@@ -189,7 +189,7 @@ func TestPushSurfacesRunConcurrently(t *testing.T) {
 	defer cancel()
 
 	res := p.pushSurfaces(ctx, fg, &store.Repo{Slug: "acme/api"},
-		&store.Upload{CommitSHA: "abc", PRID: "7", TotalPct: 80}, nil, Verdict{})
+		&store.Upload{CommitSHA: "abc", PRID: "7", TotalPct: 80}, "", nil, Verdict{})
 	if res.BuildStatus != "posted" || res.CodeInsights != "posted" || res.PRComment != "posted" {
 		t.Fatalf("push result = %+v, want every surface posted", res)
 	}

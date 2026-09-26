@@ -464,11 +464,13 @@ type Store interface {
 	CommitReport(ctx context.Context, repoID int64, commitSHA string) (*CommitReport, error)
 	// LatestPassedCommitReport returns the most recent gate-passing merged
 	// report on a branch, skipping excludeCommit (the commit being uploaded,
-	// whose own in-progress report must not serve as its baseline). Used as
+	// whose own in-progress report must not serve as its baseline) and, when
+	// beforeID > 0, every report no older than it — report ids are assigned
+	// once per commit, so they order commits by when each was first seen. Used as
 	// the delta and gate-drop baseline; PR-build reports are excluded — the
 	// baseline is always the branch's own history, never a PR that happens
 	// to carry the branch's name.
-	LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*CommitReport, error)
+	LatestPassedCommitReport(ctx context.Context, repoID int64, branch string, beforeID int64, excludeCommit string) (*CommitReport, error)
 	// ListBranchCommitReports returns merged reports on a branch newest
 	// first; limit <= 0 means all. Feeds the coverage trend. On the repo's
 	// default branch PR-build reports are left out — a PR can only reach
@@ -520,7 +522,7 @@ type CommitTx interface {
 	// parts a multi-part recompute merges. The order is unspecified: the
 	// merge keys blocks by path and position, so it needs none.
 	PartFiles(ctx context.Context, uploadIDs []int64) ([]*UploadFile, error)
-	LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*CommitReport, error)
+	LatestPassedCommitReport(ctx context.Context, repoID int64, branch string, beforeID int64, excludeCommit string) (*CommitReport, error)
 	UpsertCommitReport(ctx context.Context, cr *CommitReport) error
 }
 

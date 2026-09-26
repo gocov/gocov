@@ -99,6 +99,36 @@ func TestAPIRepoFeatureBranchCarriesItsPRBuilds(t *testing.T) {
 	}
 }
 
+// A branch with only PR builds falls back to the default branch as it
+// stood before them — the same baseline its merged upload page and the
+// source views behind its files card use — never to what main got later.
+func TestAPIRepoPRBranchComparesAgainstEarlierMain(t *testing.T) {
+	f := newFixture(t, nil)
+	doUpload(t, f, "secret-token", map[string]string{"commit": "m1", "branch": "main"}, testProfile)
+	pr := doUpload(t, f, "secret-token", map[string]string{"commit": "p1", "branch": "feat", "pr_id": "7"},
+		"mode: set\nexample.com/m/a.go:1.1,5.2 10 3\n")
+	doUpload(t, f, "secret-token", map[string]string{"commit": "m2", "branch": "main"}, testProfile)
+
+	got := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets?branch=feat"))
+	if got.Summary == nil || got.Summary.Commit.SHA != "p1" {
+		t.Fatalf("summary = %+v, want the PR build p1", got.Summary)
+	}
+	if base := got.Summary.Verdict.Base; base == nil || base.SHA != "m1" {
+		t.Errorf("compared to %+v, want main's m1, not m2 after it", base)
+	}
+	if got.Files == nil || !got.Files.HasBase {
+		t.Fatalf("files = %+v, want them compared against m1 too", got.Files)
+	}
+	var res uploadResponse
+	if err := json.Unmarshal(pr.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	page := decodeJSON[uploadPageDTO](t, get(f, fmt.Sprintf("/api/ui/uploads/%d", res.ID)))
+	if page.Verdict.Base == nil || page.Verdict.Base.SHA != "m1" {
+		t.Errorf("upload page compared to %+v, want the repo page's m1", page.Verdict.Base)
+	}
+}
+
 func TestAPIRepoPage(t *testing.T) {
 	f := newFixture(t, nil)
 	f.repo.Gate = store.Gate{MinCoverage: new(float64(50))}

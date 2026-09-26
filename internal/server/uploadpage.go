@@ -9,6 +9,7 @@ package server
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -37,6 +38,14 @@ func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
 // against the repo's gate, the files it moved against the baseline, and
 // where it came from. A false second result means the answer is already
 // written.
+//
+// ?parts=merged shows the upload's commit with every part merged instead —
+// the numbers the forge surfaces state for a commit uploaded in parts, and
+// what they link to (core's reportURL): the commit's merged report, and
+// the files of every part merged the way the repo page's files card merges
+// them, against the commit's baseline (core.CommitBaseline). The Upload
+// card still describes the upload the page is named for. A commit of one
+// part, or without a merged report yet, reads as the upload alone.
 func (s *Server) buildUploadPage(w http.ResponseWriter, r *http.Request) (*uploadPageDTO, bool) {
 	u, repo, ok := s.reportUpload(w, r)
 	if !ok {
@@ -46,15 +55,43 @@ func (s *Server) buildUploadPage(w http.ResponseWriter, r *http.Request) (*uploa
 	// The baseline is the newest earlier gate-passing upload on the same
 	// branch; its per-file coverage feeds the before → after column, and its
 	// total feeds the headline delta — the same baseline the source view
-	// uses. The files and the provenance card read independently.
+	// uses.
+	shown := pageReport{"This upload", u.TotalPct, u.CoveredStmts, u.TotalStmts, u.DiffCoverage, u.GateFailed, u.Gate, u.GateBasePct}
+	loadFiles := func(ctx context.Context) (*filesViewDTO, *baseRefDTO, error) {
+		files, base, err := s.loadFilesView(ctx, repo, u)
+		if base == nil {
+			return files, nil, err
+		}
+		return files, &baseRefDTO{UploadID: base.ID, SHA: base.CommitSHA, Coverage: base.TotalPct}, err
+	}
+	if r.FormValue("parts") == "merged" {
+		cr, err := s.store.CommitReport(r.Context(), repo.ID, u.CommitSHA)
+		switch {
+		case err == nil && cr.PartCount > 1:
+			shown = pageReport{"This commit", cr.TotalPct, cr.CoveredStmts, cr.TotalStmts, cr.DiffCoverage, cr.GateFailed, cr.Gate, cr.GateBasePct}
+			loadFiles = func(ctx context.Context) (*filesViewDTO, *baseRefDTO, error) {
+				base := core.CommitBaseline(ctx, s.store, repo, cr)
+				files, _, err := s.loadCommitFilesView(ctx, repo, cr, base)
+				if base == nil {
+					return files, nil, err
+				}
+				return files, &baseRefDTO{UploadID: base.UploadID, SHA: base.CommitSHA, Coverage: base.TotalPct}, err
+			}
+		case err != nil && !errors.Is(err, store.ErrNotFound):
+			s.internalError(w, "loading commit report", err)
+			return nil, false
+		}
+	}
+
+	// The files and the provenance card read independently.
 	var (
 		wg         sync.WaitGroup
 		files      *filesViewDTO
-		base       *store.Upload
+		base       *baseRefDTO
 		err        error
 		provenance provenanceDTO
 	)
-	wg.Go(func() { files, base, err = s.loadFilesView(r.Context(), repo, u) })
+	wg.Go(func() { files, base, err = loadFiles(r.Context()) })
 	wg.Go(func() { provenance = s.uploadProvenance(r.Context(), u) })
 	wg.Wait()
 	if err != nil {
@@ -62,39 +99,34 @@ func (s *Server) buildUploadPage(w http.ResponseWriter, r *http.Request) (*uploa
 		return nil, false
 	}
 	dto := &uploadPageDTO{
-		Repo: newRepoRefDTO(repo),
-		Upload: uploadHeadDTO{
-			ID:            u.ID,
-			SHA:           u.CommitSHA,
-			Branch:        u.Branch,
-			PRID:          u.PRID,
-			At:            u.CreatedAt,
-			CommitMessage: u.Meta.CommitMessage,
-			CommitAuthor:  u.Meta.CommitAuthor,
-			Tokenless:     u.Meta.Tokenless,
-		},
-		Verdict:      gateVerdict("This upload", u.TotalPct, u.DiffCoverage, u.GateFailed, store.JudgedGate(u.Gate, repo.Gate), u.GateBasePct),
-		CoveredStmts: u.CoveredStmts,
-		TotalStmts:   u.TotalStmts,
+		Repo:         newRepoRefDTO(repo),
+		Upload:       newUploadHeadDTO(u),
+		Verdict:      gateVerdict(shown.subject, shown.pct, shown.diff, shown.gateFailed, store.JudgedGate(shown.gate, repo.Gate), shown.gateBasePct),
+		CoveredStmts: shown.coveredStmts,
+		TotalStmts:   shown.totalStmts,
+		Diff:         newDiffCovDTO(shown.diff),
 		Files:        files,
 		Provenance:   provenance,
 	}
 	if base != nil {
-		dto.Verdict.against(base.ID, base.CommitSHA, base.TotalPct)
-	}
-	if dc := u.DiffCoverage; dc != nil {
-		dto.Diff = &diffCovDTO{
-			Coverage:       dc.Percent(),
-			CoveredLines:   dc.CoveredLines,
-			TotalLines:     dc.TotalLines,
-			ChangedFiles:   len(dc.Files),
-			UnmatchedFiles: len(dc.UnmatchedFiles),
-		}
+		dto.Verdict.against(base.UploadID, base.SHA, base.Coverage)
 	}
 	if u.RawBlobKey != "" {
 		dto.DownloadURL = new(uploadProfileURL(u))
 	}
 	return dto, true
+}
+
+// pageReport is the report an upload page states: the upload's own, or
+// its commit's merged across parts. subject names it in the verdict.
+type pageReport struct {
+	subject                  string
+	pct                      float64
+	coveredStmts, totalStmts int64
+	diff                     *diffcov.Result
+	gateFailed               bool
+	gate                     *store.Gate
+	gateBasePct              *float64
 }
 
 // uploadProfileURL is the raw-profile download route for an upload.
@@ -136,6 +168,33 @@ type diffCovDTO struct {
 	TotalLines     int64   `json:"total_lines"`
 	ChangedFiles   int     `json:"changed_files"`
 	UnmatchedFiles int     `json:"unmatched_files"`
+}
+
+func newUploadHeadDTO(u *store.Upload) uploadHeadDTO {
+	return uploadHeadDTO{
+		ID:            u.ID,
+		SHA:           u.CommitSHA,
+		Branch:        u.Branch,
+		PRID:          u.PRID,
+		At:            u.CreatedAt,
+		CommitMessage: u.Meta.CommitMessage,
+		CommitAuthor:  u.Meta.CommitAuthor,
+		Tokenless:     u.Meta.Tokenless,
+	}
+}
+
+// newDiffCovDTO is nil for a report without diff coverage.
+func newDiffCovDTO(dc *diffcov.Result) *diffCovDTO {
+	if dc == nil {
+		return nil
+	}
+	return &diffCovDTO{
+		Coverage:       dc.Percent(),
+		CoveredLines:   dc.CoveredLines,
+		TotalLines:     dc.TotalLines,
+		ChangedFiles:   len(dc.Files),
+		UnmatchedFiles: len(dc.UnmatchedFiles),
+	}
 }
 
 // provenanceDTO is the Upload card: what we recorded about how this upload

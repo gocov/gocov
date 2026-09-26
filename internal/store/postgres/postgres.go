@@ -1007,8 +1007,8 @@ func (c *commitReportTx) PartFiles(ctx context.Context, uploadIDs []int64) ([]*s
 	return partFiles(ctx, c.tx, uploadIDs)
 }
 
-func (c *commitReportTx) LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*store.CommitReport, error) {
-	return c.s.latestPassedCommitReport(ctx, c.tx, repoID, branch, excludeCommit)
+func (c *commitReportTx) LatestPassedCommitReport(ctx context.Context, repoID int64, branch string, beforeID int64, excludeCommit string) (*store.CommitReport, error) {
+	return c.s.latestPassedCommitReport(ctx, c.tx, repoID, branch, beforeID, excludeCommit)
 }
 
 func (c *commitReportTx) UpsertCommitReport(ctx context.Context, cr *store.CommitReport) error {
@@ -1076,17 +1076,17 @@ func (s *Store) CommitReport(ctx context.Context, repoID int64, commitSHA string
 		repoID, commitSHA))
 }
 
-func (s *Store) LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*store.CommitReport, error) {
-	return s.latestPassedCommitReport(ctx, s.pool, repoID, branch, excludeCommit)
+func (s *Store) LatestPassedCommitReport(ctx context.Context, repoID int64, branch string, beforeID int64, excludeCommit string) (*store.CommitReport, error) {
+	return s.latestPassedCommitReport(ctx, s.pool, repoID, branch, beforeID, excludeCommit)
 }
 
-func (s *Store) latestPassedCommitReport(ctx context.Context, q querier, repoID int64, branch, excludeCommit string) (*store.CommitReport, error) {
+func (s *Store) latestPassedCommitReport(ctx context.Context, q querier, repoID int64, branch string, beforeID int64, excludeCommit string) (*store.CommitReport, error) {
 	return s.scanCommitReport(q.QueryRow(ctx,
 		`SELECT `+commitReportCols+` FROM commit_reports
 		 WHERE repo_id = $1 AND branch = $2 AND commit_sha <> $3 AND NOT gate_failed
-		   AND pr_id = ''
+		   AND pr_id = '' AND ($4 = 0 OR id < $4)
 		 ORDER BY id DESC LIMIT 1`,
-		repoID, branch, excludeCommit))
+		repoID, branch, excludeCommit, beforeID))
 }
 
 // TryPushStatus serializes the forge status/PR-comment push for one commit

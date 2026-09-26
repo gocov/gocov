@@ -35,7 +35,7 @@ var errStatusPushFailed = errors.New("build status push failed")
 // forge; a failed coverage gate turns the state into FAILED so the forge
 // can block the merge. Best effort: push failures are reported in the
 // response but do not fail the upload.
-func (p *Pipeline) pushBuildStatus(ctx context.Context, fg forge.Forge, repo *store.Repo, u *store.Upload, deltaPct *float64, gate Verdict) string {
+func (p *Pipeline) pushBuildStatus(ctx context.Context, fg forge.Forge, repo *store.Repo, u *store.Upload, link string, deltaPct *float64, gate Verdict) string {
 	desc := fmt.Sprintf("coverage: %.1f%%", u.TotalPct)
 	if deltaPct != nil {
 		desc += fmt.Sprintf(" (%+.1f%%)", *deltaPct)
@@ -51,7 +51,7 @@ func (p *Pipeline) pushBuildStatus(ctx context.Context, fg forge.Forge, repo *st
 		State:       state,
 		Name:        "gocov",
 		Description: desc,
-		URL:         p.uploadURL(u),
+		URL:         link,
 	}
 	if err := fg.PostBuildStatus(ctx, repo.Slug, u.CommitSHA, status); err != nil {
 		p.Log.Error("post build status", "repo", repo.Slug, "commit", u.CommitSHA, "err", err)
@@ -68,8 +68,8 @@ const insightsMaxAnnotations = 100
 // PR uploads, annotates uncovered changed lines inline in the diff. Best
 // effort like the build status: failures land in the response field and
 // the log, never in the upload result.
-func (p *Pipeline) pushCodeInsights(ctx context.Context, fg forge.Forge, repo *store.Repo, u *store.Upload, deltaPct *float64, gate Verdict) string {
-	report, annotations := p.insightsReport(u, deltaPct, gate)
+func (p *Pipeline) pushCodeInsights(ctx context.Context, fg forge.Forge, repo *store.Repo, u *store.Upload, link string, deltaPct *float64, gate Verdict) string {
+	report, annotations := p.insightsReport(u, link, deltaPct, gate)
 	err := fg.PublishReport(ctx, repo.Slug, u.CommitSHA, report, annotations)
 	if errors.Is(err, forge.ErrNotImplemented) {
 		// A wrapped sentinel carries the forge's reason (e.g. GitHub
@@ -91,7 +91,7 @@ func (p *Pipeline) pushCodeInsights(ctx context.Context, fg forge.Forge, repo *s
 // insightsReport builds the report card and its annotations. The data
 // fields stay well under the forge API's cap of ten; annotations exist
 // only for PR uploads, and only on uncovered changed lines.
-func (p *Pipeline) insightsReport(u *store.Upload, deltaPct *float64, gate Verdict) (forge.Report, []forge.Annotation) {
+func (p *Pipeline) insightsReport(u *store.Upload, link string, deltaPct *float64, gate Verdict) (forge.Report, []forge.Annotation) {
 	data := []forge.ReportData{
 		{Title: "Total coverage", Type: forge.DataPercentage, Value: u.TotalPct},
 	}
@@ -139,7 +139,7 @@ func (p *Pipeline) insightsReport(u *store.Upload, deltaPct *float64, gate Verdi
 		Title:   "gocov coverage",
 		Details: details,
 		Result:  result,
-		Link:    p.uploadURL(u),
+		Link:    link,
 		Data:    data,
 	}, annotations
 }
@@ -240,11 +240,11 @@ const PRCommentMarker = "**gocov**"
 // pushPRComment posts or updates the coverage summary comment on the pull
 // request. Returns "" for non-PR uploads so the field is omitted from the
 // response.
-func (p *Pipeline) pushPRComment(ctx context.Context, fg forge.Forge, repo *store.Repo, u *store.Upload, deltaPct *float64, gate Verdict) string {
+func (p *Pipeline) pushPRComment(ctx context.Context, fg forge.Forge, repo *store.Repo, u *store.Upload, link string, deltaPct *float64, gate Verdict) string {
 	if u.PRID == "" {
 		return ""
 	}
-	body := p.prCommentBody(u, deltaPct, gate)
+	body := p.prCommentBody(u, link, deltaPct, gate)
 
 	// Best effort update-in-place: any failure falls back to posting a
 	// fresh comment, which is never worse than the old behavior.
@@ -270,7 +270,7 @@ func (p *Pipeline) pushPRComment(ctx context.Context, fg forge.Forge, repo *stor
 // prCommentMaxFiles caps the uncovered-lines table in PR comments.
 const prCommentMaxFiles = 20
 
-func (p *Pipeline) prCommentBody(u *store.Upload, deltaPct *float64, gate Verdict) string {
+func (p *Pipeline) prCommentBody(u *store.Upload, link string, deltaPct *float64, gate Verdict) string {
 	var sb strings.Builder
 	short := ShortSHA(u.CommitSHA)
 	fmt.Fprintf(&sb, "**gocov** report for `%s`\n\n", short)
@@ -320,7 +320,7 @@ func (p *Pipeline) prCommentBody(u *store.Upload, deltaPct *float64, gate Verdic
 		}
 	}
 
-	fmt.Fprintf(&sb, "\n[Full report](%s)\n", p.uploadURL(u))
+	fmt.Fprintf(&sb, "\n[Full report](%s)\n", link)
 	// Hosted only: self-hosted operators do not get marketing appended to
 	// their PRs. Appended after the marker-led body, so update-in-place
 	// (PRCommentMarker) is untouched.
@@ -330,8 +330,17 @@ func (p *Pipeline) prCommentBody(u *store.Upload, deltaPct *float64, gate Verdic
 	return sb.String()
 }
 
-func (p *Pipeline) uploadURL(u *store.Upload) string {
-	return fmt.Sprintf("%s/uploads/%d", strings.TrimSuffix(p.BaseURL, "/"), u.ID)
+// reportURL is the page every forge surface links to for the merged
+// report u carries: the triggering upload's page, and for a commit
+// uploaded in more than one part that page with every part merged
+// (?parts=merged) — the numbers the surfaces state, where the upload
+// alone would show only its own part.
+func (p *Pipeline) reportURL(u *store.Upload, parts int) string {
+	url := fmt.Sprintf("%s/uploads/%d", strings.TrimSuffix(p.BaseURL, "/"), u.ID)
+	if parts > 1 {
+		url += "?parts=merged"
+	}
+	return url
 }
 
 // mdPath neutralizes characters that would break the markdown table or the
@@ -370,7 +379,7 @@ func (p *Pipeline) Push(ctx context.Context, fg forge.Forge, repo *store.Repo, u
 	pushCtx, cancel := context.WithTimeout(ctx, statusPushTimeout)
 	defer cancel()
 	pushed, err := p.Store.TryPushStatus(pushCtx, repo.ID, upload.CommitSHA, upload.ID, func(ctx context.Context) error {
-		res = p.pushSurfaces(ctx, fg, repo, merged, mergedDelta, mergedGate)
+		res = p.pushSurfaces(ctx, fg, repo, merged, p.reportURL(merged, len(rc.Parts)), mergedDelta, mergedGate)
 		// The build status gates merges; if it didn't post, signal failure so
 		// the version isn't advanced and a later part retries. Insights and
 		// PR comment are best effort and don't hold back the version.
@@ -402,16 +411,16 @@ func (p *Pipeline) Push(ctx context.Context, fg forge.Forge, repo *store.Repo, u
 // push, which holds the commit's status lock, takes as long as the slowest
 // surface rather than the sum of all three. Without a client — the
 // workspace has no working connection — every surface is skipped.
-func (p *Pipeline) pushSurfaces(ctx context.Context, fg forge.Forge, repo *store.Repo, u *store.Upload, deltaPct *float64, gate Verdict) PushResult {
+func (p *Pipeline) pushSurfaces(ctx context.Context, fg forge.Forge, repo *store.Repo, u *store.Upload, link string, deltaPct *float64, gate Verdict) PushResult {
 	if fg == nil {
 		p.Log.Debug("code insights skipped: no forge connection", "repo", repo.Slug)
 		return everySurface("skipped", u.PRID != "")
 	}
 	var res PushResult
 	var wg sync.WaitGroup
-	wg.Go(func() { res.BuildStatus = p.pushBuildStatus(ctx, fg, repo, u, deltaPct, gate) })
-	wg.Go(func() { res.CodeInsights = p.pushCodeInsights(ctx, fg, repo, u, deltaPct, gate) })
-	wg.Go(func() { res.PRComment = p.pushPRComment(ctx, fg, repo, u, deltaPct, gate) })
+	wg.Go(func() { res.BuildStatus = p.pushBuildStatus(ctx, fg, repo, u, link, deltaPct, gate) })
+	wg.Go(func() { res.CodeInsights = p.pushCodeInsights(ctx, fg, repo, u, link, deltaPct, gate) })
+	wg.Go(func() { res.PRComment = p.pushPRComment(ctx, fg, repo, u, link, deltaPct, gate) })
 	wg.Wait()
 	return res
 }

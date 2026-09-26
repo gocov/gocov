@@ -80,7 +80,7 @@ func (p *Pipeline) Recompute(ctx context.Context, repo *store.Repo, u *store.Upl
 		}
 
 		var deltaPct *float64
-		prev, err := deltaBase(ctx, tx, repo, u.Branch, u.CommitSHA)
+		prev, err := deltaBase(ctx, tx, repo, u.Branch, u.CommitSHA, 0)
 		if err != nil {
 			return err
 		}

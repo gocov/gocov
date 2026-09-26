@@ -739,11 +739,11 @@ func (s *Store) commitReportLocked(repoID int64, commitSHA string) *store.Commit
 	return find(s.reports, func(cr *store.CommitReport) bool { return cr.RepoID == repoID && cr.CommitSHA == commitSHA })
 }
 
-func (s *Store) LatestPassedCommitReport(_ context.Context, repoID int64, branch, excludeCommit string) (*store.CommitReport, error) {
-	return s.latestCommitReport(repoID, branch, excludeCommit, true, true)
+func (s *Store) LatestPassedCommitReport(_ context.Context, repoID int64, branch string, beforeID int64, excludeCommit string) (*store.CommitReport, error) {
+	return s.latestCommitReport(repoID, branch, beforeID, excludeCommit, true, true)
 }
 
-func (s *Store) latestCommitReport(repoID int64, branch, excludeCommit string, passedOnly, nonPROnly bool) (*store.CommitReport, error) {
+func (s *Store) latestCommitReport(repoID int64, branch string, beforeID int64, excludeCommit string, passedOnly, nonPROnly bool) (*store.CommitReport, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var latest *store.CommitReport
@@ -758,6 +758,9 @@ func (s *Store) latestCommitReport(repoID int64, branch, excludeCommit string, p
 			continue
 		}
 		if excludeCommit != "" && cr.CommitSHA == excludeCommit {
+			continue
+		}
+		if beforeID > 0 && cr.ID >= beforeID {
 			continue
 		}
 		if latest == nil || cr.ID > latest.ID {

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "react-router";
+import { Link, useParams, useSearchParams } from "react-router";
 import { Chip, Mono, Tooltip } from "@/components/atoms";
 import {
   Breadcrumbs,
@@ -25,7 +25,8 @@ const tokenlessHint =
 /** One upload: its verdict, the diff it covered, its files and where it came from. */
 export default function UploadPage() {
   const id = useParams().id ?? "";
-  const query = useQuery(uploadQuery(id));
+  const [search] = useSearchParams();
+  const query = useQuery(uploadQuery(id, search.get("parts") ?? ""));
   usePageTitle(query.data && `${query.data.repo.slug} @ ${shortSha(query.data.upload.sha)}`);
 
   return (
@@ -33,6 +34,7 @@ export default function UploadPage() {
       {(data) => (
         <div className="UploadPage stack stack-3">
           <Header data={data} />
+          <PartsNote data={data} />
 
           <VerdictCard
             verdict={data.verdict}
@@ -54,7 +56,7 @@ export default function UploadPage() {
                       <span className="muted">&mdash;</span>
                     ) : (
                       <>
-                        <Link to={routes.upload(data.verdict.base.upload_id)}>
+                        <Link to={routes.upload(data.verdict.base.upload_id, data.files.merged)}>
                           <Mono>{shortSha(data.verdict.base.sha)}</Mono>
                         </Link>{" "}
                         <span className="muted small">&middot; {pct(data.verdict.base.coverage)}</span>
@@ -101,16 +103,40 @@ export default function UploadPage() {
             {data.verdict.base !== null && (
               <p className="muted small">
                 Compared against baseline{" "}
-                <Link to={routes.upload(data.verdict.base.upload_id)}>
+                <Link to={routes.upload(data.verdict.base.upload_id, data.files.merged)}>
                   <Mono>{shortSha(data.verdict.base.sha)}</Mono>
                 </Link>{" "}
-                ({pct(data.verdict.base.coverage)}), the last gate-passing upload on this branch.
+                ({pct(data.verdict.base.coverage)}),{" "}
+                {data.files.merged
+                  ? "the last gate-passing commit before this one, every part merged."
+                  : "the last gate-passing upload on this branch."}
               </p>
             )}
           </div>
         </div>
       )}
     </QueryBoundary>
+  );
+}
+
+/**
+ * For a commit uploaded in parts, which of its two views this is — the
+ * upload alone, or every part merged (what the PR comment and the build
+ * status state) — with the way to the other.
+ */
+function PartsNote({ data }: { data: UploadPageData }) {
+  const { parts } = data.provenance;
+  if (parts < 2) return null;
+  return data.files.merged ? (
+    <p className="muted small">
+      Every part of this commit merged, {parts} in all.{" "}
+      <Link to={routes.upload(data.upload.id)}>This upload alone</Link>
+    </p>
+  ) : (
+    <p className="muted small">
+      This upload is one of the {parts} parts of its commit.{" "}
+      <Link to={routes.upload(data.upload.id, true)}>Every part merged</Link>
+    </p>
   );
 }
 

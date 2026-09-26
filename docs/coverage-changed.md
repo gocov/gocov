@@ -19,7 +19,9 @@ miss, just as it carries no weight in the total.
 
 The delta beside the percentage — and the `Compared to` line on the repo page — is not the previous commit. It is the
 **latest gate-passing merged report on the same branch**, ignoring the commit's own report so an earlier part is never
-its own baseline. A feature branch with no passing history of its own falls back to the default branch.
+its own baseline. A feature branch with no passing history of its own falls back to the default branch — as it stood
+when the upload arrived, so a page does not start comparing against what the default branch received later, a PR's own
+merge commit included.
 
 Gate-failing uploads are recorded but never become a baseline. That is deliberate: re-running CI cannot launder a
 failure into the new reference point, and a PR cannot walk coverage down one tolerated step at a time. The gate's

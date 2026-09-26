@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -385,19 +384,14 @@ func (s *Server) baseFileFor(ctx context.Context, repo *store.Repo, u *store.Upl
 }
 
 // commitBaseFileFor is baseFileFor for the merged view: the same file,
-// merged across its parts, at the commit the repo page's files card
-// measures this commit against — core.ReportBaseline over the branch's
-// reports from this commit back, the card's own rule.
+// merged across its parts, at the commit the merged views measure this
+// commit against (core.CommitBaseline).
 func (s *Server) commitBaseFileFor(ctx context.Context, repo *store.Repo, u *store.Upload, path string) *store.UploadFile {
-	reports, err := s.store.ListBranchCommitReports(ctx, repo.ID, u.Branch, trendReportLimit)
+	cr, err := s.store.CommitReport(ctx, repo.ID, u.CommitSHA)
 	if err != nil {
 		return nil
 	}
-	i := slices.IndexFunc(reports, func(cr *store.CommitReport) bool { return cr.CommitSHA == u.CommitSHA })
-	if i < 0 {
-		return nil
-	}
-	_, base := core.ReportBaseline(reports[i:min(i+baselineLookback, len(reports))])
+	base := core.CommitBaseline(ctx, s.store, repo, cr)
 	if base == nil {
 		return nil
 	}
