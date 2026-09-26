@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The edit half of a wrapper bump: release.yml's bump-wrappers job clones
+# The edit half of a wrapper bump: wrappers.yml's bump-wrappers job clones
 # a wrapper, runs this in the checkout, and commits and opens the PR from
 # what it prints. Kept out of the workflow so it can be tested before a
 # release runs it — scripts/bump-wrapper-test.sh runs it against the real
