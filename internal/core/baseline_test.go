@@ -106,3 +106,48 @@ func TestUploadBaseline(t *testing.T) {
 		t.Errorf("fresh branch's baseline after main moved on = %s, want m1 still", sha(got))
 	}
 }
+
+// CommitBaseline orders commits by when each was first seen, so a CI retry
+// that recomputes a report later changes neither which reports count as
+// earlier nor which as later.
+func TestCommitBaseline(t *testing.T) {
+	ctx := t.Context()
+	st := storemem.New()
+	repo := &store.Repo{Forge: "github", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	var uploadID int64
+	put := func(sha, branch, prID string) *store.CommitReport {
+		t.Helper()
+		uploadID++
+		cr := &store.CommitReport{RepoID: repo.ID, CommitSHA: sha, Branch: branch, PRID: prID, UploadID: uploadID}
+		if err := st.UpsertCommitReport(ctx, cr); err != nil {
+			t.Fatal(err)
+		}
+		return cr
+	}
+	sha := func(cr *store.CommitReport) string {
+		if cr == nil {
+			return "none"
+		}
+		return cr.CommitSHA
+	}
+
+	put("m1", "main", "")
+	pr := put("p1", "feat", "7")
+	put("m2", "main", "") // the PR's own merge commit, after it
+	if got := CommitBaseline(ctx, st, repo, pr); sha(got) != "m1" {
+		t.Errorf("PR baseline = %s, want m1, main before the PR", sha(got))
+	}
+	// Re-running the PR's CI recomputes its report after m2 landed.
+	pr = put("p1", "feat", "7")
+	if got := CommitBaseline(ctx, st, repo, pr); sha(got) != "m1" {
+		t.Errorf("retried PR baseline = %s, want m1 still", sha(got))
+	}
+	// Re-running m1's CI does not push it out of the PR's past.
+	put("m1", "main", "")
+	if got := CommitBaseline(ctx, st, repo, pr); sha(got) != "m1" {
+		t.Errorf("PR baseline after m1's retry = %s, want m1 still", sha(got))
+	}
+}

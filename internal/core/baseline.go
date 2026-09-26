@@ -31,7 +31,7 @@ import (
 // store answers it before an upload is stored, a commit-report transaction
 // while the merge runs.
 type passedReports interface {
-	LatestPassedCommitReport(ctx context.Context, repoID int64, branch, excludeCommit string) (*store.CommitReport, error)
+	LatestPassedCommitReport(ctx context.Context, repoID int64, branch string, beforeID int64, excludeCommit string) (*store.CommitReport, error)
 }
 
 // gateDropBase returns the total of the gate's drop baseline, or nil when
@@ -44,7 +44,7 @@ func gateDropBase(ctx context.Context, reports passedReports, repo *store.Repo, 
 	if repo.Gate.MaxCoverageDrop == nil {
 		return nil, nil
 	}
-	base, err := reports.LatestPassedCommitReport(ctx, repo.ID, repo.DefaultBranch, commit)
+	base, err := reports.LatestPassedCommitReport(ctx, repo.ID, repo.DefaultBranch, 0, commit)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return nil, fmt.Errorf("loading gate baseline: %w", err)
 	}
@@ -57,17 +57,31 @@ func gateDropBase(ctx context.Context, reports passedReports, repo *store.Repo, 
 // deltaBase returns the merged report a commit's delta is measured
 // against: the previous gate-passing report on its branch, falling back to
 // the default branch for a first-time feature branch. The commit's own
-// report is skipped so an earlier part is never its own baseline. nil when
-// there is none.
-func deltaBase(ctx context.Context, reports passedReports, repo *store.Repo, branch, commit string) (*store.CommitReport, error) {
-	prev, err := reports.LatestPassedCommitReport(ctx, repo.ID, branch, commit)
+// report is skipped so an earlier part is never its own baseline, and
+// beforeID > 0 keeps only reports older than that one. nil when there is
+// none.
+func deltaBase(ctx context.Context, reports passedReports, repo *store.Repo, branch, commit string, beforeID int64) (*store.CommitReport, error) {
+	prev, err := reports.LatestPassedCommitReport(ctx, repo.ID, branch, beforeID, commit)
 	if errors.Is(err, store.ErrNotFound) && branch != repo.DefaultBranch {
-		prev, err = reports.LatestPassedCommitReport(ctx, repo.ID, repo.DefaultBranch, commit)
+		prev, err = reports.LatestPassedCommitReport(ctx, repo.ID, repo.DefaultBranch, beforeID, commit)
 	}
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return nil, fmt.Errorf("loading baseline report: %w", err)
 	}
 	return prev, nil
+}
+
+// CommitBaseline is deltaBase for a stored report, for the pages that show
+// a commit with every part merged: the report it is measured against among
+// those older than it, so the comparison stays the one it had when the
+// commit arrived. nil when there is none, or the read fails — the
+// comparison is decoration, never worth failing a page over.
+func CommitBaseline(ctx context.Context, reports passedReports, repo *store.Repo, cr *store.CommitReport) *store.CommitReport {
+	base, err := deltaBase(ctx, reports, repo, cr.Branch, cr.CommitSHA, cr.ID)
+	if err != nil {
+		return nil
+	}
+	return base
 }
 
 // ReportBaseline pairs a branch's newest merged report (reports come newest

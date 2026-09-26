@@ -38,39 +38,60 @@ func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
 // against the repo's gate, the files it moved against the baseline, and
 // where it came from. A false second result means the answer is already
 // written.
+//
+// ?parts=merged shows the upload's commit with every part merged instead —
+// the numbers the forge surfaces state for a commit uploaded in parts, and
+// what they link to (core's reportURL): the commit's merged report, and
+// the files of every part merged the way the repo page's files card merges
+// them, against the commit's baseline (core.CommitBaseline). The Upload
+// card still describes the upload the page is named for. A commit of one
+// part, or without a merged report yet, reads as the upload alone.
 func (s *Server) buildUploadPage(w http.ResponseWriter, r *http.Request) (*uploadPageDTO, bool) {
 	u, repo, ok := s.reportUpload(w, r)
 	if !ok {
 		return nil, false
 	}
 
-	// ?parts=merged is the commit this upload belongs to with every part
-	// merged — the numbers the forge surfaces state for a commit uploaded
-	// in parts, and what they link to (core's reportURL). A commit without
-	// a merged report yet reads as the upload alone.
+	// The baseline is the newest earlier gate-passing upload on the same
+	// branch; its per-file coverage feeds the before → after column, and its
+	// total feeds the headline delta — the same baseline the source view
+	// uses.
+	shown := pageReport{"This upload", u.TotalPct, u.CoveredStmts, u.TotalStmts, u.DiffCoverage, u.GateFailed, u.Gate, u.GateBasePct}
+	loadFiles := func(ctx context.Context) (*filesViewDTO, *baseRefDTO, error) {
+		files, base, err := s.loadFilesView(ctx, repo, u)
+		if base == nil {
+			return files, nil, err
+		}
+		return files, &baseRefDTO{UploadID: base.ID, SHA: base.CommitSHA, Coverage: base.TotalPct}, err
+	}
 	if r.FormValue("parts") == "merged" {
 		cr, err := s.store.CommitReport(r.Context(), repo.ID, u.CommitSHA)
 		switch {
-		case err == nil:
-			return s.buildMergedUploadPage(w, r, repo, u, cr)
-		case !errors.Is(err, store.ErrNotFound):
+		case err == nil && cr.PartCount > 1:
+			shown = pageReport{"This commit", cr.TotalPct, cr.CoveredStmts, cr.TotalStmts, cr.DiffCoverage, cr.GateFailed, cr.Gate, cr.GateBasePct}
+			loadFiles = func(ctx context.Context) (*filesViewDTO, *baseRefDTO, error) {
+				base := core.CommitBaseline(ctx, s.store, repo, cr)
+				files, _, err := s.loadCommitFilesView(ctx, repo, cr, base)
+				if base == nil {
+					return files, nil, err
+				}
+				return files, &baseRefDTO{UploadID: base.UploadID, SHA: base.CommitSHA, Coverage: base.TotalPct}, err
+			}
+		case err != nil && !errors.Is(err, store.ErrNotFound):
 			s.internalError(w, "loading commit report", err)
 			return nil, false
 		}
 	}
 
-	// The baseline is the newest earlier gate-passing upload on the same
-	// branch; its per-file coverage feeds the before → after column, and its
-	// total feeds the headline delta — the same baseline the source view
-	// uses. The files and the provenance card read independently.
+	// The files and the provenance card read independently.
 	var (
 		wg         sync.WaitGroup
 		files      *filesViewDTO
-		base       *store.Upload
+		base       *baseRefDTO
 		err        error
 		provenance provenanceDTO
 	)
-	wg.Go(func() { files, base, err = s.loadFilesView(r.Context(), repo, u) })
+	wg.Go(func() { files, base, err = loadFiles(r.Context()) })
 	wg.Go(func() { provenance = s.uploadProvenance(r.Context(), u) })
 	wg.Wait()
 	if err != nil {
@@ -80,63 +101,32 @@ func (s *Server) buildUploadPage(w http.ResponseWriter, r *http.Request) (*uploa
 	dto := &uploadPageDTO{
 		Repo:         newRepoRefDTO(repo),
 		Upload:       newUploadHeadDTO(u),
-		Verdict:      gateVerdict("This upload", u.TotalPct, u.DiffCoverage, u.GateFailed, store.JudgedGate(u.Gate, repo.Gate), u.GateBasePct),
-		CoveredStmts: u.CoveredStmts,
-		TotalStmts:   u.TotalStmts,
+		Verdict:      gateVerdict(shown.subject, shown.pct, shown.diff, shown.gateFailed, store.JudgedGate(shown.gate, repo.Gate), shown.gateBasePct),
+		CoveredStmts: shown.coveredStmts,
+		TotalStmts:   shown.totalStmts,
+		Diff:         newDiffCovDTO(shown.diff),
 		Files:        files,
 		Provenance:   provenance,
 	}
 	if base != nil {
-		dto.Verdict.against(base.ID, base.CommitSHA, base.TotalPct)
+		dto.Verdict.against(base.UploadID, base.SHA, base.Coverage)
 	}
-	dto.Diff = newDiffCovDTO(u.DiffCoverage)
 	if u.RawBlobKey != "" {
 		dto.DownloadURL = new(uploadProfileURL(u))
 	}
 	return dto, true
 }
 
-// buildMergedUploadPage is the upload page with every part of the
-// upload's commit merged (?parts=merged): the commit's merged report for
-// the verdict, the statements and the diff, and the files of every part
-// merged the way the repo page's files card merges them, against the same
-// baseline commit as the merged source view (commitBaseline). The Upload
-// card still describes the upload the page is named for.
-func (s *Server) buildMergedUploadPage(w http.ResponseWriter, r *http.Request, repo *store.Repo, u *store.Upload, cr *store.CommitReport) (*uploadPageDTO, bool) {
-	var (
-		wg         sync.WaitGroup
-		files      *filesViewDTO
-		base       *store.CommitReport
-		err        error
-		provenance provenanceDTO
-	)
-	wg.Go(func() {
-		base = s.commitBaseline(r.Context(), repo, cr)
-		files, _, err = s.loadCommitFilesView(r.Context(), repo, cr, base)
-	})
-	wg.Go(func() { provenance = s.uploadProvenance(r.Context(), u) })
-	wg.Wait()
-	if err != nil {
-		s.internalError(w, "loading commit files", err)
-		return nil, false
-	}
-	dto := &uploadPageDTO{
-		Repo:         newRepoRefDTO(repo),
-		Upload:       newUploadHeadDTO(u),
-		Verdict:      gateVerdict("This commit", cr.TotalPct, cr.DiffCoverage, cr.GateFailed, store.JudgedGate(cr.Gate, repo.Gate), cr.GateBasePct),
-		CoveredStmts: cr.CoveredStmts,
-		TotalStmts:   cr.TotalStmts,
-		Diff:         newDiffCovDTO(cr.DiffCoverage),
-		Files:        files,
-		Provenance:   provenance,
-	}
-	if base != nil {
-		dto.Verdict.against(base.UploadID, base.CommitSHA, base.TotalPct)
-	}
-	if u.RawBlobKey != "" {
-		dto.DownloadURL = new(uploadProfileURL(u))
-	}
-	return dto, true
+// pageReport is the report an upload page states: the upload's own, or
+// its commit's merged across parts. subject names it in the verdict.
+type pageReport struct {
+	subject                  string
+	pct                      float64
+	coveredStmts, totalStmts int64
+	diff                     *diffcov.Result
+	gateFailed               bool
+	gate                     *store.Gate
+	gateBasePct              *float64
 }
 
 // uploadProfileURL is the raw-profile download route for an upload.

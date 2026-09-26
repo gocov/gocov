@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -386,13 +385,13 @@ func (s *Server) baseFileFor(ctx context.Context, repo *store.Repo, u *store.Upl
 
 // commitBaseFileFor is baseFileFor for the merged view: the same file,
 // merged across its parts, at the commit the merged views measure this
-// commit against (commitBaseline).
+// commit against (core.CommitBaseline).
 func (s *Server) commitBaseFileFor(ctx context.Context, repo *store.Repo, u *store.Upload, path string) *store.UploadFile {
 	cr, err := s.store.CommitReport(ctx, repo.ID, u.CommitSHA)
 	if err != nil {
 		return nil
 	}
-	base := s.commitBaseline(ctx, repo, cr)
+	base := core.CommitBaseline(ctx, s.store, repo, cr)
 	if base == nil {
 		return nil
 	}
@@ -401,40 +400,6 @@ func (s *Server) commitBaseFileFor(ctx context.Context, repo *store.Repo, u *sto
 		return nil
 	}
 	return f
-}
-
-// commitBaseline is the merged report a commit's merged views compare
-// against: the repo page's rule (core.ReportBaseline over the branch's
-// reports from this commit back), falling back — for a PR or feature
-// branch with no passing push build of its own — to the default branch's
-// newest passing report that came before this one, as core.UploadBaseline
-// does per upload. nil when there is none, or a read fails: the
-// comparison is decoration.
-func (s *Server) commitBaseline(ctx context.Context, repo *store.Repo, cr *store.CommitReport) *store.CommitReport {
-	reports, err := s.store.ListBranchCommitReports(ctx, repo.ID, cr.Branch, trendReportLimit)
-	if err != nil {
-		return nil
-	}
-	if i := slices.IndexFunc(reports, func(r *store.CommitReport) bool { return r.CommitSHA == cr.CommitSHA }); i >= 0 {
-		if _, base := core.ReportBaseline(reports[i:min(i+baselineLookback, len(reports))]); base != nil {
-			return base
-		}
-	}
-	if cr.Branch == repo.DefaultBranch {
-		return nil
-	}
-	reports, err = s.store.ListBranchCommitReports(ctx, repo.ID, repo.DefaultBranch, trendReportLimit)
-	if err != nil {
-		return nil
-	}
-	// Reports come newest first; UploadID orders them by when they last
-	// changed, so a later one — this PR's own merge commit, say — is skipped.
-	for _, r := range reports {
-		if r.UploadID < cr.UploadID && r.CommitSHA != cr.CommitSHA && r.PRID == "" && !r.GateFailed {
-			return r
-		}
-	}
-	return nil
 }
 
 // markNewlyUncovered flags each line that is uncovered now but was covered

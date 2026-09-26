@@ -594,9 +594,17 @@ func TestCommitReportLifecycle(t *testing.T) {
 		t.Errorf("latest report = %v, %v (want c3, the newest)", latest, err)
 	}
 	// Excluding c2 and skipping the failed c3 leaves c1 as the baseline.
-	base, err := st.LatestPassedCommitReport(ctx, repo.ID, "main", "c2")
+	base, err := st.LatestPassedCommitReport(ctx, repo.ID, "main", 0, "c2")
 	if err != nil || base.CommitSHA != "c1" {
 		t.Errorf("passed baseline excluding c2 = %v, %v (want c1)", base, err)
+	}
+	// Bounded by c2's report, only c1 came before it: c3 came after.
+	c2, err := st.CommitReport(ctx, repo.ID, "c2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base, err := st.LatestPassedCommitReport(ctx, repo.ID, "main", c2.ID, ""); err != nil || base.CommitSHA != "c1" {
+		t.Errorf("passed baseline before c2 = %v, %v (want c1)", base, err)
 	}
 	// The trend lists reports newest first.
 	list, err := st.ListBranchCommitReports(ctx, repo.ID, "main", 0)
@@ -1471,7 +1479,7 @@ func TestCommitReportsExcludePRBuilds(t *testing.T) {
 			t.Errorf("ListBranchCommitReports(%s) = %v, want %v", branch, got, want)
 		}
 	}
-	base, err := st.LatestPassedCommitReport(ctx, repo.ID, "main", "c3")
+	base, err := st.LatestPassedCommitReport(ctx, repo.ID, "main", 0, "c3")
 	if err != nil {
 		t.Fatal(err)
 	}
