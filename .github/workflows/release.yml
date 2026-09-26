@@ -400,6 +400,19 @@ jobs:
           done
           exit "$failed"
 
+  # The release is finished when every wrapper has released the new CLI:
+  # verify-release checks all four repos and both registries, retrying
+  # while the bump PRs auto-merge and the wrappers publish. Red here means
+  # something did not land; the job summary says what and where.
+  verify:
+    needs: bump-wrappers
+    uses: ./.github/workflows/verify-release.yml
+    with:
+      tag: ${{ inputs.tag || github.ref_name }}
+      wait: true
+    permissions:
+      contents: read
+
   # Deploying is a separate, reusable workflow so a rollback is the same
   # job dispatched by hand with an older tag. Its job carries
   # environment: production, so the run waits here for approval.

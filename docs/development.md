@@ -178,17 +178,17 @@ scripts/verify-release.sh v0.12.0    # a specific one
 ```
 
 It confirms that the ten binaries and `checksums.txt` are on the release, that the checksums cover every binary and
-that the release and the server image carry a build provenance attestation from this repository,
-that this repo's snippets and all three wrappers name the released CLI, that `gocov-action@v1` resolves to the newest
-action release, that the pipe image is on Docker Hub and the server image on GHCR for both architectures, and that
-both images actually report the right version when opened. It also checks the pipe's tag reached Bitbucket and the
-component's tag and release reached gitlab.com — those repos release through two remotes, and a tag that lands on
-only one publishes nothing on the other silently. It needs
-`gh`, `curl` and `jq`; `docker` is optional and only the last check needs it.
+that the release and the server image carry a build provenance attestation from this repository, that this repo's
+snippets and all three wrappers name the released CLI, that `gocov-action@v1` resolves to the newest action release,
+that the pipe image is on Docker Hub and the server image on GHCR for both architectures, and that both images
+actually report the right version when opened, with each architecture's variant holding a binary built for that
+architecture. It also checks the pipe's tag reached Bitbucket and the component's tag and release reached gitlab.com —
+those repos release through two remotes, and a tag that lands on only one publishes nothing on the other silently. It
+needs `gh`, `curl` and `jq`; `docker` is optional and only the last check needs it.
 
-The `verify-release` workflow runs it weekly and on demand. It also runs on every published release, where it
-reports rather than fails: at that moment the wrapper bumps are still open PRs, so the output is a to-do list, not a
-verdict.
+The `verify-release` workflow runs it weekly and on demand, and the release build runs it as its last job, after the
+wrapper bumps are open: it retries for up to half an hour while the bump PRs auto-merge and the wrappers publish, and a
+release whose wrappers have not all landed by then ends red, with the report in the job summary.
 
 ### If the bot is in the way
 

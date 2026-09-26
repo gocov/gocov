@@ -171,10 +171,13 @@ be installed on all three wrapper repos). If one was not queued for auto-merge, 
 scripts/verify-release.sh v<VERSION>
 ```
 
-23/23 is the expected result once the wrappers are merged and their builds are done (the
-pipe's multi-arch image and the component's GitLab pipeline take a few minutes). Before
-that, the wrapper checks are legitimately behind — that is why the `verify-release`
-workflow reports rather than fails on `release: published`.
+The release run does this itself: its last job, `publish / verify / verify`, runs
+verify-release once the bump PRs are open and retries for up to 30 minutes while they
+auto-merge and the wrappers publish. Green there is the verdict; red means a wrapper did
+not land in time, and the job summary names which check. Running the script by hand is
+for a second look. All checks passing is the expected result once the wrappers are
+merged and their builds are done (the pipe's multi-arch image and the component's GitLab
+pipeline take a few minutes); before that, the wrapper checks are legitimately behind.
 
 Give the user a final summary: the version, the four merged PRs, the deploy result, and
 the verify score.
@@ -183,7 +186,7 @@ the verify score.
 
 - The release build's jobs live **under the release-please run** (`publish / release`,
   `publish / image`, `publish / bump-wrappers`, `publish / selfhost-smoke`,
-  `publish / deploy / deploy`), because release-please *calls* `release.yml`.
+  `publish / deploy / deploy`, `publish / deploy / docs`, `publish / verify / verify`), because release-please *calls* `release.yml`.
   `gh run list --workflow release.yml` shows no new run — read
   `gh api repos/gocov/gocov/actions/runs/<release-please-run-id>/jobs` and
   `.../pending_deployments` instead. A run in status `waiting` is the deploy gate.

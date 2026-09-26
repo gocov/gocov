@@ -4,22 +4,33 @@ name: verify-release
 # binaries, the action's pin and its floating v1, the pipe's image on both
 # architectures, and the pipe's tag on both of its remotes.
 #
-# Three triggers, because the answer means different things at different
-# times:
+# Three ways in:
 #
-#   release: published — the wrappers have not been bumped yet, so this
-#     run is a to-do list, not a verdict. It reports and stays green.
-#   schedule           — by Monday everything should have landed. Here a
-#     stale pin is a real failure, and the weekly cadence is what catches
-#     drift that appears outside a release (a hand-cut tag, a rebuilt
-#     image) rather than because of one.
+#   workflow_call      — release.yml calls this once the wrapper bumps are
+#     open, with wait: the bump PRs auto-merge and the wrappers release
+#     over the next few minutes, so the check retries for up to half an
+#     hour. Still failing then, something is stuck: a wrapper's checks, its
+#     release, a mirror. This used to be `release: published`, which never
+#     fired: release-please publishes with GITHUB_TOKEN, and GitHub starts
+#     no workflows from its events.
+#   schedule           — the weekly cadence catches drift that appears
+#     outside a release (a hand-cut tag, a rebuilt image).
 #   workflow_dispatch  — check any release, any time.
 #
 # Cross-repo reads are all of public repositories, so the default token is
 # enough and no App or PAT is involved.
 on:
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        description: The gocov release to verify.
+        required: true
+        type: string
+      wait:
+        description: Retry for up to 30 minutes while the wrappers catch up.
+        required: false
+        type: boolean
+        default: false
   schedule:
     - cron: "17 8 * * 1"
   workflow_dispatch:
@@ -43,11 +54,24 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+          TAG: ${{ inputs.tag }}
+          WAIT_MINUTES: ${{ inputs.wait && '30' || '0' }}
         run: |
-          ./scripts/verify-release.sh "$TAG" | tee report.txt
+          # Exit 1 is a failed check, worth waiting out while the wrappers
+          # release; exit 2 means the script could not run, which waiting
+          # does not fix.
+          deadline=$(( $(date +%s) + WAIT_MINUTES * 60 ))
+          while :; do
+            rc=0; ./scripts/verify-release.sh "$TAG" >report.txt 2>&1 || rc=$?
+            if [ "$rc" -ne 1 ] || [ "$(date +%s)" -ge "$deadline" ]; then break; fi
+            echo "$(tail -2 report.txt | head -1) — retrying in a minute"
+            sleep 60
+          done
+          cat report.txt
+          exit "$rc"
 
       - name: Publish the report
+        if: always()
         run: |
           {
             echo '```'
@@ -55,16 +79,8 @@ jobs:
             echo '```'
           } >>"$GITHUB_STEP_SUMMARY"
 
-      # Straight after a release the wrappers are legitimately behind: the
-      # bump PRs are open, not merged. Failing here would make every
-      # release red and teach everyone to ignore the one check that knows
-      # what shipped. The scheduled and manual runs are the real gate.
       - name: Fail on drift
-        if: steps.verify.outcome == 'failure' && github.event_name != 'release'
+        if: steps.verify.outcome == 'failure'
         run: |
           echo "::error title=verify-release::the release is not consistent across repos; see the job summary"
           exit 1
-
-      - name: Note what is still outstanding
-        if: steps.verify.outcome == 'failure' && github.event_name == 'release'
-        run: echo "::notice title=verify-release::the wrappers have not caught up yet; see the job summary"
