@@ -130,7 +130,8 @@ on a PR rather than a tag that has to be burned.
 
 ### The wrappers follow by themselves
 
-Once the production deploy is green, the release build opens a bump PR in each wrapper, authored by the cross-repo App
+Once the production deploy is green, the release build opens a bump PR in each wrapper (the edits are
+`scripts/bump-wrapper.sh`, which CI runs against the real wrappers on every push), authored by the cross-repo App
 (installed on exactly those three repos), so no wrapper ships a CLI newer than the hosted server: gocov-action's pins
 the CLI its `action.yml` installs; upload-pipe's bakes the CLI into the image and bumps `pipe.yml` and the CHANGELOG;
 gitlab-component's bumps the `version` default in `templates/upload.yml`, the README and the CHANGELOG. Each PR

@@ -42,17 +42,19 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref_name }}
+      # No caches in the release build: a cache any earlier run could have
+      # written is an input to the shipped binaries. Slower, and honest.
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: false
 
       # gocov-server embeds the web UI (internal/webui), so it is built
       # before anything compiles.
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+          package-manager-cache: false
       - name: Build the web UI
         working-directory: web
         run: npm ci && npm test && npm run build
@@ -141,9 +143,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref_name }}
-      - uses: docker/setup-qemu-action@v4
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -155,7 +157,7 @@ jobs:
         run: |
           minor=${TAG#v}; minor=${minor%.*}
           echo "minor=$minor" >> "$GITHUB_OUTPUT"
-      - uses: docker/build-push-action@v7
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         id: push
         with:
           context: .
@@ -276,6 +278,20 @@ jobs:
           private-key: ${{ secrets.CROSSBUMP_APP_PRIVATE_KEY }}
           owner: gocov
           repositories: gocov-action,upload-pipe,gitlab-component
+          # Only what the steps below do: push the bump branch (contents),
+          # open, label and auto-merge the PR (pull-requests).
+          permission-contents: write
+          permission-pull-requests: write
+
+      # scripts/bump-wrapper.sh makes the edits — pin, next version,
+      # CHANGELOG.md entry — and is tested against the real wrappers on
+      # every CI run (scripts/bump-wrapper-test.sh); these steps only
+      # clone, commit and open the PR. From the workflow's own ref, like
+      # deploy.yml's task definition template.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
 
       - name: Open the gocov-action bump PR
         env:
@@ -283,21 +299,10 @@ jobs:
         run: |
           set -euo pipefail
           git clone -q "https://x-access-token:$GH_TOKEN@github.com/gocov/gocov-action" action
+          out=$(scripts/bump-wrapper.sh action action "$TAG")
+          if [ -z "$out" ]; then echo "gocov-action already pins $TAG"; exit 0; fi
+          read -r old next <<<"$out"
           cd action
-          old=$(sed -n 's/^ *default: *\(v[0-9][0-9.]*\) *$/\1/p' action.yml)
-          if [ "$old" = "$TAG" ]; then echo "action already pins $TAG"; exit 0; fi
-          # The wrapper's next version is the minor after its newest release
-          # tag (v-prefixed in the action), and it is written as the newest
-          # CHANGELOG.md heading: that heading is what the wrapper's
-          # tag-on-release-merge tags, the same way in all three.
-          latest=$(git tag --list | sed 's/^v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
-          [ -n "$latest" ] || { echo "no release tags found" >&2; exit 1; }
-          major=${latest%%.*}; rest=${latest#*.}; next="$major.$(( ${rest%%.*} + 1 )).0"
-          sed -i "s|^\( *default: *\)$old\$|\1$TAG|" action.yml
-          { head -2 CHANGELOG.md
-            printf '## %s\n\n- Pin gocov CLI %s (was %s).\n\n' "$next" "$TAG" "$old"
-            tail -n +3 CHANGELOG.md
-          } > CHANGELOG.new && mv CHANGELOG.new CHANGELOG.md
           git config user.name "gocov-cross-repo-bump[bot]"
           git config user.email "gocov-cross-repo-bump[bot]@users.noreply.github.com"
           git checkout -q -b "bump-gocov-$TAG"
@@ -315,23 +320,10 @@ jobs:
         run: |
           set -euo pipefail
           git clone -q "https://x-access-token:$GH_TOKEN@github.com/gocov/upload-pipe" pipe
+          out=$(scripts/bump-wrapper.sh pipe pipe "$TAG")
+          if [ -z "$out" ]; then echo "upload-pipe already pins $TAG"; exit 0; fi
+          read -r old next <<<"$out"
           cd pipe
-          old=$(sed -n 's/^ARG GOCOV_VERSION=\(v[0-9][0-9.]*\) *$/\1/p' Dockerfile)
-          if [ "$old" = "$TAG" ]; then echo "pipe already bakes $TAG"; exit 0; fi
-          # The wrapper's next version is the minor after its newest release
-          # tag (v-prefixed in the action), and it is written as the newest
-          # CHANGELOG.md heading: that heading is what the wrapper's
-          # tag-on-release-merge tags, the same way in all three.
-          latest=$(git tag --list | sed 's/^v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
-          [ -n "$latest" ] || { echo "no release tags found" >&2; exit 1; }
-          major=${latest%%.*}; rest=${latest#*.}; next="$major.$(( ${rest%%.*} + 1 )).0"
-          sed -i "s|^ARG GOCOV_VERSION=$old\$|ARG GOCOV_VERSION=$TAG|" Dockerfile
-          # pipe.yml carries the version too, for the Atlassian catalog.
-          sed -i "s|^image: gocov/upload-pipe:[0-9][0-9.]*\$|image: gocov/upload-pipe:$next|" pipe.yml
-          { head -2 CHANGELOG.md
-            printf '## %s\n\n- Bake gocov CLI %s (was %s).\n\n' "$next" "$TAG" "$old"
-            tail -n +3 CHANGELOG.md
-          } > CHANGELOG.new && mv CHANGELOG.new CHANGELOG.md
           git config user.name "gocov-cross-repo-bump[bot]"
           git config user.email "gocov-cross-repo-bump[bot]@users.noreply.github.com"
           git checkout -q -b "bump-gocov-$TAG"
@@ -349,22 +341,10 @@ jobs:
         run: |
           set -euo pipefail
           git clone -q "https://x-access-token:$GH_TOKEN@github.com/gocov/gitlab-component" component
+          out=$(scripts/bump-wrapper.sh component component "$TAG")
+          if [ -z "$out" ]; then echo "gitlab-component already pins $TAG"; exit 0; fi
+          read -r old next <<<"$out"
           cd component
-          old=$(sed -n 's/^ *default: *\(v[0-9][0-9.]*\) *$/\1/p' templates/upload.yml)
-          if [ "$old" = "$TAG" ]; then echo "component already pins $TAG"; exit 0; fi
-          # The wrapper's next version is the minor after its newest release
-          # tag (v-prefixed in the action), and it is written as the newest
-          # CHANGELOG.md heading: that heading is what the wrapper's
-          # tag-on-release-merge tags, the same way in all three.
-          latest=$(git tag --list | sed 's/^v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
-          [ -n "$latest" ] || { echo "no release tags found" >&2; exit 1; }
-          major=${latest%%.*}; rest=${latest#*.}; next="$major.$(( ${rest%%.*} + 1 )).0"
-          sed -i "s|^\( *default: *\)$old\$|\1$TAG|" templates/upload.yml
-          sed -i "s|\`$old\`|\`$TAG\`|g" README.md
-          { head -2 CHANGELOG.md
-            printf '## %s\n\n- Install gocov CLI %s (was %s).\n\n' "$next" "$TAG" "$old"
-            tail -n +3 CHANGELOG.md
-          } > CHANGELOG.new && mv CHANGELOG.new CHANGELOG.md
           git config user.name "gocov-cross-repo-bump[bot]"
           git config user.email "gocov-cross-repo-bump[bot]@users.noreply.github.com"
           git checkout -q -b "bump-gocov-$TAG"
@@ -429,7 +409,7 @@ jobs:
     uses: ./.github/workflows/deploy.yml
     with:
       tag: ${{ inputs.tag || github.ref_name }}
-    secrets: inherit
+    secrets: inherit # zizmor: ignore[secrets-inherit] — this repo's own workflow; GOCOV_TOKEN for its smoke upload
     permissions:
       id-token: write
       contents: write

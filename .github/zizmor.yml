@@ -1,0 +1,11 @@
+# zizmor (the workflow security audit in ci.yml's workflows job).
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # GitHub's own actions and this org's own action are referenced by
+        # tag; every third-party action is pinned to a commit, with the
+        # version in a comment that Dependabot keeps current.
+        "actions/*": ref-pin
+        "gocov/*": ref-pin
+        "*": hash-pin
