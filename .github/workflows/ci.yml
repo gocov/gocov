@@ -37,12 +37,21 @@ jobs:
           go-version-file: go.mod
       - name: Check version pins agree
         run: ./scripts/check-pins.sh
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l $(git ls-files '*.go'))
+          [ -z "$unformatted" ] || {
+            echo "::error::not gofmt-formatted — run gofmt -w on:"; echo "$unformatted"; exit 1; }
       - name: Vet
         run: go vet ./...
-      - name: Test (with Postgres integration tests)
+      # -race: the server runs concurrent work (per-commit merges, status
+      # pushes, grant refreshes) behind locks, and a data race there is
+      # the kind of bug no test assertion sees. Atomic coverage is what
+      # -race needs anyway.
+      - name: Test (with Postgres integration tests, race detector on)
         env:
           GOCOV_TEST_DATABASE_URL: postgres://gocov:gocov@localhost:5432/gocov
-        run: go test ./... -covermode=atomic -coverprofile=coverage.out
+        run: go test -race ./... -covermode=atomic -coverprofile=coverage.out
       - name: Upload coverage to gocov
         uses: gocov/gocov-action@v1
         with:
