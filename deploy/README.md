@@ -321,6 +321,8 @@ Elastic IP, `gocov-web` security group, `gocov-ec2` role and the
   Builds production branch is `docs-live`, with builds of other branches
   off.
 - **Smoke repo `gocov/smoke`**: a public repo with a trivial Go module
-  and one test, tracked in the gocov workspace on app.gocov.dev, so the
-  workspace's `GOCOV_TOKEN` secret (already used by ci.yml) accepts its
-  uploads.
+  and one test, tracked in a workspace on app.gocov.dev. That workspace's
+  upload token is the `GOCOV_TOKEN` secret of the `production`
+  environment (not a repository secret: only the approved deploy job
+  reads it). Without it the smoke upload step fails rather than passing
+  on a refused tokenless upload.

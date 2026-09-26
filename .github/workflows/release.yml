@@ -23,6 +23,13 @@ on:
         description: The tag to build and publish.
         required: true
         type: string
+    secrets:
+      # The cross-repo App, for the wrapper bumps. A pushed tag (the
+      # hand-cut path) reads them from the repository directly.
+      CROSSBUMP_APP_ID:
+        required: true
+      CROSSBUMP_APP_PRIVATE_KEY:
+        required: true
 
 permissions:
   contents: write
@@ -422,7 +429,9 @@ jobs:
     uses: ./.github/workflows/deploy.yml
     with:
       tag: ${{ inputs.tag || github.ref_name }}
-    secrets: inherit # zizmor: ignore[secrets-inherit] — this repo's own workflow; GOCOV_TOKEN for its smoke upload
+    # No secrets: the one deploy.yml uses, GOCOV_TOKEN for its smoke
+    # upload, is a production environment secret, which its job reads
+    # directly and a caller could not pass anyway.
     permissions:
       id-token: write
       contents: write
