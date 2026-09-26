@@ -16,7 +16,8 @@ gocov keeps every upload but derives a **merged report** per commit from the lat
 status, gate, PR comment, Code Insights, badge and trend from that merged report. The repo page's file list is the
 merged report's too: it shows every part's files together (a Go backend's and a TypeScript frontend's side by side),
 and each file's source view shows the same merged coverage as its row. An upload's own page still shows only that upload's
-files. Re-uploading a part (a CI retry)
+files; for a commit uploaded in more than one part it links to the same page with every part merged, which is where the
+PR comment, the build status and Code Insights link, so the figure they state is the one you land on. Re-uploading a part (a CI retry)
 replaces it rather than double-counting. When two parts report the same file, their line hit counts are summed, so a
 line covered by any part counts as covered.
 

@@ -55,7 +55,8 @@ func TestReportBaseline(t *testing.T) {
 
 // UploadBaseline finds the branch's newest earlier passing build however
 // many PR builds sit on top of it, and falls back to the default branch —
-// never the upload's own commit there — for a branch with none.
+// never the upload's own commit there, nor anything it received later —
+// for a branch with none.
 func TestUploadBaseline(t *testing.T) {
 	ctx := t.Context()
 	st := storemem.New()
@@ -97,5 +98,11 @@ func TestUploadBaseline(t *testing.T) {
 	fresh := put("x1", "fresh", "")
 	if got := UploadBaseline(ctx, st, repo, fresh); sha(got) != "m1" {
 		t.Errorf("fresh branch's baseline = %s, want main's m1, skipping its own commit x1", sha(got))
+	}
+	// What main receives afterwards — the PR's own merge commit, say —
+	// does not become the baseline of a build that came before it.
+	put("m2", "main", "")
+	if got := UploadBaseline(ctx, st, repo, fresh); sha(got) != "m1" {
+		t.Errorf("fresh branch's baseline after main moved on = %s, want m1 still", sha(got))
 	}
 }

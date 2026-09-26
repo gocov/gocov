@@ -90,6 +90,59 @@ func TestMergedReportAcrossParts(t *testing.T) {
 	if last.CommitSHA != "c1" || !strings.Contains(last.Status.Description, "80.0%") {
 		t.Errorf("last status = %+v, want merged 80%% for c1", last.Status)
 	}
+	// It links to the page stating that total — the upload page with every
+	// part merged — not the frontend part's own page. A commit of one part
+	// links to the upload as it is.
+	if want := fmt.Sprintf("/uploads/%d?parts=merged", fr.ID); !strings.HasSuffix(last.Status.URL, want) {
+		t.Errorf("merged status links %q, want …%s", last.Status.URL, want)
+	}
+	for _, call := range f.forge.StatusCalls[:len(f.forge.StatusCalls)-1] {
+		if strings.Contains(call.Status.URL, "parts=merged") {
+			t.Errorf("one-part status for %s links %q, want the plain upload page", call.CommitSHA, call.Status.URL)
+		}
+	}
+	page := decodeJSON[uploadPageDTO](t, get(f, fmt.Sprintf("/api/ui/uploads/%d?parts=merged", fr.ID)))
+	if page.Verdict.Coverage != 80 || page.CoveredStmts != 8 || page.TotalStmts != 10 || !page.Files.Merged || len(page.Files.Files) != 2 {
+		t.Errorf("merged page = %.1f%% %d/%d, %d files merged=%v; want the status's 80%% 8/10 over both parts",
+			page.Verdict.Coverage, page.CoveredStmts, page.TotalStmts, len(page.Files.Files), page.Files.Merged)
+	}
+	if own := decodeJSON[uploadPageDTO](t, get(f, fmt.Sprintf("/api/ui/uploads/%d", fr.ID))); own.Verdict.Coverage != 0 || own.Files.Merged {
+		t.Errorf("upload's own page = %.1f%% merged=%v, want the frontend part alone at 0%%", own.Verdict.Coverage, own.Files.Merged)
+	}
+}
+
+// The merged page of a PR build compares against the default branch as it
+// stood before the build, never against what main received afterwards —
+// the PR's own merge commit among it.
+func TestMergedUploadPageBaselineIsEarlier(t *testing.T) {
+	f := newFixture(t, nil)
+	up := func(commit, branch, pr, part, profile string) int64 {
+		t.Helper()
+		var res uploadResponse
+		fields := map[string]string{"commit": commit, "branch": branch, "pr_id": pr, "part": part}
+		if err := json.Unmarshal(doUpload(t, f, "secret-token", fields, profile).Body.Bytes(), &res); err != nil {
+			t.Fatal(err)
+		}
+		return res.ID
+	}
+	up("m1", "main", "", "backend", backendPart)
+	up("m1", "main", "", "frontend", frontendPart)
+	up("p1", "feat", "7", "backend", backendPart)
+	pr := up("p1", "feat", "7", "frontend", "mode: set\nexample.com/m/front.go:1.1,5.2 2 1\n")
+	up("m2", "main", "", "backend", "mode: set\nexample.com/m/back.go:1.1,5.2 8 0\n")
+
+	page := decodeJSON[uploadPageDTO](t, get(f, fmt.Sprintf("/api/ui/uploads/%d?parts=merged", pr)))
+	if page.Verdict.Base == nil || page.Verdict.Base.SHA != "m1" {
+		t.Fatalf("merged PR page base = %+v, want m1, main before the PR build", page.Verdict.Base)
+	}
+	if page.Verdict.Coverage != 100 || *page.Verdict.Delta != 20 || !page.Files.HasBase {
+		t.Errorf("merged PR page = %.1f%% (%+.1f) has_base=%v, want 100%% (+20.0) against m1's files",
+			page.Verdict.Coverage, *page.Verdict.Delta, page.Files.HasBase)
+	}
+	own := decodeJSON[uploadPageDTO](t, get(f, fmt.Sprintf("/api/ui/uploads/%d", pr)))
+	if own.Verdict.Base == nil || own.Verdict.Base.SHA != "m1" {
+		t.Errorf("PR upload page base = %+v, want m1, main before the PR build", own.Verdict.Base)
+	}
 }
 
 func TestMergedReportReplaceNoDoubleCount(t *testing.T) {

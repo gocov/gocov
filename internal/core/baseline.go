@@ -92,13 +92,16 @@ type passedUploads interface {
 // UploadBaseline is deltaBase at upload granularity, for the pages that
 // compare one upload's files with an earlier one: the newest earlier
 // non-PR, gate-passing upload on the same branch, falling back to the
-// default branch's latest passing upload for PR and feature-branch builds.
+// default branch's newest earlier passing upload for PR and feature-branch
+// builds. Both look only at uploads older than u, so a page keeps the
+// comparison it had when u arrived rather than drifting to whatever the
+// default branch received since — a PR's own merge commit among them.
 // nil when there is nothing to compare against, or the read fails — the
 // comparison is decoration, never worth failing a page over.
 func UploadBaseline(ctx context.Context, uploads passedUploads, repo *store.Repo, u *store.Upload) *store.Upload {
 	base, err := uploads.LatestPassedUpload(ctx, repo.ID, u.Branch, u.ID, "")
 	if err != nil && u.Branch != repo.DefaultBranch {
-		base, err = uploads.LatestPassedUpload(ctx, repo.ID, repo.DefaultBranch, 0, u.CommitSHA)
+		base, err = uploads.LatestPassedUpload(ctx, repo.ID, repo.DefaultBranch, u.ID, u.CommitSHA)
 	}
 	if err != nil {
 		return nil

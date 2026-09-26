@@ -9,6 +9,7 @@ package server
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -43,6 +44,21 @@ func (s *Server) buildUploadPage(w http.ResponseWriter, r *http.Request) (*uploa
 		return nil, false
 	}
 
+	// ?parts=merged is the commit this upload belongs to with every part
+	// merged — the numbers the forge surfaces state for a commit uploaded
+	// in parts, and what they link to (core's reportURL). A commit without
+	// a merged report yet reads as the upload alone.
+	if r.FormValue("parts") == "merged" {
+		cr, err := s.store.CommitReport(r.Context(), repo.ID, u.CommitSHA)
+		switch {
+		case err == nil:
+			return s.buildMergedUploadPage(w, r, repo, u, cr)
+		case !errors.Is(err, store.ErrNotFound):
+			s.internalError(w, "loading commit report", err)
+			return nil, false
+		}
+	}
+
 	// The baseline is the newest earlier gate-passing upload on the same
 	// branch; its per-file coverage feeds the before → after column, and its
 	// total feeds the headline delta — the same baseline the source view
@@ -62,17 +78,8 @@ func (s *Server) buildUploadPage(w http.ResponseWriter, r *http.Request) (*uploa
 		return nil, false
 	}
 	dto := &uploadPageDTO{
-		Repo: newRepoRefDTO(repo),
-		Upload: uploadHeadDTO{
-			ID:            u.ID,
-			SHA:           u.CommitSHA,
-			Branch:        u.Branch,
-			PRID:          u.PRID,
-			At:            u.CreatedAt,
-			CommitMessage: u.Meta.CommitMessage,
-			CommitAuthor:  u.Meta.CommitAuthor,
-			Tokenless:     u.Meta.Tokenless,
-		},
+		Repo:         newRepoRefDTO(repo),
+		Upload:       newUploadHeadDTO(u),
 		Verdict:      gateVerdict("This upload", u.TotalPct, u.DiffCoverage, u.GateFailed, store.JudgedGate(u.Gate, repo.Gate), u.GateBasePct),
 		CoveredStmts: u.CoveredStmts,
 		TotalStmts:   u.TotalStmts,
@@ -82,14 +89,49 @@ func (s *Server) buildUploadPage(w http.ResponseWriter, r *http.Request) (*uploa
 	if base != nil {
 		dto.Verdict.against(base.ID, base.CommitSHA, base.TotalPct)
 	}
-	if dc := u.DiffCoverage; dc != nil {
-		dto.Diff = &diffCovDTO{
-			Coverage:       dc.Percent(),
-			CoveredLines:   dc.CoveredLines,
-			TotalLines:     dc.TotalLines,
-			ChangedFiles:   len(dc.Files),
-			UnmatchedFiles: len(dc.UnmatchedFiles),
-		}
+	dto.Diff = newDiffCovDTO(u.DiffCoverage)
+	if u.RawBlobKey != "" {
+		dto.DownloadURL = new(uploadProfileURL(u))
+	}
+	return dto, true
+}
+
+// buildMergedUploadPage is the upload page with every part of the
+// upload's commit merged (?parts=merged): the commit's merged report for
+// the verdict, the statements and the diff, and the files of every part
+// merged the way the repo page's files card merges them, against the same
+// baseline commit as the merged source view (commitBaseline). The Upload
+// card still describes the upload the page is named for.
+func (s *Server) buildMergedUploadPage(w http.ResponseWriter, r *http.Request, repo *store.Repo, u *store.Upload, cr *store.CommitReport) (*uploadPageDTO, bool) {
+	var (
+		wg         sync.WaitGroup
+		files      *filesViewDTO
+		base       *store.CommitReport
+		err        error
+		provenance provenanceDTO
+	)
+	wg.Go(func() {
+		base = s.commitBaseline(r.Context(), repo, cr)
+		files, _, err = s.loadCommitFilesView(r.Context(), repo, cr, base)
+	})
+	wg.Go(func() { provenance = s.uploadProvenance(r.Context(), u) })
+	wg.Wait()
+	if err != nil {
+		s.internalError(w, "loading commit files", err)
+		return nil, false
+	}
+	dto := &uploadPageDTO{
+		Repo:         newRepoRefDTO(repo),
+		Upload:       newUploadHeadDTO(u),
+		Verdict:      gateVerdict("This commit", cr.TotalPct, cr.DiffCoverage, cr.GateFailed, store.JudgedGate(cr.Gate, repo.Gate), cr.GateBasePct),
+		CoveredStmts: cr.CoveredStmts,
+		TotalStmts:   cr.TotalStmts,
+		Diff:         newDiffCovDTO(cr.DiffCoverage),
+		Files:        files,
+		Provenance:   provenance,
+	}
+	if base != nil {
+		dto.Verdict.against(base.UploadID, base.CommitSHA, base.TotalPct)
 	}
 	if u.RawBlobKey != "" {
 		dto.DownloadURL = new(uploadProfileURL(u))
@@ -136,6 +178,33 @@ type diffCovDTO struct {
 	TotalLines     int64   `json:"total_lines"`
 	ChangedFiles   int     `json:"changed_files"`
 	UnmatchedFiles int     `json:"unmatched_files"`
+}
+
+func newUploadHeadDTO(u *store.Upload) uploadHeadDTO {
+	return uploadHeadDTO{
+		ID:            u.ID,
+		SHA:           u.CommitSHA,
+		Branch:        u.Branch,
+		PRID:          u.PRID,
+		At:            u.CreatedAt,
+		CommitMessage: u.Meta.CommitMessage,
+		CommitAuthor:  u.Meta.CommitAuthor,
+		Tokenless:     u.Meta.Tokenless,
+	}
+}
+
+// newDiffCovDTO is nil for a report without diff coverage.
+func newDiffCovDTO(dc *diffcov.Result) *diffCovDTO {
+	if dc == nil {
+		return nil
+	}
+	return &diffCovDTO{
+		Coverage:       dc.Percent(),
+		CoveredLines:   dc.CoveredLines,
+		TotalLines:     dc.TotalLines,
+		ChangedFiles:   len(dc.Files),
+		UnmatchedFiles: len(dc.UnmatchedFiles),
+	}
 }
 
 // provenanceDTO is the Upload card: what we recorded about how this upload
