@@ -362,7 +362,7 @@ func attention(repo *store.Repo, row dashRepoDTO, latest *store.CommitReport) []
 	}
 	if row.Stale {
 		a := item("stale")
-		a.StaleDays = new(int(time.Since(latest.UpdatedAt).Hours() / 24))
+		a.StaleDays = new(int(time.Since(*row.UploadedAt).Hours() / 24))
 		out = append(out, a)
 	}
 	return out

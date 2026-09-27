@@ -79,34 +79,26 @@ func TestAPIDashboardNeedsAttention(t *testing.T) {
 // upload and its staleness follow the newest upload, not the commit's first.
 func TestAPIDashboardReuploadIsNotStale(t *testing.T) {
 	f := newFixture(t, nil)
-	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/smoke", Token: "smoke", DefaultBranch: "main"}
-	if err := f.store.CreateRepo(t.Context(), repo); err != nil {
-		t.Fatal(err)
-	}
-	firstSeen := time.Now().Add(-20 * 24 * time.Hour)
-	for range 2 { // first upload 20 days ago, the re-upload now
+	upload := func(firstSeen time.Time) {
 		if err := f.store.UpsertCommitReport(t.Context(), &store.CommitReport{
-			RepoID: repo.ID, CommitSHA: "c1", Branch: "main",
+			RepoID: f.repo.ID, CommitSHA: "c1", Branch: "main",
 			TotalPct: 80, CoveredStmts: 80, TotalStmts: 100, CreatedAt: firstSeen,
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
+	upload(time.Now().Add(-20 * 24 * time.Hour)) // the commit's first upload
+	upload(time.Time{})                          // the same commit, uploaded again now
 
 	got := decodeJSON[dashboardDTO](t, get(f, "/api/ui/dashboard"))
 	if len(got.Attention) != 0 {
-		t.Errorf("attention = %+v, want none for a repo uploaded just now", got.Attention)
+		t.Errorf("attention = %+v, want no stale notice after the re-upload", got.Attention)
 	}
-	i := slices.IndexFunc(got.Repos, func(r dashRepoDTO) bool { return r.Slug == "acme/smoke" })
-	if i < 0 {
-		t.Fatalf("repos = %+v, want acme/smoke among them", got.Repos)
+	if len(got.Repos) != 1 {
+		t.Fatalf("repos = %+v, want the fixture's one", got.Repos)
 	}
-	row := got.Repos[i]
-	if row.Stale {
-		t.Error("row is stale, want fresh after the re-upload")
-	}
-	if row.UploadedAt == nil || time.Since(*row.UploadedAt) > time.Hour {
-		t.Errorf("uploaded_at = %v, want the re-upload's time, not the commit's first upload", row.UploadedAt)
+	if at := got.Repos[0].UploadedAt; at == nil || time.Since(*at) > time.Hour {
+		t.Errorf("uploaded_at = %v, want the re-upload's time, not the commit's first upload", at)
 	}
 }
 
