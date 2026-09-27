@@ -74,6 +74,42 @@ func TestAPIDashboardNeedsAttention(t *testing.T) {
 	}
 }
 
+// A commit uploaded again weeks after its first upload (a smoke job that
+// re-uploads the same commit on every deploy) is fresh: the row's last
+// upload and its staleness follow the newest upload, not the commit's first.
+func TestAPIDashboardReuploadIsNotStale(t *testing.T) {
+	f := newFixture(t, nil)
+	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/smoke", Token: "smoke", DefaultBranch: "main"}
+	if err := f.store.CreateRepo(t.Context(), repo); err != nil {
+		t.Fatal(err)
+	}
+	firstSeen := time.Now().Add(-20 * 24 * time.Hour)
+	for range 2 { // first upload 20 days ago, the re-upload now
+		if err := f.store.UpsertCommitReport(t.Context(), &store.CommitReport{
+			RepoID: repo.ID, CommitSHA: "c1", Branch: "main",
+			TotalPct: 80, CoveredStmts: 80, TotalStmts: 100, CreatedAt: firstSeen,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got := decodeJSON[dashboardDTO](t, get(f, "/api/ui/dashboard"))
+	if len(got.Attention) != 0 {
+		t.Errorf("attention = %+v, want none for a repo uploaded just now", got.Attention)
+	}
+	i := slices.IndexFunc(got.Repos, func(r dashRepoDTO) bool { return r.Slug == "acme/smoke" })
+	if i < 0 {
+		t.Fatalf("repos = %+v, want acme/smoke among them", got.Repos)
+	}
+	row := got.Repos[i]
+	if row.Stale {
+		t.Error("row is stale, want fresh after the re-upload")
+	}
+	if row.UploadedAt == nil || time.Since(*row.UploadedAt) > time.Hour {
+		t.Errorf("uploaded_at = %v, want the re-upload's time, not the commit's first upload", row.UploadedAt)
+	}
+}
+
 // The delta a row shows is measured against the last gate-passing report,
 // never against a failure in between.
 func TestAPIDashboardDeltaSkipsGateFailedBaselines(t *testing.T) {

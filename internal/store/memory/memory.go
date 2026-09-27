@@ -718,7 +718,9 @@ func (s *Store) UpsertCommitReport(_ context.Context, cr *store.CommitReport) er
 	if cr.CreatedAt.IsZero() {
 		cr.CreatedAt = now
 	}
-	cr.UpdatedAt = now
+	if cr.UpdatedAt.IsZero() {
+		cr.UpdatedAt = cr.CreatedAt
+	}
 	s.reports[cr.ID] = copyCommitReport(cr)
 	return nil
 }

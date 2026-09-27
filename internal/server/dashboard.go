@@ -313,8 +313,10 @@ func (s *Server) fillCurrent(r *http.Request, dto *dashboardDTO, cur *dashGroup)
 		latest, base := core.ReportBaseline(reports)
 		if latest != nil {
 			row.Coverage = new(latest.TotalPct)
-			row.UploadedAt = new(latest.CreatedAt)
-			row.Stale = time.Since(latest.CreatedAt) > dashStaleAfter
+			// UpdatedAt, not CreatedAt: a re-upload of the same commit
+			// moves only UpdatedAt, and it is an upload all the same.
+			row.UploadedAt = new(latest.UpdatedAt)
+			row.Stale = time.Since(latest.UpdatedAt) > dashStaleAfter
 			covered += latest.CoveredStmts
 			total += latest.TotalStmts
 			row.Gate = gateState(store.JudgedGate(latest.Gate, repo.Gate), latest.GateFailed)
@@ -360,7 +362,7 @@ func attention(repo *store.Repo, row dashRepoDTO, latest *store.CommitReport) []
 	}
 	if row.Stale {
 		a := item("stale")
-		a.StaleDays = new(int(time.Since(latest.CreatedAt).Hours() / 24))
+		a.StaleDays = new(int(time.Since(latest.UpdatedAt).Hours() / 24))
 		out = append(out, a)
 	}
 	return out
