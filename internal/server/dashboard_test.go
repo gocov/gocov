@@ -74,6 +74,34 @@ func TestAPIDashboardNeedsAttention(t *testing.T) {
 	}
 }
 
+// A commit uploaded again weeks after its first upload (a smoke job that
+// re-uploads the same commit on every deploy) is fresh: the row's last
+// upload and its staleness follow the newest upload, not the commit's first.
+func TestAPIDashboardReuploadIsNotStale(t *testing.T) {
+	f := newFixture(t, nil)
+	upload := func(firstSeen time.Time) {
+		if err := f.store.UpsertCommitReport(t.Context(), &store.CommitReport{
+			RepoID: f.repo.ID, CommitSHA: "c1", Branch: "main",
+			TotalPct: 80, CoveredStmts: 80, TotalStmts: 100, CreatedAt: firstSeen,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	upload(time.Now().Add(-20 * 24 * time.Hour)) // the commit's first upload
+	upload(time.Time{})                          // the same commit, uploaded again now
+
+	got := decodeJSON[dashboardDTO](t, get(f, "/api/ui/dashboard"))
+	if len(got.Attention) != 0 {
+		t.Errorf("attention = %+v, want no stale notice after the re-upload", got.Attention)
+	}
+	if len(got.Repos) != 1 {
+		t.Fatalf("repos = %+v, want the fixture's one", got.Repos)
+	}
+	if at := got.Repos[0].UploadedAt; at == nil || time.Since(*at) > time.Hour {
+		t.Errorf("uploaded_at = %v, want the re-upload's time, not the commit's first upload", at)
+	}
+}
+
 // The delta a row shows is measured against the last gate-passing report,
 // never against a failure in between.
 func TestAPIDashboardDeltaSkipsGateFailedBaselines(t *testing.T) {

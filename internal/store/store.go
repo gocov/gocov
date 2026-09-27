@@ -300,7 +300,9 @@ type CommitReport struct {
 	PartCount int
 	// UploadID is the latest upload that fed this report; the trend links a
 	// point to its upload detail page through it.
-	UploadID  int64
+	UploadID int64
+	// CreatedAt is the commit's first upload; UpdatedAt moves with every
+	// upload merged into the report, so it is the commit's last upload.
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
