@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.4](https://github.com/gocov/gocov/compare/v0.26.3...v0.26.4) (2026-09-27)
+
+
+### Bug Fixes
+
+* date a dashboard row by its newest upload, not its commit's first ([#206](https://github.com/gocov/gocov/issues/206)) ([23de776](https://github.com/gocov/gocov/commit/23de77601fc4f2a3846b5411d5bb2a57ae7bb47a))
+
 ## [0.26.3](https://github.com/gocov/gocov/compare/v0.26.2...v0.26.3) (2026-09-26)
 
 
