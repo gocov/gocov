@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.0](https://github.com/gocov/gocov/compare/v0.26.4...v0.27.0) (2026-09-28)
+
+
+### Features
+
+* **web:** fold long needs-attention lists into one row per kind ([#208](https://github.com/gocov/gocov/issues/208)) ([613bffb](https://github.com/gocov/gocov/commit/613bffb016ba3b337842b88ca21abd0b15e41ecc))
+
 ## [0.26.4](https://github.com/gocov/gocov/compare/v0.26.3...v0.26.4) (2026-09-27)
 
 
