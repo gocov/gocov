@@ -67,6 +67,16 @@ test("the filters carry their counts and slice the table", async () => {
   expect(shownNames()).toEqual(["api"]);
 });
 
+test("the filter is read from the query, so a link can open the table on it", async () => {
+  const { router } = renderPage(<ReposTable repos={repos} />, { path: "/?filter=stale" });
+  expect(shownNames()).toEqual(["web"]);
+
+  const filters = screen.getByRole("group", { name: "Filter repositories" });
+  await userEvent.click(within(filters).getByRole("button", { name: /^All/ }));
+  expect(shownNames()).toEqual(["api", "tools", "web", "docs"]);
+  expect(router.state.location.search).toBe("");
+});
+
 test("search narrows to matching names, and says so when nothing matches", async () => {
   renderPage(<ReposTable repos={repos} />);
   const search = screen.getByRole("searchbox", { name: "Search repositories" });

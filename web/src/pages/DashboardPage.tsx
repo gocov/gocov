@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { Chip, CoverageFigure, LinkButton, Mono, Notice, type Tone } from "@/components/atoms";
 import { Card, EmptyState, PageHeader, QueryBoundary, SectionHeader, StatRow, StatTile } from "@/components/molecules";
 import { AttentionList } from "@/components/organisms/AttentionList";
@@ -131,7 +131,8 @@ function NoWorkspace({ canOnboard }: { canOnboard: boolean }) {
 
 function Workspace({ data, current }: { data: Dashboard; current: WorkspaceGroup }) {
   const { stats, repos, attention, can_onboard: canOnboard } = data;
-  const notices = attentionRows(attention);
+  const { pathname } = useLocation();
+  const notices = attentionRows(attention, pathname);
   const reporting = reportingStates[stats.reporting];
   const setup = setupRoute(current);
   const hasReports = repos.some((r) => r.coverage !== null);
@@ -186,7 +187,7 @@ function Workspace({ data, current }: { data: Dashboard; current: WorkspaceGroup
 
       {notices.length > 0 && (
         <section className="stack stack-1">
-          <SectionHeader title="Needs attention">{plural(notices.length, "thing")}</SectionHeader>
+          <SectionHeader title="Needs attention">{plural(attention.length, "thing")}</SectionHeader>
           <AttentionList rows={notices} />
         </section>
       )}

@@ -137,6 +137,31 @@ test("the table filters without another request", async () => {
   expect(fetchMock.mock.calls.length).toBe(calls);
 });
 
+test("many stale repositories fold into one notice that opens the Stale filter", async () => {
+  const stale = Array.from({ length: 15 }, (_, i) => ({
+    ...dashboard.repos[1]!,
+    slug: `acme/svc-${i}`,
+    name: `svc-${i}`,
+  }));
+  const attention = [
+    dashboard.attention[0]!,
+    ...stale.map((r) => ({ ...dashboard.attention[1]!, slug: r.slug, name: r.name })),
+  ];
+  const { router } = show({ ...dashboard, repos: [...dashboard.repos, ...stale], attention }, "/w/github/acme");
+
+  expect(await screen.findByText("16 things")).toBeInTheDocument();
+  const notices = within(screen.getByRole("heading", { name: "Needs attention" }).closest("section")!).getAllByRole(
+    "listitem",
+  );
+  expect(notices).toHaveLength(2);
+  expect(notices[1]).toHaveTextContent("No uploads from 15 repositories in 30+ days");
+
+  await userEvent.click(within(notices[1]!).getByRole("link", { name: "Show stale" }));
+  await waitFor(() => expect(router.state.location.search).toBe("?filter=stale"));
+  expect(router.state.location.pathname).toBe("/w/github/acme");
+  expect(screen.getAllByRole("row")).toHaveLength(17); // header + web + 15
+});
+
 test("the path picks the workspace the query asks the server for", async () => {
   const { fetchMock } = show(dashboard, "/w/gitlab/acme-labs");
   await screen.findByRole("table");

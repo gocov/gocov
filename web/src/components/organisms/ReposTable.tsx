@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Link } from "react-router";
+import { useEffect, useRef, useState } from "react";
+import { Link, useLocation, useSearchParams } from "react-router";
 import { Chip, CoverageBar, Delta, Mono, Select, Sparkline, TextInput } from "@/components/atoms";
 import { Card, EmptyState, SegmentedControl, Toolbar } from "@/components/molecules";
 import type { DashRepo } from "@/lib/api/types";
@@ -23,6 +23,7 @@ const sortLabels: { value: RepoSort; label: string }[] = [
 ];
 
 const isSort = (v: string): v is RepoSort => sortLabels.some((s) => s.value === v);
+const isFilter = (v: string | null): v is RepoFilter => filterLabels.some((f) => f.value === v);
 
 /** The gate cell: a state, or the way to set one. */
 function GateCell({ repo }: { repo: DashRepo }) {
@@ -44,17 +45,37 @@ function GateCell({ repo }: { repo: DashRepo }) {
  * Every repository in the workspace, with the filter, search and sort that
  * slice it. All three work on the rows already in hand, so the table answers
  * without a round-trip.
+ *
+ * The filter lives in the query (?filter=stale), so a folded needs-attention
+ * row can open the table on it and a filtered view can be shared; arriving
+ * with #repositories brings the table into view.
  */
 export function ReposTable({ repos }: { repos: DashRepo[] }) {
-  const [filter, setFilter] = useState<RepoFilter>("all");
+  const [params, setParams] = useSearchParams();
+  const wanted = params.get("filter");
+  const filter: RepoFilter = isFilter(wanted) ? wanted : "all";
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<RepoSort>("cov");
+
+  const setFilter = (next: RepoFilter) => {
+    const updated = new URLSearchParams(params);
+    if (next === "all") updated.delete("filter");
+    else updated.set("filter", next);
+    setParams(updated, { replace: true, preventScrollReset: true });
+  };
+
+  const location = useLocation();
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // jsdom has no scrollIntoView.
+    if (location.hash === "#repositories") root.current?.scrollIntoView?.({ block: "start" });
+  }, [location.key, location.hash]);
 
   const counts = repoCounts(repos);
   const rows = visibleRepos(repos, { filter, search, sort });
 
   return (
-    <div className="ReposTable">
+    <div className="ReposTable" id="repositories" ref={root}>
       <Toolbar
         label="Repository filters"
         left={

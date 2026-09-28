@@ -23,7 +23,7 @@ export function AttentionList({ rows }: { rows: AttentionRow[] }) {
                 <span className="AttentionList__text">
                   <span className="AttentionList__title">
                     {copy.before}
-                    <Mono>{copy.name}</Mono>
+                    {copy.name !== "" && <Mono>{copy.name}</Mono>}
                     {copy.after}
                   </span>
                   <span className="AttentionList__message">{copy.message}</span>
