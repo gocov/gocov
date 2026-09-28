@@ -1,5 +1,5 @@
 import type { AttentionItem, DashRepo } from "./api/types";
-import { attentionCopy, compareRepos, repoCounts, repoMatches, visibleRepos } from "./dashboard";
+import { attentionCopy, attentionRows, compareRepos, repoCounts, repoMatches, visibleRepos } from "./dashboard";
 
 const item = (over: Partial<AttentionItem> = {}): AttentionItem => ({
   kind: "failing",
@@ -48,6 +48,35 @@ test("a stale repo counts the days since its last upload", () => {
   expect(copy.before + copy.name + copy.after).toBe("No uploads from api in 21 days");
   expect(copy.message).toMatch(/did not reach the upload step/);
   expect(copy.to).toBe("/repos/github/acme/api");
+});
+
+test("a few notices of a kind are listed one by one", () => {
+  const items = [item({ slug: "acme/a", name: "a" }), item({ slug: "acme/b", name: "b" }), item({ slug: "acme/c", name: "c" })];
+  expect(attentionRows(items, "/w/github/acme").map((r) => r.name)).toEqual(["a", "b", "c"]);
+});
+
+test("past the limit a kind folds into one row that opens the filtered table", () => {
+  const stale = ["a", "b", "c", "d", "e"].map((name, i) =>
+    item({ kind: "stale", slug: `acme/${name}`, name, min_coverage: null, stale_days: 30 - i }),
+  );
+  const rows = attentionRows([item(), ...stale], "/w/github/acme");
+
+  expect(rows).toHaveLength(2);
+  expect(rows[0]!.name).toBe("api");
+  const folded = rows[1]!;
+  expect(folded.tone).toBe("warn");
+  expect(folded.before + folded.name + folded.after).toBe("No uploads from 5 repositories in 26+ days");
+  expect(folded.message).toBe("a, b, c and 2 more. Their coverage shown is stale.");
+  expect(folded.action).toBe("Show stale");
+  expect(folded.to).toBe("/w/github/acme?filter=stale#repositories");
+});
+
+test("folded failing gates say how many and link to the Failing filter", () => {
+  const failing = ["a", "b", "c", "d"].map((name) => item({ slug: `acme/${name}`, name }));
+  const [row] = attentionRows(failing);
+  expect(row!.after).toBe("4 repositories are failing their coverage gate");
+  expect(row!.message).toBe("a, b, c and 1 more.");
+  expect(row!.to).toBe("/?filter=failing#repositories");
 });
 
 test("each filter keeps the rows it names", () => {

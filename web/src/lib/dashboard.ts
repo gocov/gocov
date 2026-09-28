@@ -9,7 +9,10 @@ import { routes } from "./urls";
 
 export type AttentionTone = "bad" | "warn";
 
-/** One needs-attention notice as sentences: the name is set in monospace, so it stays its own part. */
+/**
+ * One needs-attention notice as sentences: the name is set in monospace, so it
+ * stays its own part. A folded row, about several repositories, has no name.
+ */
 export interface AttentionCopy {
   tone: AttentionTone;
   /** The condition, for a screen reader — the dot alone must not carry it. */
@@ -29,14 +32,75 @@ export interface AttentionRow extends AttentionCopy {
 }
 
 /**
+ * How many notices of one kind are listed one by one. Past this they fold
+ * into a single row that opens the table on the matching filter: a list of
+ * eighteen stale repositories is read as noise, and the table already has
+ * every one of them, sorted and searchable.
+ */
+export const attentionFoldAt = 3;
+
+/**
  * The notices as the dashboard lists them: things that happened — a gate
  * failed, uploads stopped. A repository without a gate is deliberately not
  * one of them (the server does not send it): it is a standing choice, and a
  * section that is always there stops being read. The table's row says "Set a
  * gate" and the No gate filter counts it.
+ *
+ * `here` is the dashboard's own path, which a folded row's action links back
+ * to with the table's filter set.
  */
-export function attentionRows(items: AttentionItem[]): AttentionRow[] {
-  return items.map((item) => ({ ...attentionCopy(item), key: `${item.kind}:${item.forge}/${item.slug}` }));
+export function attentionRows(items: AttentionItem[], here = "/"): AttentionRow[] {
+  const rows: AttentionRow[] = [];
+  // The server sends one kind after another, most severe first; folding keeps
+  // that order, each kind in the place its first notice had.
+  const kinds = [...new Set(items.map((item) => item.kind))];
+  for (const kind of kinds) {
+    const group = items.filter((item) => item.kind === kind);
+    if (group.length > attentionFoldAt) {
+      rows.push({ ...foldedCopy(kind, group, here), key: `${kind}:folded` });
+      continue;
+    }
+    for (const item of group) rows.push({ ...attentionCopy(item), key: `${item.kind}:${item.forge}/${item.slug}` });
+  }
+  return rows;
+}
+
+/** The first few names and how many more — the folded row's message. */
+function someNames(group: AttentionItem[]): string {
+  const shown = group.slice(0, attentionFoldAt).map((item) => item.name);
+  const rest = group.length - shown.length;
+  return rest > 0 ? `${shown.join(", ")} and ${rest} more` : shown.join(", ");
+}
+
+/** Every notice of one kind as a single row, pointing at the table's filter. */
+function foldedCopy(kind: AttentionItem["kind"], group: AttentionItem[], here: string): AttentionCopy {
+  const count = plural(group.length, "repository", "repositories");
+  switch (kind) {
+    case "failing":
+      return {
+        tone: "bad",
+        status: "Failing",
+        before: "",
+        name: "",
+        after: `${count} are failing their coverage gate`,
+        message: `${someNames(group)}.`,
+        action: "Show failing",
+        to: `${here}?filter=failing#repositories`,
+      };
+    case "stale": {
+      const days = Math.min(...group.map((item) => item.stale_days ?? 0));
+      return {
+        tone: "warn",
+        status: "Stale",
+        before: "",
+        name: "",
+        after: `No uploads from ${count} in ${days}+ days`,
+        message: `${someNames(group)}. Their coverage shown is stale.`,
+        action: "Show stale",
+        to: `${here}?filter=stale#repositories`,
+      };
+    }
+  }
 }
 
 export function attentionCopy(item: AttentionItem): AttentionCopy {
