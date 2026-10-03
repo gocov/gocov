@@ -7,7 +7,7 @@ paths:
 
 # Store, blob store and migrations
 
-`store.Store` (normalized coverage model, workspaces/repos/gates) has `store/postgres` in production and `store/memory` as the test double; `blobstore.Store` (raw uploaded profiles) has `blobstore/postgres` and `blobstore/memory`. A change to an interface lands in both implementations and in the tests that drive them.
+`store.Store` (normalized coverage model, workspaces/repos/gates) has `store/postgres` in production and `store/memory` as the test double; `blobstore.Store` (raw uploaded profiles) has `blobstore/postgres` and `blobstore/memory`. A change to an interface lands in both implementations and in the tests that drive them. Behavior every `store.Store` must share is tested once, in `internal/store/storetest`, which both implementations run (`TestContract`); a new method or rule gets its scenario there, and only what is postgres-specific (encryption at rest, migrations, pool and lock behavior) stays in `postgres_test.go`.
 
 SQL migrations live in `internal/store/postgres/migrations/` as numbered `00NN_name.sql` files, embedded and applied automatically at boot. New schema changes get the next number; never edit a migration that has shipped. Migrations are forward-only in production, so a rollback leaves the schema behind.
 
