@@ -80,15 +80,19 @@ func (p *Pipeline) Recompute(ctx context.Context, repo *store.Repo, u *store.Upl
 		}
 
 		var deltaPct *float64
-		prev, err := deltaBase(ctx, tx, repo, u.Branch, u.CommitSHA, 0)
+		prev, err := deltaBase(ctx, tx, repo, u.Branch, u.CommitSHA, 0, names)
 		if err != nil {
 			return err
 		}
 		if prev != nil {
-			deltaPct = new(totalPct - prev.TotalPct)
+			prevPct, err := prev.totalOver(ctx, tx, names)
+			if err != nil {
+				return fmt.Errorf("loading baseline report: %w", err)
+			}
+			deltaPct = new(totalPct - prevPct)
 		}
 
-		dropBase, err := gateDropBase(ctx, tx, repo, u.CommitSHA)
+		dropBase, err := gateDropBase(ctx, tx, repo, u.CommitSHA, names)
 		if err != nil {
 			return err
 		}
@@ -141,13 +145,19 @@ func (p *Pipeline) Recompute(ctx context.Context, repo *store.Repo, u *store.Upl
 	return result, nil
 }
 
+// partFiles is the one read a merge of several parts needs; both the
+// store and a commit-report transaction answer it.
+type partFiles interface {
+	PartFiles(ctx context.Context, uploadIDs []int64) ([]*store.UploadFile, error)
+}
+
 // mergedCoverage counts the covered and total statements of the parts
 // merged together. A lone part is its own merge: every parser keys blocks
 // by position and files by path, so merging one profile changes nothing,
 // and its upload row already carries the totals — the common single-part
 // commit reads no files at all. Several parts are read in one query and
 // merged, so a block two parts both report counts once.
-func mergedCoverage(ctx context.Context, tx store.CommitTx, parts []*store.Upload) (covered, total int64, err error) {
+func mergedCoverage(ctx context.Context, tx partFiles, parts []*store.Upload) (covered, total int64, err error) {
 	if len(parts) == 1 {
 		return parts[0].CoveredStmts, parts[0].TotalStmts, nil
 	}

@@ -2,8 +2,10 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"strings"
 	"testing"
 
@@ -28,8 +30,14 @@ func newPipeline(t *testing.T, gate store.Gate) (*Pipeline, *storemem.Store, *st
 // statements, the way an upload from one CI job would land.
 func addPart(t *testing.T, st *storemem.Store, repo *store.Repo, commit, part string, covered, total int64) *store.Upload {
 	t.Helper()
+	return addBranchPart(t, st, repo, commit, repo.DefaultBranch, "", part, covered, total)
+}
+
+// addBranchPart is addPart for a build of another branch or a PR.
+func addBranchPart(t *testing.T, st *storemem.Store, repo *store.Repo, commit, branch, prID, part string, covered, total int64) *store.Upload {
+	t.Helper()
 	u := &store.Upload{
-		RepoID: repo.ID, CommitSHA: commit, Branch: repo.DefaultBranch, Format: "go",
+		RepoID: repo.ID, CommitSHA: commit, Branch: branch, PRID: prID, Format: "go",
 		TotalPct: profile.Percent(covered, total), CoveredStmts: covered, TotalStmts: total, Part: part,
 	}
 	// Coverage is recomputed from the blocks, so the file needs a covered
@@ -172,5 +180,54 @@ func TestRecomputeReadsPartFilesOnlyToMerge(t *testing.T) {
 	}
 	if merged.Upload.CoveredStmts != 16 || merged.Upload.TotalStmts != 30 {
 		t.Errorf("merged = %d/%d, want 16/30", merged.Upload.CoveredStmts, merged.Upload.TotalStmts)
+	}
+}
+
+// A commit's parts arrive one by one, on the PR and on the default branch
+// alike, so the delta and the gate's drop rule compare like with like: a
+// baseline missing one of the commit's parts is passed over, and a commit
+// still missing some of its parts is measured against the baseline's same
+// parts only.
+func TestRecomputeComparesTheSameParts(t *testing.T) {
+	p, st, repo := newPipeline(t, store.Gate{MaxCoverageDrop: pct(1)})
+	ctx := t.Context()
+	recompute := func(u *store.Upload) *Merged {
+		t.Helper()
+		merged, err := p.Recompute(ctx, repo, u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return merged
+	}
+	wantDelta := func(m *Merged, want float64) {
+		t.Helper()
+		if m.Delta == nil || math.Abs(*m.Delta-want) > 1e-9 {
+			got := "none"
+			if m.Delta != nil {
+				got = fmt.Sprintf("%+.1f", *m.Delta)
+			}
+			t.Errorf("delta = %s, want %+.1f", got, want)
+		}
+	}
+
+	// main at 50%: backend 8/10, frontend 2/10.
+	recompute(addPart(t, st, repo, "m1", "backend", 8, 10))
+	recompute(addPart(t, st, repo, "m1", "frontend", 2, 10))
+
+	// The PR's backend lands first: 9/10 against main's backend 8/10, not
+	// against main's 50% over both parts.
+	m := recompute(addBranchPart(t, st, repo, "p1", "feat", "7", "backend", 9, 10))
+	wantDelta(m, 10)
+
+	// Another commit reaches main and only its backend is in so far.
+	recompute(addPart(t, st, repo, "m2", "backend", 10, 10))
+
+	// The PR's frontend completes it at 55%. m2 is not a baseline for two
+	// parts — against its 100% the PR would read -45% and fail the drop
+	// rule — so both compare against m1.
+	m = recompute(addBranchPart(t, st, repo, "p1", "feat", "7", "frontend", 2, 10))
+	wantDelta(m, 5)
+	if m.Verdict.Failed() {
+		t.Errorf("gate failed against a partial baseline: %v", m.Verdict.Failures)
 	}
 }

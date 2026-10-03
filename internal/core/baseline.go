@@ -16,6 +16,13 @@
 // do PR builds: a feature branch's history includes its PR's builds, but
 // what the branch is measured against is always a build of the branch
 // itself.
+//
+// A commit's report is merged from parts that arrive one by one, so either
+// side of a comparison may be missing some. The commit-report baselines
+// compare like with like: a report missing any of the commit's parts — one
+// still in flight, or a part that did not run — is passed over, and when
+// the commit has fewer parts than its baseline, the baseline is counted
+// over the commit's parts alone (comparableBase).
 
 package core
 
@@ -25,48 +32,112 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 )
 
-// passedReports is the one read the commit-report baselines need; the
-// store answers it before an upload is stored, a commit-report transaction
-// while the merge runs.
+// passedReports is what the commit-report baselines read; the store
+// answers it before an upload is stored, a commit-report transaction while
+// the merge runs.
 type passedReports interface {
 	LatestPassedCommitReport(ctx context.Context, repoID int64, branch string, beforeID int64, excludeCommit string) (*store.CommitReport, error)
+	LatestUploadsPerPart(ctx context.Context, repoID int64, commitSHA string) ([]*store.Upload, error)
+	partFiles
+}
+
+// baselineSearchDepth bounds how many newer reports lacking one of the
+// commit's parts a baseline search passes over before giving up — a part
+// in flight leaves one such report, a part that stopped running a run of
+// them, and the comparison is decoration not worth a long walk.
+const baselineSearchDepth = 10
+
+// comparableBase is a baseline report together with its parts' latest
+// uploads, so its total can be counted over a subset of them.
+type comparableBase struct {
+	Report *store.CommitReport
+	parts  []*store.Upload
+}
+
+// comparableReport returns the newest gate-passing, non-PR report on
+// branch that carries every one of parts, skipping the commit's own report
+// and, with beforeID > 0, anything not older than that one. A report
+// missing one of them would compare a total over different code.
+// store.ErrNotFound when there is none within baselineSearchDepth.
+func comparableReport(ctx context.Context, reports passedReports, repoID int64, branch, commit string, beforeID int64, parts []string) (*comparableBase, error) {
+	for range baselineSearchDepth {
+		cr, err := reports.LatestPassedCommitReport(ctx, repoID, branch, beforeID, commit)
+		if err != nil {
+			return nil, err
+		}
+		ups, err := reports.LatestUploadsPerPart(ctx, repoID, cr.CommitSHA)
+		if err != nil {
+			return nil, err
+		}
+		if !slices.ContainsFunc(parts, func(name string) bool {
+			return !slices.ContainsFunc(ups, func(u *store.Upload) bool { return u.Part == name })
+		}) {
+			return &comparableBase{Report: cr, parts: ups}, nil
+		}
+		beforeID = cr.ID
+	}
+	return nil, store.ErrNotFound
+}
+
+// totalOver is the base's coverage counted over the named parts only —
+// its merged total when it has no others, so the common case reads
+// nothing more. The parts are a subset of the base's (comparableReport).
+func (b *comparableBase) totalOver(ctx context.Context, files partFiles, parts []string) (float64, error) {
+	if len(b.parts) == len(parts) {
+		return b.Report.TotalPct, nil
+	}
+	sub := slices.DeleteFunc(slices.Clone(b.parts), func(u *store.Upload) bool { return !slices.Contains(parts, u.Part) })
+	covered, total, err := mergedCoverage(ctx, files, sub)
+	if err != nil {
+		return 0, err
+	}
+	return profile.Percent(covered, total), nil
 }
 
 // gateDropBase returns the total of the gate's drop baseline, or nil when
 // the drop rule is off or has nothing to compare against: the default
-// branch's latest passing merged report. The commit's own report is
-// skipped so an earlier part is never its own baseline. The result is
-// recorded with the row (GateBasePct) so the verdict can later be
-// explained against the comparison the gate actually made.
-func gateDropBase(ctx context.Context, reports passedReports, repo *store.Repo, commit string) (*float64, error) {
+// branch's latest passing merged report carrying every one of parts,
+// counted over those parts. The commit's own report is skipped so an
+// earlier part is never its own baseline. The result is recorded with the
+// row (GateBasePct) so the verdict can later be explained against the
+// comparison the gate actually made.
+func gateDropBase(ctx context.Context, reports passedReports, repo *store.Repo, commit string, parts []string) (*float64, error) {
 	if repo.Gate.MaxCoverageDrop == nil {
 		return nil, nil
 	}
-	base, err := reports.LatestPassedCommitReport(ctx, repo.ID, repo.DefaultBranch, 0, commit)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return nil, fmt.Errorf("loading gate baseline: %w", err)
-	}
-	if base == nil {
+	base, err := comparableReport(ctx, reports, repo.ID, repo.DefaultBranch, commit, 0, parts)
+	if errors.Is(err, store.ErrNotFound) {
 		return nil, nil
 	}
-	return new(base.TotalPct), nil
+	if err != nil {
+		return nil, fmt.Errorf("loading gate baseline: %w", err)
+	}
+	pct, err := base.totalOver(ctx, reports, parts)
+	if err != nil {
+		return nil, fmt.Errorf("loading gate baseline: %w", err)
+	}
+	return new(pct), nil
 }
 
 // deltaBase returns the merged report a commit's delta is measured
-// against: the previous gate-passing report on its branch, falling back to
-// the default branch for a first-time feature branch. The commit's own
-// report is skipped so an earlier part is never its own baseline, and
-// beforeID > 0 keeps only reports older than that one. nil when there is
-// none.
-func deltaBase(ctx context.Context, reports passedReports, repo *store.Repo, branch, commit string, beforeID int64) (*store.CommitReport, error) {
-	prev, err := reports.LatestPassedCommitReport(ctx, repo.ID, branch, beforeID, commit)
+// against: the previous gate-passing report on its branch carrying every
+// one of the commit's parts, falling back to the default branch for a
+// first-time feature branch. The commit's own report is skipped so an
+// earlier part is never its own baseline, and beforeID > 0 keeps only
+// reports older than that one. nil when there is none.
+func deltaBase(ctx context.Context, reports passedReports, repo *store.Repo, branch, commit string, beforeID int64, parts []string) (*comparableBase, error) {
+	prev, err := comparableReport(ctx, reports, repo.ID, branch, commit, beforeID, parts)
 	if errors.Is(err, store.ErrNotFound) && branch != repo.DefaultBranch {
-		prev, err = reports.LatestPassedCommitReport(ctx, repo.ID, repo.DefaultBranch, beforeID, commit)
+		prev, err = comparableReport(ctx, reports, repo.ID, repo.DefaultBranch, commit, beforeID, parts)
 	}
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
 		return nil, fmt.Errorf("loading baseline report: %w", err)
 	}
 	return prev, nil
@@ -78,11 +149,19 @@ func deltaBase(ctx context.Context, reports passedReports, repo *store.Repo, bra
 // commit arrived. nil when there is none, or the read fails — the
 // comparison is decoration, never worth failing a page over.
 func CommitBaseline(ctx context.Context, reports passedReports, repo *store.Repo, cr *store.CommitReport) *store.CommitReport {
-	base, err := deltaBase(ctx, reports, repo, cr.Branch, cr.CommitSHA, cr.ID)
+	ups, err := reports.LatestUploadsPerPart(ctx, repo.ID, cr.CommitSHA)
 	if err != nil {
 		return nil
 	}
-	return base
+	parts := make([]string, len(ups))
+	for i, u := range ups {
+		parts[i] = u.Part
+	}
+	base, err := deltaBase(ctx, reports, repo, cr.Branch, cr.CommitSHA, cr.ID, parts)
+	if err != nil || base == nil {
+		return nil
+	}
+	return base.Report
 }
 
 // ReportBaseline pairs a branch's newest merged report (reports come newest

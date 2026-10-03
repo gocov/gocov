@@ -23,6 +23,11 @@ its own baseline. A feature branch with no passing history of its own falls back
 when the upload arrived, so a page does not start comparing against what the default branch received later, a PR's own
 merge commit included.
 
+When a commit's coverage comes in [parts](parts.md), the comparison is between the same parts. A baseline still
+missing one of the commit's parts — its other jobs still running, say — is passed over for an earlier one that has them
+all; and while the commit itself is still missing parts, the delta compares the parts it has against the same parts of
+the baseline. The gate's max drop rule compares the same way.
+
 Gate-failing uploads are recorded but never become a baseline. That is deliberate: re-running CI cannot launder a
 failure into the new reference point, and a PR cannot walk coverage down one tolerated step at a time. The gate's
 **max drop** rule goes further and always measures against the default branch's latest passing report, whatever branch
