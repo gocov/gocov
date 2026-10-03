@@ -58,6 +58,10 @@ jobs:
           files: coverage.out
           # One part of the commit's report; the web job uploads the other.
           part: go
+          # The store contract suite is test code that lives outside a
+          # _test.go file so both stores can import it; its failure
+          # branches are not product code left untested.
+          ignore: /internal/store/storetest/**
           # No token: a push or same-repo PR uploads via OIDC (id-token
           # above); a fork PR, which gets no id-token, falls back to the
           # App-verified tokenless path automatically.
