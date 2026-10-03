@@ -8,6 +8,7 @@ import (
 	"github.com/gocov/gocov/internal/store"
 )
 
+// pct points at a gate threshold.
 func pct(v float64) *float64 { return new(v) }
 
 func TestEvaluateGate(t *testing.T) {
