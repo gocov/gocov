@@ -1,0 +1,1629 @@
+// Package storetest is the contract suite every store.Store implementation
+// runs: the same scenarios against postgres (production) and memory (the
+// test double the handler tests stand on), so the two cannot drift apart
+// unnoticed.
+package storetest
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"reflect"
+	"slices"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/gocov/gocov/internal/diffcov"
+	"github.com/gocov/gocov/internal/profile"
+	"github.com/gocov/gocov/internal/store"
+)
+
+// Run runs the contract suite. newStore returns a fresh, empty store for
+// each subtest.
+func Run(t *testing.T, newStore func(*testing.T) store.Store) {
+	t.Run("RepoLifecycle", func(t *testing.T) { repoLifecycle(t, newStore) })
+	t.Run("WorkspaceLifecycle", func(t *testing.T) { workspaceLifecycle(t, newStore) })
+	t.Run("UploadLifecycle", func(t *testing.T) { uploadLifecycle(t, newStore) })
+	t.Run("PublicRepoRefs", func(t *testing.T) { publicRepoRefs(t, newStore) })
+	t.Run("DeleteWorkspaceCascade", func(t *testing.T) { deleteWorkspaceCascade(t, newStore) })
+	t.Run("CommitReportLifecycle", func(t *testing.T) { commitReportLifecycle(t, newStore) })
+	t.Run("TryPushStatus", func(t *testing.T) { tryPushStatus(t, newStore) })
+	t.Run("UserLifecycle", func(t *testing.T) { userLifecycle(t, newStore) })
+	t.Run("SessionLifecycle", func(t *testing.T) { sessionLifecycle(t, newStore) })
+	t.Run("WorkspaceMembership", func(t *testing.T) { workspaceMembership(t, newStore) })
+	t.Run("RegisterWorkspace", func(t *testing.T) { registerWorkspace(t, newStore) })
+	t.Run("TokenlessClaims", func(t *testing.T) { tokenlessClaims(t, newStore) })
+	t.Run("CommitReportsExcludePRBuilds", func(t *testing.T) { commitReportsExcludePRBuilds(t, newStore) })
+	t.Run("GateBasePctRoundTrip", func(t *testing.T) { gateBasePctRoundTrip(t, newStore) })
+	t.Run("PartFilesReadsEveryPartAtOnce", func(t *testing.T) { partFilesReadsEveryPartAtOnce(t, newStore) })
+	t.Run("UploadFileReadsOneFile", func(t *testing.T) { uploadFileReadsOneFile(t, newStore) })
+	t.Run("ListWorkspaceRepos", func(t *testing.T) { listWorkspaceRepos(t, newStore) })
+	t.Run("DefaultBranchReportsLatest", func(t *testing.T) { defaultBranchReportsLatest(t, newStore) })
+	t.Run("DefaultBranchReports", func(t *testing.T) { defaultBranchReports(t, newStore) })
+	t.Run("JudgedGateRoundTrip", func(t *testing.T) { judgedGateRoundTrip(t, newStore) })
+	t.Run("LatestPassedUploadAndRecentBranches", func(t *testing.T) { latestPassedUploadAndRecentBranches(t, newStore) })
+	t.Run("StoreContractEdges", func(t *testing.T) { storeContractEdges(t, newStore) })
+	t.Run("UsersNeverAliasForgeWorkspaces", func(t *testing.T) { usersNeverAliasForgeWorkspaces(t, newStore) })
+	t.Run("NamesAreScopedPerForge", func(t *testing.T) { namesAreScopedPerForge(t, newStore) })
+	t.Run("WorkspaceGrantStaysOnItsForge", func(t *testing.T) { workspaceGrantStaysOnItsForge(t, newStore) })
+}
+
+func repoLifecycle(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+
+	repo := &store.Repo{
+		Forge:         "bitbucket",
+		Slug:          "acme/widgets",
+		Token:         "tok-1",
+		DefaultBranch: "main",
+	}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	if repo.ID == 0 || repo.CreatedAt.IsZero() {
+		t.Fatalf("CreateRepo did not fill ID/CreatedAt: %+v", repo)
+	}
+
+	// All lookups return the same row.
+	for name, get := range map[string]func() (*store.Repo, error){
+		"by id":    func() (*store.Repo, error) { return st.RepoByID(ctx, repo.ID) },
+		"by slug":  func() (*store.Repo, error) { return st.RepoBySlug(ctx, "bitbucket", "acme/widgets") },
+		"by token": func() (*store.Repo, error) { return st.RepoByToken(ctx, "tok-1") },
+	} {
+		got, err := get()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got.Slug != repo.Slug || got.Token != repo.Token || got.DefaultBranch != "main" {
+			t.Errorf("%s: got %+v", name, got)
+		}
+	}
+
+	// Unique constraints hold — per forge: the same slug on another forge
+	// is another repo (github.com/acme/widgets beside bitbucket's).
+	dup := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "other", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, dup); err == nil {
+		t.Error("duplicate slug must fail")
+	}
+	gh := &store.Repo{Forge: "github", Slug: "acme/widgets", Token: "tok-gh", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, gh); err != nil {
+		t.Fatalf("same slug on another forge: %v", err)
+	}
+	if got, err := st.RepoBySlug(ctx, "github", "acme/widgets"); err != nil || got.ID != gh.ID {
+		t.Errorf("RepoBySlug(github) = %+v, %v; want the github row", got, err)
+	}
+	if got, err := st.RepoBySlug(ctx, "bitbucket", "acme/widgets"); err != nil || got.ID != repo.ID {
+		t.Errorf("RepoBySlug(bitbucket) = %+v, %v; want the bitbucket row", got, err)
+	}
+	if err := st.DeleteRepo(ctx, gh.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// ListRepos is sorted by slug.
+	second := &store.Repo{Forge: "bitbucket", Slug: "aaa/first", Token: "tok-2", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	repos, err := st.ListRepos(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repos) != 2 || repos[0].Slug != "aaa/first" || repos[1].Slug != "acme/widgets" {
+		t.Errorf("ListRepos = %v, %v", repos[0].Slug, repos[1].Slug)
+	}
+
+	// Update: branch change round-trips, and nullable gate fields survive
+	// set/clear cycles.
+	minCov, maxDrop := 82.5, 0.0
+	repo.DefaultBranch = "develop"
+	repo.Token = "tok-rotated"
+	repo.Gate = store.Gate{MinCoverage: &minCov, MaxCoverageDrop: &maxDrop}
+	if err := st.UpdateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.RepoByID(ctx, repo.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DefaultBranch != "develop" || got.Token != "tok-rotated" {
+		t.Errorf("after update: %+v", got)
+	}
+	if got.Gate.MinCoverage == nil || *got.Gate.MinCoverage != 82.5 ||
+		got.Gate.MaxCoverageDrop == nil || *got.Gate.MaxCoverageDrop != 0 ||
+		got.Gate.MinDiffCoverage != nil {
+		t.Errorf("gate round trip: %+v", got.Gate)
+	}
+	repo.Gate = store.Gate{}
+	if err := st.UpdateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.RepoByID(ctx, repo.ID); got.Gate.Configured() {
+		t.Errorf("gate not cleared: %+v", got.Gate)
+	}
+
+	// Ignore patterns round-trip as a text[] and clear back to nil, so a
+	// repo that never had any and one that had them removed compare equal.
+	if got.IgnorePaths != nil {
+		t.Errorf("fresh repo has ignore paths: %q", got.IgnorePaths)
+	}
+	repo.IgnorePaths = []string{"cmd/preview/**", "*_mock.go"}
+	if err := st.UpdateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.RepoByID(ctx, repo.ID); !slices.Equal(got.IgnorePaths, repo.IgnorePaths) {
+		t.Errorf("ignore paths round trip: %q", got.IgnorePaths)
+	}
+	repo.IgnorePaths = nil
+	if err := st.UpdateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.RepoByID(ctx, repo.ID); got.IgnorePaths != nil {
+		t.Errorf("ignore paths not cleared: %q", got.IgnorePaths)
+	}
+	withIgnore := &store.Repo{Forge: "bitbucket", Slug: "acme/ignored", Token: "tok-3", DefaultBranch: "main", IgnorePaths: []string{"gen/**"}}
+	if err := st.CreateRepo(ctx, withIgnore); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.RepoByID(ctx, withIgnore.ID); !slices.Equal(got.IgnorePaths, []string{"gen/**"}) {
+		t.Errorf("ignore paths not stored at create: %q", got.IgnorePaths)
+	}
+	if _, err := st.RepoByToken(ctx, "tok-1"); !errors.Is(err, store.ErrNotFound) {
+		t.Error("old token still resolves after rotation")
+	}
+
+	// Until the forge has ever answered, the checked-at stamp reads back
+	// as the zero value (NULL), not year one.
+	if got, _ = st.RepoByID(ctx, repo.ID); !got.VisibilityCheckedAt.IsZero() {
+		t.Errorf("VisibilityCheckedAt before any answer = %v, want zero", got.VisibilityCheckedAt)
+	}
+
+	// The public-reports switch rides UpdateRepo; visibility and its
+	// checked-at stamp do not — only SetRepoVisibility writes them, so a
+	// full-row save carrying stale values cannot revert a concurrent
+	// refresh.
+	flippedAt := time.Now()
+	if err := st.SetRepoVisibility(ctx, repo.ID, store.VisibilityPrivate, flippedAt); err != nil {
+		t.Fatal(err)
+	}
+	repo.Visibility = store.VisibilityPublic // stale in-memory values
+	repo.VisibilityCheckedAt = time.Time{}
+	repo.PublicReportsDisabled = true
+	if err := st.UpdateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.RepoByID(ctx, repo.ID); got.Visibility != store.VisibilityPrivate || !got.PublicReportsDisabled ||
+		got.DefaultBranch != "develop" {
+		t.Errorf("after stale-visibility UpdateRepo: %+v", got)
+	}
+	if got.VisibilityCheckedAt.IsZero() {
+		t.Error("SetRepoVisibility did not stamp VisibilityCheckedAt (or UpdateRepo cleared it)")
+	}
+
+	// An answer whose ask predates the stored stamp lost the race and is
+	// skipped without error; a later ask wins.
+	if err := st.SetRepoVisibility(ctx, repo.ID, store.VisibilityPublic, flippedAt.Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.RepoByID(ctx, repo.ID); got.Visibility != store.VisibilityPrivate {
+		t.Errorf("a stale answer overwrote a fresher one: %q", got.Visibility)
+	}
+	if err := st.SetRepoVisibility(ctx, repo.ID, store.VisibilityPublic, flippedAt.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.RepoByID(ctx, repo.ID); got.Visibility != store.VisibilityPublic {
+		t.Errorf("a fresher answer was refused: %q", got.Visibility)
+	}
+
+	// Missing rows yield ErrNotFound.
+	if err := st.UpdateRepo(ctx, &store.Repo{ID: 9999, Slug: "x/y", Token: "t"}); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("UpdateRepo missing = %v", err)
+	}
+	if _, err := st.RepoBySlug(ctx, "bitbucket", "no/such"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("RepoBySlug missing = %v", err)
+	}
+	if err := st.SetRepoVisibility(ctx, 9999, store.VisibilityPublic, time.Now()); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("SetRepoVisibility missing = %v", err)
+	}
+}
+
+func workspaceLifecycle(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+
+	minDiff := 70.0
+	w := &store.Workspace{
+		Forge: "bitbucket", Prefix: "acme", Token: "ws-tok", DefaultBranch: "development",
+		Gate:                 store.Gate{MinDiffCoverage: &minDiff},
+		GitHubInstallationID: 42,
+	}
+	if err := st.CreateWorkspace(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	if w.ID == 0 || w.CreatedAt.IsZero() {
+		t.Fatalf("CreateWorkspace did not fill ID/CreatedAt: %+v", w)
+	}
+
+	for name, get := range map[string]func() (*store.Workspace, error){
+		"by prefix": func() (*store.Workspace, error) { return st.WorkspaceByPrefix(ctx, "bitbucket", "acme") },
+		"by token":  func() (*store.Workspace, error) { return st.WorkspaceByToken(ctx, "ws-tok") },
+	} {
+		got, err := get()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got.Prefix != "acme" || got.DefaultBranch != "development" {
+			t.Errorf("%s: %+v", name, got)
+		}
+		if got.Gate.MinDiffCoverage == nil || *got.Gate.MinDiffCoverage != 70 {
+			t.Errorf("%s gate: %+v", name, got.Gate)
+		}
+		if got.GitHubInstallationID != 42 || got.GitHubAppBroken {
+			t.Errorf("%s github app link: id = %d, broken = %v", name, got.GitHubInstallationID, got.GitHubAppBroken)
+		}
+	}
+
+	// Unique constraints — per forge: the GitHub org "acme" is a tenant
+	// of its own beside the Bitbucket workspace.
+	if err := st.CreateWorkspace(ctx, &store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "other", DefaultBranch: "main"}); err == nil {
+		t.Error("duplicate prefix must fail")
+	}
+	gh := &store.Workspace{Forge: "github", Prefix: "acme", Token: "gh-tok", DefaultBranch: "main"}
+	if err := st.CreateWorkspace(ctx, gh); err != nil {
+		t.Fatalf("same prefix on another forge: %v", err)
+	}
+	if got, err := st.WorkspaceByPrefix(ctx, "github", "acme"); err != nil || got.ID != gh.ID {
+		t.Errorf("WorkspaceByPrefix(github) = %+v, %v; want the github row", got, err)
+	}
+	if err := st.DeleteWorkspace(ctx, gh.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateWorkspace(ctx, &store.Workspace{Forge: "bitbucket", Prefix: "beta", Token: "ws-tok", DefaultBranch: "main"}); err == nil {
+		t.Error("duplicate token must fail")
+	}
+
+	// List is sorted by prefix.
+	if err := st.CreateWorkspace(ctx, &store.Workspace{Forge: "bitbucket", Prefix: "aaa", Token: "tok-2", DefaultBranch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := st.ListWorkspaces(ctx)
+	if err != nil || len(list) != 2 || list[0].Prefix != "aaa" || list[1].Prefix != "acme" {
+		t.Errorf("ListWorkspaces = %+v (err %v)", list, err)
+	}
+
+	// Update (rotation) and stale-token lookups.
+	w.Token = "ws-tok-2"
+	w.DefaultBranch = "trunk"
+	w.GitHubAppBroken = true
+	if err := st.UpdateWorkspace(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.WorkspaceByToken(ctx, "ws-tok"); !errors.Is(err, store.ErrNotFound) {
+		t.Error("old token still resolves")
+	}
+	got, err := st.WorkspaceByPrefix(ctx, "bitbucket", "acme")
+	if err != nil || got.Token != "ws-tok-2" || got.DefaultBranch != "trunk" {
+		t.Errorf("after update: %+v (err %v)", got, err)
+	}
+	if !got.GitHubAppBroken {
+		t.Error("broken flag not persisted")
+	}
+
+	// Delete; missing rows yield ErrNotFound.
+	if err := st.DeleteWorkspace(ctx, w.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteWorkspace(ctx, w.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("second delete = %v", err)
+	}
+	if err := st.UpdateWorkspace(ctx, &store.Workspace{ID: 9999, Prefix: "x", Token: "y"}); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("update missing = %v", err)
+	}
+}
+
+func uploadLifecycle(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+
+	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+
+	blocks := []profile.Block{
+		{StartLine: 1, StartCol: 1, EndLine: 5, EndCol: 2, NumStmts: 3, Count: 1},
+		{StartLine: 7, StartCol: 1, EndLine: 9, EndCol: 2, NumStmts: 2, Count: 0},
+	}
+	mkUpload := func(commit, branch string, pct float64, dc *diffcov.Result) *store.Upload {
+		t.Helper()
+		u := &store.Upload{
+			RepoID: repo.ID, CommitSHA: commit, Branch: branch, Format: "go",
+			TotalPct: pct, CoveredStmts: 3, TotalStmts: 5,
+			RawBlobKey: "profiles/" + commit, DiffCoverage: dc,
+		}
+		files := []*store.UploadFile{
+			{Path: "example.com/m/b.go", Pct: 100, CoveredStmts: 2, TotalStmts: 2, Blocks: blocks[:1]},
+			{Path: "example.com/m/a.go", Pct: 60, CoveredStmts: 3, TotalStmts: 5, Blocks: blocks},
+		}
+		if err := st.CreateUpload(ctx, u, files); err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+
+	u1 := mkUpload("c1", "main", 60, nil)
+	u2 := mkUpload("c2", "main", 65, nil)
+	dc := &diffcov.Result{
+		Files: []diffcov.FileCoverage{
+			{Path: "m/a.go", CoveredLines: 2, TotalLines: 3, UncoveredLines: []int{9}},
+		},
+		CoveredLines: 2, TotalLines: 3,
+		UnmatchedFiles: []string{"m/new.go"},
+	}
+	u3 := mkUpload("c3", "feature/x", 70, dc)
+
+	// Full round trip of a stored upload.
+	got, err := st.Upload(ctx, u1.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CommitSHA != "c1" || got.Branch != "main" || got.TotalPct != 60 ||
+		got.RawBlobKey != "profiles/c1" || got.DiffCoverage != nil {
+		t.Errorf("upload round trip: %+v", got)
+	}
+
+	// Per-file rows are sorted and preserve block data exactly.
+	files, err := st.UploadFiles(ctx, u1.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 || files[0].Path != "example.com/m/a.go" {
+		t.Fatalf("files = %+v", files)
+	}
+	if !reflect.DeepEqual(files[0].Blocks, blocks) {
+		t.Errorf("blocks round trip: %+v", files[0].Blocks)
+	}
+
+	// Diff coverage round-trips through JSONB.
+	got3, err := st.Upload(ctx, u3.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got3.DiffCoverage, dc) {
+		t.Errorf("diff coverage round trip:\n got %+v\nwant %+v", got3.DiffCoverage, dc)
+	}
+
+	// ListUploads: newest first, limited and unlimited.
+	ups, err := st.ListUploads(ctx, repo.ID, 0, 2)
+	if err != nil || len(ups) != 2 || ups[0].ID != u3.ID || ups[1].ID != u2.ID {
+		t.Errorf("limited list = %v (err %v)", ups, err)
+	}
+	ups, err = st.ListUploads(ctx, repo.ID, 0, 0)
+	if err != nil || len(ups) != 3 {
+		t.Errorf("unlimited list = %d uploads (err %v)", len(ups), err)
+	}
+	ups, err = st.ListUploads(ctx, repo.ID, 1, 1)
+	if err != nil || len(ups) != 1 || ups[0].ID != u2.ID {
+		t.Errorf("list from offset 1 = %v (err %v), want u2", ups, err)
+	}
+	if ups, err = st.ListUploads(ctx, repo.ID, 3, 0); err != nil || len(ups) != 0 {
+		t.Errorf("list past the end = %v (err %v), want none", ups, err)
+	}
+
+	// The gate_failed flag round-trips (the per-upload web views read it).
+	failed := &store.Upload{
+		RepoID: repo.ID, CommitSHA: "c4", Branch: "main", Format: "go",
+		TotalPct: 10, CoveredStmts: 1, TotalStmts: 10, GateFailed: true,
+	}
+	if err := st.CreateUpload(ctx, failed, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := st.Upload(ctx, failed.ID); err != nil || !got.GateFailed {
+		t.Errorf("gate_failed round trip: %+v (err %v)", got, err)
+	}
+
+	// DeleteRepo cascades to uploads and files.
+	if err := st.DeleteRepo(ctx, repo.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Upload(ctx, u1.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Error("upload survived repo deletion")
+	}
+	if _, err := st.RepoByID(ctx, repo.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Error("repo survived deletion")
+	}
+	if err := st.DeleteRepo(ctx, repo.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("second delete = %v, want ErrNotFound", err)
+	}
+}
+
+// TestDeleteWorkspaceCascade proves the settings-page delete removes the
+// workspace's repos (and their uploads, via ON DELETE CASCADE) by slug
+// prefix, while leaving repos of a different workspace that merely shares
+// a name-prefix substring untouched.
+// publicRepoRefs drives the sitemap listing: only forge-public repos
+// with public reports on, ordered by forge then slug, capped by limit.
+func publicRepoRefs(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+	mk := func(forge, slug, visibility string, disabled bool) {
+		t.Helper()
+		r := &store.Repo{Forge: forge, Slug: slug, Token: forge + "-" + slug, DefaultBranch: "main", PublicReportsDisabled: disabled}
+		if err := st.CreateRepo(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.SetRepoVisibility(ctx, r.ID, visibility, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("gitlab", "acme/widgets", store.VisibilityPublic, false)
+	mk("bitbucket", "zeta/tools", store.VisibilityPublic, false)
+	mk("bitbucket", "acme/widgets", store.VisibilityPublic, false)
+	mk("github", "acme/widgets", store.VisibilityPrivate, false)
+	mk("github", "acme/hidden", store.VisibilityPublic, true)
+
+	got, err := st.PublicRepoRefs(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []store.RepoRef{
+		{Forge: "bitbucket", Slug: "acme/widgets"},
+		{Forge: "bitbucket", Slug: "zeta/tools"},
+		{Forge: "gitlab", Slug: "acme/widgets"},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("PublicRepoRefs = %v, want %v", got, want)
+	}
+	if got, _ := st.PublicRepoRefs(ctx, 2); !slices.Equal(got, want[:2]) {
+		t.Errorf("PublicRepoRefs(limit 2) = %v, want %v", got, want[:2])
+	}
+}
+
+func deleteWorkspaceCascade(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+
+	ws := &store.Workspace{Forge: "github", Prefix: "acme", Token: "acme-tok", DefaultBranch: "main"}
+	if err := st.CreateWorkspace(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+	mkRepo := func(forge, slug string) *store.Repo {
+		t.Helper()
+		r := &store.Repo{Forge: forge, Slug: slug, Token: "t-" + forge + "-" + slug, DefaultBranch: "main"}
+		if err := st.CreateRepo(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+		u := &store.Upload{RepoID: r.ID, CommitSHA: "c1", Branch: "main", Format: "go",
+			TotalPct: 50, CoveredStmts: 1, TotalStmts: 2, RawBlobKey: "b/" + forge + "/" + slug}
+		if err := st.CreateUpload(ctx, u, nil); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	inside := mkRepo("github", "acme/widgets")
+	// "acme-labs/x" shares the "acme" text but is NOT under the "acme/"
+	// prefix, so the cascade must spare it.
+	outside := mkRepo("github", "acme-labs/x")
+	// The same prefix on another forge is another tenant's repo, uploads
+	// and all.
+	elsewhere := mkRepo("gitlab", "acme/widgets")
+
+	if err := st.DeleteWorkspace(ctx, ws.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.WorkspaceByPrefix(ctx, "bitbucket", "acme"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("workspace survived: %v", err)
+	}
+	if _, err := st.RepoByID(ctx, inside.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("in-prefix repo survived the cascade: %v", err)
+	}
+	if _, err := st.RepoByID(ctx, outside.ID); err != nil {
+		t.Errorf("out-of-prefix repo was wrongly deleted: %v", err)
+	}
+	if _, err := st.RepoByID(ctx, elsewhere.ID); err != nil {
+		t.Errorf("same-prefix repo on another forge was cascaded away: %v", err)
+	}
+}
+
+func commitReportLifecycle(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+
+	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+
+	mkUpload := func(commit, part string, count int) *store.Upload {
+		t.Helper()
+		u := &store.Upload{RepoID: repo.ID, CommitSHA: commit, Branch: "main", Format: "go", Part: part}
+		files := []*store.UploadFile{{Path: "a.go", Blocks: []profile.Block{
+			{StartLine: 1, EndLine: 2, NumStmts: 1, Count: count},
+		}}}
+		if err := st.CreateUpload(ctx, u, files); err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+
+	// Two parts, plus a re-upload of one part that must supersede its
+	// predecessor in LatestUploadsPerPart.
+	mkUpload("c1", "backend", 0)
+	be2 := mkUpload("c1", "backend", 1)
+	fe := mkUpload("c1", "frontend", 1)
+	parts, err := st.LatestUploadsPerPart(ctx, repo.ID, "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 2 {
+		t.Fatalf("latest per part = %d uploads, want 2 (backend superseded)", len(parts))
+	}
+	got := map[string]int64{}
+	for _, p := range parts {
+		got[p.Part] = p.ID
+	}
+	if got["backend"] != be2.ID || got["frontend"] != fe.ID {
+		t.Errorf("latest per part = %v, want newest backend %d and frontend %d", got, be2.ID, fe.ID)
+	}
+
+	// Upsert creates, then replaces in place preserving id and created_at.
+	dc := &diffcov.Result{Files: []diffcov.FileCoverage{{Path: "a.go", CoveredLines: 1, TotalLines: 2, UncoveredLines: []int{9}}}, CoveredLines: 1, TotalLines: 2}
+	cr := &store.CommitReport{RepoID: repo.ID, CommitSHA: "c1", Branch: "main", PRID: "7",
+		TotalPct: 50, CoveredStmts: 1, TotalStmts: 2, DiffCoverage: dc, PartCount: 2}
+	if err := st.UpsertCommitReport(ctx, cr); err != nil {
+		t.Fatal(err)
+	}
+	if cr.ID == 0 || cr.CreatedAt.IsZero() {
+		t.Fatalf("upsert did not fill ID/CreatedAt: %+v", cr)
+	}
+	firstID, firstCreated := cr.ID, cr.CreatedAt
+	cr2 := &store.CommitReport{RepoID: repo.ID, CommitSHA: "c1", Branch: "main",
+		TotalPct: 80, CoveredStmts: 8, TotalStmts: 10, PartCount: 2}
+	if err := st.UpsertCommitReport(ctx, cr2); err != nil {
+		t.Fatal(err)
+	}
+	if cr2.ID != firstID || !cr2.CreatedAt.Equal(firstCreated) {
+		t.Errorf("upsert changed id/created_at: id %d→%d", firstID, cr2.ID)
+	}
+
+	// Round trip: latest values win, diff_coverage cleared to nil.
+	round, err := st.CommitReport(ctx, repo.ID, "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if round.TotalPct != 80 || round.CoveredStmts != 8 || round.DiffCoverage != nil {
+		t.Errorf("round trip = %+v, want 80%% 8/10 nil diff", round)
+	}
+
+	// Baseline selection: a passing report on another commit, skipping the
+	// excluded commit and gate-failing reports.
+	if err := st.UpsertCommitReport(ctx, &store.CommitReport{RepoID: repo.ID, CommitSHA: "c2", Branch: "main", TotalPct: 90, PartCount: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertCommitReport(ctx, &store.CommitReport{RepoID: repo.ID, CommitSHA: "c3", Branch: "main", TotalPct: 10, GateFailed: true, PartCount: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if latest, err := latestReports(ctx, st, []int64{repo.ID}); err != nil || latest[repo.ID] == nil || latest[repo.ID].CommitSHA != "c3" {
+		t.Errorf("latest report = %v, %v (want c3, the newest)", latest, err)
+	}
+	// Excluding c2 and skipping the failed c3 leaves c1 as the baseline.
+	base, err := st.LatestPassedCommitReport(ctx, repo.ID, "main", 0, "c2")
+	if err != nil || base.CommitSHA != "c1" {
+		t.Errorf("passed baseline excluding c2 = %v, %v (want c1)", base, err)
+	}
+	// Bounded by c2's report, only c1 came before it: c3 came after.
+	c2, err := st.CommitReport(ctx, repo.ID, "c2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base, err := st.LatestPassedCommitReport(ctx, repo.ID, "main", c2.ID, ""); err != nil || base.CommitSHA != "c1" {
+		t.Errorf("passed baseline before c2 = %v, %v (want c1)", base, err)
+	}
+	// The trend lists reports newest first.
+	list, err := st.ListBranchCommitReports(ctx, repo.ID, "main", 0)
+	if err != nil || len(list) != 3 || list[0].CommitSHA != "c3" {
+		t.Errorf("branch reports = %+v (err %v)", list, err)
+	}
+
+	// DeleteRepo cascades to commit reports.
+	if err := st.DeleteRepo(ctx, repo.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CommitReport(ctx, repo.ID, "c1"); !errors.Is(err, store.ErrNotFound) {
+		t.Error("commit report survived repo deletion")
+	}
+}
+
+func tryPushStatus(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	noop := func(context.Context) error { return nil }
+
+	// Nothing to push before the report exists.
+	if pushed, err := st.TryPushStatus(ctx, repo.ID, "c1", 5, noop); err != nil || pushed {
+		t.Fatalf("push on missing report = %v, %v (want false)", pushed, err)
+	}
+	if err := st.UpsertCommitReport(ctx, &store.CommitReport{RepoID: repo.ID, CommitSHA: "c1", Branch: "main", PartCount: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A version pushes only if it is at least the last successful one.
+	steps := []struct {
+		version int64
+		want    bool
+	}{
+		{5, true},  // first push
+		{5, true},  // equal — a re-upload of the same part may re-push
+		{3, false}, // older push arriving late — must be skipped
+		{7, true},  // newer recompute pushes
+	}
+	for _, s := range steps {
+		if pushed, err := st.TryPushStatus(ctx, repo.ID, "c1", s.version, noop); err != nil || pushed != s.want {
+			t.Errorf("push v%d = %v (want %v), err %v", s.version, pushed, s.want, err)
+		}
+	}
+
+	// A failed push does not advance the version — a later part can retry.
+	boom := errors.New("forge down")
+	if _, err := st.TryPushStatus(ctx, repo.ID, "c1", 9, func(context.Context) error { return boom }); !errors.Is(err, boom) {
+		t.Fatalf("failed push err = %v, want boom", err)
+	}
+	// Version is still 7 (not 9): a push at 8 must still succeed.
+	if pushed, err := st.TryPushStatus(ctx, repo.ID, "c1", 8, noop); err != nil || !pushed {
+		t.Errorf("push v8 after failed v9 = %v, %v (want true; failed push must not burn the version)", pushed, err)
+	}
+
+	// Concurrent pushes serialize, so the forge never sees an older push land
+	// after a newer one: whatever pushes last is the highest version that ran.
+	if err := st.UpsertCommitReport(ctx, &store.CommitReport{RepoID: repo.ID, CommitSHA: "c2", Branch: "main", PartCount: 1}); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var order []int64
+	var wg sync.WaitGroup
+	for _, v := range []int64{100, 101, 102, 103, 104} {
+		wg.Go(func() {
+			_, _ = st.TryPushStatus(ctx, repo.ID, "c2", v, func(context.Context) error {
+				mu.Lock()
+				order = append(order, v)
+				mu.Unlock()
+				return nil
+			})
+		})
+	}
+	wg.Wait()
+	if len(order) == 0 {
+		t.Fatal("no push ran")
+	}
+	last, maxV := order[len(order)-1], int64(0)
+	for _, v := range order {
+		if v > maxV {
+			maxV = v
+		}
+	}
+	if last != maxV {
+		t.Errorf("last push was v%d but v%d pushed earlier — a stale status won: %v", last, maxV, order)
+	}
+}
+
+func userLifecycle(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+
+	u := &store.User{Forge: "bitbucket", ForgeUUID: "{u1}", Email: "jane@example.com", DisplayName: "Jane Dev",
+		ForgeWorkspaces: []string{"acme", "personal"}, ForgeOwnedWorkspaces: []string{"personal"}}
+	if err := st.UpsertUser(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	if u.ID == 0 || u.CreatedAt.IsZero() || u.LastLoginAt.IsZero() {
+		t.Fatalf("UpsertUser did not fill ID/CreatedAt/LastLoginAt: %+v", u)
+	}
+
+	// A second login by the same forge account refreshes the same row,
+	// including the forge workspace snapshot.
+	again := &store.User{Forge: "bitbucket", ForgeUUID: "{u1}", Email: "jane@new.example", DisplayName: "Jane Renamed",
+		ForgeWorkspaces: []string{"acme", "newco"}, ForgeOwnedWorkspaces: []string{"acme", "newco"}}
+	if err := st.UpsertUser(ctx, again); err != nil {
+		t.Fatal(err)
+	}
+	if again.ID != u.ID {
+		t.Errorf("second login created a new row: %d != %d", again.ID, u.ID)
+	}
+	got, err := st.UserByID(ctx, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Email != "jane@new.example" || got.DisplayName != "Jane Renamed" {
+		t.Errorf("fields not refreshed: %+v", got)
+	}
+	if !reflect.DeepEqual(got.ForgeWorkspaces, []string{"acme", "newco"}) {
+		t.Errorf("forge workspaces not refreshed: %v", got.ForgeWorkspaces)
+	}
+	if !reflect.DeepEqual(got.ForgeOwnedWorkspaces, []string{"acme", "newco"}) {
+		t.Errorf("owned forge workspaces not refreshed: %v", got.ForgeOwnedWorkspaces)
+	}
+	if got.LastLoginAt.Before(u.LastLoginAt) {
+		t.Errorf("last_login_at went backwards: %v < %v", got.LastLoginAt, u.LastLoginAt)
+	}
+
+	// Same UUID under another forge must not collide.
+	other := &store.User{Forge: "github", ForgeUUID: "{u1}", Email: "x@example.com", DisplayName: "X"}
+	if err := st.UpsertUser(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	if other.ID == u.ID {
+		t.Error("uniqueness must be per forge+UUID, not per UUID")
+	}
+
+	users, err := st.ListUsers(ctx)
+	if err != nil || len(users) != 2 {
+		t.Fatalf("ListUsers = %d users, %v", len(users), err)
+	}
+
+	if err := st.DeleteUser(ctx, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UserByID(ctx, u.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Error("user survived deletion")
+	}
+	if err := st.DeleteUser(ctx, u.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("second delete = %v, want ErrNotFound", err)
+	}
+}
+
+func sessionLifecycle(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+
+	u := &store.User{Forge: "bitbucket", ForgeUUID: "{s1}", Email: "s@example.com", DisplayName: "S"}
+	if err := st.UpsertUser(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+
+	sess := &store.Session{TokenHash: "hash-live", UserID: u.ID, ExpiresAt: time.Now().Add(time.Hour)}
+	if err := st.CreateSession(ctx, sess); err != nil {
+		t.Fatal(err)
+	}
+	if sess.CreatedAt.IsZero() {
+		t.Error("CreateSession did not fill CreatedAt")
+	}
+	got, err := st.UserBySession(ctx, "hash-live")
+	if err != nil || got.ID != u.ID {
+		t.Fatalf("UserBySession = %v, %v", got, err)
+	}
+
+	// A session past expiry never authenticates.
+	expired := &store.Session{TokenHash: "hash-expired", UserID: u.ID, ExpiresAt: time.Now().Add(-time.Minute)}
+	if err := st.CreateSession(ctx, expired); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UserBySession(ctx, "hash-expired"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("expired session authenticated: %v", err)
+	}
+
+	// Logout invalidates server-side immediately.
+	if err := st.DeleteSession(ctx, "hash-live"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UserBySession(ctx, "hash-live"); !errors.Is(err, store.ErrNotFound) {
+		t.Error("deleted session still authenticates")
+	}
+	if err := st.DeleteSession(ctx, "hash-live"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("second delete = %v, want ErrNotFound", err)
+	}
+
+	// Deleting a user deletes their sessions.
+	sess2 := &store.Session{TokenHash: "hash-cascade", UserID: u.ID, ExpiresAt: time.Now().Add(time.Hour)}
+	if err := st.CreateSession(ctx, sess2); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteUser(ctx, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UserBySession(ctx, "hash-cascade"); !errors.Is(err, store.ErrNotFound) {
+		t.Error("session survived user deletion")
+	}
+}
+
+func workspaceMembership(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+
+	u := &store.User{Forge: "bitbucket", ForgeUUID: "{m1}", DisplayName: "Member"}
+	if err := st.UpsertUser(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	acme := &store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "tok-acme"}
+	beta := &store.Workspace{Forge: "bitbucket", Prefix: "beta", Token: "tok-beta"}
+	for _, w := range []*store.Workspace{acme, beta} {
+		if err := st.CreateWorkspace(ctx, w); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	prefixes := func() []string {
+		t.Helper()
+		wss, err := st.ListWorkspacesForUser(ctx, u.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := make([]string, len(wss))
+		for i, w := range wss {
+			out[i] = w.Prefix
+		}
+		return out
+	}
+	roles := func() []store.Membership {
+		t.Helper()
+		ms, err := st.ListMembershipsForUser(ctx, u.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ms
+	}
+	owner := func(ws *store.Workspace) store.Membership {
+		return store.Membership{WorkspaceID: ws.ID, Role: store.RoleOwner}
+	}
+	member := func(ws *store.Workspace) store.Membership {
+		return store.Membership{WorkspaceID: ws.ID, Role: store.RoleMember}
+	}
+
+	// Initial sync attaches both, ordered by prefix, each in its role.
+	if err := st.SetUserMemberships(ctx, u.ID, []store.Membership{member(beta), owner(acme)}); err != nil {
+		t.Fatal(err)
+	}
+	if got := prefixes(); !reflect.DeepEqual(got, []string{"acme", "beta"}) {
+		t.Fatalf("after sync: %v, want [acme beta]", got)
+	}
+	if got := roles(); !reflect.DeepEqual(got, []store.Membership{owner(acme), member(beta)}) {
+		t.Fatalf("roles after sync: %+v", got)
+	}
+
+	// Re-running with the same set is idempotent (no duplicate rows).
+	if err := st.SetUserMemberships(ctx, u.ID, []store.Membership{owner(acme), member(beta)}); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(roles()); n != 2 {
+		t.Fatalf("idempotent re-sync produced %d rows, want 2", n)
+	}
+
+	// A role change on the forge lands on the existing row: demoted in
+	// acme, promoted in beta.
+	if err := st.SetUserMemberships(ctx, u.ID, []store.Membership{member(acme), owner(beta)}); err != nil {
+		t.Fatal(err)
+	}
+	if got := roles(); !reflect.DeepEqual(got, []store.Membership{member(acme), owner(beta)}) {
+		t.Fatalf("roles after role change: %+v", got)
+	}
+	if n := len(roles()); n != 2 {
+		t.Fatalf("role change produced %d rows, want 2", n)
+	}
+
+	// A membership admits nothing but the two roles.
+	if err := st.SetUserMemberships(ctx, u.ID, []store.Membership{{WorkspaceID: acme.ID, Role: "admin"}}); err == nil {
+		t.Fatal("an unknown role must be rejected")
+	}
+
+	// Dropping beta on the forge removes only that membership.
+	if err := st.SetUserMemberships(ctx, u.ID, []store.Membership{owner(acme)}); err != nil {
+		t.Fatal(err)
+	}
+	if got := prefixes(); !reflect.DeepEqual(got, []string{"acme"}) {
+		t.Fatalf("after drop: %v, want [acme]", got)
+	}
+
+	// Deleting the workspace cascades the membership away.
+	if err := st.DeleteWorkspace(ctx, acme.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := prefixes(); len(got) != 0 {
+		t.Fatalf("membership survived workspace deletion: %v", got)
+	}
+
+	// Re-attach, then delete the user: memberships cascade on that side too.
+	if err := st.SetUserMemberships(ctx, u.ID, []store.Membership{member(beta)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteUser(ctx, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(roles()); n != 0 {
+		t.Fatalf("membership survived user deletion: %d rows", n)
+	}
+
+	// An empty sync clears everything and is safe on a user with no rows.
+	other := &store.User{Forge: "bitbucket", ForgeUUID: "{m2}", DisplayName: "Other"}
+	if err := st.UpsertUser(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetUserMemberships(ctx, other.ID, nil); err != nil {
+		t.Fatalf("empty sync on fresh user: %v", err)
+	}
+	if got, err := st.ListMembershipsForUser(ctx, other.ID); err != nil || len(got) != 0 {
+		t.Fatalf("memberships of a fresh user = %v, %v", got, err)
+	}
+}
+
+func registerWorkspace(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+
+	u := &store.User{Forge: "bitbucket", ForgeUUID: "{r1}", DisplayName: "Founder"}
+	if err := st.UpsertUser(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+
+	// Registration creates the workspace and its first membership together.
+	w := &store.Workspace{Forge: "bitbucket", Prefix: "startup", Token: "reg-tok", DefaultBranch: "main"}
+	if err := st.RegisterWorkspace(ctx, w, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if w.ID == 0 || w.CreatedAt.IsZero() {
+		t.Fatalf("RegisterWorkspace did not fill ID/CreatedAt: %+v", w)
+	}
+	wss, err := st.ListWorkspacesForUser(ctx, u.ID)
+	if err != nil || len(wss) != 1 || wss[0].Prefix != "startup" {
+		t.Fatalf("memberships after registration = %v, %v", wss, err)
+	}
+	// ...and the founder is its owner.
+	ms, err := st.ListMembershipsForUser(ctx, u.ID)
+	if err != nil || !reflect.DeepEqual(ms, []store.Membership{{WorkspaceID: w.ID, Role: store.RoleOwner}}) {
+		t.Fatalf("roles after registration = %+v, %v", ms, err)
+	}
+
+	// A losing duplicate claim fails atomically: no workspace row, no
+	// membership row, and the winner's registration is untouched.
+	other := &store.User{Forge: "bitbucket", ForgeUUID: "{r2}", DisplayName: "Latecomer"}
+	if err := st.UpsertUser(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	dup := &store.Workspace{Forge: "bitbucket", Prefix: "startup", Token: "other-tok", DefaultBranch: "main"}
+	if err := st.RegisterWorkspace(ctx, dup, other.ID); err == nil {
+		t.Fatal("duplicate registration must fail")
+	}
+	if wss, _ := st.ListWorkspacesForUser(ctx, other.ID); len(wss) != 0 {
+		t.Errorf("failed registration left memberships: %v", wss)
+	}
+	if got, err := st.WorkspaceByPrefix(ctx, "bitbucket", "startup"); err != nil || got.Token != "reg-tok" {
+		t.Errorf("winner's workspace disturbed: %+v (err %v)", got, err)
+	}
+}
+
+func tokenlessClaims(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+
+	repo := &store.Repo{Forge: "github", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+
+	won, err := st.ClaimTokenlessUpload(ctx, repo.ID, 9001, 2, "default")
+	if err != nil || !won {
+		t.Fatalf("first claim = (%v, %v), want won", won, err)
+	}
+	won, err = st.ClaimTokenlessUpload(ctx, repo.ID, 9001, 2, "default")
+	if err != nil || won {
+		t.Fatalf("replayed claim = (%v, %v), want refused", won, err)
+	}
+	// Another part and another attempt are distinct triples.
+	if won, err = st.ClaimTokenlessUpload(ctx, repo.ID, 9001, 2, "frontend"); err != nil || !won {
+		t.Fatalf("other-part claim = (%v, %v), want won", won, err)
+	}
+	if won, err = st.ClaimTokenlessUpload(ctx, repo.ID, 9001, 3, "default"); err != nil || !won {
+		t.Fatalf("next-attempt claim = (%v, %v), want won", won, err)
+	}
+	// Releasing reopens the triple for the CI retry.
+	if err := st.ReleaseTokenlessUpload(ctx, repo.ID, 9001, 2, "default"); err != nil {
+		t.Fatal(err)
+	}
+	if won, err = st.ClaimTokenlessUpload(ctx, repo.ID, 9001, 2, "default"); err != nil || !won {
+		t.Fatalf("claim after release = (%v, %v), want won", won, err)
+	}
+	// Deleting the repo sweeps its claims away.
+	if err := st.DeleteRepo(ctx, repo.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The default branch's history leaves PR-build reports out — in
+// the latest default-branch report (the badge, the dashboard) and
+// ListBranchCommitReports (the trend, the repo page) — and
+// LatestPassedCommitReport does the same for the delta/gate baseline: a
+// fork PR whose head branch is named like the default branch must feed
+// none of them. On a feature branch a PR's builds are its history.
+func commitReportsExcludePRBuilds(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+
+	repo := &store.Repo{Forge: "github", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	branchReport := &store.CommitReport{RepoID: repo.ID, CommitSHA: "c1", Branch: "main", TotalPct: 80}
+	if err := st.UpsertCommitReport(ctx, branchReport); err != nil {
+		t.Fatal(err)
+	}
+	prReport := &store.CommitReport{RepoID: repo.ID, CommitSHA: "c2", Branch: "main", PRID: "42", TotalPct: 10}
+	if err := st.UpsertCommitReport(ctx, prReport); err != nil {
+		t.Fatal(err)
+	}
+
+	latestMain, err := latestReports(ctx, st, []int64{repo.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := latestMain[repo.ID]; got == nil || got.CommitSHA != "c1" {
+		t.Errorf("latest default-branch report = %+v, want c1", got)
+	}
+	featReport := &store.CommitReport{RepoID: repo.ID, CommitSHA: "f1", Branch: "feat", PRID: "7", TotalPct: 50}
+	if err := st.UpsertCommitReport(ctx, featReport); err != nil {
+		t.Fatal(err)
+	}
+	for branch, want := range map[string][]string{"main": {"c1"}, "feat": {"f1"}} {
+		reports, err := st.ListBranchCommitReports(ctx, repo.ID, branch, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, cr := range reports {
+			got = append(got, cr.CommitSHA)
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("ListBranchCommitReports(%s) = %v, want %v", branch, got, want)
+		}
+	}
+	base, err := st.LatestPassedCommitReport(ctx, repo.ID, "main", 0, "c3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base.CommitSHA != "c1" {
+		t.Errorf("baseline = %s, want c1 (PR report must not be the baseline)", base.CommitSHA)
+	}
+}
+
+func gateBasePctRoundTrip(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+
+	withBase := &store.Upload{RepoID: repo.ID, CommitSHA: "c1", Branch: "feat", Format: "go", GateBasePct: new(72.5)}
+	without := &store.Upload{RepoID: repo.ID, CommitSHA: "c2", Branch: "feat", Format: "go"}
+	for _, u := range []*store.Upload{withBase, without} {
+		if err := st.CreateUpload(ctx, u, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := st.Upload(ctx, withBase.ID); err != nil || got.GateBasePct == nil || *got.GateBasePct != 72.5 {
+		t.Errorf("upload GateBasePct = %v (err %v), want 72.5", got.GateBasePct, err)
+	}
+	if got, err := st.Upload(ctx, without.ID); err != nil || got.GateBasePct != nil {
+		t.Errorf("upload GateBasePct = %v (err %v), want nil", got.GateBasePct, err)
+	}
+
+	// The recompute's latest judgement wins, including a base appearing.
+	cr := &store.CommitReport{RepoID: repo.ID, CommitSHA: "c1", Branch: "feat", PartCount: 1}
+	if err := st.UpsertCommitReport(ctx, cr); err != nil {
+		t.Fatal(err)
+	}
+	cr.GateBasePct = new(72.5)
+	if err := st.UpsertCommitReport(ctx, cr); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := st.CommitReport(ctx, repo.ID, "c1"); err != nil || got.GateBasePct == nil || *got.GateBasePct != 72.5 {
+		t.Errorf("report GateBasePct = %v (err %v), want 72.5", got.GateBasePct, err)
+	}
+}
+
+func partFilesReadsEveryPartAtOnce(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	block := []profile.Block{{StartLine: 1, EndLine: 2, NumStmts: 1, Count: 1}}
+	var ids []int64
+	for _, part := range []string{"backend", "frontend", "empty"} {
+		u := &store.Upload{RepoID: repo.ID, CommitSHA: "c1", Branch: "main", Format: "go", Part: part}
+		var files []*store.UploadFile
+		if part != "empty" {
+			files = []*store.UploadFile{
+				{Path: part + "/b.go", Blocks: block},
+				{Path: part + "/a.go", Blocks: block},
+			}
+		}
+		if err := st.CreateUpload(ctx, u, files); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, u.ID)
+	}
+
+	var got []string
+	err := st.WithCommitReportTx(ctx, repo.ID, "c1", func(ctx context.Context, tx store.CommitTx) error {
+		files, err := tx.PartFiles(ctx, ids)
+		for _, f := range files {
+			if len(f.Blocks) != 1 {
+				t.Errorf("%s: %d blocks, want 1", f.Path, len(f.Blocks))
+			}
+			got = append(got, fmt.Sprintf("%d:%s", f.UploadID, f.Path))
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		fmt.Sprintf("%d:backend/a.go", ids[0]), fmt.Sprintf("%d:backend/b.go", ids[0]),
+		fmt.Sprintf("%d:frontend/a.go", ids[1]), fmt.Sprintf("%d:frontend/b.go", ids[1]),
+	}
+	// The order is unspecified: the merge needs none.
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("PartFiles = %v, want %v", got, want)
+	}
+}
+
+func uploadFileReadsOneFile(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	u := &store.Upload{RepoID: repo.ID, CommitSHA: "c1", Branch: "main", Format: "go"}
+	blocks := []profile.Block{{StartLine: 1, EndLine: 2, NumStmts: 3, Count: 1}}
+	files := []*store.UploadFile{
+		{Path: "a.go", Pct: 50, CoveredStmts: 1, TotalStmts: 2, Blocks: blocks},
+		{Path: "b.go", Pct: 100, CoveredStmts: 3, TotalStmts: 3, Blocks: blocks},
+	}
+	if err := st.CreateUpload(ctx, u, files); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.UploadFile(ctx, u.ID, "b.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.UploadID != u.ID || got.Path != "b.go" || got.Pct != 100 || got.CoveredStmts != 3 || !reflect.DeepEqual(got.Blocks, blocks) {
+		t.Errorf("UploadFile(b.go) = %+v", got)
+	}
+	got.Pct = 0 // a caller's copy never reaches the stored row
+	if again, _ := st.UploadFile(ctx, u.ID, "b.go"); again.Pct != 100 {
+		t.Errorf("stored file changed through a returned copy: %+v", again)
+	}
+	for _, tc := range []struct {
+		id   int64
+		path string
+	}{{u.ID, "c.go"}, {u.ID + 1, "a.go"}} {
+		if _, err := st.UploadFile(ctx, tc.id, tc.path); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("UploadFile(%d, %s) = %v, want ErrNotFound", tc.id, tc.path, err)
+		}
+	}
+}
+
+// ListWorkspaceRepos is Workspace.Owns as a query: the forge must match,
+// nested projects count, and a prefix is compared byte for byte — no
+// pattern characters, no case folding, and no neighbour whose name only
+// starts the same ("acme-x", "acme0"). Deleting the workspace takes the
+// same repos with it.
+func listWorkspaceRepos(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+	for _, r := range []struct{ forge, slug string }{
+		{"gitlab", "acme/api"}, {"gitlab", "acme/team/web"}, {"gitlab", "acmeco/api"},
+		{"github", "acme/api"}, {"gitlab", "a_b/x"}, {"gitlab", "axb/x"},
+		{"gitlab", "acme-x/api"}, {"gitlab", "acme0/api"}, {"gitlab", "Acme/api"}, {"gitlab", "émile/x"},
+	} {
+		if err := st.CreateRepo(ctx, &store.Repo{Forge: r.forge, Slug: r.slug, Token: r.forge + r.slug, DefaultBranch: "main"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		forge, prefix string
+		want          []string
+	}{
+		{"gitlab", "acme", []string{"acme/api", "acme/team/web"}},
+		{"gitlab", "acme/team", []string{"acme/team/web"}},
+		{"github", "acme", []string{"acme/api"}},
+		{"gitlab", "a_b", []string{"a_b/x"}},
+		{"gitlab", "Acme", []string{"Acme/api"}},
+		{"gitlab", "émile", []string{"émile/x"}},
+		{"gitlab", "acme-", nil},
+		{"gitlab", "nobody", nil},
+	} {
+		repos, err := st.ListWorkspaceRepos(ctx, tc.forge, tc.prefix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, r := range repos {
+			got = append(got, r.Slug)
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("ListWorkspaceRepos(%s, %s) = %v, want %v", tc.forge, tc.prefix, got, tc.want)
+		}
+	}
+
+	ws := &store.Workspace{Forge: "gitlab", Prefix: "acme", Token: "ws-acme", DefaultBranch: "main"}
+	if err := st.CreateWorkspace(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteWorkspace(ctx, ws.ID); err != nil {
+		t.Fatal(err)
+	}
+	all, err := st.ListRepos(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var left []string
+	for _, r := range all {
+		left = append(left, r.Forge+":"+r.Slug)
+	}
+	slices.Sort(left)
+	want := []string{"github:acme/api", "gitlab:Acme/api", "gitlab:a_b/x", "gitlab:acme-x/api", "gitlab:acme0/api",
+		"gitlab:acmeco/api", "gitlab:axb/x", "gitlab:émile/x"}
+	slices.Sort(want)
+	if !slices.Equal(left, want) {
+		t.Errorf("repos after deleting gitlab:acme = %v, want %v", left, want)
+	}
+}
+
+// DefaultBranchReports at limit 1 reads each repo's newest report on its own
+// default branch; a repo without one is simply absent.
+func defaultBranchReportsLatest(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+	a := &store.Repo{Forge: "github", Slug: "acme/a", Token: "ta", DefaultBranch: "main"}
+	b := &store.Repo{Forge: "github", Slug: "acme/b", Token: "tb", DefaultBranch: "trunk"}
+	c := &store.Repo{Forge: "github", Slug: "acme/c", Token: "tc", DefaultBranch: "main"}
+	for _, r := range []*store.Repo{a, b, c} {
+		if err := st.CreateRepo(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, cr := range []*store.CommitReport{
+		{RepoID: a.ID, CommitSHA: "a1", Branch: "main", TotalPct: 10},
+		{RepoID: a.ID, CommitSHA: "a2", Branch: "main", TotalPct: 20},
+		{RepoID: a.ID, CommitSHA: "a3", Branch: "feat", TotalPct: 30},
+		{RepoID: b.ID, CommitSHA: "b1", Branch: "trunk", TotalPct: 40},
+		{RepoID: b.ID, CommitSHA: "b2", Branch: "main", TotalPct: 50},
+		{RepoID: c.ID, CommitSHA: "c1", Branch: "feat", TotalPct: 60},
+	} {
+		cr.PartCount = 1
+		if err := st.UpsertCommitReport(ctx, cr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := latestReports(ctx, st, []int64{a.ID, b.ID, c.ID, 999})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[a.ID] == nil || got[a.ID].CommitSHA != "a2" || got[b.ID] == nil || got[b.ID].CommitSHA != "b1" {
+		t.Errorf("latest default-branch reports = %v, want a2 for acme/a and b1 for acme/b only", got)
+	}
+}
+
+// DefaultBranchReports reads each repo's default-branch history — no other
+// branch, no PR builds, newest first, capped per repo — in one call, and
+// leaves diff coverage unloaded.
+func defaultBranchReports(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+	a := &store.Repo{Forge: "github", Slug: "acme/a", Token: "ta", DefaultBranch: "main"}
+	b := &store.Repo{Forge: "github", Slug: "acme/b", Token: "tb", DefaultBranch: "trunk"}
+	c := &store.Repo{Forge: "github", Slug: "acme/c", Token: "tc", DefaultBranch: "main"}
+	for _, r := range []*store.Repo{a, b, c} {
+		if err := st.CreateRepo(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dc := &diffcov.Result{CoveredLines: 1, TotalLines: 2}
+	for _, cr := range []*store.CommitReport{
+		{RepoID: a.ID, CommitSHA: "a1", Branch: "main", DiffCoverage: dc},
+		{RepoID: a.ID, CommitSHA: "a2", Branch: "main"},
+		{RepoID: a.ID, CommitSHA: "a3", Branch: "main"},
+		{RepoID: a.ID, CommitSHA: "ap", Branch: "main", PRID: "7"},
+		{RepoID: a.ID, CommitSHA: "af", Branch: "feat"},
+		{RepoID: b.ID, CommitSHA: "b1", Branch: "trunk"},
+		{RepoID: c.ID, CommitSHA: "c1", Branch: "feat"},
+	} {
+		cr.PartCount = 1
+		if err := st.UpsertCommitReport(ctx, cr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	shas := func(reports []*store.CommitReport) []string {
+		var out []string
+		for _, cr := range reports {
+			out = append(out, cr.CommitSHA)
+		}
+		return out
+	}
+	got, err := st.DefaultBranchReports(ctx, []int64{a.ID, b.ID, c.ID, 999}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || !slices.Equal(shas(got[a.ID]), []string{"a3", "a2"}) || !slices.Equal(shas(got[b.ID]), []string{"b1"}) {
+		t.Errorf("DefaultBranchReports = a:%v b:%v (%d repos), want a3,a2 and b1 only", shas(got[a.ID]), shas(got[b.ID]), len(got))
+	}
+	all, err := st.DefaultBranchReports(ctx, []int64{a.ID}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(shas(all[a.ID]), []string{"a3", "a2", "a1"}) {
+		t.Errorf("uncapped = %v, want a3,a2,a1", shas(all[a.ID]))
+	}
+	for _, cr := range all[a.ID] {
+		if cr.DiffCoverage != nil {
+			t.Errorf("%s carries diff coverage; it is not loaded", cr.CommitSHA)
+		}
+	}
+}
+
+// The judged gate round-trips on uploads and commit reports: rules set and
+// unset, an empty gate distinct from none recorded.
+func judgedGateRoundTrip(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	judged := &store.Gate{MinCoverage: new(80.0), MaxCoverageDrop: new(0.0)}
+	for _, tc := range []struct {
+		commit string
+		gate   *store.Gate
+	}{{"c1", judged}, {"c2", &store.Gate{}}, {"c3", nil}} {
+		u := &store.Upload{RepoID: repo.ID, CommitSHA: tc.commit, Branch: "main", Format: "go", Gate: tc.gate}
+		if err := st.CreateUpload(ctx, u, nil); err != nil {
+			t.Fatal(err)
+		}
+		cr := &store.CommitReport{RepoID: repo.ID, CommitSHA: tc.commit, Branch: "main", PartCount: 1, Gate: tc.gate}
+		if err := st.UpsertCommitReport(ctx, cr); err != nil {
+			t.Fatal(err)
+		}
+		gotUpload, err := st.Upload(ctx, u.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotReport, err := st.CommitReport(ctx, repo.ID, tc.commit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, got := range map[string]*store.Gate{"upload": gotUpload.Gate, "report": gotReport.Gate} {
+			if !reflect.DeepEqual(got, tc.gate) {
+				t.Errorf("%s %s gate = %+v, want %+v", tc.commit, name, got, tc.gate)
+			}
+		}
+	}
+}
+
+// latestReports is DefaultBranchReports at limit 1, keyed to the one
+// report each repo has: the read the badge and the dashboard previews make.
+func latestReports(ctx context.Context, st store.Store, repoIDs []int64) (map[int64]*store.CommitReport, error) {
+	reports, err := st.DefaultBranchReports(ctx, repoIDs, 1)
+	if err != nil {
+		return nil, err
+	}
+	latest := map[int64]*store.CommitReport{}
+	for id, rs := range reports {
+		if len(rs) != 1 {
+			return nil, fmt.Errorf("repo %d: %d reports at limit 1", id, len(rs))
+		}
+		latest[id] = rs[0]
+	}
+	return latest, nil
+}
+
+// LatestPassedUpload is the upload baseline as a query: the newest
+// non-PR, gate-passing upload on the branch, older than beforeID when set
+// and off excludeCommit when set. RecentBranches names the branches of the
+// newest uploads, sorted byte-wise.
+func latestPassedUploadAndRecentBranches(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+	repo := &store.Repo{Forge: "github", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]int64{}
+	for _, u := range []*store.Upload{
+		{CommitSHA: "m1", Branch: "main"},
+		{CommitSHA: "m2", Branch: "main", GateFailed: true},
+		{CommitSHA: "p1", Branch: "main", PRID: "7"},
+		{CommitSHA: "f1", Branch: "feat"},
+		{CommitSHA: "m3", Branch: "main"},
+		{CommitSHA: "z1", Branch: "Zeta"},
+	} {
+		u.RepoID, u.Format = repo.ID, "go"
+		if err := st.CreateUpload(ctx, u, nil); err != nil {
+			t.Fatal(err)
+		}
+		ids[u.CommitSHA] = u.ID
+	}
+	for _, tc := range []struct {
+		name, branch  string
+		beforeID      int64
+		excludeCommit string
+		want          string // "" for ErrNotFound
+	}{
+		{"newest passing", "main", 0, "", "m3"},
+		{"older than m3 skips the PR build and the failure", "main", ids["m3"], "", "m1"},
+		{"excluding m3's commit", "main", 0, "m3", "m1"},
+		{"nothing older", "main", ids["m1"], "", ""},
+		{"another branch", "feat", 0, "", "f1"},
+		{"unknown branch", "nope", 0, "", ""},
+	} {
+		got, err := st.LatestPassedUpload(ctx, repo.ID, tc.branch, tc.beforeID, tc.excludeCommit)
+		switch {
+		case tc.want == "" && !errors.Is(err, store.ErrNotFound):
+			t.Errorf("%s: got %v, %v; want ErrNotFound", tc.name, got, err)
+		case tc.want != "" && (err != nil || got.CommitSHA != tc.want):
+			t.Errorf("%s: got %v, %v; want %s", tc.name, got, err, tc.want)
+		}
+	}
+
+	branches, err := st.RecentBranches(ctx, repo.ID, 100)
+	if err != nil || !slices.Equal(branches, []string{"Zeta", "feat", "main"}) {
+		t.Errorf("recent branches = %v, %v; want Zeta, feat, main", branches, err)
+	}
+	// Only the newest scan uploads count: z1 and m3.
+	if branches, err = st.RecentBranches(ctx, repo.ID, 2); err != nil || !slices.Equal(branches, []string{"Zeta", "main"}) {
+		t.Errorf("branches of the newest two = %v, %v; want Zeta, main", branches, err)
+	}
+}
+
+// The two stores agree on the edges: an upload without files — or no
+// upload at all — lists no files rather than failing, files come back
+// ordered by path, and a membership needs its workspace to exist.
+func storeContractEdges(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+	repo := &store.Repo{Forge: "github", Slug: "acme/edges", Token: "tok-edges", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	bare := &store.Upload{RepoID: repo.ID, CommitSHA: "c1", Branch: "main", Format: "go"}
+	if err := st.CreateUpload(ctx, bare, nil); err != nil {
+		t.Fatal(err)
+	}
+	withFiles := &store.Upload{RepoID: repo.ID, CommitSHA: "c2", Branch: "main", Format: "go"}
+	if err := st.CreateUpload(ctx, withFiles, []*store.UploadFile{{Path: "b.go"}, {Path: "a.go"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{bare.ID, 999999} {
+		if files, err := st.UploadFiles(ctx, id); err != nil || len(files) != 0 {
+			t.Errorf("UploadFiles(%d) = %v, %v; want no files and no error", id, files, err)
+		}
+	}
+	files, err := st.UploadFiles(ctx, withFiles.ID)
+	if err != nil || len(files) != 2 || files[0].Path != "a.go" || files[1].Path != "b.go" {
+		t.Errorf("UploadFiles = %v, %v; want a.go then b.go", files, err)
+	}
+
+	u := &store.User{Forge: "github", ForgeUUID: "edge-user", DisplayName: "Edge"}
+	if err := st.UpsertUser(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetUserMemberships(ctx, u.ID, []store.Membership{{WorkspaceID: 999999, Role: store.RoleMember}}); err == nil {
+		t.Error("a membership in a workspace that does not exist was accepted")
+	}
+}
+
+// A caller that mutates the slices it passed in or got back never reaches
+// the stored row: postgres hands back fresh slices on every read, and the
+// memory store must too, since handler tests stand on it.
+func usersNeverAliasForgeWorkspaces(t *testing.T, newStore func(*testing.T) store.Store) {
+	ctx := t.Context()
+	s := newStore(t)
+	u := &store.User{Forge: "github", ForgeUUID: "1", ForgeWorkspaces: []string{"acme"}, ForgeOwnedWorkspaces: []string{"acme"}}
+	if err := s.UpsertUser(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	u.ForgeWorkspaces[0] = "mutated-after-upsert"
+
+	got, err := s.UserByID(ctx, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.ForgeWorkspaces, []string{"acme"}) {
+		t.Fatalf("stored workspaces follow the caller's slice: %v", got.ForgeWorkspaces)
+	}
+	got.ForgeWorkspaces[0] = "mutated-after-read"
+	got.ForgeOwnedWorkspaces[0] = "mutated-after-read"
+
+	again, err := s.UserByID(ctx, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(again.ForgeWorkspaces, []string{"acme"}) || !reflect.DeepEqual(again.ForgeOwnedWorkspaces, []string{"acme"}) {
+		t.Fatalf("read result aliases the store: %v %v", again.ForgeWorkspaces, again.ForgeOwnedWorkspaces)
+	}
+
+	// Re-login replaces the snapshot; the caller's new slice must not be
+	// adopted either.
+	relogin := &store.User{Forge: "github", ForgeUUID: "1", ForgeWorkspaces: []string{"acme", "newco"}}
+	if err := s.UpsertUser(ctx, relogin); err != nil {
+		t.Fatal(err)
+	}
+	relogin.ForgeWorkspaces[1] = "mutated"
+	final, _ := s.UserByID(ctx, u.ID)
+	if !reflect.DeepEqual(final.ForgeWorkspaces, []string{"acme", "newco"}) {
+		t.Fatalf("re-login snapshot aliased: %v", final.ForgeWorkspaces)
+	}
+}
+
+// Names are scoped per forge: the same slug or prefix on
+// another forge is a different row, and a workspace delete only cascades
+// over its own forge's repos.
+func namesAreScopedPerForge(t *testing.T, newStore func(*testing.T) store.Store) {
+	ctx := t.Context()
+	s := newStore(t)
+	bb := &store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "bb-ws", DefaultBranch: "main"}
+	gh := &store.Workspace{Forge: "github", Prefix: "acme", Token: "gh-ws", DefaultBranch: "main"}
+	for _, ws := range []*store.Workspace{bb, gh} {
+		if err := s.CreateWorkspace(ctx, ws); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.CreateWorkspace(ctx, &store.Workspace{Forge: "github", Prefix: "acme", Token: "other", DefaultBranch: "main"}); err == nil {
+		t.Error("duplicate prefix on the same forge must fail")
+	}
+	bbRepo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "bb-repo", DefaultBranch: "main"}
+	ghRepo := &store.Repo{Forge: "github", Slug: "acme/widgets", Token: "gh-repo", DefaultBranch: "main"}
+	for _, r := range []*store.Repo{bbRepo, ghRepo} {
+		if err := s.CreateRepo(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.CreateRepo(ctx, &store.Repo{Forge: "github", Slug: "acme/widgets", Token: "other", DefaultBranch: "main"}); err == nil {
+		t.Error("duplicate slug on the same forge must fail")
+	}
+	if got, err := s.RepoBySlug(ctx, "github", "acme/widgets"); err != nil || got.ID != ghRepo.ID {
+		t.Errorf("RepoBySlug(github) = %+v, %v", got, err)
+	}
+	if got, err := s.WorkspaceByPrefix(ctx, "bitbucket", "acme"); err != nil || got.ID != bb.ID {
+		t.Errorf("WorkspaceByPrefix(bitbucket) = %+v, %v", got, err)
+	}
+
+	if err := s.DeleteWorkspace(ctx, gh.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RepoByID(ctx, ghRepo.ID); err == nil {
+		t.Error("the github repo survived its workspace")
+	}
+	if _, err := s.RepoByID(ctx, bbRepo.ID); err != nil {
+		t.Errorf("the bitbucket namesake was cascaded away: %v", err)
+	}
+}
+
+// A grant write aimed at another forge's workspace finds
+// nothing to update.
+func workspaceGrantStaysOnItsForge(t *testing.T, newStore func(*testing.T) store.Store) {
+	ctx := t.Context()
+	s := newStore(t)
+	w := &store.Workspace{Forge: "gitlab", Prefix: "acme"}
+	if err := s.CreateWorkspace(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetWorkspaceGrant(ctx, w.ID, "gitlab", store.Grant{Account: "covbot"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, forge := range []string{"bitbucket", "github"} {
+		if err := s.SetWorkspaceGrant(ctx, w.ID, forge, store.Grant{Account: "other"}); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("SetWorkspaceGrant(%s) on a gitlab workspace = %v, want ErrNotFound", forge, err)
+		}
+	}
+	if got, _ := s.WorkspaceByPrefix(ctx, "gitlab", "acme"); got.Grant.Account != "covbot" {
+		t.Errorf("grant = %+v, want covbot untouched", got.Grant)
+	}
+}

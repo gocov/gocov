@@ -396,6 +396,10 @@ func (s *Store) SetUserMemberships(_ context.Context, userID int64, memberships 
 		if _, ok := s.workspaces[m.WorkspaceID]; !ok {
 			return fmt.Errorf("memory: membership in unknown workspace %d", m.WorkspaceID)
 		}
+		// Mirror postgres: the role column admits only the two roles.
+		if m.Role != store.RoleOwner && m.Role != store.RoleMember {
+			return fmt.Errorf("memory: unknown membership role %q", m.Role)
+		}
 		set[m.WorkspaceID] = m.Role
 	}
 	s.members[userID] = set
