@@ -1,4 +1,5 @@
-// Package memory provides an in-memory store.Store for tests.
+// Package memory provides an in-memory store.Store for tests and the
+// gocov-preview harness.
 package memory
 
 import (

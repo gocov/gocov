@@ -64,7 +64,8 @@ func Percent(covered, total int64) float64 {
 }
 
 // Parser turns a raw coverage report into the normalized model.
-// Implementations exist per format ("go" first; lcov, cobertura later).
+// There is one implementation per format: go, lcov, jacoco, cobertura,
+// clover and simplecov.
 type Parser interface {
 	Parse(r io.Reader) (*Profile, error)
 }

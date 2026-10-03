@@ -1,4 +1,5 @@
-// Package memory provides an in-memory blobstore.Store for tests.
+// Package memory provides an in-memory blobstore.Store for tests and the
+// gocov-preview harness.
 package memory
 
 import (
