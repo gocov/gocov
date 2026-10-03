@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 gocov is a self-hostable coverage-tracking service (Coveralls/Codecov alternative): a single Go binary + Postgres, AGPL-3.0. Direct dependencies are pgx and bykclk/env (tag-based env parsing, itself dependency-free); everything else is stdlib.
 
-Package-specific conventions live in `.claude/rules/` and load when you touch the matching paths (`core`, `server`, `forge`, `config`, `store`, `docs`, `web`). Slash commands: `/release`, `/verify-release`, `/check-pins`, `/docs-check`.
+Package-specific conventions live in `.claude/rules/` and load when you touch the matching paths (`core`, `server`, `forge`, `config`, `store`, `docs`, `web`). Slash commands: `/release`, `/verify-release`, `/check-pins`, `/docs-check`, `/pre-pr`, `/prod-status`.
 
 ## Commands
 
