@@ -69,8 +69,8 @@ the last tag contain and propose a number.
 last tag with a conventional subject (`feat:`, `fix:`, …) makes release-please infer the
 version itself and open `chore(main): release X.Y.Z` on the first such merge, refreshing
 it on every push to main. If that PR exists and states the version you agreed on, skip
-this step and go to Step 2 — a `Release-As:` PR would only add an empty commit (v0.18.0:
-#110 was opened and closed unmerged for exactly this reason).
+this step and go to Step 2 — a `Release-As:` PR would only add an empty commit that gets
+closed unmerged.
 
 ```sh
 gh pr list --search "chore(main): release in:title" --json number,title,updatedAt
@@ -94,7 +94,7 @@ User merges. Then `git checkout main && git pull`.
 
 release-please runs on the push to main and opens `chore(main): release <VERSION>` holding
 the version, the CHANGELOG entry, and the bumped pins (gitlab-ci.md, ci-other.md,
-self-hosting.md, onboarding.html, internal/hosted). Watch for it:
+self-hosting.md, internal/hosted, deploy/.env.example). Watch for it:
 
 ```sh
 gh run list --workflow release-please.yml --limit 3
@@ -120,8 +120,9 @@ release-please *calls* `release.yml` directly. The push to main is the user's me
 
 ```sh
 gh run list --limit 5
-gh run watch <run-id>
 ```
+
+To wait on the run, poll its status as the last gotcha below describes.
 
 One human gate in this run, the user's click:
 
@@ -134,7 +135,7 @@ The build publishes: 10 binaries + `checksums.txt` on the release, the GHCR serv
 
 ## When the release contains a server-side feature the wrappers use
 
-Two ordering rules, both learned on v0.16.0 (OIDC tokenless uploads):
+Two ordering rules:
 
 - The wrappers' own feature PRs (the ones teaching them the new flow) go onto their mains
   **before** the gocov release. They carry no `release` label, so merging them publishes
@@ -206,8 +207,9 @@ the verify score.
   not triggered. Never "fix" it by re-pushing the tag.
 - `-X main.version` comes from `$TAG`, not `GITHUB_REF_NAME` (on the called path that
   would be `main`).
-- The production box follows *release tags*, not main: the deploy checks out the tag in
-  `/opt/gocov`, so compose and Caddyfile move with the release.
+- Production follows *release tags*, not main: `deploy.yml` registers a task definition
+  from `deploy/ecs/` at the tag and updates the ECS service, so the task definition moves
+  with the release.
 - The pipe's Bitbucket mirror needs `BITBUCKET_MIRROR_APP_PASSWORD`; git auth there uses
   the fixed username `x-bitbucket-api-token-auth`. It warns rather than fails when unset —
   verify-release is what notices.

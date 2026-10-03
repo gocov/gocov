@@ -8,7 +8,7 @@ paths:
 
 # web/ — the single-page web UI
 
-`web/` is the web UI: a Vite + React + TypeScript single-page app (it replaced the Go-template UI in September 2026). `web/README.md` holds the conventions (atomic layers, one component = three files, the deliberately minimal tokens). Read the README before writing a component.
+`web/` is the web UI: a Vite + React + TypeScript single-page app. `web/README.md` holds the conventions (atomic layers, one component = three files, the deliberately minimal tokens). Read the README before writing a component.
 
 - The build writes to `internal/webui/dist`, which `internal/webui` embeds; only `.gitkeep` there is committed. Go builds and tests must keep passing without a web build.
 - Go serves the app's shell for every page route (`internal/server/spa.go`) and decides the status code and the head tags — per-page `<title>`, the public repo page's description and canonical link, `noindex` on upload and source pages — by replacing the literal `<title>gocov</title>` in `web/index.html`; bundles ride under `/static/app/`. A page route added in `web/src/router.tsx` needs its twin in `routes()` in `server.go`, or a reload 404s.
