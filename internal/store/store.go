@@ -1,5 +1,6 @@
 // Package store defines the storage interface and its domain types.
-// Implementations: postgres (production), memory (tests).
+// Implementations: postgres (production), memory (tests and the
+// gocov-preview harness).
 package store
 
 import (

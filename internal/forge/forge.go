@@ -1,6 +1,6 @@
-// Package forge abstracts VCS-host integrations (Bitbucket first; GitHub
-// and GitLab later). No forge-specific types or URLs may leak out of the
-// concrete implementations.
+// Package forge abstracts VCS-host integrations: Bitbucket, GitHub and
+// GitLab each implement Forge in their own subpackage. No forge-specific
+// types or URLs may leak out of the concrete implementations.
 package forge
 
 import (

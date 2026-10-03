@@ -38,7 +38,7 @@ main is squash-merged, so the PR title becomes the commit subject, and release-p
 Three binaries in `cmd/`:
 - `gocov-server` — API + web UI (the embedded single-page app), configured entirely via environment variables.
 - `gocov` — the upload CLI users run in CI. Detects the coverage format from file content (`detect.go`); defaults to the hosted server URL in `internal/hosted`.
-- `gocov-preview` — throwaway dev harness, not part of the product.
+- `gocov-preview` — the web UI's development backend (in-memory store, synthetic history): the Vite dev server proxies to it and `scripts/docs-screenshots.mjs` shoots the docs from it. Not shipped.
 
 Everything hangs off four interfaces, each with a production implementation and a test double, so handlers are fully testable without Postgres or a real forge:
 

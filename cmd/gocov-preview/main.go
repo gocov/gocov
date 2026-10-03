@@ -1,6 +1,7 @@
-// Command gocov-preview is a throwaway dev harness: it serves the web UI
-// from an in-memory store seeded with a synthetic upload history, for
-// eyeballing UI changes without Postgres. Not part of the product.
+// Command gocov-preview is the web UI's development backend: it serves the
+// UI and its JSON API from an in-memory store seeded with a synthetic upload
+// history, so UI work needs neither Postgres nor OAuth. The Vite dev server
+// proxies to it and the docs screenshots are taken from it. Not shipped.
 package main
 
 import (
