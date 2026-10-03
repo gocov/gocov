@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -219,5 +220,146 @@ func waitForVisibility(t *testing.T, st *storemem.Store, slug, want string) {
 			t.Fatalf("visibility = %q, want %q (background re-check never landed)", stored.Visibility, want)
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestRegisterRepo(t *testing.T) {
+	gate := store.Gate{MinCoverage: new(80.0)}
+	for _, tc := range []struct {
+		name       string
+		connected  bool   // workspace has a working one-click connection
+		wsBranch   string // workspace default branch
+		forgeSetup func(*forgefake.Forge)
+		wantBranch string
+		wantErr    error
+	}{
+		{
+			name: "forge answers the default branch", connected: true, wsBranch: "main",
+			forgeSetup: func(f *forgefake.Forge) { f.DefaultBranch = "trunk" },
+			wantBranch: "trunk",
+		},
+		{
+			name: "forge without the endpoint falls back to the workspace", connected: true, wsBranch: "develop",
+			wantBranch: "develop",
+		},
+		{
+			name: "transient forge error falls back to the workspace", connected: true, wsBranch: "develop",
+			forgeSetup: func(f *forgefake.Forge) { f.DefaultBranchErr = errors.New("timeout") },
+			wantBranch: "develop",
+		},
+		{
+			name:       "no connection and no workspace branch falls back to main",
+			wantBranch: "main",
+		},
+		{
+			// A leaked workspace token must not fill the dashboard with
+			// repos the forge says do not exist.
+			name: "forge denying the repo aborts the registration", connected: true,
+			forgeSetup: func(f *forgefake.Forge) { f.DefaultBranchErr = forge.ErrRepoNotFound },
+			wantErr:    forge.ErrRepoNotFound,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			client := forgefake.New()
+			if tc.forgeSetup != nil {
+				tc.forgeSetup(client)
+			}
+			forges, st := newForges(t, &fakeBB{client: client})
+			p := &Pipeline{Store: st, Log: forges.Log, Forges: forges}
+
+			ws := &store.Workspace{Forge: "bitbucket", Prefix: "acme", DefaultBranch: tc.wsBranch, Gate: gate}
+			if tc.connected {
+				ws = connectedWorkspace(t, st, "acme")
+				ws.DefaultBranch, ws.Gate = tc.wsBranch, gate
+			}
+
+			repo, err := p.RegisterRepo(ctx, ws, "acme/widgets")
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("err = %v, want %v", err, tc.wantErr)
+				}
+				if _, err := st.RepoBySlug(ctx, "bitbucket", "acme/widgets"); !errors.Is(err, store.ErrNotFound) {
+					t.Errorf("aborted registration left a repo behind (lookup err = %v)", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if repo.DefaultBranch != tc.wantBranch {
+				t.Errorf("default branch = %q, want %q", repo.DefaultBranch, tc.wantBranch)
+			}
+			if repo.Forge != "bitbucket" || repo.Gate.MinCoverage == nil || *repo.Gate.MinCoverage != 80 {
+				t.Errorf("repo = %+v, want the workspace's forge and gate", repo)
+			}
+			if len(repo.Token) != 48 {
+				t.Errorf("token %q is not 24 hex-encoded bytes", repo.Token)
+			}
+			stored, err := st.RepoBySlug(ctx, "bitbucket", "acme/widgets")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stored.ID != repo.ID {
+				t.Errorf("stored repo id = %d, want %d", stored.ID, repo.ID)
+			}
+		})
+	}
+}
+
+func TestRegisterRepoLosingTheRaceReturnsTheWinner(t *testing.T) {
+	ctx := t.Context()
+	p, st, existing := newPipeline(t, store.Gate{})
+	ws := &store.Workspace{Forge: existing.Forge, Prefix: "acme"}
+
+	repo, err := p.RegisterRepo(ctx, ws, existing.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repo.ID != existing.ID || repo.Token != existing.Token {
+		t.Errorf("got repo %+v, want the concurrently registered %+v", repo, existing)
+	}
+	repos, err := st.ListRepos(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repos) != 1 {
+		t.Errorf("repos = %d, want 1", len(repos))
+	}
+}
+
+func TestMarkRepoPrivate(t *testing.T) {
+	ctx := t.Context()
+	p, st, repo := newPipeline(t, store.Gate{})
+	repo.Visibility = store.VisibilityPublic
+
+	p.MarkRepoPrivate(ctx, repo)
+	if repo.Visibility != store.VisibilityPrivate {
+		t.Errorf("repo.Visibility = %q, want private", repo.Visibility)
+	}
+	stored, err := st.RepoBySlug(ctx, repo.Forge, repo.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Visibility != store.VisibilityPrivate || stored.VisibilityCheckedAt.IsZero() {
+		t.Errorf("stored = %q at %v, want private with a stamp", stored.Visibility, stored.VisibilityCheckedAt)
+	}
+
+	// A store that cannot persist the flip leaves the in-memory repo as it
+	// was, so the request does not act on a state nobody recorded.
+	gone := &store.Repo{ID: repo.ID + 100, Slug: "acme/gone", Visibility: store.VisibilityPublic}
+	p.MarkRepoPrivate(ctx, gone)
+	if gone.Visibility != store.VisibilityPublic {
+		t.Errorf("unpersisted flip changed the repo to %q", gone.Visibility)
+	}
+}
+
+func TestNewToken(t *testing.T) {
+	a, b := NewToken(), NewToken()
+	if len(a) != 48 || strings.Trim(a, "0123456789abcdef") != "" {
+		t.Errorf("token %q is not 48 lowercase hex characters", a)
+	}
+	if a == b {
+		t.Error("two tokens collided")
 	}
 }

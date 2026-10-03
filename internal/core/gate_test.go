@@ -102,3 +102,114 @@ func TestEvaluateGate(t *testing.T) {
 		})
 	}
 }
+
+func TestMinCoverageFailed(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		gate     store.Gate
+		totalPct float64
+		want     bool
+	}{
+		{name: "no minimum configured", gate: store.Gate{MaxCoverageDrop: pct(1)}, totalPct: 0},
+		{name: "above the minimum", gate: store.Gate{MinCoverage: pct(80)}, totalPct: 81},
+		{name: "exactly at the threshold", gate: store.Gate{MinCoverage: pct(57)}, totalPct: 56.999999999999993},
+		{name: "below the minimum", gate: store.Gate{MinCoverage: pct(80)}, totalPct: 79.9, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := MinCoverageFailed(tc.gate, tc.totalPct); got != tc.want {
+				t.Errorf("MinCoverageFailed = %v, want %v", got, tc.want)
+			}
+			// The predicate and the verdict must agree on the minimum rule.
+			verdict := EvaluateGate(tc.gate, tc.totalPct, nil, nil)
+			if verdict.Failed() != tc.want {
+				t.Errorf("EvaluateGate failed = %v, MinCoverageFailed = %v", verdict.Failed(), tc.want)
+			}
+		})
+	}
+}
+
+func TestGateReason(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		gate     store.Gate
+		totalPct float64
+		dropBase *float64
+		diff     *diffcov.Result
+		want     string
+	}{
+		{
+			name: "no gate configured",
+			gate: store.Gate{}, totalPct: 72.34,
+			want: "No coverage gate is configured for this repo. This upload records 72.3% total coverage.",
+		},
+		{
+			name: "total above the minimum",
+			gate: store.Gate{MinCoverage: pct(80)}, totalPct: 85,
+			want: "Total coverage is above the minimum of 80%.",
+		},
+		{
+			name: "total below the minimum",
+			gate: store.Gate{MinCoverage: pct(80)}, totalPct: 70,
+			want: "Total coverage is below the minimum of 80%.",
+		},
+		{
+			name: "total exactly at the threshold reads as above",
+			gate: store.Gate{MinCoverage: pct(57)}, totalPct: 56.999999999999993,
+			want: "Total coverage is above the minimum of 57%.",
+		},
+		{
+			name: "coverage rose against the default branch",
+			gate: store.Gate{MaxCoverageDrop: pct(1)}, totalPct: 81, dropBase: pct(80),
+			want: "Coverage held or rose against the default branch.",
+		},
+		{
+			name: "drop under the allowance",
+			gate: store.Gate{MaxCoverageDrop: pct(1)}, totalPct: 79.5, dropBase: pct(80),
+			want: "The drop against the default branch is 0.5% — under the 1% allowed.",
+		},
+		{
+			name: "drop over the allowance",
+			gate: store.Gate{MaxCoverageDrop: pct(1)}, totalPct: 77, dropBase: pct(80),
+			want: "The drop against the default branch is 3% — over the 1% allowed.",
+		},
+		{
+			// Without a recorded baseline the gate skipped the drop rule, so
+			// the narration must not invent a clause for it.
+			name: "drop rule without a baseline falls back to the total",
+			gate: store.Gate{MaxCoverageDrop: pct(1)}, totalPct: 77,
+			want: "This upload records 77.0% total coverage.",
+		},
+		{
+			name: "diff coverage meets the minimum",
+			gate: store.Gate{MinDiffCoverage: pct(80)}, totalPct: 50,
+			diff: &diffcov.Result{TotalLines: 10, CoveredLines: 9},
+			want: "Diff coverage meets the 80% minimum.",
+		},
+		{
+			name: "diff coverage below the minimum",
+			gate: store.Gate{MinDiffCoverage: pct(80)}, totalPct: 50,
+			diff: &diffcov.Result{TotalLines: 10, CoveredLines: 5},
+			want: "Diff coverage is below the 80% minimum.",
+		},
+		{
+			name: "empty diff leaves the diff rule out",
+			gate: store.Gate{MinDiffCoverage: pct(80)}, totalPct: 50,
+			diff: &diffcov.Result{TotalLines: 0},
+			want: "This upload records 50.0% total coverage.",
+		},
+		{
+			name:     "every rule joins into one sentence",
+			gate:     store.Gate{MinCoverage: pct(60), MaxCoverageDrop: pct(1), MinDiffCoverage: pct(90)},
+			totalPct: 55, dropBase: pct(58),
+			diff: &diffcov.Result{TotalLines: 4, CoveredLines: 1},
+			want: "Total coverage is below the minimum of 60%, and the drop against the default branch is 3% — over the 1% allowed, and diff coverage is below the 90% minimum.",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := GateReason(tc.totalPct, tc.diff, tc.gate, tc.dropBase, "This upload")
+			if got != tc.want {
+				t.Errorf("GateReason =\n  %q\nwant\n  %q", got, tc.want)
+			}
+		})
+	}
+}
