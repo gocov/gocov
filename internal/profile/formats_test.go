@@ -30,3 +30,28 @@ func TestEveryFormatNamesItsFilesAndSources(t *testing.T) {
 		}
 	}
 }
+
+// A changed test file is never measured, so it is never flagged as a
+// source file with no coverage data.
+func TestIsTestFile(t *testing.T) {
+	for _, tc := range []struct {
+		format, path string
+		want         bool
+	}{
+		{"go", "internal/core/gate_test.go", true},
+		{"go", "internal/core/gate.go", false},
+		{"go", "internal/core/test.go", false},
+		{"lcov", "web/src/app.test.tsx", true},
+		{"lcov", "web/src/app.spec.ts", true},
+		{"lcov", "web/src/app.tsx", false},
+		{"clover", "web/src/app.test.js", true},
+		{"simplecov", "spec/models/user_spec.rb", true},
+		{"simplecov", "app/models/user.rb", false},
+		{"jacoco", "src/test/java/FooTest.java", false}, // no convention claimed
+	} {
+		f, _ := Lookup(tc.format)
+		if got := f.IsTestFile(tc.path); got != tc.want {
+			t.Errorf("%s IsTestFile(%q) = %v, want %v", tc.format, tc.path, got, tc.want)
+		}
+	}
+}

@@ -568,6 +568,11 @@ diff --git a/m/untested.go b/m/untested.go
 @@ -0,0 +1,2 @@
 +l1
 +l2
+diff --git a/m/a_test.go b/m/a_test.go
+--- /dev/null
++++ b/m/a_test.go
+@@ -0,0 +1,1 @@
++package m
 diff --git a/README.md b/README.md
 --- a/README.md
 +++ b/README.md
@@ -619,7 +624,7 @@ func TestUploadDiffCoverage(t *testing.T) {
 		t.Fatalf("stored diff coverage = %+v", u.DiffCoverage)
 	}
 	if len(u.DiffCoverage.UnmatchedFiles) != 1 || u.DiffCoverage.UnmatchedFiles[0] != "m/untested.go" {
-		t.Errorf("unmatched = %v, want [m/untested.go] (README.md filtered out)",
+		t.Errorf("unmatched = %v, want [m/untested.go] (README.md and m/a_test.go filtered out)",
 			u.DiffCoverage.UnmatchedFiles)
 	}
 

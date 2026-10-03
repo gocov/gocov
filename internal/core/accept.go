@@ -103,7 +103,7 @@ func (p *Pipeline) Accept(ctx context.Context, sub Submission) (*Result, error) 
 		})
 	}
 
-	dropBase, err := gateDropBase(ctx, p.Store, sub.Repo, sub.Commit)
+	dropBase, err := gateDropBase(ctx, p.Store, sub.Repo, sub.Commit, []string{sub.Part})
 	if err != nil {
 		return nil, err
 	}
@@ -172,12 +172,13 @@ func (p *Pipeline) diffCoverage(ctx context.Context, fg forge.Forge, repo *store
 
 	// Keep only source files in the "changed but no coverage data" list;
 	// docs, configs etc. are expected to be absent from the profile. So
-	// are ignored files — they were dropped from the profile above, and
-	// flagging them as untested would count them against the PR after all.
+	// are test files, which no report measures, and ignored files — they
+	// were dropped from the profile above, and flagging them as untested
+	// would count them against the PR after all.
 	f, _ := profile.Lookup(format)
 	exts := f.SourceExts
 	result.UnmatchedFiles = slices.DeleteFunc(result.UnmatchedFiles, func(p string) bool {
-		if ignored.Match(p, "") { // diff paths are repo-relative already
+		if ignored.Match(p, "") || f.IsTestFile(p) { // diff paths are repo-relative already
 			return true
 		}
 		return len(exts) > 0 && !slices.ContainsFunc(exts, func(ext string) bool { return strings.HasSuffix(p, ext) })

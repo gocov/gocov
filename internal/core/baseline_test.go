@@ -151,3 +151,28 @@ func TestCommitBaseline(t *testing.T) {
 		t.Errorf("PR baseline after m1's retry = %s, want m1 still", sha(got))
 	}
 }
+
+// The pages compare a commit with every part in against a baseline with
+// every part in too, passing over a newer one still missing some.
+func TestCommitBaselineSkipsPartialReports(t *testing.T) {
+	p, st, repo := newPipeline(t, store.Gate{})
+	ctx := t.Context()
+	for _, u := range []*store.Upload{
+		addPart(t, st, repo, "m1", "backend", 8, 10),
+		addPart(t, st, repo, "m1", "frontend", 2, 10),
+		addPart(t, st, repo, "m2", "backend", 10, 10), // frontend still in flight
+		addBranchPart(t, st, repo, "p1", "feat", "7", "backend", 9, 10),
+		addBranchPart(t, st, repo, "p1", "feat", "7", "frontend", 2, 10),
+	} {
+		if _, err := p.Recompute(ctx, repo, u); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cr, err := st.CommitReport(ctx, repo.ID, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := CommitBaseline(ctx, st, repo, cr); got == nil || got.CommitSHA != "m1" {
+		t.Errorf("baseline = %v, want m1, the newest main report with both parts", got)
+	}
+}
