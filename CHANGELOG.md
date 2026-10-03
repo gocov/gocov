@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.1](https://github.com/gocov/gocov/compare/v0.27.0...v0.27.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* compare coverage deltas over the same parts, and stop flagging test files ([#216](https://github.com/gocov/gocov/issues/216)) ([6f4d3aa](https://github.com/gocov/gocov/commit/6f4d3aa95753424a76cf28f93a13a79b97f7dbe7))
+
 ## [0.27.0](https://github.com/gocov/gocov/compare/v0.26.4...v0.27.0) (2026-09-28)
 
 
