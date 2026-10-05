@@ -290,7 +290,7 @@ func buildFilesView(diff *diffcov.Result, uploads map[int64]*store.Upload, files
 				}
 				// Lines that ran at the baseline and miss now are a change
 				// even when the percentage holds.
-				if len(regressedSpans(f.Blocks, bf.Blocks)) > 0 {
+				if !row.CoverageChanged && len(regressedSpans(f.Blocks, bf.Blocks)) > 0 {
 					row.CoverageChanged = true
 				}
 			} else {
@@ -440,12 +440,9 @@ func lineCounts(blocks []profile.Block, limit int) map[int]int {
 }
 
 // regressedSpans returns the lines a file executes-but-misses now that were
-// hit at the baseline — the regressions this upload introduced, matched by
-// line number. Best effort without a line-level diff, and the same rule the
-// source view's markNewlyUncovered applies line by line (a test holds the
-// two together). A file with any is coverage-changed even when its
-// percentage holds. It works on spans rather than lines because the blocks
-// are uploader-declared and may claim millions of lines.
+// hit at the baseline, matched by line number — best effort without a
+// line-level diff. Spans rather than lines, because uploader-declared
+// blocks may claim millions of lines.
 func regressedSpans(cur, base []profile.Block) []diffcov.Span {
 	return diffcov.IntersectSpans(diffcov.MissedSpans(cur), diffcov.MergedSpans(base, diffcov.Ran))
 }

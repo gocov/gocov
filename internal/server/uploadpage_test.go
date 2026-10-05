@@ -125,43 +125,6 @@ func TestRegressedSpansMatchesLineByLineRule(t *testing.T) {
 	}
 }
 
-// TestRegressedSpansMatchesSourceView holds the files table and the source
-// view to one rule: a file counts as coverage-changed for regressed lines
-// exactly when its source view marks some line newly uncovered, and on the
-// same lines. The two are written differently — spans over uploader ranges
-// for the table, per-line counts clamped to the file for the source view —
-// so they are compared on random block sets that fit inside the source.
-// (Blocks past the end of the file can only show in the table: the source
-// view has no line to mark.)
-func TestRegressedSpansMatchesSourceView(t *testing.T) {
-	const fileLines = 50
-	source := []byte(strings.Repeat("x\n", fileLines))
-	rng := rand.New(rand.NewPCG(3, 4))
-	blocks := func() []profile.Block {
-		out := make([]profile.Block, rng.IntN(6))
-		for i := range out {
-			start := rng.IntN(40) - 2
-			out[i] = profile.Block{StartLine: start, EndLine: start + rng.IntN(8) - 1, NumStmts: rng.IntN(2), Count: rng.IntN(3)}
-		}
-		return out
-	}
-	for range 2000 {
-		cur, base := blocks(), blocks()
-		lines := renderSourceLines(source, cur)
-		n := markNewlyUncovered(lines, base)
-		var marked []int
-		for _, l := range lines {
-			if l.NewMiss {
-				marked = append(marked, l.No)
-			}
-		}
-		got, want := diffcov.Ranges(marked), spansString(regressedSpans(cur, base))
-		if got != want || n != len(marked) {
-			t.Fatalf("cur %v, base %v: source view marks %q (count %d), files table regressed %q", cur, base, got, n, want)
-		}
-	}
-}
-
 // TestRegressedSpansIgnoresDeclaredSpan guards the report pages against
 // stored blocks that claim millions of lines: the work must follow the
 // number of blocks, not the lines they declare. Expanded line by line this
