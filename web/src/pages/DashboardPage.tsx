@@ -162,7 +162,7 @@ function Workspace({ data, current }: { data: Dashboard; current: WorkspaceGroup
         }
       />
 
-      {current.tracked && canOnboard && (
+      {current.tracked && (
         // Keyed: switching workspace is a new arrival, with its own verdict.
         <SetupSection key={`${current.forge}/${current.prefix}`} ws={current} hasReports={hasReports} />
       )}

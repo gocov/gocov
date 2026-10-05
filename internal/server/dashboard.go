@@ -54,7 +54,8 @@ type wsGroupDTO struct {
 	RepoCount int      `json:"repo_count"`
 	Coverage  *float64 `json:"coverage"`
 	Current   bool     `json:"current"`
-	// Tracked marks a registered workspace — the ones with a settings page.
+	// Tracked marks a registered workspace the viewer has a settings page
+	// for: a signed-in member's. With sign-in off nobody does (signedIn).
 	Tracked bool `json:"tracked"`
 }
 
@@ -189,7 +190,7 @@ func (s *Server) buildDashboard(r *http.Request, dto *dashboardDTO, selected str
 		s.log.Warn("loading dashboard previews", "err", err)
 	}
 	for _, k := range order {
-		g := groupDTO(groups[k], latest)
+		g := groupDTO(groups[k], latest, currentUser(r) != nil)
 		g.Current = groups[k] == cur
 		dto.Switcher = append(dto.Switcher, g)
 		if g.Current {
@@ -267,7 +268,8 @@ func (s *Server) groupPrefix(repo *store.Repo, tracked []*store.Workspace) strin
 // groupDTO is a group's switcher entry: its identity, a repo count, and a
 // weighted-coverage rollup over its repos' latest default-branch reports
 // (latest, by repo id), so the picker previews each workspace's health.
-func groupDTO(g *dashGroup, latest map[int64]*store.CommitReport) wsGroupDTO {
+// signedIn is whether the viewer is, which a settings page takes.
+func groupDTO(g *dashGroup, latest map[int64]*store.CommitReport, signedIn bool) wsGroupDTO {
 	var covered, total int64
 	for _, repo := range g.repos {
 		if cr := latest[repo.ID]; cr != nil {
@@ -280,7 +282,7 @@ func groupDTO(g *dashGroup, latest map[int64]*store.CommitReport) wsGroupDTO {
 		Prefix:    g.key.prefix,
 		RepoCount: len(g.repos),
 		Coverage:  optPct(total > 0, profile.Percent(covered, total)),
-		Tracked:   g.ws != nil,
+		Tracked:   g.ws != nil && signedIn,
 	}
 }
 

@@ -328,22 +328,24 @@ func uploadSHAs(rows []uploadRowDTO) []string {
 	return shas
 }
 
-// On an open instance every viewer is a member, so the settings button
-// hangs on whether a tracked workspace owns the repo.
+// On an open instance the settings pages do not exist (signedIn), so no
+// repo offers the button, tracked workspace or not.
 func TestAPIRepoSettingsButtonOnOpenInstance(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		connected map[string]string
-		want      bool
 	}{
-		{"untracked", nil, false},
-		{"tracked", map[string]string{}, true},
+		{"untracked", nil},
+		{"tracked", map[string]string{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t, tc.connected)
 			got := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets"))
-			if got.Repo.CanSettings != tc.want {
-				t.Errorf("can_settings = %v, want %v", got.Repo.CanSettings, tc.want)
+			if got.Repo.CanSettings {
+				t.Error("can_settings on an open instance, whose settings page is a 404")
+			}
+			if rec := get(f, "/api/ui/repo-settings/bitbucket/acme/widgets"); rec.Code != http.StatusNotFound {
+				t.Errorf("repo settings = %d, want the open instance's 404", rec.Code)
 			}
 		})
 	}

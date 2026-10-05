@@ -61,7 +61,6 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 		latest, base *store.CommitReport
 		lastUpload   *store.Upload
 		files        *filesViewDTO
-		canSettings  bool
 	)
 	wg.Go(func() {
 		branches, branchesErr = s.store.RecentBranches(r.Context(), repo.ID, recentUploads)
@@ -88,20 +87,6 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 			s.log.Warn("loading files for repo page", "commit", latest.CommitSHA, "err", err)
 		}
 	})
-	// The settings link is for members of a tracked workspace; anyone
-	// admitted through the public branch — anonymous or a signed-in
-	// non-member — gets neither the button nor the workspace lookup behind
-	// it. With sign-in on, membership already is a tracked workspace owning
-	// the repo, so only an open instance has one to look up.
-	switch {
-	case !member:
-	case s.authEnabled():
-		canSettings = true
-	default:
-		wg.Go(func() {
-			canSettings = s.forges.WorkspaceFor(r.Context(), repo.Slug, repo.Forge) != nil
-		})
-	}
 	wg.Wait()
 
 	if branchesErr != nil {
@@ -118,7 +103,11 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 			repoRefDTO:    newRepoRefDTO(repo),
 			DefaultBranch: repo.DefaultBranch,
 			Gate:          newGateDTO(repo.Gate),
-			CanSettings:   canSettings,
+			// The settings page is a signed-in member's (signedIn): anyone
+			// admitted through the public branch, and everyone on an open
+			// instance, would follow the button to a 404. With sign-in on,
+			// membership already is a tracked workspace owning the repo.
+			CanSettings: member && s.authEnabled(),
 		},
 		Branches:    branches,
 		TrendBranch: trendBranch,
@@ -264,7 +253,8 @@ type repoHeadDTO struct {
 	repoRefDTO
 	DefaultBranch string  `json:"default_branch"`
 	Gate          gateDTO `json:"gate"`
-	// CanSettings is the settings button: members of a tracked workspace.
+	// CanSettings is the settings button: signed-in members of a tracked
+	// workspace.
 	CanSettings bool `json:"can_settings"`
 }
 

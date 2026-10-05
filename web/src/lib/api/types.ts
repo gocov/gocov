@@ -55,7 +55,7 @@ export interface WorkspaceGroup {
   /** Statement-weighted, null before any upload. */
   coverage: number | null;
   current: boolean;
-  /** A registered workspace (has a settings page). */
+  /** A registered workspace the viewer has a settings page for: never with sign-in off. */
   tracked: boolean;
 }
 

@@ -262,3 +262,21 @@ func TestForkPRNamedLikeTheDefaultBranchIsNotItsHistory(t *testing.T) {
 		t.Errorf("badge = %s, want 80.0%%", body)
 	}
 }
+
+// Tracked is the workspace settings button, and those pages are a signed-in
+// member's: an open instance's registered workspace has none to offer.
+func TestAPIDashboardTrackedTakesSignIn(t *testing.T) {
+	open := newFixture(t, map[string]string{})
+	if got := decodeJSON[dashboardDTO](t, get(open, "/api/ui/dashboard")); got.Current == nil || got.Current.Tracked {
+		t.Errorf("open instance current = %+v, want acme untracked: its settings page is a 404", got.Current)
+	}
+	if rec := get(open, "/api/ui/workspace-settings/bitbucket/acme"); rec.Code != http.StatusNotFound {
+		t.Errorf("open instance workspace settings = %d, want 404", rec.Code)
+	}
+
+	f := newPublicFixture(t, store.VisibilityPrivate, true)
+	sess := signIn(t, f, "/")
+	if got := decodeJSON[dashboardDTO](t, get(f, "/api/ui/dashboard", sess)); got.Current == nil || !got.Current.Tracked {
+		t.Errorf("member's current = %+v, want acme tracked", got.Current)
+	}
+}
