@@ -195,7 +195,7 @@ function Workspace({ data, current }: { data: Dashboard; current: WorkspaceGroup
       <section className="stack stack-1">
         <SectionHeader title="Repositories" />
         {repos.length > 0 ? (
-          <ReposTable repos={repos} />
+          <ReposTable repos={repos} settings={current.tracked} />
         ) : (
           <Card>
             <Card.Body>

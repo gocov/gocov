@@ -54,7 +54,7 @@ const workspace: Repo[] = [
 ];
 
 export function Workspace() {
-  return <ReposTable repos={workspace as never} />;
+  return <ReposTable repos={workspace as never} settings />;
 }
 
 export function AwaitingFirstUploads() {
@@ -66,10 +66,11 @@ export function AwaitingFirstUploads() {
           repo({ name: "web", coverage: null, gate: "none", series: [], uploaded_at: null }),
         ] as never
       }
+      settings
     />
   );
 }
 
 export function NoRepositories() {
-  return <ReposTable repos={[]} />;
+  return <ReposTable repos={[]} settings />;
 }

@@ -31,7 +31,7 @@ const shownNames = () =>
     .map((row) => within(row).getAllByRole("cell")[0]?.textContent);
 
 test("lowest coverage leads and a repo with no report sinks", () => {
-  renderPage(<ReposTable repos={repos} />);
+  renderPage(<ReposTable repos={repos} settings />);
   expect(shownNames()).toEqual(["api", "tools", "web", "docs"]);
 
   const rows = screen.getAllByRole("row");
@@ -50,8 +50,15 @@ test("lowest coverage leads and a repo with no report sinks", () => {
   expect(rows[4]).toHaveTextContent("never");
 });
 
+test("without settings pages a repo with no gate says so instead of linking to one", () => {
+  renderPage(<ReposTable repos={repos} settings={false} />);
+  const rows = screen.getAllByRole("row");
+  expect(within(rows[2]!).getByText("No gate")).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: "Set a gate" })).not.toBeInTheDocument();
+});
+
 test("the filters carry their counts and slice the table", async () => {
-  renderPage(<ReposTable repos={repos} />);
+  renderPage(<ReposTable repos={repos} settings />);
   const filters = screen.getByRole("group", { name: "Filter repositories" });
 
   expect(within(filters).getByRole("button", { name: /^All/ })).toHaveTextContent("4");
@@ -68,7 +75,7 @@ test("the filters carry their counts and slice the table", async () => {
 });
 
 test("the filter is read from the query, so a link can open the table on it", async () => {
-  const { router } = renderPage(<ReposTable repos={repos} />, { path: "/?filter=stale" });
+  const { router } = renderPage(<ReposTable repos={repos} settings />, { path: "/?filter=stale" });
   expect(shownNames()).toEqual(["web"]);
 
   const filters = screen.getByRole("group", { name: "Filter repositories" });
@@ -78,7 +85,7 @@ test("the filter is read from the query, so a link can open the table on it", as
 });
 
 test("search narrows to matching names, and says so when nothing matches", async () => {
-  renderPage(<ReposTable repos={repos} />);
+  renderPage(<ReposTable repos={repos} settings />);
   const search = screen.getByRole("searchbox", { name: "Search repositories" });
 
   await userEvent.type(search, "oo");
@@ -91,7 +98,7 @@ test("search narrows to matching names, and says so when nothing matches", async
 });
 
 test("the sort control reorders the rows", async () => {
-  renderPage(<ReposTable repos={repos} />);
+  renderPage(<ReposTable repos={repos} settings />);
   const sort = screen.getByRole("combobox", { name: "Sort by" });
 
   await userEvent.selectOptions(sort, "Sort: biggest drop");
