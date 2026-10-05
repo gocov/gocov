@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.3](https://github.com/gocov/gocov/compare/v0.27.2...v0.27.3) (2026-10-05)
+
+
+### Bug Fixes
+
+* **web:** drop the newly uncovered column from an upload's files ([#224](https://github.com/gocov/gocov/issues/224)) ([b0ae8c0](https://github.com/gocov/gocov/commit/b0ae8c0a29fc2c8dbd201a6d7f1df44da97e440b))
+
 ## [0.27.2](https://github.com/gocov/gocov/compare/v0.27.1...v0.27.2) (2026-10-05)
 
 
