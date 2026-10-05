@@ -34,6 +34,18 @@ jobs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
+      # "Latest" on GitHub means the release app.gocov.dev runs: deploy.yml
+      # moves it once the deploy and its smoke tests pass. The action below
+      # publishes the new release as latest, so the one production runs is
+      # noted first and put back right after, and releases/latest never
+      # hands out a CLI the hosted server is not running yet.
+      - name: Note the release production runs
+        id: live
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: echo "tag=$(gh release view -R "$REPO" --json tagName --jq .tagName || true)" >>"$GITHUB_OUTPUT"
+
       # Two runs of the action, two tokens. The tag and the GitHub release
       # carry GITHUB_TOKEN, which starts no workflows: release.yml is
       # called by the publish job below, and an App-pushed tag would start
@@ -44,6 +56,14 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           skip-github-pull-request: true
+
+      - name: Keep latest on the release production runs
+        if: steps.release.outputs.release_created == 'true' && steps.live.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          LIVE: ${{ steps.live.outputs.tag }}
+        run: gh release edit "$LIVE" -R "$REPO" --latest
 
       # The release PR is opened and updated as the cross-repo App, so its
       # CI runs by itself; a PR pushed with GITHUB_TOKEN starts no
@@ -86,7 +106,8 @@ jobs:
     # grants, so everything release.yml's jobs need is named here: the
     # release itself (contents), the GHCR push (packages), the deploy
     # role and the provenance signing (id-token), the provenance itself
-    # (attestations), the image's storage record (artifact-metadata). The
+    # (attestations), the image's storage record (artifact-metadata), the
+    # wait for ci.yml on the tagged commit (actions). The
     # secrets are named too: the App's, for the wrapper bumps, and the
     # deploy's smoke upload token.
     secrets:
@@ -99,3 +120,4 @@ jobs:
       id-token: write
       attestations: write
       artifact-metadata: write
+      actions: read

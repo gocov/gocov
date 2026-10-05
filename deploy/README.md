@@ -89,7 +89,15 @@ The docs site follows the app: once the smoke tests pass, the workflow's
 `docs` job force-moves the `docs-live` branch to the tag, and Cloudflare
 Workers Builds (production branch `docs-live`) publishes docs.gocov.dev
 from it. Docs merged to `main` therefore go live with the next release's
-deploy, and a rollback rolls the docs back too.
+deploy, and a rollback rolls the docs back too. The same job marks the
+tag's GitHub release **Latest**: until then latest stays on the release
+production ran before, so `releases/latest` always hands out the CLI the
+hosted server runs, a failed deploy leaves it alone, and a rollback moves
+it back.
+
+Before any of that, the deploy waits for `ci.yml` to have passed on the
+tagged commit: the release build runs only the unit tests, and the
+Postgres integration tests and the race detector live in `ci.yml`.
 
 **Rolling means two tasks for a moment.** The new task must be healthy
 before the old one is stopped, so for ~30 seconds both serve traffic and

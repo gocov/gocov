@@ -53,7 +53,9 @@ for tool in gh curl jq; do
   command -v "$tool" >/dev/null 2>&1 || { echo "verify-release: $tool is required but not installed" >&2; exit 2; }
 done
 
-# The version under test: the argument, or whatever gocov released last.
+# The version under test: the argument, or gocov's latest release — the
+# one app.gocov.dev runs, since deploy.yml marks a release latest only
+# once it is live.
 tag=${1:-}
 if [ -z "$tag" ]; then
   tag=$(gh release view --repo "$CLI_REPO" --json tagName --jq .tagName 2>/dev/null)

@@ -29,7 +29,9 @@ name: deploy
 # job moves the docs-live branch to the tag, and Cloudflare Workers Builds
 # (production branch docs-live, not main) builds and publishes the site
 # from there. The docs never describe a release the app is not running
-# yet, and a rollback takes them back with it.
+# yet, and a rollback takes them back with it. The same job marks the
+# tag's GitHub release latest, so releases/latest is the CLI that matches
+# the hosted server — and a rollback moves that back too.
 
 on:
   workflow_call:
@@ -269,3 +271,9 @@ jobs:
               -f ref=refs/heads/docs-live -f sha="$sha" --jq .object.sha
           fi
           echo "docs-live -> $TAG ($sha)"
+
+      - name: Mark the release latest
+        # Only now: until here latest stays on the release production ran
+        # before (release-please.yml puts it back there, and a hand-cut
+        # tag is created not latest), so a failed deploy leaves it there.
+        run: gh release edit "$TAG" -R "$REPO" --latest
