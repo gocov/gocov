@@ -8,7 +8,10 @@
 # Docker Hub for both architectures with the new CLI baked in, the pipe's
 # tag has to exist on *both* of its remotes, and the GitLab component has
 # to pin the new CLI, reach its gitlab.com mirror and be released to the
-# CI/CD Catalog there. Checked by hand until now — which is how the pipe
+# CI/CD Catalog there. And once it is live, "latest" has to follow it: the
+# GitHub release marked Latest and the server image's floating X.Y and
+# latest tags, which deploy.yml moves only after the deploy. Checked by
+# hand until now — which is how the pipe
 # spent ten days in August shipping a CLI two releases old without anyone
 # noticing.
 #
@@ -18,7 +21,7 @@
 # working tree is not what users get.
 #
 # Usage:
-#   scripts/verify-release.sh            # verify the newest gocov release
+#   scripts/verify-release.sh            # verify the newest gocov release (by version)
 #   scripts/verify-release.sh v0.12.0    # verify a specific one
 #
 # Needs: gh (authenticated), curl, jq. docker is optional — without it the
@@ -53,14 +56,16 @@ for tool in gh curl jq; do
   command -v "$tool" >/dev/null 2>&1 || { echo "verify-release: $tool is required but not installed" >&2; exit 2; }
 done
 
-# The version under test: the argument, or gocov's latest release — the
-# one app.gocov.dev runs, since deploy.yml marks a release latest only
-# once it is live.
-tag=${1:-}
-if [ -z "$tag" ]; then
-  tag=$(gh release view --repo "$CLI_REPO" --json tagName --jq .tagName 2>/dev/null)
-  [ -n "$tag" ] || { echo "verify-release: could not read the latest $CLI_REPO release" >&2; exit 2; }
-fi
+# The newest published release by version — not the one marked latest:
+# deploy.yml moves latest only once a release is live, so a release whose
+# deploy failed is the newest but not latest, and verifying latest would
+# skip right past it. The "latest" checks below compare the two.
+newest=$(gh release list --repo "$CLI_REPO" --limit 30 --exclude-drafts --exclude-pre-releases \
+  --json tagName --jq '.[].tagName' 2>/dev/null | sort -V | tail -1)
+
+# The version under test: the argument, or the newest release.
+tag=${1:-$newest}
+[ -n "$tag" ] || { echo "verify-release: could not read the newest $CLI_REPO release" >&2; exit 2; }
 
 echo "verify-release: checking gocov $tag across four repos"
 
@@ -185,6 +190,21 @@ if [ -n "$docs_stale" ]; then
   bad "install snippets on main still name an older release" "$docs_stale" "expected $tag"
 else
   ok "install snippets on main all name $tag"
+fi
+
+# releases/latest is what an unpinned download gets; deploy.yml marks a
+# release latest once app.gocov.dev runs it. Only the newest release can
+# be latest, so an older tag under test skips this.
+if [ "$tag" != "$newest" ]; then
+  skip "did not check that $tag is the latest release" "it is not the newest one ($newest is)"
+else
+  latest=$(gh release view --repo "$CLI_REPO" --json tagName --jq .tagName 2>/dev/null)
+  if [ "$latest" = "$tag" ]; then
+    ok "release $tag is marked latest"
+  else
+    bad "release $tag is not marked latest (${latest:-nothing} is)" \
+      "deploy.yml's promote job marks it once the deploy passes — did the deploy fail?"
+  fi
 fi
 
 # ------------------------------------------------------------- action --
@@ -358,7 +378,7 @@ head2 "ghcr.io/$SERVER_IMAGE"
 
 # The server image is what production deploys and what self-hosters pull;
 # both pin the exact release tag, so a tag that is missing or half-built
-# is a failed deploy waiting for its approval click.
+# is a failed deploy waiting to happen.
 ghcr_token=$(curl -fsSL "https://ghcr.io/token?scope=repository:$SERVER_IMAGE:pull" 2>/dev/null | jq -r .token 2>/dev/null)
 if [ -z "$ghcr_token" ] || [ "$ghcr_token" = null ]; then
   bad "could not get a GHCR pull token for $SERVER_IMAGE" "is the package public?"
@@ -385,6 +405,32 @@ else
   else
     bad "ghcr.io/$SERVER_IMAGE:$tag has no valid build provenance from $CLI_REPO" \
       "the image job's attest step did not run, or was not pushed to the registry"
+  fi
+
+  # The floating tags are self-host conveniences that deploy.yml's promote
+  # job moves to a release once production runs it — by digest, so they
+  # must be the very same image, not a rebuild. Only for the newest
+  # release: an older one has rightly been moved past.
+  minor=${tag#v}; minor=${minor%.*}
+  if [ "$tag" != "$newest" ]; then
+    skip "did not check :$minor and :latest" "$tag is not the newest release ($newest is)"
+  else
+    digest_of() {
+      curl -fsSI -H "Authorization: Bearer $ghcr_token" \
+        -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json" \
+        "https://ghcr.io/v2/$SERVER_IMAGE/manifests/$1" 2>/dev/null |
+        tr -d '\r' | awk -F': ' 'tolower($1) == "docker-content-digest" {print $2}'
+    }
+    want=$(digest_of "$tag")
+    for t in "$minor" latest; do
+      got=$(digest_of "$t")
+      if [ -n "$want" ] && [ "$got" = "$want" ]; then
+        ok ":$t is the same image as :$tag"
+      else
+        bad ":$t is not :$tag (${got:-missing}, want ${want:-unknown})" \
+          "deploy.yml's promote job moves it once the deploy passes — did the deploy fail?"
+      fi
+    done
   fi
 fi
 
