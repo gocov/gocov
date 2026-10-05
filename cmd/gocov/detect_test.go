@@ -242,6 +242,21 @@ func TestDetectMeta(t *testing.T) {
 	})
 }
 
+// TestDetectMetaRunGit reads HEAD through the real git: the checkout the
+// tests run in, shallow or not, always has it.
+func TestDetectMetaRunGit(t *testing.T) {
+	if _, err := runGit("rev-parse", "HEAD"); err != nil {
+		t.Skipf("not in a git checkout: %v", err)
+	}
+	got := detectMeta(func(string) string { return "" }, runGit, "")
+	if got.CommitMessage == "" || strings.ContainsAny(got.CommitMessage, "\r\n") {
+		t.Errorf("CommitMessage = %q, want HEAD's subject", got.CommitMessage)
+	}
+	if got.CommitAuthor == "" {
+		t.Error("CommitAuthor is empty, want HEAD's author")
+	}
+}
+
 func TestSlugFromRemote(t *testing.T) {
 	tests := []struct {
 		remote string
