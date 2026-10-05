@@ -5,7 +5,7 @@ name: wrappers
 #
 # release.yml calls this after the deploy (a wrapper release puts the new
 # CLI in front of every user of that wrapper, so it waits for the same
-# approval and smoke tests as app.gocov.dev). It can also be dispatched by
+# smoke tests as app.gocov.dev). It can also be dispatched by
 # hand with a released tag: when a deploy fails after its rollout, the
 # production side is fixed by dispatching deploy.yml, and this finishes
 # the release without re-running it.

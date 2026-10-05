@@ -144,7 +144,7 @@ moves `v1`, the pipe's builds the multi-arch image for Docker Hub, the component
 where the project's own pipeline creates the release the CI/CD Catalog lists. The release build queues each bump PR
 for auto-merge, so it merges itself once the checks its repo's `main` requires have passed — each wrapper's checks
 install the new CLI and upload with it — and a wrapper whose `main` requires no checks is left for a human, with a
-warning. So a full release across all four repos is one PR merge and the deploy approval; between the gocov release
+warning. So a full release across all four repos is one PR merge; between the gocov release
 and the wrapper merges, `verify-release` reports the wrappers as behind, which is true.
 
 The mirrors are the seams. The pipe's tag workflow pushes Bitbucket only when the

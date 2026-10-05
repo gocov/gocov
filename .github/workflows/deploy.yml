@@ -16,10 +16,14 @@ name: deploy
 # rollout; ECS's own circuit breaker rolls a failed rollout back to the
 # previous revision before this job even reports it.
 #
-# The job is gated by the `production` environment, whose required
-# reviewer is the human approval every deploy waits for. The AWS side is
-# an OIDC role that may do only what a deploy needs: register a task
-# definition and update the one service. Setup is in deploy/README.md.
+# The job runs in the `production` environment, which has no required
+# reviewer: merging the release PR is the human gate (a dispatch is its
+# own), and on the release path release.yml's self-host smoke test has
+# already passed by the time this runs. What the environment still does
+# is scope the AWS side — an OIDC role trusted only for this environment,
+# which takes deploys from main and release tags alone, and which may do
+# only what a deploy needs: register a task definition and update the one
+# service. Setup is in deploy/README.md.
 #
 # Once the app is live on the tag, docs.gocov.dev follows it: the docs
 # job moves the docs-live branch to the tag, and Cloudflare Workers Builds
@@ -236,9 +240,9 @@ jobs:
             exit 1; }
 
   docs:
-    # After the rollout and smoke tests, so it rides the same approval. A
-    # job of its own: branch write access stays out of the job that holds
-    # the AWS role.
+    # After the rollout and smoke tests, so the docs never go live ahead
+    # of a deploy that failed. A job of its own: branch write access stays
+    # out of the job that holds the AWS role.
     needs: deploy
     runs-on: ubuntu-latest
     concurrency:

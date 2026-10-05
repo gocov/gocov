@@ -279,10 +279,13 @@ jobs:
 
   # Deploying is a separate, reusable workflow so a rollback is the same
   # job dispatched by hand with an older tag. Its job carries
-  # environment: production, so the run waits here for approval.
+  # environment: production, which scopes the AWS role; nothing waits on
+  # a reviewer here, merging the release PR was the approval. It waits
+  # for selfhost-smoke instead, so an image that cannot boot, migrate or
+  # take an upload never reaches app.gocov.dev.
   # contents: write is for its docs job, which moves docs-live to the tag.
   deploy:
-    needs: image
+    needs: [image, selfhost-smoke]
     uses: ./.github/workflows/deploy.yml
     with:
       tag: ${{ inputs.tag || github.ref_name }}
