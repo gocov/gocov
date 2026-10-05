@@ -25,7 +25,7 @@ aws ecs describe-services --cluster gocov --services gocov-server \
 t=$(aws ecs list-tasks --cluster gocov --service-name gocov-server --query taskArns --output text)
 aws ecs describe-tasks --cluster gocov --tasks $t \
   --query 'tasks[].{image:containers[0].image,health:healthStatus,last:lastStatus,started:startedAt}' --output table
-gh release view -R gocov/gocov --json tagName,publishedAt -q '"\(.tagName) \(.publishedAt)"'
+gh release list -R gocov/gocov -L 2 --json tagName,publishedAt,isLatest -q '.[] | "\(.tagName) \(.publishedAt) latest=\(.isLatest)"'
 aws cloudwatch describe-alarms --query 'MetricAlarms[].{name:AlarmName,state:StateValue,since:StateUpdatedTimestamp}' --output table
 tg=$(aws elbv2 describe-target-groups --names gocov-server --query 'TargetGroups[0].TargetGroupArn' --output text)
 aws elbv2 describe-target-health --target-group-arn "$tg" \
@@ -39,8 +39,9 @@ aws logs tail /gocov/server --since 30m --format short | grep -iE 'error|panic|l
 ## How to read it
 
 - **Healthy** means: one PRIMARY deployment with `rolloutState: COMPLETED`, running
-  equals desired, the task `HEALTHY` and `RUNNING`, its image tag equal to the latest
-  release tag, the ALB target `healthy`, `/healthz` 200, every alarm `OK`
+  equals desired, the task `HEALTHY` and `RUNNING`, its image tag equal to the newest
+  release tag (which is then also the one marked latest), the ALB target `healthy`,
+  `/healthz` 200, every alarm `OK`
   (`gocov-unhealthy-targets` sits in `INSUFFICIENT_DATA` when nothing has been
   unhealthy; that is normal).
 - **Rollout still IN_PROGRESS** with two deployments: a deploy is mid-flight. Say which
@@ -49,8 +50,10 @@ aws logs tail /gocov/server --since 30m --format short | grep -iE 'error|panic|l
   succeeded; `deploy.yml` samples `rolloutState` once right after the stability waiter
   and can lose that race. Say so explicitly, and note that the smoke steps after the
   check were skipped, so a real upload has not been proven for that release.
-- **Image tag behind the latest release**: the release was cut but not deployed (the
-  deploy job failed or was skipped before rolling).
+- **Image tag behind the newest release**: the release was cut but not deployed (the
+  deploy job failed, or was skipped — the `ci` gate refuses a commit whose `ci.yml`
+  run is red). The newest release is then not marked latest: `deploy.yml` marks it
+  only once the deploy and its smoke tests pass.
   Point at the run URL. The rollback and the manual deploy are the same command,
   which the user runs, never you: `gh workflow run deploy.yml -f tag=vX.Y.Z`.
 - **Image from ECR `gocov-server-dev`**: a branch deploy from a laptop

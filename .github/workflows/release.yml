@@ -104,7 +104,9 @@ jobs:
           set -euo pipefail
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             # Hand-cut tag: nothing exists yet, so this is the whole job.
-            gh release create "$TAG" dist/* --title "$TAG" --generate-notes
+            # Not marked latest: deploy.yml does that once app.gocov.dev
+            # runs the tag, as on the release-please path.
+            gh release create "$TAG" dist/* --title "$TAG" --generate-notes --latest=false
             exit 0
           fi
 
@@ -277,15 +279,59 @@ jobs:
     permissions:
       contents: read
 
+  # The full CI — Postgres integration tests, -race, the web and docs
+  # builds — runs on the push to main, not here, and nothing else ties the
+  # deploy to it: the release job above runs only the unit tests. So the
+  # deploy waits for ci.yml to have passed on the tagged commit. It is
+  # usually done long before the image is, so this costs nothing on a
+  # good day. A hand-cut tag on a commit that never reached main has no
+  # such run and stops here.
+  ci:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Wait for ci.yml on the tagged commit
+        run: |
+          set -euo pipefail
+          sha=$(gh api "repos/$REPO/commits/$TAG" --jq .sha)
+          echo "waiting for ci.yml on $sha ($TAG)"
+          for i in $(seq 1 60); do # up to 30 minutes, 30 s apart
+            gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$sha&event=push" \
+              --jq '[.workflow_runs[] | {status, conclusion, url: .html_url}]' >runs.json
+            if jq -e 'any(.[]; .conclusion == "success")' runs.json >/dev/null; then
+              jq -r '.[] | select(.conclusion == "success") | "ci.yml passed: \(.url)"' runs.json
+              exit 0
+            fi
+            if jq -e 'length > 0 and all(.[]; .status == "completed")' runs.json >/dev/null; then
+              echo "::error::ci.yml did not pass on $sha — not deploying $TAG"
+              jq -r '.[] | "\(.conclusion): \(.url)"' runs.json
+              exit 1
+            fi
+            if [ "$i" -ge 10 ] && jq -e 'length == 0' runs.json >/dev/null; then
+              echo "::error::no ci.yml push run for $sha after 5 minutes — is $TAG on main?"
+              exit 1
+            fi
+            sleep 30
+          done
+          echo "::error::ci.yml on $sha did not finish within 30 minutes"
+          exit 1
+
   # Deploying is a separate, reusable workflow so a rollback is the same
   # job dispatched by hand with an older tag. Its job carries
   # environment: production, which scopes the AWS role; nothing waits on
   # a reviewer here, merging the release PR was the approval. It waits
-  # for selfhost-smoke instead, so an image that cannot boot, migrate or
-  # take an upload never reaches app.gocov.dev.
-  # contents: write is for its docs job, which moves docs-live to the tag.
+  # for selfhost-smoke and ci instead, so an image that cannot boot,
+  # migrate or take an upload, or a commit whose full CI is red, never
+  # reaches app.gocov.dev.
+  # contents: write is for its docs job, which moves docs-live to the tag
+  # and marks the release latest.
   deploy:
-    needs: [image, selfhost-smoke]
+    needs: [image, selfhost-smoke, ci]
     uses: ./.github/workflows/deploy.yml
     with:
       tag: ${{ inputs.tag || github.ref_name }}
