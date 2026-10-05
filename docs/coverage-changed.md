@@ -10,10 +10,10 @@ covered over total. A file with 300 statements moves the number thirty times as 
 well-tested small package can land and the total barely twitches. A report with no statements at all reads 0%, not
 100%.
 
-Where coverage is shown line by line — diff coverage, the source view, a file's uncovered and newly uncovered ranges —
-one rule applies everywhere: a line is executable when a statement spans it, and covered when a statement on it ran. A
-line holding two blocks, one of which ran, is covered; an empty body (Go's `func noop() {}`) is not code a test can
-miss, just as it carries no weight in the total.
+Where coverage is shown line by line — diff coverage, the source view and its newly uncovered lines, a file's uncovered
+ranges — one rule applies everywhere: a line is executable when a statement spans it, and covered when a statement on it
+ran. A line holding two blocks, one of which ran, is covered; an empty body (Go's `func noop() {}`) is not code a test
+can miss, just as it carries no weight in the total.
 
 ## What it is compared against
 
@@ -45,6 +45,11 @@ passing because coverage still holds against the default branch. Uploads judged 
 leave the drop out of the explanation.
 
 So a delta can move without your coverage moving — because the baseline it points at changed.
+
+The **Coverage changed** filter on a files table compares against that same baseline. It lists the files whose
+percentage moved, the files the baseline did not have, and the files with lines that ran at the baseline and miss now —
+even when the percentage holds, because a newly covered line elsewhere in the file made up for the lost one. Open such a
+file and the source view marks those lines as newly uncovered.
 
 ## A part did not run
 
