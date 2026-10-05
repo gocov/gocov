@@ -29,9 +29,10 @@ name: deploy
 # job moves the docs-live branch to the tag, and Cloudflare Workers Builds
 # (production branch docs-live, not main) builds and publishes the site
 # from there. The docs never describe a release the app is not running
-# yet, and a rollback takes them back with it. The same job marks the
-# tag's GitHub release latest, so releases/latest is the CLI that matches
-# the hosted server — and a rollback moves that back too.
+# yet, and a rollback takes them back with it. The promote job does the
+# same for "latest": it marks the tag's GitHub release latest and moves
+# the image's X.Y and latest tags to it, so releases/latest and
+# gocov-server:latest are what the hosted server runs.
 
 on:
   workflow_call:
@@ -272,8 +273,52 @@ jobs:
           fi
           echo "docs-live -> $TAG ($sha)"
 
+  promote:
+    # "Latest" means what app.gocov.dev runs, for the GitHub release and
+    # for the image's floating tags alike, so both move only here, after
+    # the rollout and its smoke tests — and on a rollback they move back
+    # with it. Until then latest stays on the release production ran
+    # before (release-please.yml puts it back there, and a hand-cut tag is
+    # created not latest), so a failed deploy leaves both alone. A job of
+    # its own, like docs: release and registry write access stay out of
+    # the job that holds the AWS role.
+    needs: deploy
+    runs-on: ubuntu-latest
+    concurrency:
+      group: promote
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      packages: write
+    env:
+      TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
       - name: Mark the release latest
-        # Only now: until here latest stays on the release production ran
-        # before (release-please.yml puts it back there, and a hand-cut
-        # tag is created not latest), so a failed deploy leaves it there.
         run: gh release edit "$TAG" -R "$REPO" --latest
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Move the image's X.Y and latest tags to it
+        # The image job pushes only vX.Y.Z; X.Y and latest are self-host
+        # conveniences, so a self-hoster pulling either never gets an image
+        # production has not run. imagetools create from a single index
+        # re-pushes its exact bytes, so the floating tags keep the digest
+        # the build provenance is attached to; checked below, not assumed.
+        run: |
+          set -euo pipefail
+          minor=${TAG#v}; minor=${minor%.*}
+          docker buildx imagetools create \
+            -t "$IMAGE:$minor" -t "$IMAGE:latest" "$IMAGE:$TAG"
+          want=$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest.Digest}}')
+          for t in "$minor" latest; do
+            got=$(docker buildx imagetools inspect "$IMAGE:$t" --format '{{json .Manifest.Digest}}')
+            [ "$got" = "$want" ] || {
+              echo "::error::$IMAGE:$t is $got, want $want (the digest of $TAG)"; exit 1; }
+            echo "$IMAGE:$t -> $TAG ($want)"
+          done

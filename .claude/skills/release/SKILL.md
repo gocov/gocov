@@ -128,9 +128,9 @@ No human gate in this run: once the image and the self-host smoke test are green
 smoke-tests `/healthz` plus a real upload from `gocov/smoke`.
 
 The build publishes: 10 binaries + `checksums.txt` on the release, the GHCR server image
-(`vX.Y.Z`, `X.Y`, `latest`), and — after the deploy is green — the three wrapper bump PRs.
-The GitHub release is marked **Latest** only then, by the deploy's `docs` job; until the
-deploy passes, latest stays on the previous release.
+(`vX.Y.Z`), and — after the deploy is green — the three wrapper bump PRs. Only then does
+the deploy's `promote` job mark the GitHub release **Latest** and move the image's `X.Y`
+and `latest` tags to it; until the deploy passes, both stay on the previous release.
 
 ## When the release contains a server-side feature the wrappers use
 
@@ -195,7 +195,7 @@ the verify score.
 
 - The release build's jobs live **under the release-please run** (`publish / release`,
   `publish / image`, `publish / ci`, `publish / wrappers / bump-wrappers`, `publish / selfhost-smoke`,
-  `publish / deploy / deploy`, `publish / deploy / docs`, `publish / wrappers / verify / verify`), because release-please *calls* `release.yml`.
+  `publish / deploy / deploy`, `publish / deploy / docs`, `publish / deploy / promote`, `publish / wrappers / verify / verify`), because release-please *calls* `release.yml`.
   `gh run list --workflow release.yml` shows no new run — read
   `gh api repos/gocov/gocov/actions/runs/<release-please-run-id>/jobs` and
   `.../pending_deployments` instead. A run in status `waiting` is the deploy gate.

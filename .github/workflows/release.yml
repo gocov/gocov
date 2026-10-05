@@ -162,13 +162,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Image tags
-        id: tags
-        # vX.Y.Z also lands on X.Y and latest. Those two float and are for
-        # self-host convenience only; production pins the full version.
-        run: |
-          minor=${TAG#v}; minor=${minor%.*}
-          echo "minor=$minor" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         id: push
         with:
@@ -176,12 +169,11 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: VERSION=${{ env.TAG }}
-          tags: |
-            ghcr.io/gocov/gocov-server:${{ env.TAG }}
-            ghcr.io/gocov/gocov-server:${{ steps.tags.outputs.minor }}
-            ghcr.io/gocov/gocov-server:latest
+          # Only the exact version: deploy.yml's promote job moves X.Y and
+          # latest to it once app.gocov.dev runs it.
+          tags: ghcr.io/gocov/gocov-server:${{ env.TAG }}
       # The same provenance for the image, attached to the manifest digest
-      # (which all three tags share) and pushed to GHCR next to it, so a
+      # (which the floating tags share once promoted) and pushed to GHCR next to it, so a
       # self-hoster can check what they are about to run:
       #
       #   gh attestation verify oci://ghcr.io/gocov/gocov-server:vX.Y.Z --repo gocov/gocov
@@ -328,8 +320,9 @@ jobs:
   # for selfhost-smoke and ci instead, so an image that cannot boot,
   # migrate or take an upload, or a commit whose full CI is red, never
   # reaches app.gocov.dev.
-  # contents: write is for its docs job, which moves docs-live to the tag
-  # and marks the release latest.
+  # contents: write is for its docs job, which moves docs-live to the tag,
+  # and its promote job, which marks the release latest; packages: write
+  # is for promote too, which moves the image's X.Y and latest tags.
   deploy:
     needs: [image, selfhost-smoke, ci]
     uses: ./.github/workflows/deploy.yml
@@ -343,3 +336,4 @@ jobs:
     permissions:
       id-token: write
       contents: write
+      packages: write
