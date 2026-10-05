@@ -30,6 +30,11 @@ Report in this order:
    - **docker.io / ghcr.io** — image missing an architecture or reporting an older
      version: the image build for that tag (`gh run list -R gocov/upload-pipe`, or
      `gh run list --workflow release.yml` here).
+   - **latest** — the release not marked Latest, or GHCR's `X.Y` / `latest` not the
+     same digest as `vX.Y.Z`: `deploy.yml`'s `promote` job did not run, so the deploy
+     failed or was skipped (the `publish / ci` gate or the smoke tests). Point at the
+     release run; the fix is the user's `gh workflow run deploy.yml -f tag=<TAG>`, which
+     re-runs promote once the deploy passes.
 3. Every `skip`, with its reason. The two "open the image and read its version" checks
    skip without docker; the `verify-release` workflow has docker:
    `gh workflow run verify-release.yml -f tag=<TAG>`.

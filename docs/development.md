@@ -183,7 +183,10 @@ snippets and all three wrappers name the released CLI, that `gocov-action@v1` re
 that the pipe image is on Docker Hub and the server image on GHCR for both architectures, and that both images
 actually report the right version when opened, with each architecture's variant holding a binary built for that
 architecture. It also checks the pipe's tag reached Bitbucket and the component's tag and release reached gitlab.com —
-those repos release through two remotes, and a tag that lands on only one publishes nothing on the other silently. It
+those repos release through two remotes, and a tag that lands on only one publishes nothing on the other silently.
+For the newest release it also checks that "latest" followed the deploy: the GitHub release is marked Latest and the
+server image's `X.Y` and `latest` tags are the same digest as its `vX.Y.Z`, both of which `deploy.yml` moves only once
+app.gocov.dev runs the release — so a deploy that failed shows up here. It
 needs `gh`, `curl` and `jq`; `docker` is optional and only the last check needs it.
 
 The `verify-release` workflow runs it weekly and on demand, and the release build runs it as its last job, after the
