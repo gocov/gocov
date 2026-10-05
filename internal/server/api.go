@@ -179,12 +179,9 @@ type fileRowDTO struct {
 	BeforeCoveredStmts *int64 `json:"before_covered_stmts"`
 	BeforeTotalStmts   *int64 `json:"before_total_stmts"`
 	NewFile            bool   `json:"new_file"`
-	// NewlyUncovered is left out of the repo page's files card: a branch's
-	// standing is read from its coverage, not from what its latest commit
-	// lost (the commit's own upload page shows that).
-	NewlyUncovered  string `json:"newly_uncovered,omitempty"`
-	SourceChanged   bool   `json:"source_changed"`
-	CoverageChanged bool   `json:"coverage_changed"`
+	NewlyUncovered     string `json:"newly_uncovered"`
+	SourceChanged      bool   `json:"source_changed"`
+	CoverageChanged    bool   `json:"coverage_changed"`
 }
 
 // filesViewDTO is the files card: its rows, whether there was a baseline

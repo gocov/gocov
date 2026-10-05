@@ -204,7 +204,7 @@ export function FilesTable({
                         </td>
                         {newlyUncovered && (
                           <td className="hide-sm">
-                            {node.kind === "file" ? <UncoveredRanges ranges={node.row.newly_uncovered ?? ""} /> : dash}
+                            {node.kind === "file" ? <UncoveredRanges ranges={node.row.newly_uncovered} /> : dash}
                           </td>
                         )}
                       </>

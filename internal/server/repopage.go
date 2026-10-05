@@ -83,14 +83,11 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 		latest = trendReports[0]
 		base = core.CommitBaseline(r.Context(), s.store, repo, latest)
 		var err error
-		if files, lastUpload, err = s.loadCommitFilesView(r.Context(), repo, latest, base); err != nil {
+		// A branch's files card has no "newly uncovered" column: the
+		// branch's standing is its coverage, not what its latest commit
+		// lost (that commit's own page shows it).
+		if files, lastUpload, err = s.loadCommitFilesView(r.Context(), repo, latest, base, false); err != nil {
 			s.log.Warn("loading files for repo page", "commit", latest.CommitSHA, "err", err)
-		} else {
-			// The branch's files card shows no "newly uncovered" column;
-			// the rows still count as coverage-changed for its filter.
-			for i := range files.Files {
-				files.Files[i].NewlyUncovered = ""
-			}
 		}
 	})
 	wg.Wait()
@@ -168,7 +165,8 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 // baseline commit's parts merged the same way. A commit uploaded in parts
 // (backend, frontend) lists every part's files, not only the last part in.
 // It also returns the latest upload, one of the parts it read.
-func (s *Server) loadCommitFilesView(ctx context.Context, repo *store.Repo, latest, base *store.CommitReport) (*filesViewDTO, *store.Upload, error) {
+// withNewlyUncovered fills each row's newly uncovered ranges.
+func (s *Server) loadCommitFilesView(ctx context.Context, repo *store.Repo, latest, base *store.CommitReport, withNewlyUncovered bool) (*filesViewDTO, *store.Upload, error) {
 	var (
 		wg        sync.WaitGroup
 		uploads   map[int64]*store.Upload
@@ -192,7 +190,7 @@ func (s *Server) loadCommitFilesView(ctx context.Context, repo *store.Repo, late
 	if err != nil {
 		return nil, nil, err
 	}
-	view := buildFilesView(latest.DiffCoverage, uploads, files, baseFiles)
+	view := buildFilesView(latest.DiffCoverage, uploads, files, baseFiles, withNewlyUncovered)
 	view.Merged = true
 	return view, uploads[latest.UploadID], nil
 }

@@ -141,8 +141,8 @@ export interface FileRow {
   before_covered_stmts: number | null;
   before_total_stmts: number | null;
   new_file: boolean;
-  /** Ranges covered at the baseline but not now; absent on the repo page. */
-  newly_uncovered?: string;
+  /** Ranges covered at the baseline but not now; empty on the repo page. */
+  newly_uncovered: string;
   source_changed: boolean;
   coverage_changed: boolean;
 }
