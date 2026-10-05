@@ -131,6 +131,17 @@ test("with a baseline the table compares, and a new file says it is new", () => 
   expect(screen.getByText("44-46")).toBeInTheDocument();
 });
 
+test("a branch's table leaves out the newly uncovered column", () => {
+  render(
+    <MemoryRouter>
+      <FilesTable view={withBase} heading="Files on main" newlyUncovered={false} />
+    </MemoryRouter>,
+  );
+  expect(screen.getByRole("columnheader", { name: /Before/ })).toBeInTheDocument();
+  expect(screen.queryByRole("columnheader", { name: "Newly uncovered" })).not.toBeInTheDocument();
+  expect(screen.queryByText("44-46")).not.toBeInTheDocument();
+});
+
 test("without a baseline the table counts statements instead", () => {
   draw(noBase);
   expect(screen.queryByRole("group", { name: "Filter files" })).not.toBeInTheDocument();

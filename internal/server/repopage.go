@@ -85,6 +85,12 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 		var err error
 		if files, lastUpload, err = s.loadCommitFilesView(r.Context(), repo, latest, base); err != nil {
 			s.log.Warn("loading files for repo page", "commit", latest.CommitSHA, "err", err)
+		} else {
+			// The branch's files card shows no "newly uncovered" column;
+			// the rows still count as coverage-changed for its filter.
+			for i := range files.Files {
+				files.Files[i].NewlyUncovered = ""
+			}
 		}
 	})
 	wg.Wait()

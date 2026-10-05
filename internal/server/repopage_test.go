@@ -135,8 +135,9 @@ func TestAPIRepoPage(t *testing.T) {
 	if err := f.store.UpdateRepo(t.Context(), f.repo); err != nil {
 		t.Fatal(err)
 	}
+	// c2 leaves a.go's lines 7-9 uncovered that c1 covered.
 	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"},
-		"mode: set\nexample.com/m/a.go:1.1,5.2 10 3\n") // 100%
+		"mode: set\nexample.com/m/a.go:1.1,5.2 6 1\nexample.com/m/a.go:7.1,9.2 2 1\nexample.com/m/b.go:1.1,3.2 2 1\n") // 100%
 	doUpload(t, f, "secret-token", map[string]string{"commit": "c2", "branch": "main"}, testProfile) // 80%
 	doUpload(t, f, "secret-token", map[string]string{"commit": "f1", "branch": "feat"}, testProfile)
 
@@ -187,6 +188,9 @@ func TestAPIRepoPage(t *testing.T) {
 	}
 	if row.Uncovered == "" || !row.CoverageChanged {
 		t.Errorf("file row lost its uncovered ranges or its change flag: %+v", row)
+	}
+	if row.NewlyUncovered != "" {
+		t.Errorf("newly uncovered = %q, want none on the repo page's files", row.NewlyUncovered)
 	}
 	// The branch filter moves the summary, trend and files with it.
 	feat := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets?branch=feat"))
