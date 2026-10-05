@@ -122,6 +122,37 @@ func TestConcurrentUploadsShareOneRefresh(t *testing.T) {
 	}
 }
 
+// lockWinnerStore stands in for a request that held the grant lock just
+// before us: by the time the lock is ours, its token is in the cache.
+type lockWinnerStore struct {
+	*storemem.Store
+	f *Forges
+}
+
+func (s lockWinnerStore) WithGrantLock(ctx context.Context, workspaceID int64, fn func(context.Context, store.GrantTx) error) error {
+	s.f.CacheGrantToken("bitbucket", workspaceID, "at-winner", time.Hour)
+	return s.Store.WithGrantLock(ctx, workspaceID, fn)
+}
+
+func TestCacheFilledWhileWaitingForLock(t *testing.T) {
+	// The burst above takes this path only when the scheduler lets a
+	// request miss the cache before the first refresh lands; this pins
+	// it: a request that missed the cache and then waited out another's
+	// refresh uses that token instead of spending a second one.
+	bb := &fakeBB{client: forgefake.New()}
+	f, st := newForges(t, bb)
+	ws := connectedWorkspace(t, st, "acme")
+	f.Store = lockWinnerStore{Store: st, f: f}
+
+	token, err := f.accessToken(t.Context(), f.grants["bitbucket"], ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "at-winner" || bb.refreshes != 0 {
+		t.Errorf("token = %q after %d refreshes, want the lock winner's at-winner and none", token, bb.refreshes)
+	}
+}
+
 func TestRotatedRefreshTokenIsPersisted(t *testing.T) {
 	// Every refresh invalidates the stored token, so losing the new one
 	// breaks the next refresh: it has to reach the store before the
