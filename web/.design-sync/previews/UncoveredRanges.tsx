@@ -24,7 +24,6 @@ export function InAFilesTable() {
           <thead>
             <tr>
               <th>File</th>
-              <th>Newly uncovered</th>
               <th>Uncovered</th>
             </tr>
           </thead>
@@ -34,18 +33,12 @@ export function InAFilesTable() {
                 <Mono>internal/server/upload.go</Mono>
               </td>
               <td>
-                <UncoveredRanges ranges="88, 91" />
-              </td>
-              <td>
                 <UncoveredRanges ranges="12-18, 40, 55-57, 61, 88, 91" max={4} />
               </td>
             </tr>
             <tr>
               <td>
                 <Mono>internal/core/report.go</Mono>
-              </td>
-              <td>
-                <UncoveredRanges ranges="" />
               </td>
               <td>
                 <UncoveredRanges ranges="104-110, 119" />

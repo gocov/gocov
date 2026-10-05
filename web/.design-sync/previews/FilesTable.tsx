@@ -10,7 +10,6 @@ const file = (path: string, over: Record<string, unknown> = {}) => ({
   before_covered_stmts: null,
   before_total_stmts: null,
   new_file: false,
-  newly_uncovered: "",
   source_changed: false,
   coverage_changed: false,
   ...over,
@@ -33,7 +32,6 @@ export function AgainstABaseline() {
             before_total_stmts: 50,
             source_changed: true,
             coverage_changed: true,
-            newly_uncovered: "44-46",
             uncovered: "44-46, 88, 91",
           }),
           file("internal/server/spa.go", {
