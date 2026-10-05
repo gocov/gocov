@@ -290,7 +290,7 @@ func buildFilesView(diff *diffcov.Result, uploads map[int64]*store.Upload, files
 				}
 				// Lines that ran at the baseline and miss now are a change
 				// even when the percentage holds.
-				if newlyUncovered(f.Blocks, bf.Blocks) != "" {
+				if !row.CoverageChanged && len(regressedSpans(f.Blocks, bf.Blocks)) > 0 {
 					row.CoverageChanged = true
 				}
 			} else {
@@ -439,19 +439,12 @@ func lineCounts(blocks []profile.Block, limit int) map[int]int {
 	return counts
 }
 
-// newlyUncovered lists the lines a file executes-but-misses now that were hit
-// at the baseline — the regressions this upload introduced, matched by line
-// number. Best effort without a line-level diff, the same basis the source
-// view uses to flag newly uncovered lines, and diffcov's line rule. It works
-// on spans rather than lines, since this renders on anonymous report pages
-// from uploader-declared ranges.
-func newlyUncovered(cur, base []profile.Block) string {
-	regressed := diffcov.IntersectSpans(diffcov.MissedSpans(cur), diffcov.MergedSpans(base, diffcov.Ran))
-	parts := make([]string, len(regressed))
-	for i, sp := range regressed {
-		parts[i] = sp.String()
-	}
-	return strings.Join(parts, ", ")
+// regressedSpans returns the lines a file executes-but-misses now that were
+// hit at the baseline, matched by line number — best effort without a
+// line-level diff. Spans rather than lines, because uploader-declared
+// blocks may claim millions of lines.
+func regressedSpans(cur, base []profile.Block) []diffcov.Span {
+	return diffcov.IntersectSpans(diffcov.MissedSpans(cur), diffcov.MergedSpans(base, diffcov.Ran))
 }
 
 // handleUploadProfile implements GET /uploads/{id}/profile — the raw coverage

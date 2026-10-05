@@ -98,7 +98,7 @@ func (s *Server) buildSourcePage(w http.ResponseWriter, r *http.Request) (*sourc
 		// Compare against the file at the previous baseline commit to flag
 		// regressions and show a coverage delta.
 		if base != nil {
-			markNewlyUncovered(dto.Lines, base.Blocks)
+			markNewlyUncovered(dto.Lines, file.Blocks, base.Blocks)
 			dto.Delta = new(file.Pct - base.Pct)
 		}
 	}
@@ -140,9 +140,6 @@ type sourceLineDTO struct {
 	Hits    *int   `json:"hits"`
 	NewMiss bool   `json:"new_miss"` // uncovered now but covered at the baseline commit
 }
-
-// missed reports an executable line that did not run.
-func (l sourceLineDTO) missed() bool { return l.Hits != nil && *l.Hits == 0 }
 
 // handleAPISource implements GET /api/ui/uploads/{id}/files/{path...}.
 func (s *Server) handleAPISource(w http.ResponseWriter, r *http.Request) {
@@ -402,15 +399,15 @@ func (s *Server) commitBaseFileFor(ctx context.Context, repo *store.Repo, u *sto
 	return f
 }
 
-// markNewlyUncovered flags each line that is uncovered now but was covered
-// at the baseline, and returns how many. Matching is by line number, so it
-// surfaces regressions on a best-effort basis without a full diff.
-func markNewlyUncovered(lines []sourceLineDTO, baseBlocks []profile.Block) int {
-	baseCounts := lineCounts(baseBlocks, len(lines))
+// markNewlyUncovered flags the lines regressedSpans finds between the file's
+// blocks and the baseline's — the same rule the files table counts as
+// coverage-changed — and returns how many. Spans past the end of the
+// source have no line to mark.
+func markNewlyUncovered(lines []sourceLineDTO, cur, base []profile.Block) int {
 	n := 0
-	for i := range lines {
-		if lines[i].missed() && baseCounts[lines[i].No] > 0 {
-			lines[i].NewMiss = true
+	for _, sp := range regressedSpans(cur, base) {
+		for l := sp.Start; l <= min(sp.End, len(lines)); l++ {
+			lines[l-1].NewMiss = true
 			n++
 		}
 	}

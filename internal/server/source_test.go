@@ -288,7 +288,7 @@ func TestRenderSourceLines(t *testing.T) {
 	if lines[2].Hits != nil {
 		t.Errorf("line 3 must be neutral: %+v", lines[2])
 	}
-	if !lines[3].missed() {
+	if lines[3].Hits == nil || *lines[3].Hits != 0 {
 		t.Errorf("line 4 = %+v", lines[3])
 	}
 	// Overlapping blocks: a line ran if any block over it did, and shows the
@@ -298,7 +298,7 @@ func TestRenderSourceLines(t *testing.T) {
 		{StartLine: 2, EndLine: 2, NumStmts: 1, Count: 5},
 		{StartLine: 2, EndLine: 2, NumStmts: 1, Count: 2},
 	})
-	if !overlap[0].missed() || overlap[1].Hits == nil || *overlap[1].Hits != 5 {
+	if overlap[0].Hits == nil || *overlap[0].Hits != 0 || overlap[1].Hits == nil || *overlap[1].Hits != 5 {
 		t.Errorf("overlapping blocks = %+v", overlap)
 	}
 	// Blocks beyond EOF must not panic.
@@ -318,16 +318,17 @@ func TestRenderSourceLines(t *testing.T) {
 func TestMarkNewlyUncovered(t *testing.T) {
 	// Line 2 is uncovered now; the baseline had it covered → a regression.
 	// Line 4 is uncovered now and was already uncovered → not new.
-	lines := renderSourceLines([]byte("a\nb\nc\nd\n"), []profile.Block{
+	cur := []profile.Block{
 		{StartLine: 1, EndLine: 1, NumStmts: 1, Count: 3},
 		{StartLine: 2, EndLine: 2, NumStmts: 1, Count: 0},
 		{StartLine: 4, EndLine: 4, NumStmts: 1, Count: 0},
-	})
+	}
+	lines := renderSourceLines([]byte("a\nb\nc\nd\n"), cur)
 	base := []profile.Block{
 		{StartLine: 2, EndLine: 2, NumStmts: 1, Count: 5}, // was covered
 		{StartLine: 4, EndLine: 4, NumStmts: 1, Count: 0}, // already uncovered
 	}
-	n := markNewlyUncovered(lines, base)
+	n := markNewlyUncovered(lines, cur, base)
 	if n != 1 {
 		t.Fatalf("newly uncovered = %d, want 1", n)
 	}
@@ -336,6 +337,13 @@ func TestMarkNewlyUncovered(t *testing.T) {
 	}
 	if lines[3].NewMiss {
 		t.Errorf("line 4 was already uncovered, not new")
+	}
+
+	// A regression past the end of the source has no line to mark.
+	past := []profile.Block{{StartLine: 3, EndLine: 9, NumStmts: 1, Count: 0}}
+	short := renderSourceLines([]byte("a\nb\nc\n"), past)
+	if n := markNewlyUncovered(short, past, []profile.Block{{StartLine: 1, EndLine: 9, NumStmts: 1, Count: 1}}); n != 1 || !short[2].NewMiss {
+		t.Errorf("past EOF: marked %d, lines %+v; want only line 3", n, short)
 	}
 }
 

@@ -45,7 +45,16 @@ func TestUncoveredRanges(t *testing.T) {
 	}
 }
 
-func TestNewlyUncovered(t *testing.T) {
+// spansString renders spans the way the report pages print line ranges.
+func spansString(spans []diffcov.Span) string {
+	parts := make([]string, len(spans))
+	for i, sp := range spans {
+		parts[i] = sp.String()
+	}
+	return strings.Join(parts, ", ")
+}
+
+func TestRegressedSpans(t *testing.T) {
 	b := func(start, end, stmts, count int) profile.Block {
 		return profile.Block{StartLine: start, EndLine: end, NumStmts: stmts, Count: count}
 	}
@@ -64,16 +73,16 @@ func TestNewlyUncovered(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := newlyUncovered(tt.cur, tt.base); got != tt.want {
-				t.Errorf("newlyUncovered() = %q, want %q", got, tt.want)
+			if got := spansString(regressedSpans(tt.cur, tt.base)); got != tt.want {
+				t.Errorf("regressedSpans() = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
-// TestNewlyUncoveredMatchesLineByLineRule checks the span arithmetic against
+// TestRegressedSpansMatchesLineByLineRule checks the span arithmetic against
 // the plain per-line definition on many small random block sets.
-func TestNewlyUncoveredMatchesLineByLineRule(t *testing.T) {
+func TestRegressedSpansMatchesLineByLineRule(t *testing.T) {
 	lineByLine := func(cur, base []profile.Block) string {
 		exec, hit, baseHit := map[int]bool{}, map[int]bool{}, map[int]bool{}
 		mark := func(blocks []profile.Block, exec, hit map[int]bool) {
@@ -110,24 +119,24 @@ func TestNewlyUncoveredMatchesLineByLineRule(t *testing.T) {
 	}
 	for range 2000 {
 		cur, base := blocks(), blocks()
-		if got, want := newlyUncovered(cur, base), lineByLine(cur, base); got != want {
-			t.Fatalf("newlyUncovered(%v, %v) = %q, want %q", cur, base, got, want)
+		if got, want := spansString(regressedSpans(cur, base)), lineByLine(cur, base); got != want {
+			t.Fatalf("regressedSpans(%v, %v) = %q, want %q", cur, base, got, want)
 		}
 	}
 }
 
-// TestNewlyUncoveredIgnoresDeclaredSpan guards the report pages against
+// TestRegressedSpansIgnoresDeclaredSpan guards the report pages against
 // stored blocks that claim millions of lines: the work must follow the
 // number of blocks, not the lines they declare. Expanded line by line this
 // input is billions of iterations and would time the test out.
-func TestNewlyUncoveredIgnoresDeclaredSpan(t *testing.T) {
+func TestRegressedSpansIgnoresDeclaredSpan(t *testing.T) {
 	var cur, base []profile.Block
 	for col := range 500 {
 		cur = append(cur, profile.Block{StartLine: 1, StartCol: col, EndLine: 5_000_000, NumStmts: 1, Count: 0})
 		base = append(base, profile.Block{StartLine: 1, StartCol: col, EndLine: 5_000_000, NumStmts: 1, Count: 1})
 	}
-	if got := newlyUncovered(cur, base); got != "1-5000000" {
-		t.Errorf("newlyUncovered() = %q, want %q", got, "1-5000000")
+	if got := spansString(regressedSpans(cur, base)); got != "1-5000000" {
+		t.Errorf("regressedSpans() = %q, want %q", got, "1-5000000")
 	}
 }
 
