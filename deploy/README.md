@@ -75,9 +75,9 @@ a parameter with the same name would override one.
 ### Deploys
 
 Every release deploys itself: `release.yml` builds the multi-arch image,
-pushes it to GHCR, then calls `deploy.yml`, which waits on the
-`production` environment for approval. Approving is the whole human part
-of a deploy. The workflow then assumes the `gocov-deploy` OIDC role,
+pushes it to GHCR, smoke-tests it as a self-hosted instance, then calls
+`deploy.yml`. There is no approval step: merging the release PR is the
+human part of a deploy. The workflow assumes the `gocov-deploy` OIDC role,
 registers a task definition for the tag, updates the service, waits for
 the rollout, checks that the primary deployment is the new revision and
 that the running container reports the released image, then smoke-tests
@@ -88,7 +88,7 @@ automatically on start, as always.
 The docs site follows the app: once the smoke tests pass, the workflow's
 `docs` job force-moves the `docs-live` branch to the tag, and Cloudflare
 Workers Builds (production branch `docs-live`) publishes docs.gocov.dev
-from it. Docs merged to `main` therefore go live with the next approved
+from it. Docs merged to `main` therefore go live with the next release's
 deploy, and a rollback rolls the docs back too.
 
 **Rolling means two tasks for a moment.** The new task must be healthy
@@ -308,9 +308,12 @@ Elastic IP, `gocov-web` security group, `gocov-ec2` role and the
 - **GHCR package public**: the first push of `ghcr.io/gocov/gocov-server`
   creates a private package — make it public (package settings) and link
   it to the repo. Production pulls it with no credential.
-- **Environment `production`** on gocov/gocov with a required reviewer.
-  This is the deploy gate; without it every release would deploy
-  unattended.
+- **Environment `production`** on gocov/gocov, with no required reviewer
+  (merging the release PR is the gate) and its deployment branches and
+  tags limited to `main` and `v*` tags (the release path runs on `main`;
+  `release.yml`'s own tag trigger runs on the tag). That rule is what keeps
+  the AWS role out of reach of a workflow run from any other branch, a
+  dispatch included; the role trusts the environment, not the branch.
 - **AWS OIDC**: an IAM OIDC provider for `token.actions.githubusercontent.com`
   (audience `sts.amazonaws.com`) and the role `gocov-deploy`, trusted only
   for `repo:gocov/gocov:environment:production`, with the inline policy

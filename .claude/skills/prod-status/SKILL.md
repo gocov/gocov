@@ -50,7 +50,7 @@ aws logs tail /gocov/server --since 30m --format short | grep -iE 'error|panic|l
   and can lose that race. Say so explicitly, and note that the smoke steps after the
   check were skipped, so a real upload has not been proven for that release.
 - **Image tag behind the latest release**: the release was cut but not deployed (the
-  production approval was not clicked, or the deploy job failed before rolling).
+  deploy job failed or was skipped before rolling).
   Point at the run URL. The rollback and the manual deploy are the same command,
   which the user runs, never you: `gh workflow run deploy.yml -f tag=vX.Y.Z`.
 - **Image from ECR `gocov-server-dev`**: a branch deploy from a laptop

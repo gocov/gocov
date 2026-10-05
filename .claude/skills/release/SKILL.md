@@ -11,7 +11,7 @@ disable-model-invocation: true
 Requested version: **$ARGUMENTS** (empty = propose one from the commits since the last tag and ask).
 
 You are the guide here. You run the checks and the `gh` plumbing; the user does every
-merge and every approval click. Never merge a PR, never approve a deploy, never push a
+merge. Never merge a PR, never dispatch a deploy, never push a
 tag by hand unless the user explicitly says so in this session.
 
 Background: `docs/development.md` § Releasing is the written source; this command is the
@@ -19,14 +19,12 @@ operational version of it. Read it if anything below disagrees with the repo.
 
 ## The shape of a release
 
-One release lands in four repositories and is, in the end, **one PR merge plus one
-approval click** (the production deploy); the three wrapper PRs merge themselves once their
-checks pass:
+One release lands in four repositories and is, in the end, **one PR merge**: the production
+deploy follows by itself, and the three wrapper PRs merge themselves once their checks pass:
 
 1. `gocov` — a `Release-As:` PR states the version; release-please opens the real release
    PR; merging it tags `vX.Y.Z` and the tag build publishes binaries and the GHCR image,
-   waits for the production deploy approval, and once the deploy is green opens the three
-   wrapper bump PRs.
+   deploys app.gocov.dev, and once the deploy is green opens the three wrapper bump PRs.
 2. `gocov-action` — its bump PR auto-merges; that *is* its release (tags next minor, moves
    `v1`).
 3. `upload-pipe` — its bump PR auto-merges; that *is* its release (Docker Hub multi-arch +
@@ -112,7 +110,7 @@ and that click is the user's — point it out before the merge.
 Until this is merged nothing is tagged — a wrong version is a PR comment, not a burnt tag.
 User merges it.
 
-## Step 3 — The tag build, and the deploy approval
+## Step 3 — The tag build and the deploy
 
 Merging tags `v<VERSION>` and, because a GITHUB_TOKEN tag cannot trigger a workflow,
 release-please *calls* `release.yml` directly. The push to main is the user's merge, so no
@@ -124,11 +122,9 @@ gh run list --limit 5
 
 To wait on the run, poll its status as the last gotcha below describes.
 
-One human gate in this run, the user's click:
-
-- **production deploy** — the `production` environment's required reviewer. Approve when
-  the image job is done; the deploy pulls the image, rolls app.gocov.dev, and smoke-tests
-  `/healthz` plus a real upload from `gocov/smoke`.
+No human gate in this run: once the image and the self-host smoke test are green, the
+**production deploy** starts by itself — it pulls the image, rolls app.gocov.dev, and
+smoke-tests `/healthz` plus a real upload from `gocov/smoke`.
 
 The build publishes: 10 binaries + `checksums.txt` on the release, the GHCR server image
 (`vX.Y.Z`, `X.Y`, `latest`), and — after the deploy is green — the three wrapper bump PRs.
@@ -192,7 +188,7 @@ the verify score.
   jobs uses the run's own workflow files, so a fix merged since does not apply. Fix the
   cause, then dispatch `deploy.yml` with the tag (redeploys the same image, runs the smoke
   steps, moves docs-live) and, once green, `wrappers.yml` with the tag (bump PRs and
-  verify). Both need the user: the deploy asks for its approval.
+  verify). Both are the user's to dispatch.
 
 - The release build's jobs live **under the release-please run** (`publish / release`,
   `publish / image`, `publish / wrappers / bump-wrappers`, `publish / selfhost-smoke`,
