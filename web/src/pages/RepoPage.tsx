@@ -112,7 +112,7 @@ export default function RepoPage() {
             </section>
           )}
 
-          {data.files !== null && <FilesTable view={data.files} heading={`Files on ${data.trend_branch}`} />}
+          {data.files !== null && <FilesTable view={data.files} heading={`Files on ${data.trend_branch}`} newlyUncovered={false} />}
 
           <section className="stack stack-1">
             <SectionHeader title="Uploads">

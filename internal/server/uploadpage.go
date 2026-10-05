@@ -71,7 +71,7 @@ func (s *Server) buildUploadPage(w http.ResponseWriter, r *http.Request) (*uploa
 			shown = pageReport{"This commit", cr.TotalPct, cr.CoveredStmts, cr.TotalStmts, cr.DiffCoverage, cr.GateFailed, cr.Gate, cr.GateBasePct}
 			loadFiles = func(ctx context.Context) (*filesViewDTO, *baseRefDTO, error) {
 				base := core.CommitBaseline(ctx, s.store, repo, cr)
-				files, _, err := s.loadCommitFilesView(ctx, repo, cr, base)
+				files, _, err := s.loadCommitFilesView(ctx, repo, cr, base, true)
 				if base == nil {
 					return files, nil, err
 				}
@@ -241,16 +241,17 @@ func (s *Server) loadFilesView(ctx context.Context, repo *store.Repo, upload *st
 	if err != nil {
 		return nil, nil, err
 	}
-	return buildFilesView(upload.DiffCoverage, map[int64]*store.Upload{upload.ID: upload}, files, baseFiles), base, nil
+	return buildFilesView(upload.DiffCoverage, map[int64]*store.Upload{upload.ID: upload}, files, baseFiles, true), base, nil
 }
 
 // buildFilesView pairs each file with its coverage at the baseline — the
 // files card. The files come from the uploads keyed by id (one upload, or
 // every part of a commit), each row linking to the upload it came from;
 // diff marks the files whose source the PR touched, and a nil baseFiles
-// means there is no baseline. The directory tree the card draws is the
-// client's to build from these rows.
-func buildFilesView(diff *diffcov.Result, uploads map[int64]*store.Upload, files []*store.UploadFile, baseFiles map[string]*store.UploadFile) *filesViewDTO {
+// means there is no baseline. withNewlyUncovered fills each row's newly
+// uncovered ranges; a regression marks the row coverage-changed either way.
+// The directory tree the card draws is the client's to build from these rows.
+func buildFilesView(diff *diffcov.Result, uploads map[int64]*store.Upload, files []*store.UploadFile, baseFiles map[string]*store.UploadFile, withNewlyUncovered bool) *filesViewDTO {
 	hasBase := baseFiles != nil
 	var diffPaths []string
 	if diff != nil {
@@ -289,8 +290,10 @@ func buildFilesView(diff *diffcov.Result, uploads map[int64]*store.Upload, files
 					row.CoverageChanged = true
 				}
 				if nm := newlyUncovered(f.Blocks, bf.Blocks); nm != "" {
-					row.NewlyUncovered = nm
 					row.CoverageChanged = true
+					if withNewlyUncovered {
+						row.NewlyUncovered = nm
+					}
 				}
 			} else {
 				row.NewFile = true
