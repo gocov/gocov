@@ -12,7 +12,6 @@ const file = (path: string, covered: number, total: number, extra: Partial<FileR
   before_covered_stmts: null,
   before_total_stmts: null,
   new_file: false,
-  newly_uncovered: "",
   source_changed: false,
   coverage_changed: false,
   ...extra,

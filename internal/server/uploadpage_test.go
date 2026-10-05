@@ -161,8 +161,8 @@ func TestAPIUploadPageBeforeAfter(t *testing.T) {
 	if a.Before == nil || *a.Before != 100 || a.Coverage != 75 {
 		t.Errorf("a.go = %+v, want 100%% before and 75%% now", a)
 	}
-	if a.NewlyUncovered != "7-9" || !a.CoverageChanged {
-		t.Errorf("a.go regression = %+v, want lines 7-9 newly uncovered", a)
+	if !a.CoverageChanged {
+		t.Errorf("a.go regression = %+v, want it marked coverage-changed", a)
 	}
 	// The baseline's own counts ride along, so the app's directory rollup
 	// weighs a.go by what it had then (8 of 8), not by what it has now.

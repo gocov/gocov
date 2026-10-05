@@ -40,16 +40,7 @@ const indent = (depth: number) => ({ paddingLeft: `calc(${depth} * var(--space-2
  * change filter apply to both — a directory stays as long as anything under
  * it matches.
  */
-export function FilesTable({
-  view,
-  heading = "Files",
-  newlyUncovered = true,
-}: {
-  view: FilesView;
-  heading?: string;
-  /** Whether a compared table lists each file's newly uncovered lines. */
-  newlyUncovered?: boolean;
-}) {
+export function FilesTable({ view, heading = "Files" }: { view: FilesView; heading?: string }) {
   const [mode, setMode] = useState<Mode>("tree");
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
@@ -146,7 +137,6 @@ export function FilesTable({
                         Before <Icon name="arrow-right" size={12} /> after
                       </th>
                       <th className="num">&Delta;</th>
-                      {newlyUncovered && <th className="hide-sm">Newly uncovered</th>}
                     </>
                   ) : (
                     <>
@@ -202,11 +192,6 @@ export function FilesTable({
                             <Delta value={node.before === null ? null : node.coverage - node.before} />
                           )}
                         </td>
-                        {newlyUncovered && (
-                          <td className="hide-sm">
-                            {node.kind === "file" ? <UncoveredRanges ranges={node.row.newly_uncovered} /> : dash}
-                          </td>
-                        )}
                       </>
                     ) : (
                       <>

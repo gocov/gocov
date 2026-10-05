@@ -15,7 +15,6 @@ const file = (path: string, over: Partial<FileRow> = {}): FileRow => ({
   before_covered_stmts: null,
   before_total_stmts: null,
   new_file: false,
-  newly_uncovered: "",
   source_changed: false,
   coverage_changed: false,
   ...over,
@@ -25,7 +24,7 @@ const withBase: FilesView = {
   merged: false,
   has_base: true,
   files: [
-    file("internal/server/api.go", { before: 62, before_covered_stmts: 31, before_total_stmts: 50, coverage: 80, source_changed: true, coverage_changed: true, newly_uncovered: "44-46" }),
+    file("internal/server/api.go", { before: 62, before_covered_stmts: 31, before_total_stmts: 50, coverage: 80, source_changed: true, coverage_changed: true }),
     file("internal/server/spa.go", { before: 80, before_covered_stmts: 8, before_total_stmts: 10, coverage: 80 }),
     file("internal/core/pipeline.go", { new_file: true, coverage: 55 }),
     file("main.go", { before: 90, before_covered_stmts: 9, before_total_stmts: 10, coverage: 90 }),
@@ -125,21 +124,9 @@ test("a filter that matches nothing says so", async () => {
 test("with a baseline the table compares, and a new file says it is new", () => {
   draw(withBase);
   expect(screen.getByRole("columnheader", { name: /Before/ })).toBeInTheDocument();
-  expect(screen.getByRole("columnheader", { name: "Newly uncovered" })).toBeInTheDocument();
+  expect(screen.queryByRole("columnheader", { name: "Newly uncovered" })).not.toBeInTheDocument();
   expect(screen.getByText("new file")).toBeInTheDocument();
   expect(screen.getByText("+18.0%")).toBeInTheDocument();
-  expect(screen.getByText("44-46")).toBeInTheDocument();
-});
-
-test("a branch's table leaves out the newly uncovered column", () => {
-  render(
-    <MemoryRouter>
-      <FilesTable view={withBase} heading="Files on main" newlyUncovered={false} />
-    </MemoryRouter>,
-  );
-  expect(screen.getByRole("columnheader", { name: /Before/ })).toBeInTheDocument();
-  expect(screen.queryByRole("columnheader", { name: "Newly uncovered" })).not.toBeInTheDocument();
-  expect(screen.queryByText("44-46")).not.toBeInTheDocument();
 });
 
 test("without a baseline the table counts statements instead", () => {

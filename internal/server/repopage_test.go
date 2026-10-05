@@ -189,9 +189,6 @@ func TestAPIRepoPage(t *testing.T) {
 	if row.Uncovered == "" || !row.CoverageChanged {
 		t.Errorf("file row lost its uncovered ranges or its change flag: %+v", row)
 	}
-	if row.NewlyUncovered != "" {
-		t.Errorf("newly uncovered = %q, want none on the repo page's files", row.NewlyUncovered)
-	}
 	// The branch filter moves the summary, trend and files with it.
 	feat := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets?branch=feat"))
 	if feat.TrendBranch != "feat" {

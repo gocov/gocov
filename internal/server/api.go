@@ -179,7 +179,6 @@ type fileRowDTO struct {
 	BeforeCoveredStmts *int64 `json:"before_covered_stmts"`
 	BeforeTotalStmts   *int64 `json:"before_total_stmts"`
 	NewFile            bool   `json:"new_file"`
-	NewlyUncovered     string `json:"newly_uncovered"`
 	SourceChanged      bool   `json:"source_changed"`
 	CoverageChanged    bool   `json:"coverage_changed"`
 }
