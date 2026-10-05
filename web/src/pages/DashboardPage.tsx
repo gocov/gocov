@@ -150,7 +150,8 @@ function Workspace({ data, current }: { data: Dashboard; current: WorkspaceGroup
         }
         actions={
           <>
-            {current.tracked && (
+            {/* Settings are a member's page: with sign-in off there are no members, and the page is a 404. */}
+            {current.tracked && canOnboard && (
               <LinkButton to={routes.workspace(current.forge, current.prefix)}>Workspace settings</LinkButton>
             )}
             {canOnboard && (

@@ -183,6 +183,14 @@ test("an untracked workspace has no settings page and onboards instead", async (
   expect(screen.getByRole("link", { name: "Add a repository" })).toHaveAttribute("href", "/onboarding");
 });
 
+test("with sign-in off a registered workspace offers no settings page, which only members have", async () => {
+  show({ ...dashboard, can_onboard: false });
+
+  await screen.findByRole("table");
+  expect(screen.queryByRole("link", { name: "Workspace settings" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: "Add a repository" })).not.toBeInTheDocument();
+});
+
 test("a workspace with no repositories yet points at the setup instructions", async () => {
   show({ ...dashboard, repos: [], attention: [], stats: { ...dashboard.stats, coverage: null } });
 
