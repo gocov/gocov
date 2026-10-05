@@ -150,8 +150,7 @@ function Workspace({ data, current }: { data: Dashboard; current: WorkspaceGroup
         }
         actions={
           <>
-            {/* Settings are a member's page: with sign-in off there are no members, and the page is a 404. */}
-            {current.tracked && canOnboard && (
+            {current.tracked && (
               <LinkButton to={routes.workspace(current.forge, current.prefix)}>Workspace settings</LinkButton>
             )}
             {canOnboard && (
@@ -163,7 +162,7 @@ function Workspace({ data, current }: { data: Dashboard; current: WorkspaceGroup
         }
       />
 
-      {current.tracked && canOnboard && (
+      {current.tracked && (
         // Keyed: switching workspace is a new arrival, with its own verdict.
         <SetupSection key={`${current.forge}/${current.prefix}`} ws={current} hasReports={hasReports} />
       )}
