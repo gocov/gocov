@@ -25,17 +25,20 @@ const sortLabels: { value: RepoSort; label: string }[] = [
 const isSort = (v: string): v is RepoSort => sortLabels.some((s) => s.value === v);
 const isFilter = (v: string | null): v is RepoFilter => filterLabels.some((f) => f.value === v);
 
-/** The gate cell: a state, or the way to set one. */
-function GateCell({ repo }: { repo: DashRepo }) {
+/** The gate cell: a state, or the way to set one where the viewer has settings to set it in. */
+function GateCell({ repo, settings }: { repo: DashRepo; settings: boolean }) {
   return (
     <span className="ReposTable__gate">
       {repo.gate === "pass" && <Chip tone="good">Passing</Chip>}
       {repo.gate === "fail" && <Chip tone="bad">Failing</Chip>}
-      {repo.gate === "none" && (
-        <Link className="ReposTable__setGate" to={routes.repoSettings(repo.forge, repo.slug)}>
-          Set a gate
-        </Link>
-      )}
+      {repo.gate === "none" &&
+        (settings ? (
+          <Link className="ReposTable__setGate" to={routes.repoSettings(repo.forge, repo.slug)}>
+            Set a gate
+          </Link>
+        ) : (
+          <Chip tone="neutral">No gate</Chip>
+        ))}
       {repo.stale && <Chip tone="warn">Stale</Chip>}
     </span>
   );
@@ -49,8 +52,12 @@ function GateCell({ repo }: { repo: DashRepo }) {
  * The filter lives in the query (?filter=stale), so a folded needs-attention
  * row can open the table on it and a filtered view can be shared; arriving
  * with #repositories brings the table into view.
+ *
+ * settings is whether the workspace has settings pages for the viewer (its
+ * tracked flag); without them a repo with no gate says so rather than
+ * linking to a page that is not there.
  */
-export function ReposTable({ repos }: { repos: DashRepo[] }) {
+export function ReposTable({ repos, settings }: { repos: DashRepo[]; settings: boolean }) {
   const [params, setParams] = useSearchParams();
   const wanted = params.get("filter");
   const filter: RepoFilter = isFilter(wanted) ? wanted : "all";
@@ -141,7 +148,7 @@ export function ReposTable({ repos }: { repos: DashRepo[] }) {
                       <Sparkline series={repo.series} stale={repo.stale} />
                     </td>
                     <td>
-                      <GateCell repo={repo} />
+                      <GateCell repo={repo} settings={settings} />
                     </td>
                     <td className="hide-sm muted small">{repo.uploaded_at === null ? "never" : timeAgo(repo.uploaded_at)}</td>
                   </tr>

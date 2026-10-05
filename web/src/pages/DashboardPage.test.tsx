@@ -181,6 +181,7 @@ test("an untracked workspace has no settings page and onboards instead", async (
   await screen.findByRole("table");
   expect(screen.queryByRole("link", { name: "Workspace settings" })).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Add a repository" })).toHaveAttribute("href", "/onboarding");
+  expect(screen.queryByRole("link", { name: "Set a gate" })).not.toBeInTheDocument();
 });
 
 test("a workspace with no repositories yet points at the setup instructions", async () => {
