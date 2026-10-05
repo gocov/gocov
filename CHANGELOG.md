@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.27.2](https://github.com/gocov/gocov/compare/v0.27.1...v0.27.2) (2026-10-05)
+
+
+### Bug Fixes
+
+* hide the settings buttons that lead to a 404 when sign-in is off ([#219](https://github.com/gocov/gocov/issues/219)) ([1e5cc90](https://github.com/gocov/gocov/commit/1e5cc90207dd048f82d560aa3a5c0f2be949b030))
+* **web:** drop the newly uncovered column from a branch's files ([#222](https://github.com/gocov/gocov/issues/222)) ([8bc9f18](https://github.com/gocov/gocov/commit/8bc9f1882464c5c26fab4ded1701ef901890b63c))
+* **web:** drop the Set a gate link when sign-in is off ([#221](https://github.com/gocov/gocov/issues/221)) ([0eea739](https://github.com/gocov/gocov/commit/0eea7394226c05bd18d5230e5524a2bffe0a076a))
+
 ## [0.27.1](https://github.com/gocov/gocov/compare/v0.27.0...v0.27.1) (2026-10-03)
 
 
