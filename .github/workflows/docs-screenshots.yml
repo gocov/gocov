@@ -1,0 +1,128 @@
+name: docs-screenshots
+# Keeps the screenshots under docs/assets in step with the UI. After a
+# push to main that can change how a documented page looks, this shoots
+# them again from the preview harness (scripts/docs-screenshots.mjs) and,
+# when any image changed, opens a PR with the new ones — or updates the
+# one already open. Reviewing that PR is the human check; nothing is
+# committed to main from here.
+#
+# The preview and the browser both run on a pinned clock
+# (GOCOV_PREVIEW_NOW), so the dates and "3 days ago"s are the same on
+# every run and an unchanged UI shoots byte-identical images: a PR means
+# the pixels moved, not the calendar.
+#
+# The PR is pushed and opened as the cross-repo App (the one
+# release-please.yml uses), so its CI and the pr-title check run by
+# themselves; a PR pushed with GITHUB_TOKEN starts no workflows.
+on:
+  push:
+    branches: [main]
+    paths:
+      - web/**
+      - cmd/gocov-preview/**
+      - internal/server/**
+      - internal/webui/**
+      - scripts/docs-screenshots.mjs
+      - .github/workflows/docs-screenshots.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-screenshots
+  cancel-in-progress: true
+
+env:
+  BRANCH: chore/docs-screenshots
+  GOCOV_PREVIEW_NOW: "2026-06-01T12:00:00Z"
+
+jobs:
+  shoot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build the web UI
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+      - name: Shoot the screenshots
+        env:
+          GOCOV_PREVIEW_AUTH: "1"
+        run: |
+          set -euo pipefail
+          go build -o "$RUNNER_TEMP/gocov-preview" ./cmd/gocov-preview
+          "$RUNNER_TEMP/gocov-preview" >"$RUNNER_TEMP/preview.log" 2>&1 &
+          for _ in $(seq 100); do
+            curl -sf http://localhost:8099/healthz >/dev/null && break
+            sleep 0.2
+          done
+          CHROME=$(command -v google-chrome) node scripts/docs-screenshots.mjs
+      - name: Preview log
+        if: failure()
+        run: cat "$RUNNER_TEMP/preview.log"
+      - name: Did any change?
+        id: diff
+        run: |
+          if git diff --quiet -- docs/assets; then
+            echo "changed=false" >>"$GITHUB_OUTPUT"
+          else
+            git diff --stat -- docs/assets
+            echo "changed=true" >>"$GITHUB_OUTPUT"
+          fi
+      - uses: actions/create-github-app-token@v3
+        id: app
+        with:
+          client-id: ${{ secrets.CROSSBUMP_APP_ID }}
+          private-key: ${{ secrets.CROSSBUMP_APP_PRIVATE_KEY }}
+          owner: gocov
+          repositories: gocov
+          # The screenshots branch (contents) and its PR (pull-requests).
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Open or update the PR
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          BOT: ${{ steps.app.outputs.app-slug }}[bot]
+        run: |
+          set -euo pipefail
+          # Committed as the App's bot user, the identity that pushes it.
+          git config user.name "$BOT"
+          git config user.email "$(gh api "users/$BOT" --jq .id)+$BOT@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git add docs/assets
+          git commit -m "docs: refresh UI screenshots" -m "Shot by .github/workflows/docs-screenshots.yml from $GITHUB_SHA."
+          # The branch belongs to this workflow: each run replaces it with
+          # one commit on top of the main that was shot.
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "HEAD:refs/heads/$BRANCH"
+          if [ -z "$(gh pr list -R "$REPO" --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
+            gh pr create -R "$REPO" --base main --head "$BRANCH" \
+              --title "docs: refresh UI screenshots" \
+              --body "The screenshots under \`docs/assets\` no longer match the UI on main. Shot by the docs-screenshots workflow from the preview harness; look the images over and merge. Later runs update this PR in place."
+          fi
+      # A UI change that was undone before its screenshot PR merged leaves
+      # that PR describing nothing: close it.
+      - name: Close a PR that is no longer needed
+        if: steps.diff.outputs.changed == 'false'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for pr in $(gh pr list -R "$REPO" --head "$BRANCH" --state open --json number --jq '.[].number'); do
+            gh pr close "$pr" -R "$REPO" --delete-branch \
+              --comment "The screenshots on main match the UI again; nothing to refresh."
+          done

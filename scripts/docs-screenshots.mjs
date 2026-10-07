@@ -10,7 +10,12 @@
 // Start from a FRESH preview: the shots rely on its seeded state (the two-part
 // upload, the broken GitHub workspace the dev user owns, the connected one
 // with no report yet). CHROME and GOCOV_PREVIEW override the browser binary
-// and the server address. Light theme, 1280px wide, 2x.
+// and the server address. Light theme, 1280px wide, 2x, UTC.
+//
+// GOCOV_PREVIEW_NOW (RFC 3339) pins the clock: give the preview and this
+// script the same value and the browser's Date starts from it too, so the
+// dates and "3 days ago"s come out the same on every run. CI does this
+// (.github/workflows/docs-screenshots.yml) to tell a UI change from a new day.
 import { spawn } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,12 +26,17 @@ const BASE = process.env.GOCOV_PREVIEW ?? "http://localhost:8099";
 const OUT = fileURLToPath(new URL("../docs/assets", import.meta.url));
 const CHROME = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const PORT = 9333;
+const NOW = process.env.GOCOV_PREVIEW_NOW ? Date.parse(process.env.GOCOV_PREVIEW_NOW) : null;
+if (Number.isNaN(NOW)) throw new Error(`GOCOV_PREVIEW_NOW is not a date: ${process.env.GOCOV_PREVIEW_NOW}`);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const chrome = spawn(CHROME, [
   "--headless=new", `--remote-debugging-port=${PORT}`, `--user-data-dir=${mkdtempSync(join(tmpdir(), "gocov-shots-"))}`,
-  "--hide-scrollbars", "--force-color-profile=srgb", "--no-first-run", "--no-default-browser-check", "about:blank",
+  "--hide-scrollbars", "--force-color-profile=srgb", "--no-first-run", "--no-default-browser-check",
+  // Chrome refuses to start as root (a container) with its sandbox on.
+  ...(process.getuid?.() === 0 ? ["--no-sandbox"] : []),
+  "about:blank",
 ], { stdio: "ignore" });
 
 async function target() {
@@ -100,6 +110,21 @@ try {
   await send("Page.enable");
   await send("Runtime.enable");
   await send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "light" }] });
+  await send("Emulation.setTimezoneOverride", { timezoneId: "UTC" });
+  if (NOW !== null) {
+    // Shift Date rather than freeze it: the clock still ticks from NOW, so
+    // timers and anything measuring elapsed time behave as they would.
+    await send("Page.addScriptToEvaluateOnNewDocument", {
+      source: `(() => {
+        const Real = Date, offset = ${NOW} - Real.now();
+        class Pinned extends Real {
+          constructor(...a) { a.length ? super(...a) : super(Real.now() + offset); }
+          static now() { return Real.now() + offset; }
+        }
+        globalThis.Date = Pinned;
+      })();`,
+    });
+  }
   await viewport(1280, 900);
 
   // 1. Signed out: the login page.

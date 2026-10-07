@@ -85,6 +85,9 @@ type Config struct {
 	// (analytics.go). The zero value leaves every page free of third-party
 	// scripts, which is what self-hosted deployments get by default.
 	PostHog PostHog
+	// Now is the clock the dashboard judges staleness by. Nil is
+	// time.Now; the preview pins it so the docs screenshots repeat.
+	Now func() time.Time
 }
 
 // The forge connectors a deployment can configure. They are declared in
@@ -130,6 +133,7 @@ type Server struct {
 	secureCookies bool
 	// posthog is the analytics snippet configuration; zero means off.
 	posthog PostHog
+	now     func() time.Time
 }
 
 // New builds a Server.
@@ -199,12 +203,16 @@ func New(cfg Config) *Server {
 		publicReports:     cfg.PublicReports,
 		secureCookies:     strings.HasPrefix(cfg.BaseURL, "https://"),
 		posthog:           cfg.PostHog,
+		now:               cfg.Now,
 	}
 	// Everything that decides rather than transports lives in core; the
 	// server holds one handle to it.
 	s.pipeline = &core.Pipeline{Store: cfg.Store, Blobs: cfg.Blobs, Log: log, BaseURL: cfg.BaseURL, Forges: s.forges, Hosted: cfg.Hosted}
 	for _, p := range cfg.Auths {
 		s.auths[p.Name()] = p
+	}
+	if s.now == nil {
+		s.now = time.Now
 	}
 	s.routes()
 	s.handler = s.requireAuth(s.mux)

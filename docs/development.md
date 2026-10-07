@@ -52,7 +52,15 @@ design tokens are described in `web/README.md`.
 
 The screenshots under `docs/assets/` are generated, not hand-taken: with a fresh preview running (after
 `npm run build` in `web/`), `node scripts/docs-screenshots.mjs` drives headless Chrome through the pages and rewrites
-them all. Re-run it after a change to how a documented page looks.
+them all. You rarely need to: after every push to `main` that touches the UI, the `docs-screenshots` workflow shoots
+them again and, when an image changed, opens (or updates) a `docs: refresh UI screenshots` PR to review and merge. It
+pins the clock with `GOCOV_PREVIEW_NOW` (an RFC 3339 time, given to both the preview and the script), so an unchanged
+UI gives byte-identical images; do the same when you shoot them by hand:
+
+```sh
+GOCOV_PREVIEW_NOW=2026-06-01T12:00:00Z GOCOV_PREVIEW_AUTH=1 go run ./cmd/gocov-preview &
+GOCOV_PREVIEW_NOW=2026-06-01T12:00:00Z node scripts/docs-screenshots.mjs
+```
 
 ## Configuration
 

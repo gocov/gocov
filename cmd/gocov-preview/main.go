@@ -83,6 +83,18 @@ func (d devGrantConnect) ForgeClient(string) forge.Forge { return d.fg }
 
 func main() {
 	ctx := context.Background()
+	cfg, err := config.LoadPreview()
+	if err != nil {
+		log.Fatal(err)
+	}
+	// A pinned clock ticks on from GOCOV_PREVIEW_NOW, like the browser's
+	// in scripts/docs-screenshots.mjs; the server judges staleness by it.
+	now := time.Now()
+	var clock func() time.Time
+	if !cfg.Now.IsZero() {
+		offset := cfg.Now.Sub(now)
+		now, clock = cfg.Now, func() time.Time { return time.Now().Add(offset) }
+	}
 	st := storemem.New()
 	// Marked public so the anonymous read-only view (CTA band, hidden
 	// settings) is previewable with GOCOV_PREVIEW_AUTH=1 in a second,
@@ -118,7 +130,7 @@ func main() {
 	// ~45 uploads drifting between ~68% and ~85%, a few gate failures,
 	// a couple of PR uploads that must not appear in the trend.
 	rnd := rand.New(rand.NewSource(42))
-	base := time.Now().Add(-45 * 24 * time.Hour)
+	base := now.Add(-45 * 24 * time.Hour)
 	pct := 74.0
 	for i := range 45 {
 		pct += rnd.Float64()*4 - 2 + 0.1*math.Sin(float64(i)/4)
@@ -280,10 +292,6 @@ func main() {
 		}
 	}
 
-	cfg, err := config.LoadPreview()
-	if err != nil {
-		log.Fatal(err)
-	}
 	var auths []auth.Provider
 	hosted := false
 	if cfg.Auth {
@@ -305,6 +313,7 @@ func main() {
 		BitbucketConnect: devGrantConnect{fg: forgefake.New()},
 		GitLabConnect:    devGrantConnect{fg: forgefake.New()},
 		PostHog:          server.PostHog{Key: cfg.PostHogKey, Host: "https://eu.i.posthog.com"},
+		Now:              clock,
 	})
 	log.Println("preview on :" + cfg.Port)
 	log.Fatal(http.ListenAndServe(":"+cfg.Port, srv))

@@ -303,6 +303,7 @@ func (s *Server) fillCurrent(r *http.Request, dto *dashboardDTO, cur *dashGroup)
 		cur = &dashGroup{key: cur.key, ws: cur.ws}
 	}
 	var covered, total int64
+	now := s.now()
 	for _, repo := range cur.repos {
 		reports := history[repo.ID]
 		row := dashRepoDTO{
@@ -318,7 +319,7 @@ func (s *Server) fillCurrent(r *http.Request, dto *dashboardDTO, cur *dashGroup)
 			// UpdatedAt, not CreatedAt: a re-upload of the same commit
 			// moves only UpdatedAt, and it is an upload all the same.
 			row.UploadedAt = new(latest.UpdatedAt)
-			row.Stale = time.Since(latest.UpdatedAt) > dashStaleAfter
+			row.Stale = now.Sub(latest.UpdatedAt) > dashStaleAfter
 			covered += latest.CoveredStmts
 			total += latest.TotalStmts
 			row.Gate = gateState(store.JudgedGate(latest.Gate, repo.Gate), latest.GateFailed)
@@ -327,7 +328,7 @@ func (s *Server) fillCurrent(r *http.Request, dto *dashboardDTO, cur *dashGroup)
 			row.Delta = new(latest.TotalPct - base.TotalPct)
 		}
 		dto.Repos = append(dto.Repos, row)
-		dto.Attention = append(dto.Attention, attention(repo, row, latest)...)
+		dto.Attention = append(dto.Attention, attention(repo, row, latest, now)...)
 	}
 
 	// Rows go out in slug order; the app sorts them (compareRepos), lowest
@@ -347,7 +348,7 @@ func (s *Server) fillCurrent(r *http.Request, dto *dashboardDTO, cur *dashGroup)
 // standing choice, not an event: listing it made the section permanent,
 // and a notice that is always there stops being read. The table still
 // offers "Set a gate" on its row and counts it under the No gate filter.
-func attention(repo *store.Repo, row dashRepoDTO, latest *store.CommitReport) []attentionDTO {
+func attention(repo *store.Repo, row dashRepoDTO, latest *store.CommitReport, now time.Time) []attentionDTO {
 	var out []attentionDTO
 	item := func(kind string) attentionDTO {
 		return attentionDTO{Kind: kind, Forge: repo.Forge, Slug: repo.Slug, Name: row.Name, Coverage: new(latest.TotalPct)}
@@ -364,7 +365,7 @@ func attention(repo *store.Repo, row dashRepoDTO, latest *store.CommitReport) []
 	}
 	if row.Stale {
 		a := item("stale")
-		a.StaleDays = new(int(time.Since(*row.UploadedAt).Hours() / 24))
+		a.StaleDays = new(int(now.Sub(*row.UploadedAt).Hours() / 24))
 		out = append(out, a)
 	}
 	return out

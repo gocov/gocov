@@ -102,6 +102,35 @@ func TestAPIDashboardReuploadIsNotStale(t *testing.T) {
 	}
 }
 
+// Staleness is judged by the configured clock, not the wall clock: the
+// preview pins it so the docs screenshots come out the same every run.
+func TestAPIDashboardStalenessFollowsConfiguredClock(t *testing.T) {
+	f := newFixture(t, nil)
+	uploaded := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	if err := f.store.UpsertCommitReport(t.Context(), &store.CommitReport{
+		RepoID: f.repo.ID, CommitSHA: "c1", Branch: "main",
+		TotalPct: 80, CoveredStmts: 80, TotalStmts: 100, CreatedAt: uploaded,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		now       time.Time
+		wantStale bool
+	}{
+		{uploaded.Add(time.Hour), false},
+		{uploaded.Add(20 * 24 * time.Hour), true},
+	} {
+		f.srv.now = func() time.Time { return tc.now }
+		got := decodeJSON[dashboardDTO](t, get(f, "/api/ui/dashboard"))
+		if len(got.Repos) != 1 || got.Repos[0].Stale != tc.wantStale {
+			t.Errorf("at %v: repos = %+v, want stale %v", tc.now, got.Repos, tc.wantStale)
+		}
+		if tc.wantStale && (len(got.Attention) != 1 || got.Attention[0].StaleDays == nil || *got.Attention[0].StaleDays != 20) {
+			t.Errorf("at %v: attention = %+v, want a stale notice at 20 days", tc.now, got.Attention)
+		}
+	}
+}
+
 // The delta a row shows is measured against the last gate-passing report,
 // never against a failure in between.
 func TestAPIDashboardDeltaSkipsGateFailedBaselines(t *testing.T) {
