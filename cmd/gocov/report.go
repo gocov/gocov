@@ -17,8 +17,10 @@ import (
 
 // gocov report reads a commit's merged report back from the server's read
 // API (GET /api/v1/reports/…) and prints what an agent or a person fixing
-// the change needs: the totals, and the changed lines no test ran. It needs
-// no credential, because the API serves public reports only.
+// the change needs: the totals, and the changed lines no test ran. A
+// public repo needs no credential; a private one is read with whatever its
+// upload would authenticate with — the token, or in CI the forge's OIDC
+// token — found the same way an upload finds it.
 
 // reportResponse is the read API's answer, as much of it as the CLI prints.
 // -json passes the server's body through untouched instead.
@@ -61,6 +63,7 @@ func runReport(args []string, stdout io.Writer, env envFunc, git gitFunc, doer h
 	repo := fs.String("repo", "", "repo slug workspace/repo (default: auto-detect)")
 	commit := fs.String("commit", "", "commit SHA (default: auto-detect; ignored with -branch)")
 	branch := fs.String("branch", "", "report the newest commit on this branch instead of one commit")
+	token := fs.String("token", cfg.Token, "upload token, for a private repo (or $GOCOV_TOKEN)")
 	asJSON := fs.Bool("json", false, "print the server's JSON answer as is")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -101,12 +104,30 @@ func runReport(args []string, stdout io.Writer, env envFunc, git gitFunc, doer h
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "gocov/"+version)
+	// The upload's credential order: a token, else an OIDC token the CI
+	// mints or hands over. None at all reads public reports only.
+	cred, mintErr := *token, error(nil)
+	if cred == "" {
+		var minted string
+		minted, mintErr = mintGitHubOIDC(env, doer, *server)
+		cred = cmp.Or(minted, envOIDCToken(env))
+	}
+	if cred != "" {
+		req.Header.Set("Authorization", "Bearer "+cred)
+	}
 	status, body, err := send(doer, req)
 	if err != nil {
 		return err
 	}
 	if status == http.StatusNotFound {
-		return fmt.Errorf("no report for %s/%s (%s): it is not uploaded yet, or its reports are not public", f, build.Repo, q.Encode())
+		why := "its reports are not public: set -token or $GOCOV_TOKEN to read a private repo"
+		switch {
+		case cred != "":
+			why = "the credential is not for this repo and its reports are not public"
+		case mintErr != nil:
+			why = fmt.Sprintf("its reports are not public, and GitHub's OIDC token request failed (%v)", mintErr)
+		}
+		return fmt.Errorf("no report for %s/%s (%s): it is not uploaded yet, or %s", f, build.Repo, q.Encode(), why)
 	}
 	if status != http.StatusOK {
 		return &serverError{code: status, msg: strings.TrimSpace(string(body))}

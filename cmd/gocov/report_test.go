@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gocov/gocov/internal/auth"
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
 	"github.com/gocov/gocov/internal/diffcov"
 	"github.com/gocov/gocov/internal/server"
@@ -286,5 +288,112 @@ func TestRunDispatchesReport(t *testing.T) {
 	}
 	if err := run([]string{"reprot"}); err == nil || !strings.Contains(err.Error(), "gocov report") {
 		t.Errorf("unknown command: err = %v, want the usage naming gocov report", err)
+	}
+}
+
+// A private repo is read with what its upload would authenticate with,
+// found in the upload's order.
+func TestReportSendsTheUploadCredential(t *testing.T) {
+	mint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer req-token" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		_, _ = w.Write([]byte(`{"value":"minted-` + r.URL.Query().Get("audience") + `"}`))
+	}))
+	t.Cleanup(mint.Close)
+	srv, req := newReportServer(t, http.StatusOK, reportBody)
+	actions := map[string]string{"ACTIONS_ID_TOKEN_REQUEST_URL": mint.URL, "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "req-token"}
+
+	for _, tc := range []struct {
+		name string
+		flag []string
+		env  map[string]string
+		want string
+	}{
+		{"none: public reports only", nil, nil, ""},
+		{"the token", []string{"-token", "tok"}, actions, "Bearer tok"},
+		{"GitHub's OIDC token, for this server", nil, actions, "Bearer minted-" + srv.URL},
+		{"GitLab's or Bitbucket's", nil, map[string]string{"GOCOV_ID_TOKEN": "a.b.c"}, "Bearer a.b.c"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"-server", srv.URL, "-forge", "github", "-repo", "acme/widgets", "-commit", "abc"}, tc.flag...)
+			if err := runReport(args, &bytes.Buffer{}, mapEnv(tc.env), noGit, http.DefaultClient); err != nil {
+				t.Fatal(err)
+			}
+			if got := req.Header.Get("Authorization"); got != tc.want {
+				t.Errorf("Authorization = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestReportNotFoundSaysWhy(t *testing.T) {
+	missing, _ := newReportServer(t, http.StatusNotFound, `{"error":"not found"}`)
+	refusing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(refusing.Close)
+	args := []string{"-server", missing.URL, "-forge", "github", "-repo", "acme/widgets", "-commit", "abc"}
+
+	for _, tc := range []struct {
+		name string
+		flag []string
+		env  map[string]string
+		want string
+	}{
+		{"no credential", nil, nil, "set -token or $GOCOV_TOKEN to read a private repo"},
+		{"a credential", []string{"-token", "tok"}, nil, "the credential is not for this repo"},
+		{"the OIDC mint failed", nil, map[string]string{"ACTIONS_ID_TOKEN_REQUEST_URL": refusing.URL, "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "x"}, "GitHub's OIDC token request failed (id-token endpoint returned 403)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := runReport(append(args, tc.flag...), &bytes.Buffer{}, mapEnv(tc.env), noGit, http.DefaultClient)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// signInRequired is a sign-in provider that is never used: its presence
+// alone turns the server into one where only the public rule or a
+// credential opens a report.
+type signInRequired struct{}
+
+func (signInRequired) Name() string                       { return "github" }
+func (signInRequired) AuthorizeURL(string, string) string { return "" }
+func (signInRequired) Identity(context.Context, string, string) (*auth.Identity, error) {
+	return nil, errors.New("unused")
+}
+
+// TestReportPrivateRepoAgainstTheServer reads a private repo through the
+// real read API: refused without the token, served with it.
+func TestReportPrivateRepoAgainstTheServer(t *testing.T) {
+	st := storemem.New()
+	repo := &store.Repo{Forge: "github", Slug: "acme/secret", Token: "repo-token", DefaultBranch: "main", Visibility: store.VisibilityPrivate}
+	if err := st.CreateRepo(t.Context(), repo); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertCommitReport(t.Context(), &store.CommitReport{
+		RepoID: repo.ID, CommitSHA: "7aa8f0162ab5", Branch: "main", TotalPct: 91, PartCount: 1, UploadID: 4,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	api := httptest.NewServer(server.New(server.Config{
+		Store: st, Blobs: blobmem.New(), BaseURL: "https://gocov.example",
+		Auths: []auth.Provider{signInRequired{}}, PublicReports: true,
+	}))
+	t.Cleanup(api.Close)
+	args := []string{"-server", api.URL, "-forge", "github", "-repo", "acme/secret", "-commit", "7aa8f0162ab5"}
+
+	if err := runReport(args, &bytes.Buffer{}, mapEnv(nil), noGit, http.DefaultClient); err == nil || !strings.Contains(err.Error(), "not public") {
+		t.Errorf("without the token: err = %v", err)
+	}
+	var out bytes.Buffer
+	if err := runReport(append(args, "-token", "repo-token"), &out, mapEnv(nil), noGit, http.DefaultClient); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out.String(), "github/acme/secret @ 7aa8f01 (main)\ncoverage: 91.0%\n") {
+		t.Errorf("output:\n%s", out.String())
 	}
 }

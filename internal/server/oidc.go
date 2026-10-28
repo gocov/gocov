@@ -129,29 +129,10 @@ func (s *Server) oidcForge(issuer string) string {
 // prints our reason into the CI log, and silent failure is the competitor
 // behavior this feature exists to not have.
 func (s *Server) authOIDC(w http.ResponseWriter, r *http.Request) (*store.Repo, bool) {
-	ctx := r.Context()
-	if s.oidc == nil {
-		httpError(w, http.StatusForbidden, "OIDC uploads are not available: this server has no public URL configured")
+	tok, ok := s.verifyOIDC(w, r, r.FormValue("oidc_token"), "uploads")
+	if !ok {
 		return nil, false
 	}
-	tok, err := s.oidc.Verify(ctx, r.FormValue("oidc_token"))
-	switch {
-	case err == nil:
-	case errors.Is(err, oidc.ErrUnknownIssuer):
-		httpError(w, http.StatusForbidden, "oidc_unknown_issuer: the OIDC token's issuer is not one this server trusts")
-		return nil, false
-	case errors.Is(err, oidc.ErrBadAudience):
-		httpError(w, http.StatusForbidden, "oidc_bad_audience: the OIDC token was not minted for this server; set the token audience to %s", s.baseURL)
-		return nil, false
-	case errors.Is(err, oidc.ErrInvalidToken):
-		httpError(w, http.StatusUnauthorized, "oidc_invalid_token: the OIDC token is not valid (%v)", err)
-		return nil, false
-	default:
-		s.log.Error("oidc verification", "err", err)
-		httpError(w, http.StatusBadGateway, "could not verify the OIDC token with the forge; retrying may help")
-		return nil, false
-	}
-
 	switch s.oidcForge(tok.Issuer) {
 	case "github":
 		// GitHub names the repo by slug in the token itself.
@@ -165,6 +146,31 @@ func (s *Server) authOIDC(w http.ResponseWriter, r *http.Request) (*store.Repo, 
 		httpError(w, http.StatusForbidden, "oidc_invalid_token: unsupported OIDC issuer")
 		return nil, false
 	}
+}
+
+// verifyOIDC checks a forge OIDC token's signature, issuer and audience,
+// writing the refusal itself; a false second return means the response is
+// written. what names the feature in the refusal ("uploads", "reads").
+func (s *Server) verifyOIDC(w http.ResponseWriter, r *http.Request, raw, what string) (*oidc.Token, bool) {
+	if s.oidc == nil {
+		httpError(w, http.StatusForbidden, "OIDC %s are not available: this server has no public URL configured", what)
+		return nil, false
+	}
+	tok, err := s.oidc.Verify(r.Context(), raw)
+	switch {
+	case err == nil:
+		return tok, true
+	case errors.Is(err, oidc.ErrUnknownIssuer):
+		httpError(w, http.StatusForbidden, "oidc_unknown_issuer: the OIDC token's issuer is not one this server trusts")
+	case errors.Is(err, oidc.ErrBadAudience):
+		httpError(w, http.StatusForbidden, "oidc_bad_audience: the OIDC token was not minted for this server; set the token audience to %s", s.baseURL)
+	case errors.Is(err, oidc.ErrInvalidToken):
+		httpError(w, http.StatusUnauthorized, "oidc_invalid_token: the OIDC token is not valid (%v)", err)
+	default:
+		s.log.Error("oidc verification", "err", err)
+		httpError(w, http.StatusBadGateway, "could not verify the OIDC token with the forge; retrying may help")
+	}
+	return nil, false
 }
 
 // oidcResolveBySlug maps a signed slug claim to a tracked repo and

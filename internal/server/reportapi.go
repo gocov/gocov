@@ -10,6 +10,7 @@ import (
 
 	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/diffcov"
+	"github.com/gocov/gocov/internal/forge"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -19,10 +20,13 @@ import (
 // It answers what a change left untested — the uncovered changed lines —
 // rather than everything a report page draws.
 //
-// For now it serves only what the public report pages already show: a repo
-// whose reports are public, or any repo on an open instance. A session
-// cookie is not consulted, so the answer does not depend on who asks, and
-// a repo it may not serve is a 404 whether or not it exists.
+// Without a credential it serves what the public report pages already
+// show: a repo whose reports are public, or any repo on an open instance.
+// With one it serves any repo that credential may upload to — its upload
+// token, its workspace's token, or the OIDC token its own CI minted — so
+// an agent reads a private repo with what its CI already holds. A session
+// cookie is not consulted, and a repo it may not serve is a 404 whether or
+// not it exists.
 
 // reportAPIDTO is the read API's answer for one commit. Field names are
 // part of the contract: add fields, never rename or repurpose them.
@@ -85,14 +89,23 @@ func (s *Server) handleReportAPI(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "loading repo", err)
 		return
 	}
-	if s.authEnabled() {
-		if !s.publicReports || !repo.ReportsPublic() {
+	public := !s.authEnabled()
+	if !public {
+		granted, ok := s.reportCredentialGrants(w, r, repo)
+		if !ok {
+			return
+		}
+		switch {
+		case granted:
+		case s.publicReports && repo.ReportsPublic():
+			public = true
+			// The cached "public" may have flipped on the forge: re-verify
+			// an aged answer in the background, as the public report pages do.
+			s.pipeline.ReverifyVisibilityIfStale(repo)
+		default:
 			httpError(w, http.StatusNotFound, "not found")
 			return
 		}
-		// The cached "public" may have flipped on the forge: re-verify an
-		// aged answer in the background, as the public report pages do.
-		s.pipeline.ReverifyVisibilityIfStale(repo)
 	}
 
 	var cr *store.CommitReport
@@ -137,11 +150,89 @@ func (s *Server) handleReportAPI(w http.ResponseWriter, r *http.Request) {
 		dto.Base = &reportAPIBaseDTO{Commit: base.CommitSHA, Coverage: base.TotalPct}
 		dto.Delta = new(cr.TotalPct - base.TotalPct)
 	}
-	if s.authEnabled() {
+	switch {
+	case !s.authEnabled():
+	case public:
 		// The public report pages' caching, for the same reason.
 		w.Header().Set("Cache-Control", "public, max-age=60")
+	default:
+		// Read with a credential: no shared cache may keep it.
+		w.Header().Set("Cache-Control", "private, no-store")
 	}
 	s.writeJSON(w, dto)
+}
+
+// reportCredentialGrants reports whether the request's bearer credential
+// may upload to repo, and so may read it: false when none is sent or it is
+// for another repo, which leaves the public rule to decide. A credential
+// that is no credential at all — an unknown token, an OIDC token that does
+// not verify — is refused outright rather than read as anonymous, so a
+// broken CI secret says so instead of looking like a missing report. A
+// false second return means the response is written.
+func (s *Server) reportCredentialGrants(w http.ResponseWriter, r *http.Request, repo *store.Repo) (granted, ok bool) {
+	token, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if token == "" {
+		return false, true
+	}
+	if strings.Count(token, ".") == 2 {
+		// A JWT: a forge OIDC token. Upload tokens are hex.
+		return s.oidcGrantsRead(w, r, repo, token)
+	}
+	tokRepo, ws, ok := s.lookupUploadToken(w, r, token)
+	if !ok {
+		return false, false
+	}
+	if tokRepo != nil {
+		return tokRepo.ID == repo.ID, true
+	}
+	return ws.Forge == repo.Forge && strings.HasPrefix(repo.Slug, ws.Prefix+"/"), true
+}
+
+// oidcGrantsRead reports whether a forge OIDC token names repo, by the same
+// claims an OIDC upload is mapped by (oidc.go). It never registers a repo:
+// a read needs one that is tracked already.
+func (s *Server) oidcGrantsRead(w http.ResponseWriter, r *http.Request, repo *store.Repo, raw string) (granted, ok bool) {
+	tok, ok := s.verifyOIDC(w, r, raw, "reads")
+	if !ok {
+		return false, false
+	}
+	forgeName := s.oidcForge(tok.Issuer)
+	if forgeName != repo.Forge {
+		return false, true
+	}
+	switch forgeName {
+	case "github":
+		return tok.Claim("repository") == repo.Slug, true
+	case "gitlab":
+		return tok.Claim("project_path") == repo.Slug, true
+	}
+	// Bitbucket names the repo by UUID only: ask Bitbucket, through the
+	// repo's own workspace connection and under the OIDC upload's rate
+	// limit, whether that is this repo's.
+	want := bitbucketRepoUUID(tok)
+	if want == "" {
+		return false, true
+	}
+	if !s.tokenless.allow(repo.Slug, time.Now()) {
+		httpError(w, http.StatusTooManyRequests, "OIDC rate limit reached for %s; try again later", repo.Slug)
+		return false, false
+	}
+	ctx := r.Context()
+	var fg forge.Forge
+	if ws := s.forges.WorkspaceFor(ctx, repo.Slug, "bitbucket"); ws != nil {
+		fg = s.forges.Connected(ctx, ws, "bitbucket")
+	}
+	if fg == nil {
+		httpError(w, http.StatusForbidden, "oidc_not_connected: OIDC reads for %s need its workspace connected to Bitbucket; read with the token instead", repo.Slug)
+		return false, false
+	}
+	got, err := fg.GetRepoID(ctx, repo.Slug)
+	if err != nil {
+		s.log.Error("oidc bitbucket repo id", "repo", repo.Slug, "err", err)
+		httpError(w, http.StatusBadGateway, "could not verify the repository identity with Bitbucket; retrying may help")
+		return false, false
+	}
+	return normalizeUUID(got) == normalizeUUID(want), true
 }
 
 func newReportAPIDiffDTO(dc *diffcov.Result) *reportAPIDiffDTO {

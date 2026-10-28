@@ -63,8 +63,10 @@ report: https://app.gocov.dev/uploads/1114?parts=merged
 ```
 
 It finds the forge, repo and commit the way `upload` does — the CI environment, else `git` (the `origin` remote and
-`HEAD`) — so run it after the commit's CI has uploaded. It reads [public reports](public-reports.md) only and needs
-no token.
+`HEAD`) — so run it after the commit's CI has uploaded. A [public report](public-reports.md) needs no
+credential. A private repo is read with the credential its upload uses, found in the same order:
+`-token`/`$GOCOV_TOKEN`, then in CI the forge's [OIDC token](#uploading-without-a-token). A coding agent that
+runs in the repo's CI therefore reads the report with nothing more to set up. Anywhere else, give it the token.
 
 | flag      | default     | meaning                                                                        |
 |-----------|-------------|--------------------------------------------------------------------------------|
@@ -72,6 +74,7 @@ no token.
 | `-repo`   | auto-detect | repo slug, `workspace/repo`                                                    |
 | `-commit` | auto-detect | commit SHA                                                                     |
 | `-branch` | none        | report the newest commit on this branch instead                                |
+| `-token`  | `$GOCOV_TOKEN` | the repo's or its workspace's upload token, to read a private repo          |
 | `-json`   | off         | print the [API's JSON answer](api.md#reading-a-report) as is                   |
 | `-server` | `$GOCOV_SERVER`, else the hosted service | the gocov instance to read from                   |
 
