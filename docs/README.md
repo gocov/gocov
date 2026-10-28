@@ -33,7 +33,7 @@ that keeps the old tool running until the numbers agree.
 
 ## Reference
 
-- [CLI](cli.md) — every flag and environment variable of `gocov upload` and `gocov report`
+- [CLI](cli.md) — every flag and environment variable of `gocov upload`, `gocov report` and `gocov mcp`
 - [API & badge](api.md) — the upload endpoint, the read API and the SVG badge
 
 ## Self-hosting

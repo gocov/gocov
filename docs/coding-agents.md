@@ -43,6 +43,30 @@ gives the same answer as JSON.
 The CLI has to be on the agent's machine: see [installing](cli.md#installing). With a Go toolchain,
 `go run github.com/gocov/gocov/cmd/gocov@latest report` needs no install.
 
+## MCP
+
+An agent that can run commands needs nothing more than `gocov report`. For a client that cannot, such as a
+desktop app or an editor's chat panel, [`gocov mcp`](cli.md#serving-reports-over-mcp) serves the report over MCP
+as one tool, `get_report`. Register it as a stdio server:
+
+```sh
+claude mcp add gocov -- gocov mcp
+```
+
+For clients configured through a JSON file, such as Claude Desktop or Cursor:
+
+```json
+{
+  "mcpServers": {
+    "gocov": { "command": "gocov", "args": ["mcp"] }
+  }
+}
+```
+
+Started inside a checkout, the tool needs no arguments: it reads the checked-out commit. Started anywhere else,
+the agent passes `forge` and `repo`, plus `commit` or `branch`. For a private repo, add `"env": {"GOCOV_TOKEN":
+"…"}` to the entry. The token is the same one described below.
+
 ## Private repos
 
 A [public report](public-reports.md) needs no credential. A private repo is read with the credential its upload

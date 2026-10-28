@@ -397,3 +397,17 @@ func TestReportPrivateRepoAgainstTheServer(t *testing.T) {
 		t.Errorf("output:\n%s", out.String())
 	}
 }
+
+// The request never reaching a server is said, whether the URL cannot be
+// built or nothing answers at it.
+func TestReportUnreachableServer(t *testing.T) {
+	gone := httptest.NewServer(http.NotFoundHandler())
+	gone.Close()
+	for _, server := range []string{"http://bad host", gone.URL} {
+		err := runReport([]string{"-server", server, "-forge", "github", "-repo", "acme/widgets", "-commit", "abc"},
+			&bytes.Buffer{}, mapEnv(nil), noGit, http.DefaultClient)
+		if err == nil {
+			t.Errorf("-server %s: no error", server)
+		}
+	}
+}
