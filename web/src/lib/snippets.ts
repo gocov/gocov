@@ -38,7 +38,7 @@ export const languages: LanguageSpec[] = [
     label: "JS / TS",
     test: "npx jest --coverage",
     file: "coverage/lcov.info",
-    image: "node:24",
+    image: "node:26",
   },
   {
     id: "java",
