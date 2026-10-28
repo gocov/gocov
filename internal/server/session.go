@@ -116,6 +116,7 @@ func publicPath(p string) bool {
 		return true
 	}
 	return strings.HasPrefix(p, "/badge/") ||
+		strings.HasPrefix(p, "/.well-known/") ||
 		strings.HasPrefix(p, "/api/v1/reports/") ||
 		strings.HasPrefix(p, "/static/") ||
 		strings.HasPrefix(p, "/oauth/")
