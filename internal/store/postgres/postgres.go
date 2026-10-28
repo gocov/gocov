@@ -679,7 +679,8 @@ func (s *Store) ListUsers(ctx context.Context) ([]*store.User, error) {
 }
 
 func (s *Store) DeleteUser(ctx context.Context, id int64) error {
-	// Sessions go with the user via ON DELETE CASCADE.
+	// Sessions, MCP tokens and authorization codes go with the user via
+	// ON DELETE CASCADE.
 	return affected(s.pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, id))
 }
 
@@ -737,6 +738,53 @@ func (s *Store) UserBySession(ctx context.Context, tokenHash string) (*store.Use
 
 func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
 	return affected(s.pool.Exec(ctx, `DELETE FROM sessions WHERE token_hash = $1`, tokenHash))
+}
+
+func (s *Store) CreateOAuthCode(ctx context.Context, c *store.OAuthCode) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO oauth_codes (code_hash, user_id, client_id, redirect_uri, code_challenge, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6)`,
+		c.CodeHash, c.UserID, c.ClientID, c.RedirectURI, c.CodeChallenge, c.ExpiresAt)
+	return err
+}
+
+func (s *Store) ConsumeOAuthCode(ctx context.Context, codeHash string) (*store.OAuthCode, error) {
+	// The delete is the claim: of two exchanges racing on one code, one
+	// gets the row and the other nothing. An expired code is deleted all
+	// the same and answers as absent.
+	var c store.OAuthCode
+	err := s.pool.QueryRow(ctx, `
+		DELETE FROM oauth_codes WHERE code_hash = $1
+		RETURNING code_hash, user_id, client_id, redirect_uri, code_challenge, expires_at`,
+		codeHash).Scan(&c.CodeHash, &c.UserID, &c.ClientID, &c.RedirectURI, &c.CodeChallenge, &c.ExpiresAt)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && !c.ExpiresAt.After(time.Now()) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+func (s *Store) CreateMCPToken(ctx context.Context, t *store.MCPToken) error {
+	return s.pool.QueryRow(ctx, `
+		INSERT INTO mcp_tokens (token_hash, user_id, client_name, expires_at)
+		VALUES ($1, $2, $3, $4)
+		RETURNING created_at`,
+		t.TokenHash, t.UserID, t.ClientName, t.ExpiresAt,
+	).Scan(&t.CreatedAt)
+}
+
+func (s *Store) UserByMCPToken(ctx context.Context, tokenHash string) (*store.User, error) {
+	u, err := s.scanUser(s.pool.QueryRow(ctx, `
+		SELECT `+userCols+` FROM users
+		WHERE id = (SELECT user_id FROM mcp_tokens WHERE token_hash = $1 AND expires_at > now())`,
+		tokenHash))
+	if errors.Is(err, store.ErrNotFound) {
+		_, _ = s.pool.Exec(ctx,
+			`DELETE FROM mcp_tokens WHERE token_hash = $1 AND expires_at <= now()`, tokenHash)
+	}
+	return u, err
 }
 
 func (s *Store) CreateUpload(ctx context.Context, u *store.Upload, files []*store.UploadFile) error {

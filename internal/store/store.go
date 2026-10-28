@@ -272,6 +272,35 @@ type Session struct {
 	ExpiresAt time.Time
 }
 
+// OAuthCode is an authorization code the MCP connector's sign-in issued
+// (internal/server/mcpauth.go): a one-time, short-lived claim, exchanged at
+// the token endpoint for an MCPToken. Only a hash of the code is stored.
+type OAuthCode struct {
+	CodeHash string
+	UserID   int64
+	// ClientID and RedirectURI are what the code was issued to; the
+	// exchange must name the same ones.
+	ClientID    string
+	RedirectURI string
+	// CodeChallenge is the PKCE S256 challenge the exchange's verifier
+	// must hash to.
+	CodeChallenge string
+	ExpiresAt     time.Time
+}
+
+// MCPToken is an access token an MCP client (a claude.ai connector, say)
+// reads reports with on its user's behalf. It reads what its user may see
+// and nothing more: it is no web session and changes nothing. Only a hash
+// of the token is stored.
+type MCPToken struct {
+	TokenHash string
+	UserID    int64
+	// ClientName is what the client called itself when it registered.
+	ClientName string
+	CreatedAt  time.Time
+	ExpiresAt  time.Time
+}
+
 // CommitReport is the merged coverage of a commit, derived from the latest
 // upload of each part and recomputed on every upload. It is the source of
 // truth for status, gate, PR comment, insights, badge and trend, so a
@@ -414,7 +443,8 @@ type Store interface {
 	UpsertUser(ctx context.Context, u *User) error
 	UserByID(ctx context.Context, id int64) (*User, error)
 	ListUsers(ctx context.Context) ([]*User, error)
-	// DeleteUser removes the user together with all their sessions.
+	// DeleteUser removes the user together with all their sessions, MCP
+	// tokens and pending authorization codes.
 	DeleteUser(ctx context.Context, id int64) error
 
 	CreateSession(ctx context.Context, sess *Session) error
@@ -422,6 +452,17 @@ type Store interface {
 	// sessions are treated as absent (ErrNotFound).
 	UserBySession(ctx context.Context, tokenHash string) (*User, error)
 	DeleteSession(ctx context.Context, tokenHash string) error
+
+	// CreateOAuthCode stores an MCP sign-in's authorization code.
+	CreateOAuthCode(ctx context.Context, c *OAuthCode) error
+	// ConsumeOAuthCode deletes the code and returns it, so it is good for
+	// one exchange. An expired or unknown code is ErrNotFound.
+	ConsumeOAuthCode(ctx context.Context, codeHash string) (*OAuthCode, error)
+	// CreateMCPToken stores an MCP access token, setting CreatedAt.
+	CreateMCPToken(ctx context.Context, t *MCPToken) error
+	// UserByMCPToken resolves an MCP access token hash to its user.
+	// Expired tokens are treated as absent (ErrNotFound).
+	UserByMCPToken(ctx context.Context, tokenHash string) (*User, error)
 
 	// CreateUpload persists the upload and its per-file rows atomically,
 	// setting u.ID and u.CreatedAt.

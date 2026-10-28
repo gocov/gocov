@@ -31,6 +31,7 @@ func Run(t *testing.T, newStore func(*testing.T) store.Store) {
 	t.Run("TryPushStatus", func(t *testing.T) { tryPushStatus(t, newStore) })
 	t.Run("UserLifecycle", func(t *testing.T) { userLifecycle(t, newStore) })
 	t.Run("SessionLifecycle", func(t *testing.T) { sessionLifecycle(t, newStore) })
+	t.Run("MCPAuthLifecycle", func(t *testing.T) { mcpAuthLifecycle(t, newStore) })
 	t.Run("WorkspaceMembership", func(t *testing.T) { workspaceMembership(t, newStore) })
 	t.Run("RegisterWorkspace", func(t *testing.T) { registerWorkspace(t, newStore) })
 	t.Run("TokenlessClaims", func(t *testing.T) { tokenlessClaims(t, newStore) })
@@ -773,6 +774,74 @@ func userLifecycle(t *testing.T, newStore func(*testing.T) store.Store) {
 	}
 	if err := st.DeleteUser(ctx, u.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("second delete = %v, want ErrNotFound", err)
+	}
+}
+
+func mcpAuthLifecycle(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+
+	u := &store.User{Forge: "github", ForgeUUID: "m1", Email: "m@example.com", DisplayName: "M"}
+	if err := st.UpsertUser(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+
+	// A code is good for exactly one exchange.
+	code := &store.OAuthCode{CodeHash: "code-live", UserID: u.ID, ClientID: "client",
+		RedirectURI: "https://client.example/cb", CodeChallenge: "challenge", ExpiresAt: time.Now().Add(time.Minute)}
+	if err := st.CreateOAuthCode(ctx, code); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.ConsumeOAuthCode(ctx, "code-live")
+	if err != nil || got.UserID != u.ID || got.ClientID != "client" || got.RedirectURI != code.RedirectURI || got.CodeChallenge != "challenge" {
+		t.Fatalf("ConsumeOAuthCode = %+v, %v", got, err)
+	}
+	if _, err := st.ConsumeOAuthCode(ctx, "code-live"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("second exchange = %v, want ErrNotFound", err)
+	}
+	expiredCode := &store.OAuthCode{CodeHash: "code-expired", UserID: u.ID, ExpiresAt: time.Now().Add(-time.Second)}
+	if err := st.CreateOAuthCode(ctx, expiredCode); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ConsumeOAuthCode(ctx, "code-expired"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("expired code exchanged: %v", err)
+	}
+
+	tok := &store.MCPToken{TokenHash: "token-live", UserID: u.ID, ClientName: "Claude", ExpiresAt: time.Now().Add(time.Hour)}
+	if err := st.CreateMCPToken(ctx, tok); err != nil {
+		t.Fatal(err)
+	}
+	if tok.CreatedAt.IsZero() {
+		t.Error("CreateMCPToken did not fill CreatedAt")
+	}
+	if got, err := st.UserByMCPToken(ctx, "token-live"); err != nil || got.ID != u.ID {
+		t.Fatalf("UserByMCPToken = %v, %v", got, err)
+	}
+	expired := &store.MCPToken{TokenHash: "token-expired", UserID: u.ID, ExpiresAt: time.Now().Add(-time.Minute)}
+	if err := st.CreateMCPToken(ctx, expired); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UserByMCPToken(ctx, "token-expired"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("expired token authenticated: %v", err)
+	}
+	// An MCP token is no session, and a session no MCP token.
+	if _, err := st.UserBySession(ctx, "token-live"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("MCP token opened a session: %v", err)
+	}
+
+	// Both go with their user.
+	pending := &store.OAuthCode{CodeHash: "code-cascade", UserID: u.ID, ExpiresAt: time.Now().Add(time.Minute)}
+	if err := st.CreateOAuthCode(ctx, pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteUser(ctx, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UserByMCPToken(ctx, "token-live"); !errors.Is(err, store.ErrNotFound) {
+		t.Error("MCP token survived user deletion")
+	}
+	if _, err := st.ConsumeOAuthCode(ctx, "code-cascade"); !errors.Is(err, store.ErrNotFound) {
+		t.Error("authorization code survived user deletion")
 	}
 }
 

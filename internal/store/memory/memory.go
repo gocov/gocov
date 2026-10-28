@@ -33,6 +33,8 @@ type Store struct {
 	workspaces map[int64]*store.Workspace
 	users      map[int64]*store.User
 	sessions   map[string]*store.Session      // keyed by token hash
+	oauthCodes map[string]*store.OAuthCode    // keyed by code hash
+	mcpTokens  map[string]*store.MCPToken     // keyed by token hash
 	members    map[int64]map[int64]store.Role // userID -> workspace ID -> role
 	tokenless  map[string]bool                // accepted tokenless (repo, run, attempt, part) triples
 }
@@ -51,6 +53,8 @@ func New() *Store {
 		workspaces: map[int64]*store.Workspace{},
 		users:      map[int64]*store.User{},
 		sessions:   map[string]*store.Session{},
+		oauthCodes: map[string]*store.OAuthCode{},
+		mcpTokens:  map[string]*store.MCPToken{},
 		members:    map[int64]map[int64]store.Role{},
 		tokenless:  map[string]bool{},
 	}
@@ -493,6 +497,8 @@ func (s *Store) DeleteUser(_ context.Context, id int64) error {
 	delete(s.users, id)
 	delete(s.members, id)
 	maps.DeleteFunc(s.sessions, func(_ string, sess *store.Session) bool { return sess.UserID == id })
+	maps.DeleteFunc(s.oauthCodes, func(_ string, c *store.OAuthCode) bool { return c.UserID == id })
+	maps.DeleteFunc(s.mcpTokens, func(_ string, t *store.MCPToken) bool { return t.UserID == id })
 	return nil
 }
 
@@ -535,6 +541,61 @@ func (s *Store) DeleteSession(_ context.Context, tokenHash string) error {
 	}
 	delete(s.sessions, tokenHash)
 	return nil
+}
+
+func (s *Store) CreateOAuthCode(_ context.Context, c *store.OAuthCode) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.users[c.UserID]; !ok {
+		return fmt.Errorf("memory: code user %d does not exist", c.UserID)
+	}
+	s.oauthCodes[c.CodeHash] = new(*c)
+	return nil
+}
+
+func (s *Store) ConsumeOAuthCode(_ context.Context, codeHash string) (*store.OAuthCode, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.oauthCodes[codeHash]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	delete(s.oauthCodes, codeHash)
+	if !c.ExpiresAt.After(time.Now()) {
+		return nil, store.ErrNotFound
+	}
+	return new(*c), nil
+}
+
+func (s *Store) CreateMCPToken(_ context.Context, t *store.MCPToken) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.users[t.UserID]; !ok {
+		return fmt.Errorf("memory: token user %d does not exist", t.UserID)
+	}
+	if t.CreatedAt.IsZero() {
+		t.CreatedAt = time.Now()
+	}
+	s.mcpTokens[t.TokenHash] = new(*t)
+	return nil
+}
+
+func (s *Store) UserByMCPToken(_ context.Context, tokenHash string) (*store.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.mcpTokens[tokenHash]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	if !t.ExpiresAt.After(time.Now()) {
+		delete(s.mcpTokens, tokenHash) // lazy cleanup, matching postgres
+		return nil, store.ErrNotFound
+	}
+	u, ok := s.users[t.UserID]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	return copyUser(u), nil
 }
 
 func (s *Store) CreateUpload(_ context.Context, u *store.Upload, files []*store.UploadFile) error {

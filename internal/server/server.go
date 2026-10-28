@@ -222,12 +222,16 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/upload", s.handleUpload)
 	// The read API decides access itself (reportapi.go): public reports only.
 	s.mux.HandleFunc("GET /api/v1/reports/{forge}/{slug...}", s.handleReportAPI)
-	// The read API's public reports as an MCP server (mcp.go): every
-	// method, so the transport itself answers GET and DELETE.
-	s.mux.Handle("/mcp", s.mcp)
-	// No well-known metadata, OAuth discovery included: a plain 404 is how
-	// an MCP client learns /mcp needs no sign-in, where the login redirect
-	// a signed-out path otherwise gets would read as a broken server.
+	// The read API as an MCP server (mcp.go): every method, so the
+	// transport itself answers GET and DELETE. Behind sign-in it signs its
+	// clients in through OAuth (mcpauth.go), whose discovery documents are
+	// the only well-known metadata served.
+	s.mux.HandleFunc("/mcp", s.handleMCP)
+	s.mcpAuthRoutes()
+	// Any other well-known path is a plain 404, where the login redirect a
+	// signed-out path otherwise gets would read as a broken server — and
+	// on an instance without MCP sign-in, the 404 for OAuth discovery is
+	// how an MCP client learns /mcp needs none.
 	s.mux.HandleFunc("GET /.well-known/", http.NotFound)
 	s.mux.HandleFunc("GET /badge/{forge}/{slug...}", s.handleBadge)
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)

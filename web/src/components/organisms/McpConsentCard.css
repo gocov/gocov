@@ -1,0 +1,3 @@
+.McpConsentCard { max-width: 440px; margin: var(--space-3) auto; }
+.McpConsentCard__head { display: flex; flex-direction: column; align-items: center; gap: var(--space-1); text-align: center; }
+.McpConsentCard__actions { display: flex; justify-content: flex-end; gap: var(--space-1); }

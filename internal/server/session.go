@@ -36,8 +36,12 @@ const userKey ctxKey = 0
 
 // currentUser returns the signed-in user, or nil on public pages and when
 // auth is not configured.
-func currentUser(r *http.Request) *store.User {
-	u, _ := r.Context().Value(userKey).(*store.User)
+func currentUser(r *http.Request) *store.User { return currentUserCtx(r.Context()) }
+
+// currentUserCtx is currentUser for code that holds only the context, such
+// as an MCP tool.
+func currentUserCtx(ctx context.Context) *store.User {
+	u, _ := ctx.Value(userKey).(*store.User)
 	return u
 }
 
@@ -108,10 +112,13 @@ func (s *Server) publicReportCandidate(r *http.Request) bool {
 }
 
 // publicPath reports whether a path must work without a session: the CI
-// surface (upload API, read API, badges, health), embedded assets, the login
-// flow itself and the crawler files. Everything else is a protected page.
+// surface (upload API, read API, badges, health), the MCP server and the
+// OAuth endpoints its clients call (which take tokens, never the cookie),
+// embedded assets, the login flow itself and the crawler files. Everything
+// else is a protected page.
 func publicPath(p string) bool {
-	if p == "/api/v1/upload" || p == "/healthz" || p == "/login" || p == "/mcp" ||
+	if p == "/api/v1/upload" || p == "/healthz" || p == "/login" ||
+		p == "/mcp" || p == "/mcp/register" || p == "/mcp/token" ||
 		p == "/github/webhook" || p == "/robots.txt" || p == "/sitemap.xml" {
 		return true
 	}

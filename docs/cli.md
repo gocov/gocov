@@ -88,7 +88,7 @@ optional arguments `forge`, `repo`, `commit`, `branch` and `format` (`text` or `
 Whatever is left out is detected in the directory the client starts the server in. It takes `-server` and
 `-token` like `gocov report`, and finds a credential the same way. [Coding agents](coding-agents.md#as-a-local-command)
 shows how to register it. A client that takes a URL instead of a command uses the server's own
-[`/mcp`](api.md#mcp), which reads public reports only.
+[`/mcp`](api.md#mcp), which signs its user in through the browser instead of taking a token.
 
 ## Uploading without a token
 

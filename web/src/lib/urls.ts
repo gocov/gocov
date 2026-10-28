@@ -30,3 +30,12 @@ export const server = {
   logout: () => "/logout",
   docs: (page = "") => `https://docs.gocov.dev/${page}`,
 };
+
+/**
+ * Leaves the app for a URL the server handed it, such as an MCP client's
+ * redirect back with its code. A full navigation, off this origin as often
+ * as not.
+ */
+export function leaveFor(url: string): void {
+  window.location.assign(url);
+}

@@ -58,9 +58,11 @@ custom connector: in claude.ai, open *Settings → Connectors → Add custom con
 | Name           | `gocov`                       |
 | MCP server URL | `https://app.gocov.dev/mcp`   |
 
-Nothing to install, and nothing to sign in to. In return it reads [public reports](public-reports.md) only, and
-since the client has no checkout, ask about a repo by name: *"what did gocov/gocov's last pull request leave
-untested?"*
+Nothing to install. Connecting opens gocov's sign-in: sign in with your forge account as you would on the web,
+and approve the connector. From then on it reads what you see in gocov, the repos of your workspaces, private ones
+included, and [public reports](public-reports.md). It cannot change anything, and after 30 days it asks you to
+sign in again. Since the client has no checkout, ask about a repo by name: *"what did gocov/gocov's last pull
+request leave untested?"*
 
 ### As a local command
 
