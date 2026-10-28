@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.30.0](https://github.com/gocov/gocov/compare/v0.29.0...v0.30.0) (2026-10-28)
+
+
+### Features
+
+* serve public reports to MCP connectors at /mcp ([#256](https://github.com/gocov/gocov/issues/256)) ([8bb65b3](https://github.com/gocov/gocov/commit/8bb65b3d66403355fbd7f7a593ff8e70fa236f08))
+
 ## [0.29.0](https://github.com/gocov/gocov/compare/v0.28.0...v0.29.0) (2026-10-28)
 
 
