@@ -99,13 +99,12 @@ func run(args []string) error {
 	ghEvent := readGitHubEvent(osEnv, os.ReadFile)
 	var ghRun runInfo
 	if *token == "" {
-		minted, err := mintGitHubOIDC(osEnv, defaultHTTPDoer, *server)
-		if err != nil {
+		minted, mintErr := mintGitHubOIDC(osEnv, defaultHTTPDoer, *server)
+		if mintErr != nil {
 			// The id-token permission was present but the request failed.
 			// Report it and fall through to the next auth mode; if none
-			// applies the upload still errors below, exactly as a missing
-			// token would — this line just says why OIDC was not used.
-			fmt.Fprintf(os.Stderr, "gocov: OIDC token request failed: %v\n", err)
+			// applies the upload errors below and says why.
+			fmt.Fprintf(os.Stderr, "gocov: OIDC token request failed: %v\n", mintErr)
 		}
 		// Bitbucket and GitLab hand their OIDC token to the job through
 		// the environment directly (no request to make), so it is a read,
@@ -115,6 +114,11 @@ func run(args []string) error {
 		if oidcToken == "" {
 			ghRun = detectGitHubRun(osEnv, ghEvent)
 			if !ghRun.tokenlessEligible() {
+				// The permission is there and the request failed: telling
+				// the user to grant it would send them the wrong way.
+				if mintErr != nil {
+					return fmt.Errorf("no upload credential: the id-token permission is set but GitHub's OIDC token request failed (%w); re-run the job, or set -token or $GOCOV_TOKEN", mintErr)
+				}
 				return errors.New("no upload credential: set -token or $GOCOV_TOKEN, or enable OIDC " +
 					"(GitHub Actions: grant permissions id-token: write; GitLab CI: an id_tokens entry named GOCOV_ID_TOKEN; " +
 					"Bitbucket Pipelines: oidc.audiences with the server URL)")

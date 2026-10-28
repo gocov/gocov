@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // stubDoer is an httpDoer that captures the request and returns a canned
@@ -73,6 +75,7 @@ func TestMintGitHubOIDCUnavailable(t *testing.T) {
 }
 
 func TestMintGitHubOIDCServerError(t *testing.T) {
+	noRetryWait(t)
 	env := mapEnv(map[string]string{
 		"ACTIONS_ID_TOKEN_REQUEST_URL":   "https://pipelines.actions/token",
 		"ACTIONS_ID_TOKEN_REQUEST_TOKEN": "req-secret",
@@ -80,6 +83,70 @@ func TestMintGitHubOIDCServerError(t *testing.T) {
 	doer := &stubDoer{status: 500, body: "boom"}
 	if _, err := mintGitHubOIDC(env, doer, "https://gocov.example"); err == nil {
 		t.Fatal("500 response did not error")
+	}
+}
+
+// seqDoer answers each request with the next of its responses, a zero
+// status standing for a network error, and counts the calls.
+type seqDoer struct {
+	statuses []int
+	calls    int
+}
+
+func (s *seqDoer) Do(*http.Request) (*http.Response, error) {
+	status := s.statuses[min(s.calls, len(s.statuses)-1)]
+	s.calls++
+	if status == 0 {
+		return nil, errors.New("connection reset")
+	}
+	return &http.Response{
+		StatusCode: status,
+		Body:       io.NopCloser(strings.NewReader(`{"value":"the.jwt.token"}`)),
+		Header:     make(http.Header),
+	}, nil
+}
+
+// noRetryWait keeps the id-token retries but drops their waits.
+func noRetryWait(t *testing.T) {
+	t.Helper()
+	saved := oidcRetryDelays
+	oidcRetryDelays = make([]time.Duration, len(saved))
+	t.Cleanup(func() { oidcRetryDelays = saved })
+}
+
+func TestMintGitHubOIDCRetries(t *testing.T) {
+	noRetryWait(t)
+	env := mapEnv(map[string]string{
+		"ACTIONS_ID_TOKEN_REQUEST_URL":   "https://pipelines.actions/token",
+		"ACTIONS_ID_TOKEN_REQUEST_TOKEN": "req-secret",
+	})
+	for _, tc := range []struct {
+		name      string
+		statuses  []int
+		wantToken bool
+		wantCalls int
+	}{
+		// GitHub's endpoint answered 504 once on main's CI; a retry is all it took.
+		{"a 504 then a token", []int{504, 200}, true, 2},
+		{"a dropped connection then a token", []int{0, 200}, true, 2},
+		{"rate limited twice, then a token", []int{429, 429, 200}, true, 3},
+		{"down every time gives up after three", []int{503}, false, 3},
+		// A refusal will not change on a retry.
+		{"a 403 is final", []int{403, 200}, false, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doer := &seqDoer{statuses: tc.statuses}
+			got, err := mintGitHubOIDC(env, doer, "https://gocov.example")
+			if tc.wantToken && (err != nil || got != "the.jwt.token") {
+				t.Errorf("got (%q, %v), want the token", got, err)
+			}
+			if !tc.wantToken && err == nil {
+				t.Errorf("got %q and no error, want an error", got)
+			}
+			if doer.calls != tc.wantCalls {
+				t.Errorf("made %d requests, want %d", doer.calls, tc.wantCalls)
+			}
+		})
 	}
 }
 
@@ -228,5 +295,33 @@ func TestRunNoCredentialErrors(t *testing.T) {
 
 	if err := run([]string{"upload", profPath}); err == nil {
 		t.Fatal("missing credential did not error")
+	}
+}
+
+// TestRunOIDCMintFailureSaysSo: with the id-token permission granted but
+// GitHub's endpoint failing every try, the error names the failed request
+// and does not tell the user to grant a permission they already have.
+func TestRunOIDCMintFailureSaysSo(t *testing.T) {
+	noRetryWait(t)
+	profPath := writeProfile(t)
+	tokenEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusGatewayTimeout)
+	}))
+	t.Cleanup(tokenEndpoint.Close)
+	t.Setenv("GOCOV_TOKEN", "")
+	t.Setenv("GOCOV_SERVER", "https://gocov.example")
+	t.Setenv("GITHUB_ACTIONS", "true")
+	t.Setenv("GITHUB_EVENT_NAME", "push")
+	t.Setenv("GITHUB_REPOSITORY", "acme/widgets")
+	t.Setenv("GITHUB_SHA", "abc123")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", tokenEndpoint.URL)
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "req-secret")
+
+	err := run([]string{"upload", profPath})
+	if err == nil {
+		t.Fatal("a failed OIDC mint with no other credential did not error")
+	}
+	if msg := err.Error(); !strings.Contains(msg, "returned 504") || strings.Contains(msg, "grant permissions") {
+		t.Errorf("error = %q, want the 504 named and no advice to grant the permission", msg)
 	}
 }
