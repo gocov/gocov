@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # id-token lets the coverage upload authenticate via OIDC instead of a
     # pasted GOCOV_TOKEN — dogfooding the tokenless path on our own repo.
     # A job-level block replaces the workflow default, so restate contents.
@@ -69,7 +69,7 @@ jobs:
   # vuln.go.dev, so a newly published advisory can turn this red on a PR
   # that did not cause it: the fix is still the bump it names.
   vulncheck:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -87,7 +87,7 @@ jobs:
   # release's own scripts are checked here too, the wrapper bumps against
   # the real wrappers.
   workflows:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -114,7 +114,7 @@ jobs:
   # The Go job above does not depend on it — without a build the server
   # embeds a placeholder and its tests still pass.
   web:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # For the tokenless OIDC coverage upload, as in the test job.
     permissions:
       contents: read
@@ -143,7 +143,7 @@ jobs:
         run: npm run build
 
   docs:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

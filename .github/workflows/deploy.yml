@@ -65,7 +65,7 @@ env:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # One deploy at a time, in order, and never cancel one that is already
     # talking to the server. Job-level because workflow-level concurrency
     # is ignored on the workflow_call path.
@@ -247,7 +247,7 @@ jobs:
     # of a deploy that failed. A job of its own: branch write access stays
     # out of the job that holds the AWS role.
     needs: deploy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     concurrency:
       group: docs-live
       cancel-in-progress: false
@@ -283,7 +283,7 @@ jobs:
     # its own, like docs: release and registry write access stay out of
     # the job that holds the AWS role.
     needs: deploy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     concurrency:
       group: promote
       cancel-in-progress: false

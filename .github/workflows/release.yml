@@ -39,7 +39,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       # Build provenance: the attestation is signed with the job's OIDC
@@ -136,7 +136,7 @@ jobs:
   # tag implies a release tag.
   image:
     needs: release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -192,7 +192,7 @@ jobs:
   # runs compose, so nothing else would notice either path rotting.
   selfhost-smoke:
     needs: image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     env:
@@ -279,7 +279,7 @@ jobs:
   # good day. A hand-cut tag on a commit that never reached main has no
   # such run and stops here.
   ci:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       actions: read
     env:

@@ -25,7 +25,7 @@ permissions: {}
 
 jobs:
   release-please:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The release PR and, on its merge, the tag and the GitHub release.
     permissions:
       contents: write
