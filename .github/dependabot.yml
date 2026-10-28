@@ -12,13 +12,18 @@ updates:
       actions:
         patterns: ["*"]
 
-  # The two direct Go dependencies (pgx, caarlos0/env) and their
+  # The two direct Go dependencies (pgx, bykclk/env) and their
   # transitive set. pgx is the one that matters: it is the database
   # driver, and its fixes are the kind that only show up in production.
+  # Without `allow`, Dependabot bumps direct dependencies only, and the
+  # `// indirect` lines (golang.org/x/text, twice so far) wait for a
+  # govulncheck failure to be bumped by hand.
   - package-ecosystem: gomod
     directory: /
     schedule:
       interval: weekly
+    allow:
+      - dependency-type: all
     groups:
       go:
         patterns: ["*"]
