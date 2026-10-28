@@ -60,6 +60,50 @@ The server verifies the claim with GitHub through the repo's App installation; t
 its workspace connected. Refusals are explicit: `403` with the reason, `404` for an untracked repo, `409` when the
 same `(run_id, run_attempt, part)` already uploaded, `429` past the per-repo hourly limit.
 
+## Reading a report
+
+`GET /api/v1/reports/{forge}/{workspace}/{repo}` — a commit's merged report, for tools and coding agents: what a
+change left untested, without scraping the report page. It answers for repos whose
+[reports are public](public-reports.md) (and for every repo on a self-hosted instance without sign-in), needs no
+credential, and answers `404` for anything else — the same `404` as for a repo that does not exist. The
+[`gocov report`](cli.md#reading-a-report) command calls it for you.
+
+| query    | meaning                                                                                           |
+|----------|---------------------------------------------------------------------------------------------------|
+| `commit` | the commit SHA, as it was uploaded                                                                |
+| `branch` | without `commit`: the newest report on this branch. Without either: the repo's default branch     |
+
+```json
+{
+  "repo": {"forge": "github", "slug": "acme/widgets"},
+  "commit": "7aa8f0162ab5…", "branch": "feature", "pr_id": "247",
+  "updated_at": "2026-10-28T08:11:36Z",
+  "parts": 2,
+  "coverage": 88.04, "covered_statements": 5765, "total_statements": 6550,
+  "gate_failed": false,
+  "base": {"commit": "c54dc2c0b7d6…", "coverage": 87.65}, "delta": 0.39,
+  "diff": {
+    "coverage": 82.6, "covered_lines": 19, "total_lines": 23,
+    "uncovered": [
+      {"path": "cmd/gocov/oidc.go", "lines": "49-50, 57-58", "spans": [[49, 50], [57, 58]]}
+    ],
+    "unmatched_files": []
+  },
+  "report_url": "https://app.gocov.dev/uploads/1114?parts=merged"
+}
+```
+
+- The numbers are the commit's report with every [part](parts.md) merged; `parts` counts them, and `updated_at` is
+  the latest upload, so poll until the parts you expect have arrived.
+- `base` and `delta` compare with the report the commit is measured against, as on the report page; both are `null`
+  when there is nothing to compare with.
+- `diff` is the [diff coverage](pull-requests.md) of a pull-request commit, `null` otherwise. `uncovered` lists
+  only the changed files with changed lines no test ran, as the human `lines` and as inclusive `[start, end]`
+  `spans`; `unmatched_files` are changed files the coverage data does not mention.
+- `404` also answers a commit with no report yet, or a branch with none.
+
+Fields are only ever added: a client should ignore the ones it does not know.
+
 ## Badge
 
 ```markdown

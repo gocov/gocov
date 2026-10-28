@@ -213,6 +213,8 @@ func New(cfg Config) *Server {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/upload", s.handleUpload)
+	// The read API decides access itself (reportapi.go): public reports only.
+	s.mux.HandleFunc("GET /api/v1/reports/{forge}/{slug...}", s.handleReportAPI)
 	s.mux.HandleFunc("GET /badge/{forge}/{slug...}", s.handleBadge)
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /robots.txt", s.handleRobots)

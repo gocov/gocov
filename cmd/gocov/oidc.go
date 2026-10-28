@@ -86,8 +86,9 @@ func envOIDCToken(env envFunc) string {
 	return cmp.Or(env("BITBUCKET_STEP_OIDC_TOKEN"), env("GOCOV_ID_TOKEN"))
 }
 
-// defaultHTTPDoer is the production httpDoer for the OIDC mint: a client
-// with a short timeout, since the id-token endpoint is local to the runner.
+// defaultHTTPDoer is the production httpDoer for the OIDC mint and for
+// gocov report: a client with a short timeout, since neither request
+// carries more than a small JSON answer.
 var defaultHTTPDoer httpDoer = &http.Client{Timeout: 30 * time.Second}
 
 // oidcRetryDelays are the waits before each retry of a transient id-token
