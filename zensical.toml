@@ -35,6 +35,7 @@ nav = [
     { Parts = "parts.md" },
     { "Ignoring files" = "ignoring-files.md" },
     { "Why coverage changed" = "coverage-changed.md" },
+    { "Coding agents" = "coding-agents.md" },
   ] },
   { Reference = [
     { CLI = "cli.md" },

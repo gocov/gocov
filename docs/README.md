@@ -29,11 +29,12 @@ that keeps the old tool running until the numbers agree.
 | [Ignoring files](ignoring-files.md)         | Leaving generated code, mocks and dev tooling out of the numbers    |
 | [Public reports](public-reports.md)         | Read-only report pages anyone can open, for public repos            |
 | [Why coverage changed](coverage-changed.md) | Baselines, missing parts, empty diff coverage — the usual surprises |
+| [Coding agents](coding-agents.md)           | Letting an agent read the uncovered changed lines and close the gap |
 
 ## Reference
 
-- [CLI](cli.md) — every flag and environment variable of `gocov upload`
-- [API & badge](api.md) — the raw upload endpoint and the SVG badge
+- [CLI](cli.md) — every flag and environment variable of `gocov upload` and `gocov report`
+- [API & badge](api.md) — the upload endpoint, the read API and the SVG badge
 
 ## Self-hosting
 
