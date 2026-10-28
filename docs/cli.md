@@ -3,6 +3,7 @@
 ```
 gocov upload [flags] <profile file>
 gocov report [flags]
+gocov mcp [flags]
 gocov version
 ```
 
@@ -78,6 +79,15 @@ runs in the repo's CI therefore reads the report with nothing more to set up. An
 | `-token`  | `$GOCOV_TOKEN` | the repo's or its workspace's upload token, to read a private repo          |
 | `-json`   | off         | print the [API's JSON answer](api.md#reading-a-report) as is                   |
 | `-server` | `$GOCOV_SERVER`, else the hosted service | the gocov instance to read from                   |
+
+## Serving reports over MCP
+
+`gocov mcp` serves the same report to an [MCP](https://modelcontextprotocol.io) client (an editor or a desktop
+agent) over stdio, for clients that cannot run `gocov report` themselves. It offers one tool, `get_report`, whose
+optional arguments `forge`, `repo`, `commit`, `branch` and `format` (`text` or `json`) mirror the flags above.
+Whatever is left out is detected in the directory the client starts the server in. It takes `-server` and
+`-token` like `gocov report`, and finds a credential the same way. [Coding agents](coding-agents.md#mcp) shows how
+to register it.
 
 ## Uploading without a token
 

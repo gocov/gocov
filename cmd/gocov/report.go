@@ -58,12 +58,13 @@ func runReport(args []string, stdout io.Writer, env envFunc, git gitFunc, doer h
 		return err
 	}
 	fs := flag.NewFlagSet("report", flag.ContinueOnError)
-	server := fs.String("server", cmp.Or(cfg.Server, defaultServer), "gocov server URL (or $GOCOV_SERVER)")
-	forge := fs.String("forge", "", "github, gitlab or bitbucket (default: auto-detect)")
-	repo := fs.String("repo", "", "repo slug workspace/repo (default: auto-detect)")
-	commit := fs.String("commit", "", "commit SHA (default: auto-detect; ignored with -branch)")
-	branch := fs.String("branch", "", "report the newest commit on this branch instead of one commit")
-	token := fs.String("token", cfg.Token, "upload token, for a private repo (or $GOCOV_TOKEN)")
+	q := reportQuery{}
+	fs.StringVar(&q.server, "server", cmp.Or(cfg.Server, defaultServer), "gocov server URL (or $GOCOV_SERVER)")
+	fs.StringVar(&q.forge, "forge", "", "github, gitlab or bitbucket (default: auto-detect)")
+	fs.StringVar(&q.repo, "repo", "", "repo slug workspace/repo (default: auto-detect)")
+	fs.StringVar(&q.commit, "commit", "", "commit SHA (default: auto-detect; ignored with -branch)")
+	fs.StringVar(&q.branch, "branch", "", "report the newest commit on this branch instead of one commit")
+	fs.StringVar(&q.token, "token", cfg.Token, "upload token, for a private repo (or $GOCOV_TOKEN)")
 	asJSON := fs.Bool("json", false, "print the server's JSON answer as is")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -71,66 +72,9 @@ func runReport(args []string, stdout io.Writer, env envFunc, git gitFunc, doer h
 	if fs.NArg() != 0 {
 		return errors.New("usage: gocov report [flags]")
 	}
-
-	build := buildInfo{Repo: *repo, Commit: *commit}
-	if *repo == "" || (*commit == "" && *branch == "") {
-		build.fill(detectBuild(env, git, readGitHubEvent(env, os.ReadFile)))
-	}
-	if build.Repo == "" {
-		return errors.New("repo not detected: set -repo workspace/repo")
-	}
-	f := cmp.Or(*forge, detectForge(env, git))
-	if f == "" {
-		return errors.New("forge not detected: set -forge github, gitlab or bitbucket")
-	}
-
-	q := url.Values{}
-	if *branch != "" {
-		q.Set("branch", *branch)
-	} else if build.Commit != "" {
-		q.Set("commit", build.Commit)
-	} else {
-		return errors.New("commit not detected: set -commit, or -branch for a branch's newest report")
-	}
-	segs := strings.Split(build.Repo, "/")
-	for i, seg := range segs {
-		segs[i] = url.PathEscape(seg)
-	}
-	u := fmt.Sprintf("%s/api/v1/reports/%s/%s?%s", strings.TrimRight(*server, "/"),
-		url.PathEscape(f), strings.Join(segs, "/"), q.Encode())
-	req, err := http.NewRequest(http.MethodGet, u, nil)
+	body, err := fetchReport(q, env, git, doer)
 	if err != nil {
 		return err
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "gocov/"+version)
-	// The upload's credential order: a token, else an OIDC token the CI
-	// mints or hands over. None at all reads public reports only.
-	cred, mintErr := *token, error(nil)
-	if cred == "" {
-		var minted string
-		minted, mintErr = mintGitHubOIDC(env, doer, *server)
-		cred = cmp.Or(minted, envOIDCToken(env))
-	}
-	if cred != "" {
-		req.Header.Set("Authorization", "Bearer "+cred)
-	}
-	status, body, err := send(doer, req)
-	if err != nil {
-		return err
-	}
-	if status == http.StatusNotFound {
-		why := "its reports are not public: set -token or $GOCOV_TOKEN to read a private repo"
-		switch {
-		case cred != "":
-			why = "the credential is not for this repo and its reports are not public"
-		case mintErr != nil:
-			why = fmt.Sprintf("its reports are not public, and GitHub's OIDC token request failed (%v)", mintErr)
-		}
-		return fmt.Errorf("no report for %s/%s (%s): it is not uploaded yet, or %s", f, build.Repo, q.Encode(), why)
-	}
-	if status != http.StatusOK {
-		return &serverError{code: status, msg: strings.TrimSpace(string(body))}
 	}
 	if *asJSON {
 		_, err := stdout.Write(body)
@@ -142,6 +86,78 @@ func runReport(args []string, stdout io.Writer, env envFunc, git gitFunc, doer h
 	}
 	printReport(stdout, &rep)
 	return nil
+}
+
+// reportQuery names the report to read: empty fields are detected, and an
+// empty token is looked for the way an upload looks for one.
+type reportQuery struct {
+	server, forge, repo, commit, branch, token string
+}
+
+// fetchReport reads one report from the read API and returns its JSON
+// body, or an error that says why there is none.
+func fetchReport(q reportQuery, env envFunc, git gitFunc, doer httpDoer) ([]byte, error) {
+	build := buildInfo{Repo: q.repo, Commit: q.commit}
+	if q.repo == "" || (q.commit == "" && q.branch == "") {
+		build.fill(detectBuild(env, git, readGitHubEvent(env, os.ReadFile)))
+	}
+	if build.Repo == "" {
+		return nil, errors.New("repo not detected: set -repo workspace/repo")
+	}
+	f := cmp.Or(q.forge, detectForge(env, git))
+	if f == "" {
+		return nil, errors.New("forge not detected: set -forge github, gitlab or bitbucket")
+	}
+
+	v := url.Values{}
+	if q.branch != "" {
+		v.Set("branch", q.branch)
+	} else if build.Commit != "" {
+		v.Set("commit", build.Commit)
+	} else {
+		return nil, errors.New("commit not detected: set -commit, or -branch for a branch's newest report")
+	}
+	segs := strings.Split(build.Repo, "/")
+	for i, seg := range segs {
+		segs[i] = url.PathEscape(seg)
+	}
+	u := fmt.Sprintf("%s/api/v1/reports/%s/%s?%s", strings.TrimRight(q.server, "/"),
+		url.PathEscape(f), strings.Join(segs, "/"), v.Encode())
+	req, err := http.NewRequest(http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "gocov/"+version)
+	// The upload's credential order: a token, else an OIDC token the CI
+	// mints or hands over. None at all reads public reports only.
+	cred, mintErr := q.token, error(nil)
+	if cred == "" {
+		var minted string
+		minted, mintErr = mintGitHubOIDC(env, doer, q.server)
+		cred = cmp.Or(minted, envOIDCToken(env))
+	}
+	if cred != "" {
+		req.Header.Set("Authorization", "Bearer "+cred)
+	}
+	status, body, err := send(doer, req)
+	if err != nil {
+		return nil, err
+	}
+	if status == http.StatusNotFound {
+		why := "its reports are not public: set -token or $GOCOV_TOKEN to read a private repo"
+		switch {
+		case cred != "":
+			why = "the credential is not for this repo and its reports are not public"
+		case mintErr != nil:
+			why = fmt.Sprintf("its reports are not public, and GitHub's OIDC token request failed (%v)", mintErr)
+		}
+		return nil, fmt.Errorf("no report for %s/%s (%s): it is not uploaded yet, or %s", f, build.Repo, v.Encode(), why)
+	}
+	if status != http.StatusOK {
+		return nil, &serverError{code: status, msg: strings.TrimSpace(string(body))}
+	}
+	return body, nil
 }
 
 // printReport writes the report as a few plain lines: easy to read, and
