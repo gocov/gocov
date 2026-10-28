@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.0](https://github.com/gocov/gocov/compare/v0.30.1...v0.31.0) (2026-10-28)
+
+
+### Features
+
+* sign MCP connectors in, so /mcp reads private repos ([#260](https://github.com/gocov/gocov/issues/260)) ([c51798a](https://github.com/gocov/gocov/commit/c51798a956ec506e2496bc1a47b3f18016713fea))
+
 ## [0.30.1](https://github.com/gocov/gocov/compare/v0.30.0...v0.30.1) (2026-10-28)
 
 
