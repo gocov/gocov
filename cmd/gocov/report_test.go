@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -175,5 +176,115 @@ report: https://gocov.example/uploads/3
 `
 	if out.String() != want {
 		t.Errorf("output:\n%s\nwant:\n%s", out.String(), want)
+	}
+}
+
+func TestPrintReportShapes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rep  reportResponse
+		want string
+	}{
+		{"a branch build with a failed gate", func() reportResponse {
+			var r reportResponse
+			r.Repo.Forge, r.Repo.Slug = "github", "acme/widgets"
+			r.Commit, r.Branch, r.Coverage, r.GateFailed, r.ReportURL = "abcdef123", "main", 61.25, true, "https://g/u/1"
+			return r
+		}(), "github/acme/widgets @ abcdef1 (main)\ncoverage: 61.2%, gate failed\nreport: https://g/u/1\n"},
+		{"a PR that changed no executable lines but untracked files", func() reportResponse {
+			var r reportResponse
+			r.Repo.Forge, r.Repo.Slug = "gitlab", "grp/sub/app"
+			r.Commit, r.Branch, r.PRID, r.Coverage, r.ReportURL = "abc", "docs", "9", 90, "https://g/u/2"
+			r.Diff = &struct {
+				Coverage     float64 `json:"coverage"`
+				CoveredLines int64   `json:"covered_lines"`
+				TotalLines   int64   `json:"total_lines"`
+				Uncovered    []struct {
+					Path  string `json:"path"`
+					Lines string `json:"lines"`
+				} `json:"uncovered"`
+				UnmatchedFiles []string `json:"unmatched_files"`
+			}{Coverage: 100, UnmatchedFiles: []string{"gen/a.go", "gen/b.go"}}
+			return r
+		}(), "gitlab/grp/sub/app @ abc (docs, PR 9)\ncoverage: 90.0%\ndiff coverage: no executable lines changed\n" +
+			"changed files without coverage data: gen/a.go, gen/b.go\nreport: https://g/u/2\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			printReport(&out, &tc.rep)
+			if out.String() != tc.want {
+				t.Errorf("output:\n%s\nwant:\n%s", out.String(), tc.want)
+			}
+		})
+	}
+}
+
+func TestDetectForge(t *testing.T) {
+	remote := func(url string) gitFunc {
+		return func(...string) (string, error) { return url, nil }
+	}
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		git  gitFunc
+		want string
+	}{
+		{"Bitbucket Pipelines", map[string]string{"BITBUCKET_REPO_FULL_NAME": "acme/widgets"}, noGit, "bitbucket"},
+		{"GitLab CI", map[string]string{"GITLAB_CI": "true"}, noGit, "gitlab"},
+		{"a bitbucket.org remote", nil, remote("https://bitbucket.org/acme/widgets.git"), "bitbucket"},
+		{"a self-managed GitLab remote", nil, remote("git@git.example.com:acme/widgets.git"), ""},
+		{"no remote", nil, noGit, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := detectForge(mapEnv(tc.env), tc.git); got != tc.want {
+				t.Errorf("detectForge = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestReportServerFailures(t *testing.T) {
+	broken, _ := newReportServer(t, http.StatusBadGateway, "upstream down\n")
+	garbled, _ := newReportServer(t, http.StatusOK, "<html>not json</html>")
+	args := func(url string, extra ...string) []string {
+		return append([]string{"-server", url, "-forge", "github", "-repo", "acme/widgets", "-commit", "abc"}, extra...)
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"a 502 names the status and the body", args(broken.URL), "server returned 502: upstream down"},
+		{"an answer that is not JSON", args(garbled.URL), "decoding report"},
+		{"a stray argument", args(broken.URL, "coverage.out"), "usage: gocov report"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := runReport(tc.args, &bytes.Buffer{}, mapEnv(nil), noGit, http.DefaultClient)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestRunDispatchesReport: `gocov report` reaches the command from main's
+// entry point, and an unknown command names both.
+func TestRunDispatchesReport(t *testing.T) {
+	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout := os.Stdout
+	os.Stdout = devNull // run prints to the process's stdout
+	t.Cleanup(func() { os.Stdout = stdout; devNull.Close() })
+	srv, req := newReportServer(t, http.StatusOK, reportBody)
+	if err := run([]string{"report", "-server", srv.URL, "-forge", "github", "-repo", "acme/widgets", "-commit", "abc", "-json"}); err != nil {
+		t.Fatal(err)
+	}
+	if req.URL.Path != "/api/v1/reports/github/acme/widgets" {
+		t.Errorf("requested %s", req.URL)
+	}
+	if err := run([]string{"reprot"}); err == nil || !strings.Contains(err.Error(), "gocov report") {
+		t.Errorf("unknown command: err = %v, want the usage naming gocov report", err)
 	}
 }
