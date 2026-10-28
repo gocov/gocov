@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.29.0](https://github.com/gocov/gocov/compare/v0.28.0...v0.29.0) (2026-10-28)
+
+
+### Features
+
+* **cli:** serve a commit's report to MCP clients with gocov mcp ([#255](https://github.com/gocov/gocov/issues/255)) ([a7e37dd](https://github.com/gocov/gocov/commit/a7e37ddb0d20c4bf3cfbba4a20c7bd161a442f74))
+* read a private repo's report with its upload credential ([#252](https://github.com/gocov/gocov/issues/252)) ([0194ead](https://github.com/gocov/gocov/commit/0194eadbceaf2ba591f4f1fca386b651a5fffafd))
+
 ## [0.28.0](https://github.com/gocov/gocov/compare/v0.27.5...v0.28.0) (2026-10-28)
 
 
