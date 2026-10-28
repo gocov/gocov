@@ -45,7 +45,7 @@ jobs:
   # is that wrapper's release decision — its tag-on-release-merge workflow
   # takes it from there.
   bump-wrappers:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     env:
