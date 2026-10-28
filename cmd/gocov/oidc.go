@@ -37,16 +37,28 @@ func mintGitHubOIDC(env envFunc, doer httpDoer, audience string) (string, error)
 		sep = "&"
 	}
 	full := reqURL + sep + "audience=" + url.QueryEscape(strings.TrimRight(audience, "/"))
-	req, err := http.NewRequest(http.MethodGet, full, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+reqToken)
-	req.Header.Set("Accept", "application/json")
 
-	status, body, err := send(doer, req)
-	if err != nil {
-		return "", err
+	// The endpoint is GitHub's, and it has answered 504 on a build whose
+	// upload a push has no other way to authenticate: retry what may pass
+	// on a second try (no answer, 429, 5xx), never a refusal.
+	var status int
+	var body []byte
+	for attempt := 0; ; attempt++ {
+		req, err := http.NewRequest(http.MethodGet, full, nil)
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("Authorization", "Bearer "+reqToken)
+		req.Header.Set("Accept", "application/json")
+		status, body, err = send(doer, req)
+		transient := err != nil || status == http.StatusTooManyRequests || status >= 500
+		if !transient || attempt == len(oidcRetryDelays) {
+			if err != nil {
+				return "", err
+			}
+			break
+		}
+		time.Sleep(oidcRetryDelays[attempt])
 	}
 	if status != http.StatusOK {
 		return "", fmt.Errorf("id-token endpoint returned %d", status)
@@ -77,3 +89,7 @@ func envOIDCToken(env envFunc) string {
 // defaultHTTPDoer is the production httpDoer for the OIDC mint: a client
 // with a short timeout, since the id-token endpoint is local to the runner.
 var defaultHTTPDoer httpDoer = &http.Client{Timeout: 30 * time.Second}
+
+// oidcRetryDelays are the waits before each retry of a transient id-token
+// failure: three attempts in all. A variable so tests need not sleep.
+var oidcRetryDelays = []time.Duration{2 * time.Second, 5 * time.Second}
