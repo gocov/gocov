@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.27.5](https://github.com/gocov/gocov/compare/v0.27.4...v0.27.5) (2026-10-28)
+
+
+### Bug Fixes
+
+* **cli:** retry GitHub's OIDC token request on a transient failure ([#247](https://github.com/gocov/gocov/issues/247)) ([3437bf5](https://github.com/gocov/gocov/commit/3437bf55db78377cef9a56aa6416021ec3701ec6))
+* **web:** drop the top bar's sign-in link on the login page ([#243](https://github.com/gocov/gocov/issues/243)) ([4b5ee34](https://github.com/gocov/gocov/commit/4b5ee3484b907f4483cf55e8feeac39c391eeb59))
+
 ## [0.27.4](https://github.com/gocov/gocov/compare/v0.27.3...v0.27.4) (2026-10-28)
 
 
