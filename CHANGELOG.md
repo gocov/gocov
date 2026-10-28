@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.27.4](https://github.com/gocov/gocov/compare/v0.27.3...v0.27.4) (2026-10-28)
+
+
+### Bug Fixes
+
+* **deps:** bump Go to 1.27.3 and golang.org/x/text to v0.41.0 ([#236](https://github.com/gocov/gocov/issues/236)) ([6cde5d7](https://github.com/gocov/gocov/commit/6cde5d71f03be22238a0c178c41ddc16384f7569))
+* **web:** count the landing page as a pageview ([#235](https://github.com/gocov/gocov/issues/235)) ([0c57bb4](https://github.com/gocov/gocov/commit/0c57bb41be4bdd3cbcaf291a029ee59c037a7582))
+
 ## [0.27.3](https://github.com/gocov/gocov/compare/v0.27.2...v0.27.3) (2026-10-05)
 
 
