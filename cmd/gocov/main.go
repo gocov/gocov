@@ -2,6 +2,10 @@
 //
 //	gocov upload [flags] coverage.out
 //
+// and reads a commit's report back, for a person or an agent:
+//
+//	gocov report [flags]
+//
 // Repo, commit, branch and PR id are auto-detected from Bitbucket Pipelines
 // or GitHub Actions environment variables, falling back to git. The token
 // comes from GOCOV_TOKEN or -token; the server defaults to the hosted
@@ -45,8 +49,11 @@ func run(args []string) error {
 		fmt.Println("gocov", version)
 		return nil
 	}
+	if len(args) > 0 && args[0] == "report" {
+		return runReport(args[1:], os.Stdout, osEnv, runGit, defaultHTTPDoer)
+	}
 	if len(args) == 0 || args[0] != "upload" {
-		return errors.New("usage: gocov upload [flags] <profile file> | gocov version")
+		return errors.New("usage: gocov upload [flags] <profile file> | gocov report [flags] | gocov version")
 	}
 
 	// The environment only supplies flag defaults here; see internal/config.

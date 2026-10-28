@@ -2,6 +2,7 @@
 
 ```
 gocov upload [flags] <profile file>
+gocov report [flags]
 gocov version
 ```
 
@@ -45,6 +46,34 @@ variables, falling back to `git`.
 
 `GOCOV_PART` is handy for matrix jobs that already expose the variant in the environment. `GOCOV_IGNORE` takes
 several patterns separated by commas or newlines. Flags win over the environment.
+
+## Reading a report
+
+`gocov report` prints a commit's report back: the totals and, for a pull request, the changed lines no test ran —
+what you, or a coding agent working on the change, need in order to add the missing tests.
+
+```
+$ gocov report
+github/acme/widgets @ 7aa8f01 (feature, PR 247)
+coverage: 88.0% (+0.4% vs c54dc2c), 2 parts
+diff coverage: 82.6% (19/23 changed lines)
+uncovered changed lines:
+  cmd/gocov/oidc.go: 49-50, 57-58
+report: https://app.gocov.dev/uploads/1114?parts=merged
+```
+
+It finds the forge, repo and commit the way `upload` does — the CI environment, else `git` (the `origin` remote and
+`HEAD`) — so run it after the commit's CI has uploaded. It reads [public reports](public-reports.md) only and needs
+no token.
+
+| flag      | default     | meaning                                                                        |
+|-----------|-------------|--------------------------------------------------------------------------------|
+| `-forge`  | auto-detect | `github`, `gitlab` or `bitbucket`; needed for a self-managed GitLab            |
+| `-repo`   | auto-detect | repo slug, `workspace/repo`                                                    |
+| `-commit` | auto-detect | commit SHA                                                                     |
+| `-branch` | none        | report the newest commit on this branch instead                                |
+| `-json`   | off         | print the [API's JSON answer](api.md#reading-a-report) as is                   |
+| `-server` | `$GOCOV_SERVER`, else the hosted service | the gocov instance to read from                   |
 
 ## Uploading without a token
 

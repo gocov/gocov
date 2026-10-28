@@ -108,7 +108,7 @@ func (s *Server) publicReportCandidate(r *http.Request) bool {
 }
 
 // publicPath reports whether a path must work without a session: the CI
-// surface (upload API, badges, health), embedded assets, the login
+// surface (upload API, read API, badges, health), embedded assets, the login
 // flow itself and the crawler files. Everything else is a protected page.
 func publicPath(p string) bool {
 	if p == "/api/v1/upload" || p == "/healthz" || p == "/login" ||
@@ -116,6 +116,7 @@ func publicPath(p string) bool {
 		return true
 	}
 	return strings.HasPrefix(p, "/badge/") ||
+		strings.HasPrefix(p, "/api/v1/reports/") ||
 		strings.HasPrefix(p, "/static/") ||
 		strings.HasPrefix(p, "/oauth/")
 }
