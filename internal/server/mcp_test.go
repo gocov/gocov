@@ -152,3 +152,18 @@ func TestMCPRoute(t *testing.T) {
 		t.Errorf("initialize: %s", rec.Body)
 	}
 }
+
+// An MCP client looks for OAuth metadata before it connects. Signed out,
+// it must get a plain 404, meaning "no sign-in", not the login redirect.
+func TestWellKnownIsAPlainNotFound(t *testing.T) {
+	f := newPublicFixture(t, store.VisibilityPublic, true)
+	for _, path := range []string{
+		"/.well-known/oauth-protected-resource",
+		"/.well-known/oauth-protected-resource/mcp",
+		"/.well-known/oauth-authorization-server",
+	} {
+		if rec := get(f, path); rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s: status = %d, Location %q", path, rec.Code, rec.Header().Get("Location"))
+		}
+	}
+}

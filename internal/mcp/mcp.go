@@ -19,7 +19,7 @@ import (
 // ProtocolVersions are the protocol revisions this server speaks, newest
 // first: a client asking for one of them gets it back, any other gets the
 // newest.
-var ProtocolVersions = []string{"2025-06-18", "2025-03-26", "2024-11-05"}
+var ProtocolVersions = []string{"2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"}
 
 // The JSON-RPC error codes the server answers with.
 const (
@@ -177,13 +177,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if v := r.Header.Get("MCP-Protocol-Version"); v != "" && !slices.Contains(ProtocolVersions, v) {
-		http.Error(w, "unsupported MCP-Protocol-Version "+v, http.StatusBadRequest)
-		return
-	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxMessageBytes))
 	if err != nil {
 		http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	// The header carries the revision initialize settled on, so it is
+	// checked on every later message. Not on initialize itself, which a
+	// client may send under a newer revision than this server knows: that
+	// is the very message that negotiates one both speak.
+	var peek struct {
+		Method string `json:"method"`
+	}
+	_ = json.Unmarshal(body, &peek)
+	if v := r.Header.Get("MCP-Protocol-Version"); v != "" && peek.Method != "initialize" && !slices.Contains(ProtocolVersions, v) {
+		http.Error(w, "unsupported MCP-Protocol-Version "+v, http.StatusBadRequest)
 		return
 	}
 	resp := s.Handle(r.Context(), bytes.TrimSpace(body))

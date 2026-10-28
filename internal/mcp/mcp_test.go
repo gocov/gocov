@@ -177,9 +177,20 @@ func TestStreamableHTTP(t *testing.T) {
 	if rec := post(t, `{"jsonrpc":"2.0","method":"notifications/initialized"}`, "MCP-Protocol-Version", "2025-06-18"); rec.Code != http.StatusAccepted || rec.Body.Len() != 0 {
 		t.Errorf("notification: %d %q", rec.Code, rec.Body)
 	}
-	// A revision it does not speak is refused before anything runs.
+	// After initialize, a revision it does not speak is refused before
+	// anything runs.
 	if rec := post(t, `{"jsonrpc":"2.0","id":1,"method":"ping"}`, "MCP-Protocol-Version", "1999-01-01"); rec.Code != http.StatusBadRequest {
 		t.Errorf("unsupported version: status = %d", rec.Code)
+	}
+	// But initialize under a revision newer than it knows is how a newer
+	// client finds one both speak: answered, with the newest it has.
+	rec = post(t, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2099-01-01"}}`, "MCP-Protocol-Version", "2099-01-01")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"protocolVersion":"`+ProtocolVersions[0]+`"`) {
+		t.Errorf("initialize under a newer revision: %d %s", rec.Code, rec.Body)
+	}
+	// The revision claude.ai's connector speaks.
+	if rec := post(t, `{"jsonrpc":"2.0","id":1,"method":"ping"}`, "MCP-Protocol-Version", "2025-11-25"); rec.Code != http.StatusOK {
+		t.Errorf("2025-11-25: status = %d", rec.Code)
 	}
 	if rec := post(t, `{"jsonrpc":"2.0","id":1,"method":"ping","params":{"pad":"`+strings.Repeat("x", maxMessageBytes)+`"}}`); rec.Code != http.StatusRequestEntityTooLarge {
 		t.Errorf("oversized message: status = %d", rec.Code)

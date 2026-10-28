@@ -225,6 +225,10 @@ func (s *Server) routes() {
 	// The read API's public reports as an MCP server (mcp.go): every
 	// method, so the transport itself answers GET and DELETE.
 	s.mux.Handle("/mcp", s.mcp)
+	// No well-known metadata, OAuth discovery included: a plain 404 is how
+	// an MCP client learns /mcp needs no sign-in, where the login redirect
+	// a signed-out path otherwise gets would read as a broken server.
+	s.mux.HandleFunc("GET /.well-known/", http.NotFound)
 	s.mux.HandleFunc("GET /badge/{forge}/{slug...}", s.handleBadge)
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /robots.txt", s.handleRobots)
