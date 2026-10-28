@@ -86,8 +86,9 @@ runs in the repo's CI therefore reads the report with nothing more to set up. An
 agent) over stdio, for clients that cannot run `gocov report` themselves. It offers one tool, `get_report`, whose
 optional arguments `forge`, `repo`, `commit`, `branch` and `format` (`text` or `json`) mirror the flags above.
 Whatever is left out is detected in the directory the client starts the server in. It takes `-server` and
-`-token` like `gocov report`, and finds a credential the same way. [Coding agents](coding-agents.md#mcp) shows how
-to register it.
+`-token` like `gocov report`, and finds a credential the same way. [Coding agents](coding-agents.md#as-a-local-command)
+shows how to register it. A client that takes a URL instead of a command uses the server's own
+[`/mcp`](api.md#mcp), which reads public reports only.
 
 ## Uploading without a token
 

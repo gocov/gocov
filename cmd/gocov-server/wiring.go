@@ -48,6 +48,7 @@ func buildServerConfig(cfg config.Server, d deps, log *slog.Logger) (server.Conf
 	}
 
 	srvCfg := server.Config{
+		Version: version,
 		Store:   d.Store,
 		Blobs:   d.Blobs,
 		BaseURL: cfg.BaseURL,

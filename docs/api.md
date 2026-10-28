@@ -114,6 +114,25 @@ another repo. A credential that is not one at all (an unknown token, or an OIDC 
 
 Fields are only ever added: a client should ignore the ones it does not know.
 
+## MCP
+
+`/mcp` serves the read API as a remote [MCP](https://modelcontextprotocol.io) server over Streamable HTTP, for
+clients that are given a URL rather than a command to run. [Coding agents](coding-agents.md#as-a-connector-by-url)
+shows how to add it. It offers one tool, `get_report`:
+
+| argument | meaning                                                                              |
+|----------|--------------------------------------------------------------------------------------|
+| `forge`  | required: `github`, `gitlab` or `bitbucket`                                          |
+| `repo`   | required: the repo slug, `workspace/repo`                                            |
+| `commit` | the commit SHA. Without it, the newest report on `branch`                            |
+| `branch` | the branch to read the newest report on; the repo's default branch when left out     |
+| `format` | `text` (default), the lines [`gocov report`](cli.md#reading-a-report) prints, or `json`, the answer above |
+
+It answers for what the read API answers without a credential: repos whose reports are public, and every repo
+on an instance without sign-in. A repo it may not serve gets the same answer as one that does not exist. It keeps
+no sessions. `POST` carries one JSON-RPC message, a notification gets `202`, and `GET` gets `405`, since it
+opens no stream.
+
 ## Badge
 
 ```markdown

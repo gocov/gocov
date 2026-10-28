@@ -111,7 +111,7 @@ func (s *Server) publicReportCandidate(r *http.Request) bool {
 // surface (upload API, read API, badges, health), embedded assets, the login
 // flow itself and the crawler files. Everything else is a protected page.
 func publicPath(p string) bool {
-	if p == "/api/v1/upload" || p == "/healthz" || p == "/login" ||
+	if p == "/api/v1/upload" || p == "/healthz" || p == "/login" || p == "/mcp" ||
 		p == "/github/webhook" || p == "/robots.txt" || p == "/sitemap.xml" {
 		return true
 	}
