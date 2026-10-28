@@ -63,10 +63,20 @@ same `(run_id, run_attempt, part)` already uploaded, `429` past the per-repo hou
 ## Reading a report
 
 `GET /api/v1/reports/{forge}/{workspace}/{repo}` — a commit's merged report, for tools and coding agents: what a
-change left untested, without scraping the report page. It answers for repos whose
-[reports are public](public-reports.md) (and for every repo on a self-hosted instance without sign-in), needs no
-credential, and answers `404` for anything else — the same `404` as for a repo that does not exist. The
+change left untested, without scraping the report page. The
 [`gocov report`](cli.md#reading-a-report) command calls it for you.
+
+Without a credential it answers for repos whose [reports are public](public-reports.md) (and for every repo on a
+self-hosted instance without sign-in). Any private repo is read with what its upload authenticates with, sent as
+`Authorization: Bearer <credential>`:
+
+- the repo's upload token, or its workspace's token;
+- in CI, the forge's [OIDC identity token](#oidc-uploads) for this server, which names the repo it was minted
+  for.
+
+Anything else gets `404`, the same `404` as for a repo that does not exist, and so does a credential for
+another repo. A credential that is not one at all (an unknown token, or an OIDC token that does not verify) gets
+`401` or `403` with the reason, as an upload would.
 
 | query    | meaning                                                                                           |
 |----------|---------------------------------------------------------------------------------------------------|

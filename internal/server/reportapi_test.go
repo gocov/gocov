@@ -1,13 +1,16 @@
 package server
 
 import (
+	"errors"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gocov/gocov/internal/diffcov"
+	"github.com/gocov/gocov/internal/oidc"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -158,5 +161,206 @@ func TestReportAPIUnknownCommitOrEmptyBranch(t *testing.T) {
 		if rec := get(f, path); rec.Code != http.StatusNotFound {
 			t.Errorf("GET %s: status = %d, want 404", path, rec.Code)
 		}
+	}
+}
+
+// getWith is get with a bearer credential.
+func getWith(f *fixture, path, bearer string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	rec := httptest.NewRecorder()
+	f.srv.ServeHTTP(rec, req)
+	return rec
+}
+
+// requireSignIn turns an open-instance fixture into one with sign-in, where
+// only a credential or the public rule opens a report.
+func requireSignIn(f *fixture) {
+	f.srv.auths["bitbucket"] = &fakeProvider{identity: memberIdentity()}
+}
+
+func TestReportAPIReadsAPrivateRepoWithItsCredential(t *testing.T) {
+	f := newPublicFixture(t, store.VisibilityPrivate, true)
+	seedCommitReport(t, f, prReport())
+	other := &store.Repo{Forge: "bitbucket", Slug: "beta/gadgets", Token: "beta-token", DefaultBranch: "main"}
+	if err := f.store.CreateRepo(t.Context(), other); err != nil {
+		t.Fatal(err)
+	}
+	const path = "/api/v1/reports/bitbucket/acme/widgets?commit=feed1234"
+
+	for _, cred := range []string{"secret-token", "ws-secret"} {
+		rec := getWith(f, path, cred)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d: %s", cred, rec.Code, rec.Body)
+		}
+		// A private answer: no shared cache may keep it.
+		if cc := rec.Header().Get("Cache-Control"); cc != "private, no-store" {
+			t.Errorf("%s: Cache-Control = %q", cred, cc)
+		}
+	}
+	// Another repo's token opens nothing here: the same 404 as no token.
+	if rec := getWith(f, path, "beta-token"); rec.Code != http.StatusNotFound {
+		t.Errorf("another repo's token: status = %d, want 404", rec.Code)
+	}
+	// A token that is no token is said so, not read as anonymous.
+	if rec := getWith(f, path, "nope"); rec.Code != http.StatusUnauthorized {
+		t.Errorf("unknown token: status = %d, want 401", rec.Code)
+	}
+}
+
+func TestReportAPIPublicRepoWithAnotherReposToken(t *testing.T) {
+	f := newPublicFixture(t, store.VisibilityPublic, true)
+	seedCommitReport(t, f, prReport())
+	other := &store.Repo{Forge: "bitbucket", Slug: "beta/gadgets", Token: "beta-token", DefaultBranch: "main"}
+	if err := f.store.CreateRepo(t.Context(), other); err != nil {
+		t.Fatal(err)
+	}
+	// The token grants nothing here, but anyone may read a public report.
+	rec := getWith(f, "/api/v1/reports/bitbucket/acme/widgets?commit=feed1234", "beta-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "public, max-age=60" {
+		t.Errorf("Cache-Control = %q", cc)
+	}
+}
+
+func TestReportAPIGitHubOIDC(t *testing.T) {
+	f, is := newOIDCFixture(t)
+	requireSignIn(f)
+	seedCommitReport(t, f, prReport())
+	// A bitbucket repo of the same name, which a GitHub token never names.
+	namesake := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "bb-token", DefaultBranch: "main"}
+	if err := f.store.CreateRepo(t.Context(), namesake); err != nil {
+		t.Fatal(err)
+	}
+
+	tok := is.mint(t, githubClaims("https://gocov.example"))
+	if rec := getWith(f, "/api/v1/reports/github/acme/widgets?commit=feed1234", tok); rec.Code != http.StatusOK {
+		t.Fatalf("own repo: status = %d: %s", rec.Code, rec.Body)
+	}
+	if rec := getWith(f, "/api/v1/reports/bitbucket/acme/widgets?commit=feed1234", tok); rec.Code != http.StatusNotFound {
+		t.Errorf("other forge's namesake: status = %d, want 404", rec.Code)
+	}
+	claims := githubClaims("https://gocov.example")
+	claims["repository"] = "acme/other"
+	if rec := getWith(f, "/api/v1/reports/github/acme/widgets?commit=feed1234", is.mint(t, claims)); rec.Code != http.StatusNotFound {
+		t.Errorf("another repo's token: status = %d, want 404", rec.Code)
+	}
+	rec := getWith(f, "/api/v1/reports/github/acme/widgets?commit=feed1234", is.mint(t, githubClaims("https://elsewhere.example")))
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "oidc_bad_audience") {
+		t.Errorf("wrong audience: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestReportAPIGitLabOIDC(t *testing.T) {
+	f, is := newGitLabOIDCFixture(t, gitLabDotComIssuer, nil)
+	requireSignIn(f)
+	seedCommitReport(t, f, prReport())
+	const path = "/api/v1/reports/gitlab/acme/widgets?commit=feed1234"
+	if rec := getWith(f, path, is.mint(t, glClaims(gitLabDotComIssuer, "acme/widgets", "https://gocov.example"))); rec.Code != http.StatusOK {
+		t.Fatalf("own project: status = %d: %s", rec.Code, rec.Body)
+	}
+	if rec := getWith(f, path, is.mint(t, glClaims(gitLabDotComIssuer, "acme/other", "https://gocov.example"))); rec.Code != http.StatusNotFound {
+		t.Errorf("another project's token: status = %d, want 404", rec.Code)
+	}
+}
+
+func TestReportAPIBitbucketOIDC(t *testing.T) {
+	auds := []any{bbWorkspaceARI, "https://gocov.example"}
+	const path = "/api/v1/reports/bitbucket/acme/widgets?commit=feed1234"
+
+	t.Run("its own repo, checked with Bitbucket", func(t *testing.T) {
+		f, is := newBitbucketOIDCFixture(t, bbRepoUUID)
+		requireSignIn(f)
+		seedCommitReport(t, f, prReport())
+		if rec := getWith(f, path, is.mint(t, bbClaims(bbRepoUUID, auds))); rec.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+		}
+		if len(f.forge.RepoIDCalls) != 1 {
+			t.Errorf("got %d GetRepoID calls, want 1", len(f.forge.RepoIDCalls))
+		}
+	})
+	t.Run("another repo's token", func(t *testing.T) {
+		f, is := newBitbucketOIDCFixture(t, bbRepoUUID)
+		requireSignIn(f)
+		seedCommitReport(t, f, prReport())
+		if rec := getWith(f, path, is.mint(t, bbClaims("{00000000-0000-0000-0000-000000000000}", auds))); rec.Code != http.StatusNotFound {
+			t.Errorf("status = %d, want 404", rec.Code)
+		}
+	})
+	t.Run("a token naming no repo", func(t *testing.T) {
+		f, is := newBitbucketOIDCFixture(t, bbRepoUUID)
+		requireSignIn(f)
+		claims := bbClaims(bbRepoUUID, auds)
+		delete(claims, "repositoryUuid")
+		delete(claims, "sub")
+		if rec := getWith(f, path, is.mint(t, claims)); rec.Code != http.StatusNotFound {
+			t.Errorf("status = %d, want 404", rec.Code)
+		}
+		if len(f.forge.RepoIDCalls) != 0 {
+			t.Errorf("asked Bitbucket %d times for nothing", len(f.forge.RepoIDCalls))
+		}
+	})
+	t.Run("rate limited", func(t *testing.T) {
+		f, is := newBitbucketOIDCFixture(t, bbRepoUUID)
+		requireSignIn(f)
+		for range maxTokenlessPerRepoHour {
+			f.srv.tokenless.allow("acme/widgets", time.Now())
+		}
+		if rec := getWith(f, path, is.mint(t, bbClaims(bbRepoUUID, auds))); rec.Code != http.StatusTooManyRequests {
+			t.Errorf("status = %d, want 429", rec.Code)
+		}
+	})
+	t.Run("Bitbucket does not answer", func(t *testing.T) {
+		f, is := newBitbucketOIDCFixture(t, bbRepoUUID)
+		requireSignIn(f)
+		f.forge.RepoIDErr = errors.New("boom")
+		if rec := getWith(f, path, is.mint(t, bbClaims(bbRepoUUID, auds))); rec.Code != http.StatusBadGateway {
+			t.Errorf("status = %d, want 502", rec.Code)
+		}
+	})
+	t.Run("no workspace to ask through", func(t *testing.T) {
+		f, is := newBitbucketOIDCFixture(t, bbRepoUUID)
+		requireSignIn(f)
+		loner := &store.Repo{Forge: "bitbucket", Slug: "loner/repo", Token: "loner-token", DefaultBranch: "main"}
+		if err := f.store.CreateRepo(t.Context(), loner); err != nil {
+			t.Fatal(err)
+		}
+		rec := getWith(f, "/api/v1/reports/bitbucket/loner/repo", is.mint(t, bbClaims(bbRepoUUID, auds)))
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "oidc_not_connected") {
+			t.Errorf("status = %d: %s", rec.Code, rec.Body)
+		}
+	})
+}
+
+func TestReportAPIOIDCWithoutAVerifier(t *testing.T) {
+	f := newPublicFixture(t, store.VisibilityPrivate, true)
+	f.srv.oidc = nil // as on a server with no public URL
+	rec := getWith(f, "/api/v1/reports/bitbucket/acme/widgets", "a.b.c")
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "OIDC reads are not available") {
+		t.Errorf("status = %d: %s", rec.Code, rec.Body)
+	}
+}
+
+type failingTransport struct{}
+
+func (failingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("connection refused")
+}
+
+// When the forge's signing keys cannot be fetched the token is neither good
+// nor bad: say so, and that a retry may pass.
+func TestReportAPIOIDCKeysUnreachable(t *testing.T) {
+	f := newPublicFixture(t, store.VisibilityPrivate, true)
+	is, _ := newIssuer(t, gitHubActionsIssuer, gitHubActionsIssuer+"/jwks")
+	f.srv.oidc = oidc.New(oidc.Config{
+		Audience:   "https://gocov.example",
+		Issuers:    []string{gitHubActionsIssuer},
+		HTTPClient: &http.Client{Transport: failingTransport{}},
+	})
+	rec := getWith(f, "/api/v1/reports/bitbucket/acme/widgets", is.mint(t, githubClaims("https://gocov.example")))
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("status = %d: %s", rec.Code, rec.Body)
 	}
 }
