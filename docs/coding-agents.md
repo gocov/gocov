@@ -45,9 +45,28 @@ The CLI has to be on the agent's machine: see [installing](cli.md#installing). W
 
 ## MCP
 
-An agent that can run commands needs nothing more than `gocov report`. For a client that cannot, such as a
-desktop app or an editor's chat panel, [`gocov mcp`](cli.md#serving-reports-over-mcp) serves the report over MCP
-as one tool, `get_report`. Register it as a stdio server:
+An agent that can run commands needs nothing more than `gocov report`. Clients that cannot, such as a chat app
+or an editor's chat panel, read the same report over MCP as one tool, `get_report`, in one of two ways.
+
+### As a connector, by URL
+
+gocov serves MCP at `https://app.gocov.dev/mcp` (on a self-hosted instance, `/mcp` on its own URL). Add it as a
+custom connector: in claude.ai, open *Settings → Connectors → Add custom connector* and enter
+
+| field          | value                         |
+|----------------|-------------------------------|
+| Name           | `gocov`                       |
+| MCP server URL | `https://app.gocov.dev/mcp`   |
+
+Nothing to install, and nothing to sign in to. In return it reads [public reports](public-reports.md) only, and
+since the client has no checkout, ask about a repo by name: *"what did gocov/gocov's last pull request leave
+untested?"*
+
+### As a local command
+
+[`gocov mcp`](cli.md#serving-reports-over-mcp) runs on your machine as a stdio server, reads private repos too,
+and finds the repo and commit from the checkout it starts in. Register it with a client that starts local
+servers:
 
 ```sh
 claude mcp add gocov -- gocov mcp

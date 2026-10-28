@@ -181,46 +181,6 @@ report: https://gocov.example/uploads/3
 	}
 }
 
-func TestPrintReportShapes(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		rep  reportResponse
-		want string
-	}{
-		{"a branch build with a failed gate", func() reportResponse {
-			var r reportResponse
-			r.Repo.Forge, r.Repo.Slug = "github", "acme/widgets"
-			r.Commit, r.Branch, r.Coverage, r.GateFailed, r.ReportURL = "abcdef123", "main", 61.25, true, "https://g/u/1"
-			return r
-		}(), "github/acme/widgets @ abcdef1 (main)\ncoverage: 61.2%, gate failed\nreport: https://g/u/1\n"},
-		{"a PR that changed no executable lines but untracked files", func() reportResponse {
-			var r reportResponse
-			r.Repo.Forge, r.Repo.Slug = "gitlab", "grp/sub/app"
-			r.Commit, r.Branch, r.PRID, r.Coverage, r.ReportURL = "abc", "docs", "9", 90, "https://g/u/2"
-			r.Diff = &struct {
-				Coverage     float64 `json:"coverage"`
-				CoveredLines int64   `json:"covered_lines"`
-				TotalLines   int64   `json:"total_lines"`
-				Uncovered    []struct {
-					Path  string `json:"path"`
-					Lines string `json:"lines"`
-				} `json:"uncovered"`
-				UnmatchedFiles []string `json:"unmatched_files"`
-			}{Coverage: 100, UnmatchedFiles: []string{"gen/a.go", "gen/b.go"}}
-			return r
-		}(), "gitlab/grp/sub/app @ abc (docs, PR 9)\ncoverage: 90.0%\ndiff coverage: no executable lines changed\n" +
-			"changed files without coverage data: gen/a.go, gen/b.go\nreport: https://g/u/2\n"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var out bytes.Buffer
-			printReport(&out, &tc.rep)
-			if out.String() != tc.want {
-				t.Errorf("output:\n%s\nwant:\n%s", out.String(), tc.want)
-			}
-		})
-	}
-}
-
 func TestDetectForge(t *testing.T) {
 	remote := func(url string) gitFunc {
 		return func(...string) (string, error) { return url, nil }

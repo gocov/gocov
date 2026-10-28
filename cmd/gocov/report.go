@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/gocov/gocov/internal/config"
+	"github.com/gocov/gocov/internal/readapi"
 )
 
 // gocov report reads a commit's merged report back from the server's read
@@ -21,36 +22,6 @@ import (
 // public repo needs no credential; a private one is read with whatever its
 // upload would authenticate with — the token, or in CI the forge's OIDC
 // token — found the same way an upload finds it.
-
-// reportResponse is the read API's answer, as much of it as the CLI prints.
-// -json passes the server's body through untouched instead.
-type reportResponse struct {
-	Repo struct {
-		Forge string `json:"forge"`
-		Slug  string `json:"slug"`
-	} `json:"repo"`
-	Commit     string   `json:"commit"`
-	Branch     string   `json:"branch"`
-	PRID       string   `json:"pr_id"`
-	Parts      int      `json:"parts"`
-	Coverage   float64  `json:"coverage"`
-	GateFailed bool     `json:"gate_failed"`
-	Delta      *float64 `json:"delta"`
-	Base       *struct {
-		Commit string `json:"commit"`
-	} `json:"base"`
-	Diff *struct {
-		Coverage     float64 `json:"coverage"`
-		CoveredLines int64   `json:"covered_lines"`
-		TotalLines   int64   `json:"total_lines"`
-		Uncovered    []struct {
-			Path  string `json:"path"`
-			Lines string `json:"lines"`
-		} `json:"uncovered"`
-		UnmatchedFiles []string `json:"unmatched_files"`
-	} `json:"diff"`
-	ReportURL string `json:"report_url"`
-}
 
 func runReport(args []string, stdout io.Writer, env envFunc, git gitFunc, doer httpDoer) error {
 	cfg, err := config.LoadCLI()
@@ -80,11 +51,11 @@ func runReport(args []string, stdout io.Writer, env envFunc, git gitFunc, doer h
 		_, err := stdout.Write(body)
 		return err
 	}
-	var rep reportResponse
+	var rep readapi.Report
 	if err := json.Unmarshal(body, &rep); err != nil {
 		return fmt.Errorf("decoding report: %w", err)
 	}
-	printReport(stdout, &rep)
+	readapi.Print(stdout, &rep)
 	return nil
 }
 
@@ -159,50 +130,6 @@ func fetchReport(q reportQuery, env envFunc, git gitFunc, doer httpDoer) ([]byte
 	}
 	return body, nil
 }
-
-// printReport writes the report as a few plain lines: easy to read, and
-// easy for an agent to act on line by line.
-func printReport(w io.Writer, r *reportResponse) {
-	head := fmt.Sprintf("%s/%s @ %s", r.Repo.Forge, r.Repo.Slug, short(r.Commit))
-	if r.PRID != "" {
-		head += fmt.Sprintf(" (%s, PR %s)", r.Branch, r.PRID)
-	} else if r.Branch != "" {
-		head += fmt.Sprintf(" (%s)", r.Branch)
-	}
-	fmt.Fprintln(w, head)
-
-	cov := fmt.Sprintf("coverage: %.1f%%", r.Coverage)
-	if r.Delta != nil && r.Base != nil {
-		cov += fmt.Sprintf(" (%+.1f%% vs %s)", *r.Delta, short(r.Base.Commit))
-	}
-	if r.Parts > 1 {
-		cov += fmt.Sprintf(", %d parts", r.Parts)
-	}
-	if r.GateFailed {
-		cov += ", gate failed"
-	}
-	fmt.Fprintln(w, cov)
-
-	if d := r.Diff; d != nil {
-		if d.TotalLines == 0 {
-			fmt.Fprintln(w, "diff coverage: no executable lines changed")
-		} else {
-			fmt.Fprintf(w, "diff coverage: %.1f%% (%d/%d changed lines)\n", d.Coverage, d.CoveredLines, d.TotalLines)
-		}
-		if len(d.Uncovered) > 0 {
-			fmt.Fprintln(w, "uncovered changed lines:")
-			for _, f := range d.Uncovered {
-				fmt.Fprintf(w, "  %s: %s\n", f.Path, f.Lines)
-			}
-		}
-		if len(d.UnmatchedFiles) > 0 {
-			fmt.Fprintf(w, "changed files without coverage data: %s\n", strings.Join(d.UnmatchedFiles, ", "))
-		}
-	}
-	fmt.Fprintf(w, "report: %s\n", r.ReportURL)
-}
-
-func short(sha string) string { return sha[:min(len(sha), 7)] }
 
 // detectForge names the forge the repo lives on: the CI the CLI runs in,
 // else the host of the origin remote. "" when neither says, as on a

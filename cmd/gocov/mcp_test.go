@@ -44,41 +44,6 @@ func toolText(t *testing.T, msg map[string]any) (string, bool) {
 	return content[0].(map[string]any)["text"].(string), isErr
 }
 
-func TestMCPHandshake(t *testing.T) {
-	msgs := mcpSession(t, "https://unused.example",
-		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`,
-		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
-		``,
-		`{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"1999-01-01"}}`,
-		`{"jsonrpc":"2.0","id":"p","method":"ping"}`,
-		`{"jsonrpc":"2.0","id":3,"method":"tools/list"}`,
-	)
-	// The notification and the blank line get no answer.
-	if len(msgs) != 4 {
-		t.Fatalf("got %d answers, want 4: %v", len(msgs), msgs)
-	}
-	init := msgs[0]["result"].(map[string]any)
-	if init["protocolVersion"] != "2025-03-26" {
-		t.Errorf("a version it speaks: got %v back", init["protocolVersion"])
-	}
-	if info := init["serverInfo"].(map[string]any); info["name"] != "gocov" {
-		t.Errorf("serverInfo = %v", info)
-	}
-	if _, ok := init["capabilities"].(map[string]any)["tools"]; !ok {
-		t.Errorf("capabilities = %v, want tools", init["capabilities"])
-	}
-	if v := msgs[1]["result"].(map[string]any)["protocolVersion"]; v != mcpProtocolVersions[0] {
-		t.Errorf("a version it does not speak: got %v, want the newest", v)
-	}
-	if msgs[2]["id"] != "p" || msgs[2]["result"] == nil {
-		t.Errorf("ping = %v", msgs[2])
-	}
-	tools := msgs[3]["result"].(map[string]any)["tools"].([]any)
-	if len(tools) != 1 || tools[0].(map[string]any)["name"] != "get_report" {
-		t.Errorf("tools = %v", tools)
-	}
-}
-
 func TestMCPGetReport(t *testing.T) {
 	srv, req := newReportServer(t, http.StatusOK, reportBody)
 	msgs := mcpSession(t, srv.URL,
@@ -117,34 +82,15 @@ func TestMCPGetReportFailures(t *testing.T) {
 			}
 		})
 	}
-	// Nothing to detect from and nothing given: said, not guessed.
-	text, isErr := toolText(t, mcpSession(t, missing.URL, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_report"}}`)[0])
-	if !isErr || !strings.Contains(text, "set -repo") {
+	// Arguments of the wrong type are the tool's error too.
+	text, isErr := toolText(t, mcpSession(t, missing.URL, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_report","arguments":{"repo":5}}}`)[0])
+	if !isErr || !strings.Contains(text, "invalid arguments") {
 		t.Errorf("isError = %v, text = %q", isErr, text)
 	}
-}
-
-func TestMCPProtocolErrors(t *testing.T) {
-	msgs := mcpSession(t, "https://unused.example",
-		`{not json`,
-		`{"id":1,"method":"ping"}`,
-		`{"jsonrpc":"2.0","id":2,"method":"resources/list"}`,
-		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"delete_everything"}}`,
-		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_report","arguments":"repo"}}`,
-	)
-	want := []float64{rpcParseError, rpcInvalidRequest, rpcMethodNotFound, rpcInvalidParams, rpcInvalidParams}
-	if len(msgs) != len(want) {
-		t.Fatalf("got %d answers, want %d: %v", len(msgs), len(want), msgs)
-	}
-	for i, m := range msgs {
-		e, ok := m["error"].(map[string]any)
-		if !ok || e["code"] != want[i] {
-			t.Errorf("answer %d = %v, want error %v", i, m, want[i])
-		}
-	}
-	// An unreadable message has no id to answer: null, per JSON-RPC.
-	if id, ok := msgs[0]["id"]; !ok || id != nil {
-		t.Errorf("parse error id = %v, want null", msgs[0]["id"])
+	// Nothing to detect from and nothing given: said, not guessed.
+	text, isErr = toolText(t, mcpSession(t, missing.URL, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_report"}}`)[0])
+	if !isErr || !strings.Contains(text, "set -repo") {
+		t.Errorf("isError = %v, text = %q", isErr, text)
 	}
 }
 

@@ -5,6 +5,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"embed"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 	"github.com/gocov/gocov/internal/auth"
 	"github.com/gocov/gocov/internal/blobstore"
 	"github.com/gocov/gocov/internal/core"
+	"github.com/gocov/gocov/internal/mcp"
 	"github.com/gocov/gocov/internal/oidc"
 	"github.com/gocov/gocov/internal/store"
 )
@@ -31,6 +33,8 @@ type Config struct {
 	Blobs   blobstore.Store
 	BaseURL string // public URL of this server, for links in build statuses
 	Logger  *slog.Logger
+	// Version is the build's version, which /mcp names itself by.
+	Version string
 	// Health is probed by GET /healthz (e.g. a database ping).
 	// When nil, /healthz always reports healthy.
 	Health func(ctx context.Context) error
@@ -108,6 +112,8 @@ type Server struct {
 	webhookSecret string
 	// pipeline is the coverage logic proper: gate, merge, forge report.
 	pipeline *core.Pipeline
+	// mcp serves /mcp (mcp.go).
+	mcp *mcp.Server
 	// tokenless rate-limits tokenless upload attempts per repo.
 	tokenless *tokenlessLimiter
 	// oidc verifies forge-minted OIDC identity tokens for tokenless uploads
@@ -206,6 +212,7 @@ func New(cfg Config) *Server {
 	for _, p := range cfg.Auths {
 		s.auths[p.Name()] = p
 	}
+	s.mcp = s.newMCPServer(cmp.Or(cfg.Version, "dev"))
 	s.routes()
 	s.handler = s.requireAuth(s.mux)
 	return s
@@ -215,6 +222,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/upload", s.handleUpload)
 	// The read API decides access itself (reportapi.go): public reports only.
 	s.mux.HandleFunc("GET /api/v1/reports/{forge}/{slug...}", s.handleReportAPI)
+	// The read API's public reports as an MCP server (mcp.go): every
+	// method, so the transport itself answers GET and DELETE.
+	s.mux.Handle("/mcp", s.mcp)
 	s.mux.HandleFunc("GET /badge/{forge}/{slug...}", s.handleBadge)
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /robots.txt", s.handleRobots)

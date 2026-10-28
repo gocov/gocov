@@ -11,6 +11,7 @@ import (
 
 	"github.com/gocov/gocov/internal/diffcov"
 	"github.com/gocov/gocov/internal/oidc"
+	"github.com/gocov/gocov/internal/readapi"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -54,7 +55,7 @@ func TestReportAPICommit(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
 	}
-	got := decodeJSON[reportAPIDTO](t, rec)
+	got := decodeJSON[readapi.Report](t, rec)
 	if got.Commit != "feed1234" || got.Branch != "feature" || got.PRID != "42" || got.Parts != 2 {
 		t.Errorf("head = %+v", got)
 	}
@@ -69,7 +70,7 @@ func TestReportAPICommit(t *testing.T) {
 		t.Fatal("diff is null")
 	}
 	// Only the file with untested changed lines is listed, both spellings.
-	want := []reportAPIFileDTO{{Path: "cmd/gocov/oidc.go", Lines: "49-50, 57-58", Spans: [][2]int{{49, 50}, {57, 58}}}}
+	want := []readapi.File{{Path: "cmd/gocov/oidc.go", Lines: "49-50, 57-58", Spans: [][2]int{{49, 50}, {57, 58}}}}
 	if !reflect.DeepEqual(got.Diff.Uncovered, want) {
 		t.Errorf("uncovered = %+v, want %+v", got.Diff.Uncovered, want)
 	}
@@ -93,7 +94,7 @@ func TestReportAPIBranchAndBaseline(t *testing.T) {
 	seedCommitReport(t, f, prReport())
 
 	// No commit, no branch: the newest report on the default branch.
-	got := decodeJSON[reportAPIDTO](t, get(f, "/api/v1/reports/bitbucket/acme/widgets"))
+	got := decodeJSON[readapi.Report](t, get(f, "/api/v1/reports/bitbucket/acme/widgets"))
 	if got.Commit != "new2" {
 		t.Fatalf("commit = %q, want new2", got.Commit)
 	}
@@ -104,7 +105,7 @@ func TestReportAPIBranchAndBaseline(t *testing.T) {
 	if got.ReportURL != "https://gocov.example/uploads/2" || got.Diff != nil {
 		t.Errorf("report_url = %q, diff = %+v", got.ReportURL, got.Diff)
 	}
-	if got := decodeJSON[reportAPIDTO](t, get(f, "/api/v1/reports/bitbucket/acme/widgets?branch=feature")); got.Commit != "feed1234" {
+	if got := decodeJSON[readapi.Report](t, get(f, "/api/v1/reports/bitbucket/acme/widgets?branch=feature")); got.Commit != "feed1234" {
 		t.Errorf("?branch=feature gave %q", got.Commit)
 	}
 }
@@ -362,5 +363,20 @@ func TestReportAPIOIDCKeysUnreachable(t *testing.T) {
 	rec := getWith(f, "/api/v1/reports/bitbucket/acme/widgets", is.mint(t, githubClaims("https://gocov.example")))
 	if rec.Code != http.StatusBadGateway {
 		t.Errorf("status = %d: %s", rec.Code, rec.Body)
+	}
+}
+
+// A store that fails is a 500 with nothing of the failure in it, by
+// commit and by branch alike.
+func TestReportAPIStoreFailures(t *testing.T) {
+	f := newPublicFixture(t, store.VisibilityPublic, true)
+	f.srv.store = brokenStore{Store: f.store}
+	for _, path := range []string{
+		"/api/v1/reports/bitbucket/acme/widgets?commit=feed1234",
+		"/api/v1/reports/bitbucket/acme/widgets?branch=main",
+	} {
+		if rec := get(f, path); rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "database") {
+			t.Errorf("GET %s: %d %s", path, rec.Code, rec.Body)
+		}
 	}
 }

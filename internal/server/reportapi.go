@@ -2,6 +2,7 @@ package server
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/diffcov"
 	"github.com/gocov/gocov/internal/forge"
+	"github.com/gocov/gocov/internal/readapi"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -27,54 +29,6 @@ import (
 // an agent reads a private repo with what its CI already holds. A session
 // cookie is not consulted, and a repo it may not serve is a 404 whether or
 // not it exists.
-
-// reportAPIDTO is the read API's answer for one commit. Field names are
-// part of the contract: add fields, never rename or repurpose them.
-type reportAPIDTO struct {
-	Repo   repoRefDTO `json:"repo"`
-	Commit string     `json:"commit"`
-	Branch string     `json:"branch"`
-	PRID   string     `json:"pr_id,omitempty"`
-	// UpdatedAt is the commit's latest upload: the report changes until
-	// every part has arrived.
-	UpdatedAt         time.Time `json:"updated_at"`
-	Parts             int       `json:"parts"`
-	Coverage          float64   `json:"coverage"`
-	CoveredStatements int64     `json:"covered_statements"`
-	TotalStatements   int64     `json:"total_statements"`
-	GateFailed        bool      `json:"gate_failed"`
-	// Base and Delta are null when the commit has nothing to compare with.
-	Base  *reportAPIBaseDTO `json:"base"`
-	Delta *float64          `json:"delta"`
-	// Diff is null for a commit that is not a pull-request build, or whose
-	// diff could not be read.
-	Diff      *reportAPIDiffDTO `json:"diff"`
-	ReportURL string            `json:"report_url"`
-}
-
-type reportAPIBaseDTO struct {
-	Commit   string  `json:"commit"`
-	Coverage float64 `json:"coverage"`
-}
-
-type reportAPIDiffDTO struct {
-	Coverage     float64 `json:"coverage"`
-	CoveredLines int64   `json:"covered_lines"`
-	TotalLines   int64   `json:"total_lines"`
-	// Uncovered lists the changed files with changed lines no test ran,
-	// in diff order. Never null, so a client can range over it.
-	Uncovered []reportAPIFileDTO `json:"uncovered"`
-	// UnmatchedFiles are changed files the coverage data does not mention.
-	UnmatchedFiles []string `json:"unmatched_files"`
-}
-
-type reportAPIFileDTO struct {
-	Path string `json:"path"`
-	// Lines is the human spelling, "49-50, 57-58"; Spans the same lines
-	// as inclusive [start, end] pairs.
-	Lines string   `json:"lines"`
-	Spans [][2]int `json:"spans"`
-}
 
 // handleReportAPI serves GET /api/v1/reports/{forge}/{slug...}: the merged
 // report of ?commit=, or else the newest report on ?branch= (the repo's
@@ -97,43 +51,80 @@ func (s *Server) handleReportAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		switch {
 		case granted:
-		case s.publicReports && repo.ReportsPublic():
+		case s.servesPublicly(repo):
 			public = true
-			// The cached "public" may have flipped on the forge: re-verify
-			// an aged answer in the background, as the public report pages do.
-			s.pipeline.ReverifyVisibilityIfStale(repo)
 		default:
 			httpError(w, http.StatusNotFound, "not found")
 			return
 		}
 	}
 
-	var cr *store.CommitReport
-	if commit := strings.TrimSpace(r.FormValue("commit")); commit != "" {
-		cr, err = s.store.CommitReport(r.Context(), repo.ID, commit)
-		if errors.Is(err, store.ErrNotFound) {
-			httpError(w, http.StatusNotFound, "no report for commit %s", commit)
-			return
-		}
-	} else {
-		branch := cmp.Or(strings.TrimSpace(r.FormValue("branch")), repo.DefaultBranch)
-		var reports []*store.CommitReport
-		reports, err = s.store.ListBranchCommitReports(r.Context(), repo.ID, branch, 1)
-		if err == nil && len(reports) == 0 {
-			httpError(w, http.StatusNotFound, "no report on branch %s", branch)
-			return
-		}
-		if err == nil {
-			cr = reports[0]
-		}
+	dto, err := s.loadReport(r.Context(), repo, r.FormValue("commit"), r.FormValue("branch"))
+	var none noReportError
+	if errors.As(err, &none) {
+		httpError(w, http.StatusNotFound, "%s", none)
+		return
 	}
 	if err != nil {
 		s.internalError(w, "loading commit report", err)
 		return
 	}
+	switch {
+	case !s.authEnabled():
+	case public:
+		// The public report pages' caching, for the same reason.
+		w.Header().Set("Cache-Control", "public, max-age=60")
+	default:
+		// Read with a credential: no shared cache may keep it.
+		w.Header().Set("Cache-Control", "private, no-store")
+	}
+	s.writeJSON(w, dto)
+}
 
-	dto := reportAPIDTO{
-		Repo:              newRepoRefDTO(repo),
+// servesPublicly reports whether repo's reports may be read with no
+// credential on an instance with sign-in: the public report pages' rule.
+// Serving on it re-verifies an aged "public" in the background, as those
+// pages do, since the forge may have flipped it since.
+func (s *Server) servesPublicly(repo *store.Repo) bool {
+	if !s.publicReports || !repo.ReportsPublic() {
+		return false
+	}
+	s.pipeline.ReverifyVisibilityIfStale(repo)
+	return true
+}
+
+// noReportError says which report a read named that does not exist.
+type noReportError string
+
+func (e noReportError) Error() string { return string(e) }
+
+// loadReport builds the read API's answer: the merged report of commit,
+// or else the newest report on branch (the repo's default branch when that
+// is empty too). A report that does not exist is a noReportError.
+func (s *Server) loadReport(ctx context.Context, repo *store.Repo, commit, branch string) (*readapi.Report, error) {
+	var cr *store.CommitReport
+	if commit = strings.TrimSpace(commit); commit != "" {
+		var err error
+		cr, err = s.store.CommitReport(ctx, repo.ID, commit)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, noReportError("no report for commit " + commit)
+		}
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		branch = cmp.Or(strings.TrimSpace(branch), repo.DefaultBranch)
+		reports, err := s.store.ListBranchCommitReports(ctx, repo.ID, branch, 1)
+		if err != nil {
+			return nil, err
+		}
+		if len(reports) == 0 {
+			return nil, noReportError("no report on branch " + branch)
+		}
+		cr = reports[0]
+	}
+	rep := &readapi.Report{
+		Repo:              readapi.Repo{Forge: repo.Forge, Slug: repo.Slug},
 		Commit:            cr.CommitSHA,
 		Branch:            cr.Branch,
 		PRID:              cr.PRID,
@@ -146,20 +137,11 @@ func (s *Server) handleReportAPI(w http.ResponseWriter, r *http.Request) {
 		Diff:              newReportAPIDiffDTO(cr.DiffCoverage),
 		ReportURL:         s.commitReportURL(cr),
 	}
-	if base := core.CommitBaseline(r.Context(), s.store, repo, cr); base != nil {
-		dto.Base = &reportAPIBaseDTO{Commit: base.CommitSHA, Coverage: base.TotalPct}
-		dto.Delta = new(cr.TotalPct - base.TotalPct)
+	if base := core.CommitBaseline(ctx, s.store, repo, cr); base != nil {
+		rep.Base = &readapi.Base{Commit: base.CommitSHA, Coverage: base.TotalPct}
+		rep.Delta = new(cr.TotalPct - base.TotalPct)
 	}
-	switch {
-	case !s.authEnabled():
-	case public:
-		// The public report pages' caching, for the same reason.
-		w.Header().Set("Cache-Control", "public, max-age=60")
-	default:
-		// Read with a credential: no shared cache may keep it.
-		w.Header().Set("Cache-Control", "private, no-store")
-	}
-	s.writeJSON(w, dto)
+	return rep, nil
 }
 
 // reportCredentialGrants reports whether the request's bearer credential
@@ -235,22 +217,22 @@ func (s *Server) oidcGrantsRead(w http.ResponseWriter, r *http.Request, repo *st
 	return normalizeUUID(got) == normalizeUUID(want), true
 }
 
-func newReportAPIDiffDTO(dc *diffcov.Result) *reportAPIDiffDTO {
+func newReportAPIDiffDTO(dc *diffcov.Result) *readapi.Diff {
 	if dc == nil {
 		return nil
 	}
-	out := &reportAPIDiffDTO{
+	out := &readapi.Diff{
 		Coverage:       dc.Percent(),
 		CoveredLines:   dc.CoveredLines,
 		TotalLines:     dc.TotalLines,
-		Uncovered:      []reportAPIFileDTO{},
+		Uncovered:      []readapi.File{},
 		UnmatchedFiles: append([]string{}, dc.UnmatchedFiles...),
 	}
 	for _, f := range dc.Files {
 		if len(f.UncoveredLines) == 0 {
 			continue
 		}
-		out.Uncovered = append(out.Uncovered, reportAPIFileDTO{
+		out.Uncovered = append(out.Uncovered, readapi.File{
 			Path:  f.Path,
 			Lines: diffcov.Ranges(f.UncoveredLines),
 			Spans: spanPairs(diffcov.LineSpans(f.UncoveredLines)),
