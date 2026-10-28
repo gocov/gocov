@@ -1,0 +1,27 @@
+name: vulncheck
+
+# ci.yml's vulncheck job runs only on a push or a PR, so an advisory
+# published while main is quiet surfaces weeks later, red on whichever PR
+# comes next. Dependabot cannot close that gap for the standard library: it
+# never bumps the go directive in go.mod. This runs the same check on main
+# every day, so a new advisory turns it red the day it lands.
+on:
+  schedule:
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  vulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      # Keep the version in step with ci.yml's vulncheck job.
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
