@@ -1,7 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { apiGet, apiPost } from "./client";
 import type {
-  Dashboard, LoginInfo, OnboardingInfo, RepoPage, RepoSettings, RepoUploads, Session, SetupInfo, SetupStatus, SourcePage, TokenReveal, UploadPage,
+  Dashboard, LoginInfo, McpConsent, OnboardingInfo, RepoPage, RepoSettings, RepoUploads, Session, SetupInfo, SetupStatus, SourcePage, TokenReveal, UploadPage,
   WorkspaceSettings,
 } from "./types";
 
@@ -23,6 +23,10 @@ export const sessionQuery = () =>
 
 export const loginQuery = (denied: boolean) =>
   queryOptions({ queryKey: ["login", denied], queryFn: () => apiGet<LoginInfo>("/login" + (denied ? "?denied=1" : "")) });
+
+/** The authorization request is the consent page's own query string, passed through as is. */
+export const mcpConsentQuery = (search: string) =>
+  queryOptions({ queryKey: ["mcp-consent", search], queryFn: () => apiGet<McpConsent>("/mcp-authorize" + search), staleTime: 0 });
 
 export const dashboardQuery = (ws: string) =>
   queryOptions({ queryKey: ["dashboard", ws], queryFn: () => apiGet<Dashboard>("/dashboard" + qs({ ws })) });

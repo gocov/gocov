@@ -33,6 +33,31 @@ export interface LoginInfo {
   tracked_workspaces: { name: string; forge: Forge }[];
 }
 
+// ---- GET /api/ui/mcp-authorize?{the client's authorization request} --------
+// ---- POST /api/ui/mcp-authorize/approve {query} → { redirect } -------------
+
+/**
+ * The MCP connector's consent page (/mcp/authorize). A request to refuse
+ * carries `redirect` alone: the browser goes straight back to the client.
+ * A request the server cannot vouch for answers 422 with the sentence.
+ */
+export interface McpConsent {
+  redirect?: string;
+  /** What the client called itself when it registered. */
+  client?: string;
+  /** Where an approval sends the browser: scheme and host. */
+  redirect_origin?: string;
+  /** Where declining sends the browser. */
+  deny_url?: string;
+  /** Who is approving. */
+  user?: string;
+}
+
+export interface McpApproveInput {
+  /** The consent page's own query string: the request being approved. */
+  query: string;
+}
+
 // ---- GET /api/ui/dashboard?ws={forge}/{prefix} -----------------------------
 
 export interface Dashboard {

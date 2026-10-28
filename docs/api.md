@@ -128,10 +128,17 @@ shows how to add it. It offers one tool, `get_report`:
 | `branch` | the branch to read the newest report on; the repo's default branch when left out     |
 | `format` | `text` (default), the lines [`gocov report`](cli.md#reading-a-report) prints, or `json`, the answer above |
 
-It answers for what the read API answers without a credential: repos whose reports are public, and every repo
-on an instance without sign-in. A repo it may not serve gets the same answer as one that does not exist. It keeps
-no sessions. `POST` carries one JSON-RPC message, a notification gets `202`, and `GET` gets `405`, since it
-opens no stream.
+On an instance without sign-in it answers for every repo, to anyone. With sign-in, its client signs in first, as
+the [MCP authorization spec](https://modelcontextprotocol.io/specification/latest/basic/authorization) has it: a
+message without an access token gets `401` with a `WWW-Authenticate` header that points at
+`/.well-known/oauth-protected-resource/mcp`, which names this server as the authorization server. The client
+registers itself at `/mcp/register`, sends its user to `/mcp/authorize`, where they sign in to gocov as they
+always do and approve it, and exchanges the code for a token at `/mcp/token`, under PKCE (`S256`). The token reads
+what its user may see on the report pages, the repos of their workspaces and public reports, and nothing else:
+it changes nothing, and it opens no web session. It lasts 30 days, then the client signs in again.
+
+A repo the caller may not read gets the same answer as one that does not exist. The transport keeps no sessions.
+`POST` carries one JSON-RPC message, a notification gets `202`, and `GET` gets `405`, since it opens no stream.
 
 ## Badge
 

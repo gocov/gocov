@@ -3,6 +3,7 @@ import type { RouteObject } from "react-router";
 import { AppShell } from "@/components/templates";
 import DashboardPage from "@/pages/DashboardPage";
 import LoginPage from "@/pages/LoginPage";
+import McpAuthorizePage from "@/pages/McpAuthorizePage";
 import NotFoundPage from "@/pages/NotFoundPage";
 import OnboardingPage from "@/pages/OnboardingPage";
 import RepoPage from "@/pages/RepoPage";
@@ -34,6 +35,7 @@ export const routes: RouteObject[] = [
       { path: "onboarding", element: <OnboardingPage /> },
       { path: "repo-settings/:forge/*", element: <RepoSettingsPage /> },
       { path: "login", element: <LoginPage /> },
+      { path: "mcp/authorize", element: <McpAuthorizePage /> },
       {
         path: "_components",
         element: (

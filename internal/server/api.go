@@ -68,6 +68,10 @@ func (s *Server) apiRoutes() {
 	handle("POST /api/ui/repo-settings/rotate-token/{forge}/{slug...}", s.handleAPIRepoRotateToken)
 	handle("POST /api/ui/repo-settings/reveal-token/{forge}/{slug...}", s.handleAPIRepoRevealToken)
 	handle("POST /api/ui/repo-settings/delete/{forge}/{slug...}", s.handleAPIRepoDelete)
+	// The MCP connector's consent page (mcpauth.go): the request it
+	// shows, and the approval that issues the client its code.
+	handle("GET /api/ui/mcp-authorize", s.handleAPIMCPConsent)
+	handle("POST /api/ui/mcp-authorize/approve", s.handleAPIMCPApprove)
 	// Unknown API paths answer in JSON rather than with the HTML 404 page.
 	handle(apiUIPrefix, func(w http.ResponseWriter, _ *http.Request) {
 		httpError(w, http.StatusNotFound, "not found")

@@ -73,6 +73,8 @@ The server speaks plain HTTP on `GOCOV_ADDR` (`:8080` by default), so terminate 
 Set `GOCOV_BASE_URL` to the public `https://` URL. This is not cosmetic: gocov builds every outgoing link from it —
 build statuses, PR comments, badges — and auth cookies are marked `Secure` exactly when it starts with `https://`. An
 instance served over TLS whose base URL still says `http://` hands out session cookies without the `Secure` attribute.
+It is also the name `/mcp` signs MCP clients in by: with sign-in on, an MCP client checks that the authorization
+server it is sent to is the base URL, and is sent back to the base URL with its code.
 
 Because outgoing URLs come from that one variable, gocov never has to trust `X-Forwarded-Proto` or `X-Forwarded-Host`.
 There is no proxy-header configuration to get wrong.
