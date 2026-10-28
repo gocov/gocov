@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.30.1](https://github.com/gocov/gocov/compare/v0.30.0...v0.30.1) (2026-10-28)
+
+
+### Bug Fixes
+
+* let claude.ai's connector reach /mcp ([#258](https://github.com/gocov/gocov/issues/258)) ([cc05556](https://github.com/gocov/gocov/commit/cc05556b9b01e6c890665198ba01c5bae1720c9a))
+
 ## [0.30.0](https://github.com/gocov/gocov/compare/v0.29.0...v0.30.0) (2026-10-28)
 
 
