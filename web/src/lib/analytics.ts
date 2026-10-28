@@ -146,11 +146,22 @@ function syncReplay(pathname: string): void {
   }
 }
 
-/** Mount once, inside the router: every route change is a pageview. */
-export function usePageviews(): void {
+/**
+ * Mount once, inside the router: loads PostHog once the session names a key,
+ * then every route change is a pageview. The landing page counts too: the
+ * session arrives after the first render, so its pageview waits for the key
+ * instead of firing before init, where send() would drop it.
+ */
+export function useAnalytics(analytics: AnalyticsConfig | null | undefined): void {
   const { pathname, search } = useLocation();
+  const ready = Boolean(analytics?.key && analytics.host);
+  // Declared first so it runs first: the pageview below needs it started.
   useEffect(() => {
+    initAnalytics(analytics);
+  }, [analytics]);
+  useEffect(() => {
+    if (!ready) return;
     syncReplay(pathname);
     pageview(search);
-  }, [pathname, search]);
+  }, [ready, pathname, search]);
 }
