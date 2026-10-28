@@ -22,6 +22,15 @@ test("a signed-out viewer is offered sign-in, in the app, with the page to come 
   expect(router.state.location.pathname).toBe("/login");
 });
 
+test("the login page offers no second sign-in link, so ?next cannot nest", async () => {
+  mockApi({ "GET /session": session() });
+  const { router } = renderPage(<AppShell />, { route: "*", path: "/" });
+
+  fireEvent.click(await screen.findByRole("link", { name: "Sign in" }));
+  expect(router.state.location.search).toBe("?next=%2F");
+  expect(screen.queryByRole("link", { name: "Sign in" })).not.toBeInTheDocument();
+});
+
 test("a signed-in viewer sees their name and a way out instead", async () => {
   mockApi({ "GET /session": session({ user: { display_name: "Ada", email: "ada@example.com" } }) });
   renderPage(<AppShell />, { route: "*", path: "/" });
