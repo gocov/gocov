@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.0](https://github.com/gocov/gocov/compare/v0.27.5...v0.28.0) (2026-10-28)
+
+
+### Features
+
+* read a commit's report back through the API and gocov report ([#249](https://github.com/gocov/gocov/issues/249)) ([e332818](https://github.com/gocov/gocov/commit/e332818f0be01557e8c16ee83fc670baa9fe7ca7))
+
 ## [0.27.5](https://github.com/gocov/gocov/compare/v0.27.4...v0.27.5) (2026-10-28)
 
 
