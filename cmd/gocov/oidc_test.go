@@ -131,6 +131,7 @@ func TestMintGitHubOIDCRetries(t *testing.T) {
 		{"a dropped connection then a token", []int{0, 200}, true, 2},
 		{"rate limited twice, then a token", []int{429, 429, 200}, true, 3},
 		{"down every time gives up after three", []int{503}, false, 3},
+		{"no connection every time gives up after three", []int{0}, false, 3},
 		// A refusal will not change on a retry.
 		{"a 403 is final", []int{403, 200}, false, 1},
 	} {
@@ -147,6 +148,22 @@ func TestMintGitHubOIDCRetries(t *testing.T) {
 				t.Errorf("made %d requests, want %d", doer.calls, tc.wantCalls)
 			}
 		})
+	}
+}
+
+func TestMintGitHubOIDCBadRequestURL(t *testing.T) {
+	// A request URL no request can be built from fails at once: no
+	// attempt is made, so nothing is retried.
+	env := mapEnv(map[string]string{
+		"ACTIONS_ID_TOKEN_REQUEST_URL":   "http://bad host/token",
+		"ACTIONS_ID_TOKEN_REQUEST_TOKEN": "req-secret",
+	})
+	doer := &seqDoer{statuses: []int{200}}
+	if _, err := mintGitHubOIDC(env, doer, "https://gocov.example"); err == nil {
+		t.Error("an unparsable request URL did not error")
+	}
+	if doer.calls != 0 {
+		t.Errorf("made %d requests from an unparsable URL", doer.calls)
 	}
 }
 
