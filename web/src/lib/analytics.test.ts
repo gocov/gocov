@@ -1,5 +1,5 @@
 import { act, render } from "@testing-library/react";
-import { createElement } from "react";
+import { createElement, useState } from "react";
 import { RouterProvider, createMemoryRouter } from "react-router";
 import type { AnalyticsConfig } from "./analytics";
 
@@ -154,19 +154,24 @@ test("a broken PostHog never breaks the page it measures", async () => {
   expect(() => a.track("first_upload_received")).not.toThrow();
 });
 
-test("every route the app enters is a pageview, and ?ref rides along", async () => {
-  const a = await fresh();
-  a.initAnalytics(config);
-  const ph = arrive();
-
+/** Mounts the hook in a router; `setConfig` plays the session arriving. */
+function mountAnalytics(a: typeof import("./analytics"), initial: AnalyticsConfig | undefined, url: string) {
+  let setConfig: (c: AnalyticsConfig | undefined) => void = () => {};
   const Probe = () => {
-    a.usePageviews();
+    const [c, set] = useState(initial);
+    setConfig = set;
+    a.useAnalytics(c);
     return null;
   };
-  const router = createMemoryRouter([{ path: "*", element: createElement(Probe) }], {
-    initialEntries: ["/?ref=badge"],
-  });
+  const router = createMemoryRouter([{ path: "*", element: createElement(Probe) }], { initialEntries: [url] });
   render(createElement(RouterProvider, { router }));
+  return { router, setConfig: (c: AnalyticsConfig | undefined) => act(() => setConfig(c)) };
+}
+
+test("every route the app enters is a pageview, and ?ref rides along", async () => {
+  const a = await fresh();
+  const { router } = mountAnalytics(a, config, "/?ref=badge");
+  const ph = arrive();
 
   expect(ph.capture).toHaveBeenCalledWith("$pageview", { ref: "badge" }, undefined);
   ph.capture.mockClear();
@@ -175,6 +180,16 @@ test("every route the app enters is a pageview, and ?ref rides along", async () 
   expect(ph.capture).toHaveBeenCalledWith("$pageview", undefined, undefined);
   // Off the setup pages, recording stops with the route.
   expect(ph.stopSessionRecording).toHaveBeenCalled();
+});
+
+test("the landing page is a pageview even though the session arrives after the first render", async () => {
+  const a = await fresh();
+  const { setConfig } = mountAnalytics(a, undefined, "/w/github/acme?ref=badge");
+  setConfig(config);
+  const ph = arrive();
+
+  expect(ph.capture).toHaveBeenCalledTimes(1);
+  expect(ph.capture).toHaveBeenCalledWith("$pageview", { ref: "badge" }, undefined);
 });
 
 test("an event before any init is dropped, not queued forever", async () => {

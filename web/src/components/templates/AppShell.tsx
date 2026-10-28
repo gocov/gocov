@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router";
-import { initAnalytics, usePageviews } from "@/lib/analytics";
+import { useAnalytics } from "@/lib/analytics";
 import { sessionQuery } from "@/lib/api/queries";
 import { routes, server } from "@/lib/urls";
 import { Button, Icon, Logo } from "../atoms";
@@ -17,10 +16,7 @@ export function AppShell() {
   const { data: session } = useQuery(sessionQuery());
   const location = useLocation();
   // Off unless the instance configured it; then pageviews follow the router.
-  useEffect(() => {
-    initAnalytics(session?.analytics);
-  }, [session?.analytics]);
-  usePageviews();
+  useAnalytics(session?.analytics);
   return (
     <div className="AppShell">
       <header className="AppShell__bar">
