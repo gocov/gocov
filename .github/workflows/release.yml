@@ -63,7 +63,7 @@ jobs:
       # before anything compiles.
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
           package-manager-cache: false
       - name: Build the web UI
         working-directory: web
