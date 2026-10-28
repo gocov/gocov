@@ -41,7 +41,8 @@ export function AppShell() {
               </Button>
             </>
           )}
-          {session && session.auth_enabled && !session.user && (
+          {/* Not on the login page itself: its own path would become the next ?next=, one level deeper per click. */}
+          {session && session.auth_enabled && !session.user && location.pathname !== routes.login() && (
             <Link className="AppShell__link" to={routes.login(location.pathname + location.search)}>
               Sign in
             </Link>
