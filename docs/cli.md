@@ -67,6 +67,7 @@ It finds the forge, repo and commit the way `upload` does — the CI environment
 credential. A private repo is read with the credential its upload uses, found in the same order:
 `-token`/`$GOCOV_TOKEN`, then in CI the forge's [OIDC token](#uploading-without-a-token). A coding agent that
 runs in the repo's CI therefore reads the report with nothing more to set up. Anywhere else, give it the token.
+[Coding agents](coding-agents.md) has the loop and the instructions to give an agent.
 
 | flag      | default     | meaning                                                                        |
 |-----------|-------------|--------------------------------------------------------------------------------|
