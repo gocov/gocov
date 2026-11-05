@@ -49,6 +49,9 @@ func (s *Server) apiRoutes() {
 	// screen that waits for the first report.
 	handle("GET /api/ui/onboarding", s.handleAPIOnboarding)
 	handle("POST /api/ui/onboarding/register", s.handleAPIRegister)
+	// Confirming a GitHub App installation that came back without the
+	// state of an install this browser started (githubapp.go).
+	handle("POST /api/ui/github/connect", s.handleAPIGitHubConnect)
 	// A GitLab workspace prefix carries slashes like a repo slug does, so
 	// the workspace endpoints take the same shape as the repo ones below:
 	// the trailing {prefix...} wildcard, the verb before it.

@@ -246,6 +246,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /oauth/{forge}/start", s.handleOAuthStart)
 	s.mux.HandleFunc("GET /oauth/{forge}/callback", s.handleOAuthCallback)
 	s.mux.HandleFunc("POST /logout", s.handleLogout)
+	s.mux.HandleFunc("GET /github/install", s.handleGitHubInstall)
 	s.mux.HandleFunc("GET /github/setup", s.handleGitHubSetup)
 	if s.webhookSecret != "" {
 		s.mux.HandleFunc("POST /github/webhook", s.handleGitHubWebhook)
