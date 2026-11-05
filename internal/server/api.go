@@ -33,7 +33,7 @@ func (s *Server) apiRoutes() {
 	// Sec-Fetch-Site/Origin and lets safe methods through untouched.
 	guard := http.NewCrossOriginProtection()
 	handle := func(pattern string, h http.HandlerFunc) {
-		s.mux.Handle(pattern, guard.Handler(h))
+		s.mux.Handle(pattern, guard.Handler(s.logUIRequest(h)))
 	}
 	handle("GET /api/ui/session", s.handleAPISession)
 	handle("GET /api/ui/login", s.handleAPILogin)

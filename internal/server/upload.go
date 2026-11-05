@@ -227,6 +227,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		Profile:    req.prof,
 		Meta:       meta,
 		Ignore:     req.ignore,
+		Started:    start,
 	})
 	if err != nil {
 		if claim != nil {
