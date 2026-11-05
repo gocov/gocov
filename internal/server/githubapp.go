@@ -162,6 +162,7 @@ func (s *Server) githubDisconnect(ctx context.Context, ws *store.Workspace, acto
 	if err := s.store.UpdateWorkspace(ctx, ws); err != nil {
 		return fmt.Errorf("disconnecting github app: %w", err)
 	}
+	s.forges.MarkWorkspaceReposPrivate(ctx, ws)
 	s.log.Info("github app disconnected", "workspace", ws.Prefix, "user", actor)
 	return nil
 }

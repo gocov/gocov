@@ -1,6 +1,7 @@
 package ignore
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -168,5 +169,53 @@ func TestMatchIsLinear(t *testing.T) {
 	}
 	if d := time.Since(start); d > 2*time.Second {
 		t.Fatalf("1000 matches took %v; the matcher is backtracking", d)
+	}
+}
+
+// The work matching costs is the product of pattern and path lengths, so
+// patterns from an untrusted upload against long report paths are capped
+// by Limit rather than by their count and length alone.
+func TestLimitStopsCostlyMatching(t *testing.T) {
+	pats := make([]string, MaxPatterns)
+	for i := range pats {
+		pats[i] = "*" + strings.Repeat("a", MaxPatternLength-2) + "b"
+	}
+	r, err := Compile(pats)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Limit(1 << 24)
+	p := strings.Repeat("a", 64<<10)
+	start := time.Now()
+	for range 100 {
+		if r.Match(p, "") {
+			t.Fatal("unexpected match")
+		}
+	}
+	if !errors.Is(r.Err(), ErrTooCostly) {
+		t.Fatalf("Err() = %v, want ErrTooCostly", r.Err())
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("matching past the limit took %v; the budget is not enforced", d)
+	}
+}
+
+// Without Limit, and within it, matching works as before and Err is nil.
+func TestLimitLeavesCheapMatchingAlone(t *testing.T) {
+	r, err := Compile([]string{"**/*_mock.go", "/cmd/preview"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Match("internal/x/y_mock.go", "") || r.Err() != nil {
+		t.Fatalf("unlimited: match failed or Err = %v", r.Err())
+	}
+	r.Limit(1 << 20)
+	for range 100 {
+		if !r.Match("cmd/preview/main.go", "") {
+			t.Fatal("limited: anchored pattern no longer matches")
+		}
+	}
+	if r.Err() != nil {
+		t.Fatalf("Err() = %v, want nil within the budget", r.Err())
 	}
 }

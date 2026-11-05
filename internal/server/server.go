@@ -116,6 +116,9 @@ type Server struct {
 	mcp *mcp.Server
 	// tokenless rate-limits tokenless upload attempts per repo.
 	tokenless *tokenlessLimiter
+	// preAuthUploads holds a slot per upload without a bearer token that
+	// is still reading its body (upload.go, maxPreAuthUploads).
+	preAuthUploads chan struct{}
 	// oidc verifies forge-minted OIDC identity tokens for tokenless uploads
 	// from a repo's own CI (server/oidc.go).
 	oidc *oidc.Verifier
@@ -186,17 +189,18 @@ func New(cfg Config) *Server {
 		"gitlab":    cfg.GitLabConnect,
 	})
 	s := &Server{
-		store:         cfg.Store,
-		blobs:         cfg.Blobs,
-		baseURL:       strings.TrimSuffix(cfg.BaseURL, "/"),
-		log:           log,
-		mux:           http.NewServeMux(),
-		health:        cfg.Health,
-		forges:        forges,
-		webhookSecret: cfg.GitHubWebhookSecret,
-		tokenless:     newTokenlessLimiter(),
-		oidc:          oidcVerifier,
-		gitlabIssuers: gitlabIssuers,
+		store:          cfg.Store,
+		blobs:          cfg.Blobs,
+		baseURL:        strings.TrimSuffix(cfg.BaseURL, "/"),
+		log:            log,
+		mux:            http.NewServeMux(),
+		health:         cfg.Health,
+		forges:         forges,
+		webhookSecret:  cfg.GitHubWebhookSecret,
+		tokenless:      newTokenlessLimiter(),
+		preAuthUploads: make(chan struct{}, maxPreAuthUploads),
+		oidc:           oidcVerifier,
+		gitlabIssuers:  gitlabIssuers,
 
 		auths:             map[string]auth.Provider{},
 		authOrder:         cfg.Auths,

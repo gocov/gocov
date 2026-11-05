@@ -53,6 +53,8 @@ as they are.
 - **The raw profile is stored untouched.** Ignoring shapes the numbers, not the upload; a pattern that matches too
   much can be corrected and the next upload is right again. A pattern set that matches *every* file is refused at
   upload time (`ignore patterns matched every file in the report`) rather than landing a 0% report.
+  Patterns that would be too costly to match against the report's file paths — up to a hundred long wildcard
+  patterns against very long paths — are refused the same way, with a `422`.
 - **Nothing is recalculated.** A commit uploaded before the pattern was set keeps its report, and the
   [delta](coverage-changed.md) on the first upload after a change in patterns compares against that older baseline.
 - **Diff coverage skips ignored files too.** Changed lines in an ignored file neither count for nor against the PR.

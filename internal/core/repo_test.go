@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
 	"github.com/gocov/gocov/internal/forge"
 	forgefake "github.com/gocov/gocov/internal/forge/fake"
 	"github.com/gocov/gocov/internal/store"
@@ -152,8 +153,57 @@ func TestReverifyVisibilityIfStale(t *testing.T) {
 	if p.ReverifyVisibilityIfStale(&fresh) {
 		t.Error("fresh answer started a re-check")
 	}
-	if (&Pipeline{Store: st, Log: forges.Log}).ReverifyVisibilityIfStale(repo) {
-		t.Error("pipeline without Forges started a re-check")
+}
+
+// A public answer nothing can re-verify — the workspace lost its
+// connection, or the deployment its connector — must not keep a repo's
+// pages open: once it is stale it is dropped, through the serve-path
+// re-check and through an upload alike.
+func TestStalePublicAnswerWithoutConnectionCloses(t *testing.T) {
+	ctx := t.Context()
+	p, st, repo := newPipeline(t, store.Gate{})
+	stale := time.Now().Add(-2 * defaultVisibilityServeTTL)
+	if err := st.SetRepoVisibility(ctx, repo.ID, store.VisibilityPublic, stale); err != nil {
+		t.Fatal(err)
+	}
+	repo.Visibility, repo.VisibilityCheckedAt = store.VisibilityPublic, stale
+
+	if !p.ReverifyVisibilityIfStale(repo) {
+		t.Fatal("stale public answer without a connection was not re-checked")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got, err := st.RepoBySlug(ctx, repo.Forge, repo.Slug)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Visibility == store.VisibilityPrivate {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("visibility = %q, want private once nothing can re-verify it", got.Visibility)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// The upload path: a stale public answer and no forge client.
+	repo2 := &store.Repo{Forge: "github", Slug: "acme/other", Token: "tok2", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo2); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetRepoVisibility(ctx, repo2.ID, store.VisibilityPublic, stale); err != nil {
+		t.Fatal(err)
+	}
+	repo2.Visibility, repo2.VisibilityCheckedAt = store.VisibilityPublic, stale
+	p.Blobs = blobmem.New()
+	if _, err := p.Accept(ctx, Submission{
+		Repo: repo2, Commit: "c1", Branch: "main", Part: "default", Format: "go",
+		Raw: []byte("mode: set\n"), Profile: prof("a.go", 1, 2),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.RepoBySlug(ctx, repo2.Forge, repo2.Slug); got.Visibility != store.VisibilityPrivate {
+		t.Errorf("after an upload with no connection: visibility = %q, want private", got.Visibility)
 	}
 }
 

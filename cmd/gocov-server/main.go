@@ -177,6 +177,11 @@ func serve() error {
 		Addr:              cfg.Addr,
 		Handler:           server.New(srvCfg),
 		ReadHeaderTimeout: 10 * time.Second,
+		// Close idle keep-alive connections rather than holding them open
+		// for as long as a client likes. (Request bodies are bounded per
+		// route — the upload handler sets its own read deadline — since a
+		// server-wide ReadTimeout would also cut long-lived /mcp streams.)
+		IdleTimeout: 2 * time.Minute,
 	}
 
 	errCh := make(chan error, 1)

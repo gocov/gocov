@@ -37,6 +37,12 @@ func newPublicFixture(t *testing.T, visibility string, instanceOn bool) *fixture
 	if err := st.CreateRepo(ctx, repo); err != nil {
 		t.Fatal(err)
 	}
+	// A freshly verified answer: the fixture has no forge connection, and
+	// a stale public answer nothing can re-verify no longer counts.
+	if err := st.SetRepoVisibility(ctx, repo.ID, visibility, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	repo.VisibilityCheckedAt = time.Now()
 	ws := &store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "ws-secret", DefaultBranch: "main"}
 	if err := st.CreateWorkspace(ctx, ws); err != nil {
 		t.Fatal(err)

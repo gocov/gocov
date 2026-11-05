@@ -27,6 +27,12 @@ sentences, when the commit's merged report was built with a caveat. Uploads carr
 `diff_pct`, `diff_covered_lines`, `diff_total_lines`, `diff_status` and
 `pr_comment` when the repo's workspace is [connected to its forge](connecting.md).
 
+Uploads are refused with `422` when the ignore patterns, matched against this report's file paths, would cost more
+work than one upload is allowed (`ignore patterns are too costly to match against this report's file paths`): use
+fewer or simpler patterns, or shorter paths. Uploads without the `Authorization` header (the OIDC and tokenless
+paths below) may get a `503` with `Retry-After` while the server is already reading many such uploads at once; retry
+after the delay. Every upload must finish sending its body within two minutes.
+
 ### OIDC uploads
 
 A request **without** the `Authorization` header may instead carry a forge-minted OIDC identity token in an

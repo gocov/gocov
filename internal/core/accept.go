@@ -27,6 +27,16 @@ import (
 // the uploader why.
 var ErrAllIgnored = errors.New("ignore patterns matched every file in the report")
 
+// maxIgnoreWork caps the ignore-pattern matching one upload may cost, in
+// ignore.Rules.Limit units (about a byte comparison each): a few seconds
+// of CPU at most, and over twice what a 50,000-file report matched
+// against 30 ordinary patterns needs. The patterns may come from the
+// upload itself, and matching costs the product of pattern and path
+// lengths, so without a cap one request could choose a cost many thousand
+// times its size. Past it, Accept returns ignore.ErrTooCostly. A variable
+// so tests can lower it.
+var maxIgnoreWork int64 = 1 << 31
+
 // Submission is one upload as the transport parsed it: the fields of the
 // request after validation, and the profile they named. Anything that had
 // to be read out of an HTTP request — the provenance metadata, the forge
@@ -74,13 +84,18 @@ func (p *Pipeline) Accept(ctx context.Context, sub Submission) (*Result, error) 
 	// with another request's ask, so a commit uploading many parts costs
 	// one visibility round-trip whether they arrive in sequence or at once.
 	if !visibilityFresh(sub.Repo, p.uploadVisibilityTTL()) {
-		p.refreshVisibilityOnce(ctx, fg, sub.Repo)
+		if fg == nil {
+			// Nothing can re-verify a public answer: it no longer counts.
+			p.closeUnverifiable(ctx, sub.Repo)
+		} else {
+			p.refreshVisibilityOnce(ctx, fg, sub.Repo)
+		}
 	}
 
 	// Drop ignored files first, so that totals, per-file rows, diff
 	// coverage, the gate and the merge all measure the same trimmed
 	// report. The raw profile stored below is kept as posted.
-	rules, ignored, err := applyIgnore(&sub)
+	rules, ignored, err := applyIgnore(ctx, &sub)
 	if err != nil {
 		return nil, err
 	}
@@ -190,8 +205,9 @@ func (p *Pipeline) diffCoverage(ctx context.Context, fg forge.Forge, repo *store
 // upload's ignore patterns match, returning the compiled rules (nil when
 // there are none) and how many files went. Both pattern lists were
 // validated where they came in (the settings form, the upload request),
-// so a compile error here is a bug, not bad input.
-func applyIgnore(sub *Submission) (*ignore.Rules, int, error) {
+// so a compile error here is a bug, not bad input. Matching runs under
+// maxIgnoreWork and stops early when ctx is done.
+func applyIgnore(ctx context.Context, sub *Submission) (*ignore.Rules, int, error) {
 	patterns := slices.Concat(sub.Repo.IgnorePaths, sub.Ignore)
 	if len(patterns) == 0 {
 		return nil, 0, nil
@@ -200,11 +216,23 @@ func applyIgnore(sub *Submission) (*ignore.Rules, int, error) {
 	if err != nil {
 		return nil, 0, fmt.Errorf("ignore patterns: %w", err)
 	}
-	before := len(sub.Profile.Files)
-	sub.Profile.Files = slices.DeleteFunc(sub.Profile.Files, func(f profile.File) bool {
-		return rules.Match(f.Path, sub.PathPrefix)
-	})
-	ignored := before - len(sub.Profile.Files)
+	rules.Limit(maxIgnoreWork)
+	kept := make([]profile.File, 0, len(sub.Profile.Files))
+	for i, f := range sub.Profile.Files {
+		if i%256 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, 0, err
+			}
+		}
+		if !rules.Match(f.Path, sub.PathPrefix) {
+			kept = append(kept, f)
+		}
+		if err := rules.Err(); err != nil {
+			return nil, 0, err
+		}
+	}
+	ignored := len(sub.Profile.Files) - len(kept)
+	sub.Profile.Files = kept
 	if ignored > 0 && len(sub.Profile.Files) == 0 {
 		return nil, 0, ErrAllIgnored
 	}
