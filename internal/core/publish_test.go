@@ -195,6 +195,9 @@ func TestPushSurfacesRunConcurrently(t *testing.T) {
 	if res.BuildStatus != "posted" || res.CodeInsights != "posted" || res.PRComment != "posted" {
 		t.Fatalf("push result = %+v, want every surface posted", res)
 	}
+	if pt := res.timings; !pt.ran || pt.status == 0 || pt.insights == 0 || pt.comment == 0 {
+		t.Errorf("push timings = %+v, want every surface timed", pt)
+	}
 }
 
 func TestPRCommentBody(t *testing.T) {

@@ -125,11 +125,11 @@ recovery, not a redeploy.
 ### Operating it
 
 - **Logs**: `aws logs tail /gocov/server --follow` (or `--since 1h`).
-- **Where the time goes**: three log lines answer it. `upload accepted` (or `upload failed`, with the `stage` it failed in) is one line per upload with each pipeline stage's milliseconds — `push_ms` is the forge round trip, held on a database connection. `ui request` is one line per `/api/ui/` request with its route pattern, status and `ms`. `db pool stats` is a per-minute line of the connection pool (`db pool` at startup gives its size); `empty_acquires` above zero means requests waited for a connection. In CloudWatch Logs Insights:
+- **Where the time goes**: three log lines answer it. `upload accepted` (or `upload failed`, with the `stage` it failed in) is one line per upload with each pipeline stage's milliseconds — `push_ms` is the forge push, held on a database connection, and splits into `push_lock_ms` (waiting for the commit's status lock — a pool connection, then any other part's push of the same commit) and each surface's round trip, `status_ms`, `insights_ms` and, on a PR, `comment_ms` (these run side by side, so `push_ms` ≈ `push_lock_ms` + the slowest; they are left out when nothing reached the forge). `ui request` is one line per `/api/ui/` request with its route pattern, status and `ms`. `db pool stats` is a per-minute line of the connection pool (`db pool` at startup gives its size); `empty_acquires` above zero means requests waited for a connection. In CloudWatch Logs Insights:
   ```
-  parse @message /msg="upload accepted".* push_ms=(?<push>\d+).* total_ms=(?<total>\d+)/
+  parse @message /msg="upload accepted".* push_ms=(?<push>\d+) push_lock_ms=(?<lock>\d+).* total_ms=(?<total>\d+)/
   | filter ispresent(total)
-  | stats pct(total, 95), pct(push, 95), count(*) by bin(1h)
+  | stats pct(total, 95), pct(push, 95), pct(lock, 95), count(*) by bin(1h)
   ```
 - **What is running**: `aws ecs describe-services --cluster gocov --services gocov-server --query 'services[0].deployments'`.
 - **There is no shell to get into.** The image is distroless — no `sh`, so ECS Exec cannot start a session in it, and there is nothing on a task's disk to look at: the container writes nothing. Logs are the whole story.
