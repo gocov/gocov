@@ -42,9 +42,17 @@ func (s *Server) handleGitHubInstall(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "the GitHub App install page is unavailable right now; try again shortly", http.StatusServiceUnavailable)
 		return
 	}
+	to, err := url.Parse(installURL)
+	if err != nil {
+		s.internalError(w, "parsing github app install url", err)
+		return
+	}
 	state := newState()
+	q := to.Query()
+	q.Set("state", state)
+	to.RawQuery = q.Encode()
 	setCookie(w, githubInstallCookie, state, stateCookieTTL, s.secureCookies)
-	http.Redirect(w, r, installURL+"?state="+url.QueryEscape(state), http.StatusFound)
+	http.Redirect(w, r, to.String(), http.StatusFound)
 }
 
 // githubInstallURL is where the app sends an owner to install the App:

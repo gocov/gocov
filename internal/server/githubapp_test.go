@@ -661,3 +661,19 @@ func TestAPIGitHubConnectConfirms(t *testing.T) {
 		t.Errorf("redirect = %q, want the not_your_workspace outcome", got.Redirect)
 	}
 }
+
+// The state rides as a query parameter of the install page however its
+// URL is spelled, including one that already carries a query.
+func TestGitHubInstallKeepsAnExistingQuery(t *testing.T) {
+	f, sess := newGitHubAppFixture(t, false, true)
+	f.app.installURL = "https://github.com/apps/gocov/installations/new?target_id=5"
+	f.srv.forges.GitHubApp = f.app
+	rec := get(f.fixture, "/github/install", sess)
+	to, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if to.Query().Get("target_id") != "5" || to.Query().Get("state") != cookieNamed(t, rec, githubInstallCookie).Value {
+		t.Errorf("redirect = %q, want target_id kept and the state added", to)
+	}
+}
