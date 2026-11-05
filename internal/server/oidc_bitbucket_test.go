@@ -345,12 +345,21 @@ func TestBitbucketOIDCOtherWorkspaceRefusedWithoutForgeCall(t *testing.T) {
 		t.Errorf("got %d GetRepoID calls through another workspace's connection, want 0: %v", n, f.forge.RepoIDCalls)
 	}
 
-	// The read API applies the same binding.
+	// The read API applies the same binding. (With sign-in on: an open
+	// instance answers every read without looking at credentials.)
+	requireSignIn(f)
 	if rec := getWith(f, "/api/v1/reports/bitbucket/acme/widgets", tok); rec.Code == http.StatusOK {
 		t.Errorf("read API granted another workspace's token: %s", rec.Body)
 	}
 	if n := len(f.forge.RepoIDCalls); n != 0 {
 		t.Errorf("read API made %d GetRepoID calls for another workspace's token", n)
+	}
+	// Nor do such refusals spend the repo's own rate-limit budget.
+	for range 70 {
+		getWith(f, "/api/v1/reports/bitbucket/acme/widgets", tok)
+	}
+	if !f.srv.tokenless.allow("acme/widgets", time.Now()) {
+		t.Error("another workspace's refused tokens used up acme/widgets' OIDC rate limit")
 	}
 }
 

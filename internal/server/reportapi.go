@@ -195,16 +195,17 @@ func (s *Server) oidcGrantsRead(w http.ResponseWriter, r *http.Request, repo *st
 	if want == "" {
 		return false, true
 	}
-	if !s.tokenless.allow(repo.Slug, time.Now()) {
-		httpError(w, http.StatusTooManyRequests, "OIDC rate limit reached for %s; try again later", repo.Slug)
-		return false, false
-	}
 	ctx := r.Context()
 	ws := s.forges.WorkspaceFor(ctx, repo.Slug, "bitbucket")
 	if ws != nil && !bitbucketTokenFromWorkspace(tok, ws) {
 		// Another workspace's token: it cannot name this repo, and must
-		// not make this workspace's connection answer for it.
+		// neither make this workspace's connection answer for it nor
+		// spend this repo's rate-limit budget.
 		return false, true
+	}
+	if !s.tokenless.allow(repo.Slug, time.Now()) {
+		httpError(w, http.StatusTooManyRequests, "OIDC rate limit reached for %s; try again later", repo.Slug)
+		return false, false
 	}
 	var fg forge.Forge
 	if ws != nil {
