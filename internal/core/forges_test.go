@@ -292,3 +292,31 @@ func TestRevokedGrantClosesTheWorkspacesPublicRepos(t *testing.T) {
 		}
 	}
 }
+
+// A connection that exists but fails this once — a forge outage, not a
+// revocation — must not close public pages: the last known answer stands,
+// as it does for any other transient error. Only a lost connection drops it.
+func TestTransientForgeFailureKeepsPublicAnswer(t *testing.T) {
+	bb := &fakeBB{err: errors.New("bitbucket: 503 service unavailable")}
+	f, st := newForges(t, bb)
+	connectedWorkspace(t, st, "acme")
+	ctx := t.Context()
+	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	stale := time.Now().Add(-48 * time.Hour)
+	if err := st.SetRepoVisibility(ctx, repo.ID, store.VisibilityPublic, stale); err != nil {
+		t.Fatal(err)
+	}
+	repo.Visibility, repo.VisibilityCheckedAt = store.VisibilityPublic, stale
+	p := &Pipeline{Store: st, Forges: f, Log: f.Log}
+
+	p.ReverifyVisibility(ctx, repo)
+	if got, _ := st.RepoBySlug(ctx, "bitbucket", "acme/widgets"); got.Visibility != store.VisibilityPublic {
+		t.Errorf("after a transient forge failure: visibility = %q, want the public answer kept", got.Visibility)
+	}
+	if !f.HasConnection(ctx, repo) {
+		t.Error("HasConnection = false for a connected, unbroken grant")
+	}
+}

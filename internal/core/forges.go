@@ -446,6 +446,26 @@ func (f *Forges) SetInstallationBroken(ctx context.Context, installationID int64
 	}
 }
 
+// HasConnection reports whether the workspace owning the repo still has
+// a forge connection that is neither disconnected nor marked broken —
+// whether a nil client from For was a transient failure (keep the last
+// known visibility) rather than a lost connection (it no longer counts).
+// A store error answers true, so a lookup failure never closes pages.
+func (f *Forges) HasConnection(ctx context.Context, repo *store.Repo) bool {
+	ws, err := f.LookupWorkspace(ctx, repo.Slug, repo.Forge)
+	if err != nil {
+		f.Log.Error("workspace lookup", "repo", repo.Slug, "forge", repo.Forge, "err", err)
+		return true
+	}
+	if ws == nil {
+		return false
+	}
+	if f.GitHubApp != nil && ws.Forge == "github" && ws.GitHubInstallationID != 0 && !ws.GitHubAppBroken {
+		return true
+	}
+	return f.grants[ws.Forge] != nil && ws.Grant.Account != "" && !ws.Grant.Broken
+}
+
 // MarkWorkspaceReposPrivate caches "private" for every repo the workspace
 // owns that is cached public — for when its forge connection goes away
 // (disconnected, revoked, uninstalled, suspended). A public answer is only

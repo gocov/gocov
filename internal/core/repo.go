@@ -240,8 +240,13 @@ func (p *Pipeline) ReverifyVisibility(ctx context.Context, repo *store.Repo) {
 // closeUnverifiable caches "private" for a repo cached public that no
 // forge connection can re-verify. Opening pages takes a forge's word, and
 // a stale word is not good enough: the repo may have gone private since.
+// A connection that exists but failed this once (a forge outage) keeps
+// the last known answer instead, like any other transient error.
 func (p *Pipeline) closeUnverifiable(ctx context.Context, repo *store.Repo) {
 	if repo.Visibility != store.VisibilityPublic {
+		return
+	}
+	if p.Forges != nil && p.Forges.HasConnection(ctx, repo) {
 		return
 	}
 	if err := p.Store.SetRepoVisibility(ctx, repo.ID, store.VisibilityPrivate, time.Now()); err != nil {
