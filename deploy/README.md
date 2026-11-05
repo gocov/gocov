@@ -125,6 +125,12 @@ recovery, not a redeploy.
 ### Operating it
 
 - **Logs**: `aws logs tail /gocov/server --follow` (or `--since 1h`).
+- **Where the time goes**: three log lines answer it. `upload accepted` (or `upload failed`, with the `stage` it failed in) is one line per upload with each pipeline stage's milliseconds — `push_ms` is the forge round trip, held on a database connection. `ui request` is one line per `/api/ui/` request with its route pattern, status and `ms`. `db pool stats` is a per-minute line of the connection pool (`db pool` at startup gives its size); `empty_acquires` above zero means requests waited for a connection. In CloudWatch Logs Insights:
+  ```
+  parse @message /msg="upload accepted".* push_ms=(?<push>\d+).* total_ms=(?<total>\d+)/
+  | filter ispresent(total)
+  | stats pct(total, 95), pct(push, 95), count(*) by bin(1h)
+  ```
 - **What is running**: `aws ecs describe-services --cluster gocov --services gocov-server --query 'services[0].deployments'`.
 - **There is no shell to get into.** The image is distroless — no `sh`, so ECS Exec cannot start a session in it, and there is nothing on a task's disk to look at: the container writes nothing. Logs are the whole story.
 - **Trying a branch on the live instance**: `scripts/deploy-branch.sh` builds the checked-out tree for the task's architecture, pushes it to a private ECR repository (`gocov-server-dev`, created on first use, images expire after 14 days) and rolls the service to it the way `deploy.yml` does — minus the approval click and the real-upload smoke, and as the local AWS identity rather than the workflow's role. `scripts/deploy-branch.sh --image ghcr.io/gocov/gocov-server:v<release>` rolls to any existing image, which is also the way back to the current release. What runs is whatever is on disk (the image tag says `-dirty` when the tree had uncommitted changes), and migrations are forward-only, so a branch that adds one leaves its schema behind.

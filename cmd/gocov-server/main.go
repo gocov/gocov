@@ -163,6 +163,7 @@ func serve() error {
 		return err
 	}
 	defer st.Pool().Close()
+	go logPoolStats(ctx, log, st.Pool(), poolStatsInterval)
 
 	srvCfg, err := buildServerConfig(cfg, deps{
 		Store:  st,

@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gocov/gocov/internal/diffcov"
 	"github.com/gocov/gocov/internal/forge"
@@ -56,6 +57,10 @@ type Submission struct {
 	// Ignore is the upload's own ignore patterns (internal/ignore), applied
 	// on top of the repo's. Validated by the transport.
 	Ignore []string
+	// Started is when the transport began receiving the request, so the
+	// accept log can tell reading and parsing it apart from the pipeline.
+	// Zero leaves read_parse_ms and total_ms out of the log.
+	Started time.Time
 }
 
 // Result is what the uploader is told: the row that was stored, the merged
@@ -75,7 +80,10 @@ type Result struct {
 // An error means the upload did not fully land, and the caller should say
 // so: the CI client is expected to retry, and a retry is safe because
 // every upload recomputes the whole commit.
-func (p *Pipeline) Accept(ctx context.Context, sub Submission) (*Result, error) {
+func (p *Pipeline) Accept(ctx context.Context, sub Submission) (res *Result, err error) {
+	t := newAcceptTimings(sub.Started)
+	defer func() { p.logAccept(sub, t, res, err) }()
+
 	// The client every forge surface below publishes through; nil when the
 	// repo's workspace has no connection.
 	fg := p.forgeFor(ctx, sub.Repo)
@@ -95,7 +103,10 @@ func (p *Pipeline) Accept(ctx context.Context, sub Submission) (*Result, error) 
 	// Drop ignored files first, so that totals, per-file rows, diff
 	// coverage, the gate and the merge all measure the same trimmed
 	// report. The raw profile stored below is kept as posted.
+	t.stage = "ignore"
+	end := t.begin(&t.ignore)
 	rules, ignored, err := applyIgnore(ctx, &sub)
+	end()
 	if err != nil {
 		return nil, err
 	}
@@ -114,15 +125,22 @@ func (p *Pipeline) Accept(ctx context.Context, sub Submission) (*Result, error) 
 	defer diffDone.Wait()
 	if sub.PRID != "" {
 		diffDone.Go(func() {
+			defer t.begin(&t.diff)()
 			diffResult, diffStatus = p.diffCoverage(ctx, fg, sub.Repo, sub.PRID, sub.Profile, sub.Format, sub.PathPrefix, rules)
 		})
 	}
 
+	t.stage = "gate_base"
+	end = t.begin(&t.gateBase)
 	dropBase, err := gateDropBase(ctx, p.Store, sub.Repo, sub.Commit, []string{sub.Part})
+	end()
 	if err != nil {
 		return nil, err
 	}
+	t.stage = "blob"
+	end = t.begin(&t.blob)
 	blobKey, err := p.storeRaw(ctx, sub.Repo.ID, sub.Raw)
+	end()
 	if err != nil {
 		return nil, fmt.Errorf("storing raw profile: %w", err)
 	}
@@ -130,7 +148,11 @@ func (p *Pipeline) Accept(ctx context.Context, sub Submission) (*Result, error) 
 
 	gate := EvaluateGate(sub.Repo.Gate, totalPct, dropBase, diffResult)
 	upload, files := sub.rows(blobKey, diffResult, gate, dropBase, covered, total)
-	if err := p.Store.CreateUpload(ctx, upload, files); err != nil {
+	t.stage = "insert"
+	end = t.begin(&t.insert)
+	err = p.Store.CreateUpload(ctx, upload, files)
+	end()
+	if err != nil {
 		// The raw profile was already written; don't leave it orphaned.
 		if delErr := p.Blobs.Delete(ctx, blobKey); delErr != nil {
 			p.Log.Error("cleaning up blob after failed upload", "key", blobKey, "err", delErr)
@@ -141,7 +163,10 @@ func (p *Pipeline) Accept(ctx context.Context, sub Submission) (*Result, error) 
 	// Recompute the commit's merged report from every part's latest upload
 	// and drive all outward-facing surfaces from it, so a commit uploaded
 	// in several parts reports its combined total, not the last part in.
+	t.stage = "recompute"
+	end = t.begin(&t.recompute)
 	merged, err := p.Recompute(ctx, sub.Repo, upload)
+	end()
 	if err != nil {
 		// The upload row is already committed; a recompute failure (including
 		// the bounded-timeout case) is still reported as a failure so the CI
@@ -150,11 +175,15 @@ func (p *Pipeline) Accept(ctx context.Context, sub Submission) (*Result, error) 
 		return nil, fmt.Errorf("computing merged report: %w", err)
 	}
 
+	t.stage = "push"
+	end = t.begin(&t.push)
+	push := p.Push(ctx, fg, sub.Repo, upload, merged)
+	end()
 	return &Result{
 		Upload:     upload,
 		Merged:     merged,
 		DiffStatus: diffStatus,
-		Push:       p.Push(ctx, fg, sub.Repo, upload, merged),
+		Push:       push,
 	}, nil
 }
 
