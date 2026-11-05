@@ -47,7 +47,9 @@ A request **without** the `Authorization` header may instead carry a forge-minte
 
 On success the upload proceeds like a token upload — fully verified, published through the workspace's forge
 connection. Refusals are explicit: `403 oidc_bad_audience`, `403 oidc_unknown_issuer`, `403 oidc_repo_mismatch`,
-`401 oidc_invalid_token`, and `404` for a repo under no registered workspace. See
+`401 oidc_invalid_token`, and `404` for a repo under no registered workspace. A Bitbucket token names its repository
+only by id, so it is accepted only for repos in the workspace whose pipelines minted it: a `repo` in another
+workspace, or one Bitbucket does not have, gets `403 oidc_repo_mismatch` like a repo the token does not name. See
 [GitHub Actions](github-actions.md#uploading-without-a-token).
 
 ### Tokenless fork-PR uploads
@@ -139,7 +141,9 @@ the [MCP authorization spec](https://modelcontextprotocol.io/specification/lates
 message without an access token gets `401` with a `WWW-Authenticate` header that points at
 `/.well-known/oauth-protected-resource/mcp`, which names this server as the authorization server. The client
 registers itself at `/mcp/register`, sends its user to `/mcp/authorize`, where they sign in to gocov as they
-always do and approve it, and exchanges the code for a token at `/mcp/token`, under PKCE (`S256`). The token reads
+always do and approve it, and exchanges the code for a token at `/mcp/token`, under PKCE (`S256`). A request
+gocov cannot accept (no PKCE, a response type other than `code`, a foreign resource) is shown on that page with
+the reason and a button back to the client; the browser never returns there by itself. The token reads
 what its user may see on the report pages, the repos of their workspaces and public reports, and nothing else:
 it changes nothing, and it opens no web session. It lasts 30 days, then the client signs in again.
 

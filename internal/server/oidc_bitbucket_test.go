@@ -9,6 +9,7 @@ import (
 	"time"
 
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
+	"github.com/gocov/gocov/internal/forge"
 	forgefake "github.com/gocov/gocov/internal/forge/fake"
 	"github.com/gocov/gocov/internal/oidc"
 	"github.com/gocov/gocov/internal/store"
@@ -270,5 +271,116 @@ func TestBitbucketIssuerMatch(t *testing.T) {
 		if bitbucketIssuerMatch(iss) {
 			t.Errorf("bitbucketIssuerMatch(%q) = true, want false", iss)
 		}
+	}
+}
+
+// malloryIssuer is a second tracked workspace's Bitbucket OIDC issuer.
+const malloryIssuer = "https://api.bitbucket.org/2.0/workspaces/mallory/pipelines-config/identity/oidc"
+
+// newBitbucketCrossWorkspaceFixture is newBitbucketOIDCFixture with a
+// second tracked workspace, mallory, whose pipelines mint the tokens: the
+// shape of one tenant aiming its own CI identity at another's repos.
+func newBitbucketCrossWorkspaceFixture(t *testing.T) (*fixture, *oidcIssuer) {
+	t.Helper()
+	ctx := t.Context()
+	st := storemem.New()
+	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "secret-token", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	for _, prefix := range []string{"acme", "mallory"} {
+		ws := &store.Workspace{Forge: "bitbucket", Prefix: prefix, Token: "ws-" + prefix, DefaultBranch: "main"}
+		if err := st.CreateWorkspace(ctx, ws); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.SetWorkspaceGrant(ctx, ws.ID, "bitbucket", store.Grant{Account: "bot-" + prefix, RefreshToken: "rt-" + prefix}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	blobs := blobmem.New()
+	ff := forgefake.New()
+	ff.RepoID = bbRepoUUID
+	is, client := newIssuer(t, malloryIssuer, "https://api.bitbucket.org/jwks")
+	srv := New(Config{
+		Store:            st,
+		Blobs:            blobs,
+		BaseURL:          "https://gocov.example",
+		BitbucketConnect: &fakeBBConnect{grantForge: ff},
+		OIDCVerifier: oidc.New(oidc.Config{
+			Audience:      "https://gocov.example",
+			ResolveIssuer: bitbucketIssuerResolver(st),
+			HTTPClient:    client,
+		}),
+	})
+	return &fixture{srv: srv, store: st, blobs: blobs, forge: ff, repo: repo}, is
+}
+
+func malloryToken(t *testing.T, is *oidcIssuer) string {
+	t.Helper()
+	claims := bbClaims("{99999999-9999-9999-9999-999999999999}", []any{bbWorkspaceARI, "https://gocov.example"})
+	claims["iss"] = malloryIssuer
+	return is.mint(t, claims)
+}
+
+// A token minted by one tracked workspace's pipelines can only name that
+// workspace's repos. Aimed at another workspace's slug — existing or not,
+// tracked or not — it is refused with one answer and before any forge
+// call, so the other workspace's connection never answers for it and the
+// response says nothing about which of its repos exist.
+func TestBitbucketOIDCOtherWorkspaceRefusedWithoutForgeCall(t *testing.T) {
+	f, is := newBitbucketCrossWorkspaceFixture(t)
+	tok := malloryToken(t, is)
+	var bodies []string
+	for _, slug := range []string{"acme/widgets", "acme/secret-roadmap", "acme/x/../../mallory/own"} {
+		rec := doOIDCUpload(t, f, tok, map[string]string{"repo": slug})
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "oidc_repo_mismatch") {
+			t.Errorf("repo %q: status = %d, body = %s; want 403 oidc_repo_mismatch", slug, rec.Code, rec.Body)
+		}
+		bodies = append(bodies, strings.ReplaceAll(rec.Body.String(), slug, "SLUG"))
+	}
+	if bodies[0] != bodies[1] {
+		t.Errorf("tracked and untracked slugs answered differently:\n%s\n%s", bodies[0], bodies[1])
+	}
+	if n := len(f.forge.RepoIDCalls); n != 0 {
+		t.Errorf("got %d GetRepoID calls through another workspace's connection, want 0: %v", n, f.forge.RepoIDCalls)
+	}
+
+	// The read API applies the same binding. (With sign-in on: an open
+	// instance answers every read without looking at credentials.)
+	requireSignIn(f)
+	if rec := getWith(f, "/api/v1/reports/bitbucket/acme/widgets", tok); rec.Code == http.StatusOK {
+		t.Errorf("read API granted another workspace's token: %s", rec.Body)
+	}
+	if n := len(f.forge.RepoIDCalls); n != 0 {
+		t.Errorf("read API made %d GetRepoID calls for another workspace's token", n)
+	}
+	// Nor do such refusals spend the repo's own rate-limit budget.
+	for range 70 {
+		getWith(f, "/api/v1/reports/bitbucket/acme/widgets", tok)
+	}
+	if !f.srv.tokenless.allow("acme/widgets", time.Now()) {
+		t.Error("another workspace's refused tokens used up acme/widgets' OIDC rate limit")
+	}
+}
+
+// Within its own workspace, a repo the forge does not have answers like a
+// UUID mismatch, not with a distinct error, and an invalid name is refused
+// before the forge is asked.
+func TestBitbucketOIDCOwnWorkspaceMissingRepoAndBadName(t *testing.T) {
+	f, is := newBitbucketOIDCFixture(t, bbRepoUUID)
+	f.forge.RepoIDErr = forge.RepoNotFound("acme/absent")
+	tok := is.mint(t, bbClaims(bbRepoUUID, []any{bbWorkspaceARI, "https://gocov.example"}))
+
+	rec := doOIDCUpload(t, f, tok, map[string]string{"repo": "acme/absent"})
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "oidc_repo_mismatch") {
+		t.Errorf("missing repo: status = %d, body = %s; want 403 oidc_repo_mismatch", rec.Code, rec.Body)
+	}
+	calls := len(f.forge.RepoIDCalls)
+	rec = doOIDCUpload(t, f, tok, map[string]string{"repo": "acme/a/../b"})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid name: status = %d, body = %s; want 400", rec.Code, rec.Body)
+	}
+	if len(f.forge.RepoIDCalls) != calls {
+		t.Errorf("an invalid name reached the forge: %v", f.forge.RepoIDCalls)
 	}
 }

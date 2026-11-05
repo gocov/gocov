@@ -42,7 +42,14 @@ export interface LoginInfo {
  * A request the server cannot vouch for answers 422 with the sentence.
  */
 export interface McpConsent {
+  /**
+   * Where the browser goes next: after an approval, back to the client with
+   * the code; on a refused request, back with the error — offered to the
+   * user, never followed by itself, since anyone can register a client.
+   */
   redirect?: string;
+  /** Why a refused request cannot go ahead. */
+  refusal?: string;
   /** What the client called itself when it registered. */
   client?: string;
   /** Where an approval sends the browser: scheme and host. */

@@ -1,8 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect } from "react";
 import { useLocation } from "react-router";
-import { Skeleton, QueryBoundary } from "@/components/molecules";
-import { McpConsentCard } from "@/components/organisms";
+import { QueryBoundary } from "@/components/molecules";
+import { McpConsentCard, McpRefusalCard } from "@/components/organisms";
 import { apiPost, errorMessage } from "@/lib/api/client";
 import { mcpConsentQuery } from "@/lib/api/queries";
 import type { McpApproveInput, McpConsent } from "@/lib/api/types";
@@ -27,17 +26,19 @@ export default function McpAuthorizePage() {
     },
   });
 
-  // A request to refuse goes straight back to its client.
-  const refused = query.data?.redirect;
-  useEffect(() => {
-    if (refused) leaveFor(refused);
-  }, [refused]);
-
+  // A request to refuse goes back to its client with the error, but only
+  // when the user chooses to: the client and its address are whatever its
+  // registrant said, so a link must never bounce a visitor there unseen.
   return (
     <QueryBoundary query={query}>
       {(consent) =>
         consent.redirect ? (
-          <Skeleton />
+          <McpRefusalCard
+            client={consent.client ?? ""}
+            redirectOrigin={consent.redirect_origin ?? ""}
+            refusal={consent.refusal ?? ""}
+            onBack={() => consent.redirect && leaveFor(consent.redirect)}
+          />
         ) : (
           <McpConsentCard
             client={consent.client ?? ""}
