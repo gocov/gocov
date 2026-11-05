@@ -298,13 +298,19 @@ type mcpAuthRequest struct {
 	redirectURI string
 	state       string
 	challenge   string
+	// refusal, when set, is why the request goes back to its client with
+	// an error rather than to a consent: what the page tells the user.
+	refusal string
 }
 
 // parseMCPAuthRequest checks an authorization request's query. A client or
 // redirect URI it cannot vouch for is a bad link, answered to the user
 // (bad); anything else wrong goes back to the client as an OAuth error
-// (errRedirect), since by then the redirect URI is known to be the
-// client's own.
+// (errRedirect, with req.refusal saying why), since by then the redirect
+// URI is known to be the client's own. Known to be its own is not known to
+// be safe — registration is open, so anyone can register any URI — and so
+// the page shows the refusal and leaves only when the user asks to, never
+// straight away (RFC 9700 §4.11.2).
 func (s *Server) parseMCPAuthRequest(q url.Values) (req *mcpAuthRequest, errRedirect string, bad bool) {
 	c, ok := parseMCPClient(q.Get("client_id"))
 	if !ok {
@@ -319,7 +325,8 @@ func (s *Server) parseMCPAuthRequest(q url.Values) (req *mcpAuthRequest, errRedi
 	}
 	req = &mcpAuthRequest{client: c, clientID: q.Get("client_id"), redirectURI: redirectURI, state: q.Get("state"), challenge: q.Get("code_challenge")}
 	fail := func(code, desc string) (*mcpAuthRequest, string, bool) {
-		return nil, s.authRedirect(req, url.Values{"error": {code}, "error_description": {desc}}), false
+		req.refusal = desc
+		return req, s.authRedirect(req, url.Values{"error": {code}, "error_description": {desc}}), false
 	}
 	switch {
 	case q.Get("response_type") != "code":
@@ -358,18 +365,34 @@ func (s *Server) authRedirect(req *mcpAuthRequest, params url.Values) string {
 	return u.String()
 }
 
-// mcpConsentDTO is what the consent page shows, or where it sends the
-// browser straight away when the request is one to refuse.
+// mcpConsentDTO is what the consent page shows: the consent, or a refused
+// request and the way back to its client.
 type mcpConsentDTO struct {
-	// Redirect, when set, is the only field: the request goes back to
-	// its client with an error.
+	// Redirect, when set, is where the browser goes next: on a refused
+	// request, back to the client with an error, which the page offers
+	// (with Client, RedirectOrigin and Refusal) and never follows by
+	// itself; after an approval, back to the client with the code.
 	Redirect string `json:"redirect,omitempty"`
-	Client   string `json:"client,omitempty"`
+	// Refusal says why a refused request cannot go ahead.
+	Refusal string `json:"refusal,omitempty"`
+	Client  string `json:"client,omitempty"`
 	// RedirectOrigin is where an approval is sent.
 	RedirectOrigin string `json:"redirect_origin,omitempty"`
 	// DenyURL is where declining sends the browser.
 	DenyURL string `json:"deny_url,omitempty"`
 	User    string `json:"user,omitempty"`
+}
+
+// refusedConsent is the answer to a request that goes back to its client
+// with an error: where to, and why, for the page to show before the user
+// chooses to go.
+func refusedConsent(req *mcpAuthRequest, errRedirect string) mcpConsentDTO {
+	return mcpConsentDTO{
+		Redirect:       errRedirect,
+		Refusal:        req.refusal,
+		Client:         req.client.displayName(),
+		RedirectOrigin: redirectOrigin(req.redirectURI),
+	}
 }
 
 // handleAPIMCPConsent implements GET /api/ui/mcp-authorize: the consent
@@ -385,7 +408,7 @@ func (s *Server) handleAPIMCPConsent(w http.ResponseWriter, r *http.Request) {
 		invalid(w, "This sign-in link is not one gocov issued, or it was changed on the way.")
 		return
 	case errRedirect != "":
-		s.writeJSON(w, mcpConsentDTO{Redirect: errRedirect})
+		s.writeJSON(w, refusedConsent(req, errRedirect))
 		return
 	}
 	u := currentUser(r)
@@ -422,7 +445,7 @@ func (s *Server) handleAPIMCPApprove(w http.ResponseWriter, r *http.Request) {
 		invalid(w, "This sign-in link is not one gocov issued, or it was changed on the way.")
 		return
 	case errRedirect != "":
-		s.writeJSON(w, mcpConsentDTO{Redirect: errRedirect})
+		s.writeJSON(w, refusedConsent(req, errRedirect))
 		return
 	}
 	code := core.RandomHex(32)

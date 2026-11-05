@@ -200,8 +200,14 @@ func (s *Server) oidcGrantsRead(w http.ResponseWriter, r *http.Request, repo *st
 		return false, false
 	}
 	ctx := r.Context()
+	ws := s.forges.WorkspaceFor(ctx, repo.Slug, "bitbucket")
+	if ws != nil && !bitbucketTokenFromWorkspace(tok, ws) {
+		// Another workspace's token: it cannot name this repo, and must
+		// not make this workspace's connection answer for it.
+		return false, true
+	}
 	var fg forge.Forge
-	if ws := s.forges.WorkspaceFor(ctx, repo.Slug, "bitbucket"); ws != nil {
+	if ws != nil {
 		fg = s.forges.Connected(ctx, ws, "bitbucket")
 	}
 	if fg == nil {

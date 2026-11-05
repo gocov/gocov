@@ -4,6 +4,7 @@ export { FilesTable } from "./FilesTable";
 export { GatesCard } from "./GatesCard";
 export { trackedText, LoginCard } from "./LoginCard";
 export { McpConsentCard } from "./McpConsentCard";
+export { McpRefusalCard } from "./McpRefusalCard";
 export { ProvenanceCard } from "./ProvenanceCard";
 export { ReportingCard } from "./ReportingCard";
 export { ReposTable } from "./ReposTable";

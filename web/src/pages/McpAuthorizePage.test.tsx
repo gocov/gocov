@@ -44,10 +44,22 @@ test("cancelling goes back to the client with the denial", async () => {
   expect(leaveFor).toHaveBeenCalledWith(consent.deny_url);
 });
 
-test("a request to refuse goes straight back", async () => {
-  show({ "GET /mcp-authorize": { redirect: "https://claude.ai/cb?error=invalid_request" } });
-  await waitFor(() => expect(leaveFor).toHaveBeenCalledWith("https://claude.ai/cb?error=invalid_request"));
+test("a request to refuse is shown, and goes back only when asked", async () => {
+  show({
+    "GET /mcp-authorize": {
+      redirect: "https://evil.example/cb?error=invalid_request",
+      refusal: "PKCE with code_challenge_method=S256 is required",
+      client: "Totally Claude",
+      redirect_origin: "https://evil.example",
+    },
+  });
+  const back = await screen.findByRole("button", { name: "Back to https://evil.example" });
+  expect(screen.getByText(/PKCE with code_challenge_method=S256 is required/)).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+  // Nothing leaves by itself: the client's address is only its registrant's word.
+  expect(leaveFor).not.toHaveBeenCalled();
+  await userEvent.click(back);
+  expect(leaveFor).toHaveBeenCalledWith("https://evil.example/cb?error=invalid_request");
 });
 
 test("a link gocov did not issue says so", async () => {

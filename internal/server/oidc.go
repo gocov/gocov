@@ -30,6 +30,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gocov/gocov/internal/forge"
 	"github.com/gocov/gocov/internal/oidc"
 	"github.com/gocov/gocov/internal/store"
 )
@@ -224,6 +225,21 @@ func (s *Server) oidcResolveBitbucket(w http.ResponseWriter, r *http.Request, to
 	if !ok {
 		return nil, false
 	}
+	// Bitbucket mints a pipeline's token in the workspace that owns the
+	// pipeline's repo, so a token can only ever name a repo of its own
+	// issuer's workspace. Refuse any other slug before a forge call: the
+	// UUID check below runs on the slug's workspace connection, and a
+	// token from one tracked workspace must not be able to make another
+	// workspace's connection answer questions about its repos.
+	if !bitbucketTokenFromWorkspace(tok, ws) {
+		httpError(w, http.StatusForbidden, "oidc_repo_mismatch: the OIDC token's repository does not match %q", slug)
+		return nil, false
+	}
+	// Likewise the name is checked before it reaches the forge, not only
+	// when the repo is registered.
+	if repo == nil && !checkRepoName(w, ws, slug) {
+		return nil, false
+	}
 
 	// The UUID check below makes a live forge call through the repo's own
 	// connection, so — like the fork-PR path (tokenless.go) — rate-limit it
@@ -248,6 +264,12 @@ func (s *Server) oidcResolveBitbucket(w http.ResponseWriter, r *http.Request, to
 		return nil, false
 	}
 	gotUUID, err := fg.GetRepoID(ctx, slug)
+	if errors.Is(err, forge.ErrRepoNotFound) {
+		// The same answer as a UUID mismatch: whether a repo the token
+		// does not name exists is not the caller's to learn.
+		httpError(w, http.StatusForbidden, "oidc_repo_mismatch: the OIDC token's repository does not match %q", slug)
+		return nil, false
+	}
 	if err != nil {
 		s.log.Error("oidc bitbucket repo id", "repo", slug, "err", err)
 		httpError(w, http.StatusBadGateway, "could not verify the repository identity with Bitbucket; retrying may help")
@@ -321,6 +343,14 @@ func (s *Server) oidcRegisterRepo(w http.ResponseWriter, r *http.Request, ws *st
 	}
 	s.log.Info("oidc upload registered repo", "repo", slug, "workspace", ws.Prefix)
 	return repo, true
+}
+
+// bitbucketTokenFromWorkspace reports whether a verified Bitbucket token
+// was minted by ws's own pipelines: its (canonical, store-rebuilt) issuer
+// names ws. Bitbucket workspace slugs are case-insensitive.
+func bitbucketTokenFromWorkspace(tok *oidc.Token, ws *store.Workspace) bool {
+	issWS, ok := bitbucketIssuerWorkspace(tok.Issuer)
+	return ok && ws != nil && strings.EqualFold(issWS, ws.Prefix)
 }
 
 // bitbucketRepoUUID reads the repository UUID a Bitbucket token names its

@@ -227,7 +227,11 @@ func TestMCPConsentRefusesBadRequests(t *testing.T) {
 		tc.edit(q)
 		dto := decodeJSON[mcpConsentDTO](t, get(f, "/api/ui/mcp-authorize?"+q.Encode(), sess))
 		back, _ := url.Parse(dto.Redirect)
-		if back == nil || back.Query().Get("error") != tc.want || dto.Client != "" {
+		// The way back carries the error, and the page gets what it needs
+		// to show the refusal first — the client, where it would go, why —
+		// but no consent to approve (no deny URL).
+		if back == nil || back.Query().Get("error") != tc.want || dto.Refusal == "" ||
+			dto.RedirectOrigin == "" || dto.Client == "" || dto.DenyURL != "" {
 			t.Errorf("%s: %+v", name, dto)
 		}
 	}
