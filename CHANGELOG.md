@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.32.0](https://github.com/gocov/gocov/compare/v0.31.0...v0.32.0) (2026-11-05)
+
+
+### Features
+
+* log pool stats, upload stage timings and UI request durations ([#270](https://github.com/gocov/gocov/issues/270)) ([c0f413f](https://github.com/gocov/gocov/commit/c0f413f73a8aa6e6db02baf2e5f4f0f448ecfeb7))
+
+
+### Bug Fixes
+
+* bind Bitbucket OIDC tokens to their workspace, show MCP refusals instead of redirecting ([#267](https://github.com/gocov/gocov/issues/267)) ([b07e8d4](https://github.com/gocov/gocov/commit/b07e8d4f837412ede452a09efcb6d6a457d6fb9a))
+* bound pre-auth upload buffering, ignore matching cost and stale public visibility ([#265](https://github.com/gocov/gocov/issues/265)) ([2f0ac13](https://github.com/gocov/gocov/commit/2f0ac135ac98568a1bc60ab78acb6db510ad0b63))
+* confirm GitHub App installs not started from gocov, and stop replays spending tokenless attempts ([#269](https://github.com/gocov/gocov/issues/269)) ([6d5a836](https://github.com/gocov/gocov/commit/6d5a83613ffe66be438dc287b4a48f8d7cf244a6))
+* keep a rotated upload token and a grant disconnect from being undone by connection upkeep ([#268](https://github.com/gocov/gocov/issues/268)) ([e4a582c](https://github.com/gocov/gocov/commit/e4a582cfc5e60d2affce00fba384b08be344ff2d))
+
 ## [0.31.0](https://github.com/gocov/gocov/compare/v0.30.1...v0.31.0) (2026-10-28)
 
 
