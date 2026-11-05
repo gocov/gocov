@@ -260,17 +260,20 @@ func TestTokenlessLimiter(t *testing.T) {
 	l := newTokenlessLimiter()
 	now := time.Now()
 	for i := range maxTokenlessPerRepoHour {
-		if !l.allow("acme/widgets", now) {
+		if !l.allow("github", "acme/widgets", now) {
 			t.Fatalf("attempt %d refused inside the limit", i)
 		}
 	}
-	if l.allow("acme/widgets", now) {
+	if l.allow("github", "acme/widgets", now) {
 		t.Error("attempt over the limit allowed")
 	}
-	if !l.allow("acme/other", now) {
+	if !l.allow("github", "acme/other", now) {
 		t.Error("another repo throttled by its neighbor")
 	}
-	if !l.allow("acme/widgets", now.Add(time.Hour)) {
+	if !l.allow("bitbucket", "acme/widgets", now) {
+		t.Error("a Bitbucket repo throttled by its GitHub namesake")
+	}
+	if !l.allow("github", "acme/widgets", now.Add(time.Hour)) {
 		t.Error("attempt refused after the window reset")
 	}
 }
@@ -300,5 +303,89 @@ func TestBadgeIgnoresPRReportsOnDefaultBranch(t *testing.T) {
 	rec = get(f, "/badge/github/acme/widgets.svg")
 	if !strings.Contains(rec.Body.String(), "80.0%") {
 		t.Errorf("badge = %s, want 80.0%%", rec.Body)
+	}
+}
+
+// A claim GitHub already answered is answered again from memory: replays
+// of a rejected claim cost neither an attempt nor an API call, so sending
+// the same made-up claim over and over cannot use up a repo's attempts.
+func TestTokenlessRejectedClaimReplaysAreFree(t *testing.T) {
+	f, app, _ := newTokenlessFixture(t)
+	app.verify = func(_ int64, c github.RunClaim) error {
+		if c.RunID == 1 {
+			return &github.ClaimRejectedError{Reason: "no such run"}
+		}
+		return nil
+	}
+	bogus := tokenlessFields()
+	bogus["run_id"] = "1"
+	for range 2 * maxTokenlessPerRepoHour {
+		if rec := doUpload(t, f, "", bogus, testProfile); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "no such run") {
+			t.Fatalf("replayed rejected claim: status = %d, body = %s", rec.Code, rec.Body)
+		}
+	}
+	if n := len(app.verifyCalls); n != 1 {
+		t.Errorf("GitHub was asked %d times about one claim, want 1", n)
+	}
+	if rec := doUpload(t, f, "", tokenlessFields(), testProfile); rec.Code != http.StatusCreated {
+		t.Errorf("a genuine claim after the replays: status = %d, body = %s; want 201", rec.Code, rec.Body)
+	}
+}
+
+// A rejection is remembered for that exact claim only: naming a real run
+// with the wrong head SHA must not shut that run's genuine upload out.
+func TestTokenlessRejectionDoesNotBlockTheRealRun(t *testing.T) {
+	f, app, _ := newTokenlessFixture(t)
+	app.verify = func(_ int64, c github.RunClaim) error {
+		if c.HeadSHA != "abc123" {
+			return &github.ClaimRejectedError{Reason: "head SHA does not match the run"}
+		}
+		return nil
+	}
+	wrong := tokenlessFields()
+	wrong["commit"] = "def456"
+	if rec := doUpload(t, f, "", wrong, testProfile); rec.Code != http.StatusForbidden {
+		t.Fatalf("wrong-SHA claim: status = %d, body = %s", rec.Code, rec.Body)
+	}
+	if rec := doUpload(t, f, "", tokenlessFields(), testProfile); rec.Code != http.StatusCreated {
+		t.Errorf("the real run after a wrong-SHA claim on it: status = %d, body = %s; want 201", rec.Code, rec.Body)
+	}
+}
+
+// A verified run's further parts (a matrix of jobs) are answered from
+// memory: one attempt and one verification for the run, not one each.
+func TestTokenlessVerifiedRunPartsCountOnce(t *testing.T) {
+	f, app, _ := newTokenlessFixture(t)
+	for _, part := range []string{"backend", "frontend", "e2e", "lint", "unit"} {
+		fields := tokenlessFields()
+		fields["part"] = part
+		if rec := doUpload(t, f, "", fields, testProfile); rec.Code != http.StatusCreated {
+			t.Fatalf("part %s: status = %d, body = %s", part, rec.Code, rec.Body)
+		}
+	}
+	if n := len(app.verifyCalls); n != 1 {
+		t.Errorf("verified the same run %d times, want once", n)
+	}
+	// Remembered acceptance does not bypass the per-part replay guard.
+	fields := tokenlessFields()
+	fields["part"] = "unit"
+	if rec := doUpload(t, f, "", fields, testProfile); rec.Code != http.StatusConflict {
+		t.Errorf("replayed part: status = %d, want 409", rec.Code)
+	}
+}
+
+// Requests refused by checks that cost nothing — here, a repo whose
+// workspace has no App installation — do not use up the repo's attempts.
+func TestTokenlessFreeRefusalsDoNotSpendAttempts(t *testing.T) {
+	f, _, ws := newTokenlessFixture(t)
+	ws.GitHubInstallationID = 0
+	if err := f.store.UpdateWorkspace(t.Context(), ws); err != nil {
+		t.Fatal(err)
+	}
+	for range maxTokenlessPerRepoHour + 5 {
+		doUpload(t, f, "", tokenlessFields(), testProfile)
+	}
+	if !f.srv.tokenless.allow("github", "acme/widgets", time.Now()) {
+		t.Error("refusals for a missing installation used up the repo's attempts")
 	}
 }

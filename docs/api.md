@@ -66,7 +66,10 @@ workflow — the [fork-PR path](pull-requests.md#fork-prs-without-a-token). It c
 
 The server verifies the claim with GitHub through the repo's App installation; the repo must be public, tracked, and
 its workspace connected. Refusals are explicit: `403` with the reason, `404` for an untracked repo, `409` when the
-same `(run_id, run_attempt, part)` already uploaded, `429` past the per-repo hourly limit.
+same `(run_id, run_attempt, part)` already uploaded, `429` past the per-repo hourly limit. The limit counts
+verifications, not uploads: the further parts of a run already verified, and a claim repeated within a few minutes,
+get the same answer without counting again. It is per repo rather than per caller, so once it is reached tokenless
+uploads to that repo wait for the next hour; token and OIDC uploads are never affected.
 
 ## Reading a report
 

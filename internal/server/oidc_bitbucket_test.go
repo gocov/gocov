@@ -234,7 +234,7 @@ func TestBitbucketOIDCRateLimited(t *testing.T) {
 	f, is := newBitbucketOIDCFixture(t, bbRepoUUID)
 	// Exhaust the per-repo limiter for the target slug.
 	for range maxTokenlessPerRepoHour {
-		f.srv.tokenless.allow("acme/widgets", time.Now())
+		f.srv.tokenless.allow("bitbucket", "acme/widgets", time.Now())
 	}
 	tok := is.mint(t, bbClaims(bbRepoUUID, []any{bbWorkspaceARI, "https://gocov.example"}))
 
@@ -358,7 +358,7 @@ func TestBitbucketOIDCOtherWorkspaceRefusedWithoutForgeCall(t *testing.T) {
 	for range 70 {
 		getWith(f, "/api/v1/reports/bitbucket/acme/widgets", tok)
 	}
-	if !f.srv.tokenless.allow("acme/widgets", time.Now()) {
+	if !f.srv.tokenless.allow("bitbucket", "acme/widgets", time.Now()) {
 		t.Error("another workspace's refused tokens used up acme/widgets' OIDC rate limit")
 	}
 }
