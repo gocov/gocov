@@ -73,7 +73,7 @@ func TestAcceptLogsStageTimings(t *testing.T) {
 			t.Errorf("%s = %v, want %v", k, line[k], v)
 		}
 	}
-	for _, k := range []string{"ignore_ms", "gate_base_ms", "blob_ms", "diff_ms", "insert_ms", "recompute_ms", "push_ms", "accept_ms", "total_ms"} {
+	for _, k := range []string{"ignore_ms", "gate_base_ms", "blob_ms", "diff_ms", "insert_ms", "recompute_ms", "push_ms", "push_lock_ms", "accept_ms", "total_ms"} {
 		if _, ok := line[k].(float64); !ok {
 			t.Errorf("%s missing or not a number: %v", k, line[k])
 		}
@@ -122,5 +122,42 @@ func TestAcceptLogsFailingStage(t *testing.T) {
 	line := findLog(t, logLines(t, &buf), "upload failed")
 	if line["level"] != "WARN" || line["stage"] != "ignore" || line["err"] == nil {
 		t.Errorf("failure line = %v, want WARN at stage ignore with the error", line)
+	}
+}
+
+// The push is split in the log into the lock wait and each surface's
+// round trip; the PR comment only for a PR, and only the lock wait when
+// no surface reached the forge (no connection, superseded).
+func TestAcceptLogSplitsThePush(t *testing.T) {
+	ran := pushTimings{ran: true, lock: 30 * time.Millisecond, status: 400 * time.Millisecond, insights: 700 * time.Millisecond, comment: 900 * time.Millisecond}
+	for _, tc := range []struct {
+		name    string
+		prID    string
+		timings pushTimings
+		want    map[string]float64 // absent keys must be left out
+	}{
+		{"pr", "7", ran, map[string]float64{"push_lock_ms": 30, "status_ms": 400, "insights_ms": 700, "comment_ms": 900}},
+		{"branch build", "", ran, map[string]float64{"push_lock_ms": 30, "status_ms": 400, "insights_ms": 700}},
+		{"nothing pushed", "7", pushTimings{lock: 30 * time.Millisecond}, map[string]float64{"push_lock_ms": 30}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			p := &Pipeline{Log: slog.New(slog.NewJSONHandler(&buf, nil))}
+			sub := Submission{Repo: &store.Repo{Slug: "acme/widgets"}, Commit: "c1", PRID: tc.prID, Profile: prof("a.go", 1, 2)}
+			res := &Result{Merged: &Merged{}, Push: PushResult{BuildStatus: "posted", timings: tc.timings}}
+			p.logAccept(sub, newAcceptTimings(time.Time{}), res, nil)
+
+			line := findLog(t, logLines(t, &buf), "upload accepted")
+			for _, k := range []string{"push_lock_ms", "status_ms", "insights_ms", "comment_ms"} {
+				want, ok := tc.want[k]
+				got, present := line[k]
+				switch {
+				case ok && got != want:
+					t.Errorf("%s = %v, want %v", k, got, want)
+				case !ok && present:
+					t.Errorf("%s = %v, want it left out", k, got)
+				}
+			}
+		})
 	}
 }

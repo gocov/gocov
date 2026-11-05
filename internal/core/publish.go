@@ -359,6 +359,21 @@ type PushResult struct {
 	BuildStatus  string
 	CodeInsights string
 	PRComment    string
+
+	// timings is for the accept log only; it never reaches the uploader.
+	timings pushTimings
+}
+
+// pushTimings splits a push's time for the accept log: how long it waited
+// for the commit's status lock (a pool connection, then the advisory lock
+// behind any other part's push), then each surface's forge round trip.
+// The surfaces run side by side, so the push takes as long as the slowest.
+// ran is false when no surface reached the forge — no connection, or the
+// push was superseded — and lock is then the whole wait.
+type pushTimings struct {
+	ran                       bool
+	lock                      time.Duration
+	status, insights, comment time.Duration
 }
 
 // Push updates every forge surface for the commit and reports what each
@@ -378,7 +393,10 @@ func (p *Pipeline) Push(ctx context.Context, fg forge.Forge, repo *store.Repo, u
 
 	pushCtx, cancel := context.WithTimeout(ctx, statusPushTimeout)
 	defer cancel()
+	start := time.Now()
+	var lock time.Duration
 	pushed, err := p.Store.TryPushStatus(pushCtx, repo.ID, upload.CommitSHA, upload.ID, func(ctx context.Context) error {
+		lock = time.Since(start)
 		res = p.pushSurfaces(ctx, fg, repo, merged, p.reportURL(merged, len(rc.Parts)), mergedDelta, mergedGate)
 		// The build status gates merges; if it didn't post, signal failure so
 		// the version isn't advanced and a later part retries. Insights and
@@ -402,6 +420,12 @@ func (p *Pipeline) Push(ctx context.Context, fg forge.Forge, repo *store.Repo, u
 	case !pushed:
 		res = everySurface("skipped: superseded", merged.PRID != "")
 	}
+	if lock == 0 {
+		// push never ran (superseded, nothing to attach to, or no lock):
+		// all of the time went to getting there.
+		lock = time.Since(start)
+	}
+	res.timings.lock = lock
 	return res
 }
 
@@ -416,13 +440,29 @@ func (p *Pipeline) pushSurfaces(ctx context.Context, fg forge.Forge, repo *store
 		p.Log.Debug("code insights skipped: no forge connection", "repo", repo.Slug)
 		return everySurface("skipped", u.PRID != "")
 	}
-	var res PushResult
+	res := PushResult{timings: pushTimings{ran: true}}
 	var wg sync.WaitGroup
-	wg.Go(func() { res.BuildStatus = p.pushBuildStatus(ctx, fg, repo, u, link, deltaPct, gate) })
-	wg.Go(func() { res.CodeInsights = p.pushCodeInsights(ctx, fg, repo, u, link, deltaPct, gate) })
-	wg.Go(func() { res.PRComment = p.pushPRComment(ctx, fg, repo, u, link, deltaPct, gate) })
+	t := &res.timings
+	wg.Go(func() {
+		defer timeInto(&t.status)()
+		res.BuildStatus = p.pushBuildStatus(ctx, fg, repo, u, link, deltaPct, gate)
+	})
+	wg.Go(func() {
+		defer timeInto(&t.insights)()
+		res.CodeInsights = p.pushCodeInsights(ctx, fg, repo, u, link, deltaPct, gate)
+	})
+	wg.Go(func() {
+		defer timeInto(&t.comment)()
+		res.PRComment = p.pushPRComment(ctx, fg, repo, u, link, deltaPct, gate)
+	})
 	wg.Wait()
 	return res
+}
+
+// timeInto starts timing into d and returns the call that stops it.
+func timeInto(d *time.Duration) func() {
+	start := time.Now()
+	return func() { *d = time.Since(start) }
 }
 
 // everySurface reports one outcome on every surface the upload has. The

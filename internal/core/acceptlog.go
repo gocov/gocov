@@ -1,6 +1,7 @@
 // The accept log: one line per upload saying where its time went, so a
 // slow upload can be told apart into the forge (diff, push), the database
-// (gate baseline, blob, insert, recompute) and the request itself.
+// (gate baseline, blob, insert, recompute) and the request itself, and
+// the push apart into its lock wait and each forge surface.
 
 package core
 
@@ -26,10 +27,7 @@ func newAcceptTimings(started time.Time) *acceptTimings {
 }
 
 // begin starts timing a stage into d and returns the call that stops it.
-func (t *acceptTimings) begin(d *time.Duration) func() {
-	start := time.Now()
-	return func() { *d = time.Since(start) }
-}
+func (t *acceptTimings) begin(d *time.Duration) func() { return timeInto(d) }
 
 // logAccept writes the accept log line: at info when the upload landed,
 // at warn with the failing stage when it did not.
@@ -60,8 +58,24 @@ func (p *Pipeline) logAccept(sub Submission, t *acceptTimings, res *Result, err 
 		"insert_ms", t.insert.Milliseconds(),
 		"recompute_ms", t.recompute.Milliseconds(),
 		"push_ms", t.push.Milliseconds(),
-		"accept_ms", end.Sub(t.accepted).Milliseconds(),
 	)
+	// push_ms split: the wait for the commit's status lock, then each
+	// surface's forge round trip (side by side, so push_ms ≈ lock + the
+	// slowest). The surfaces are left out when none reached the forge.
+	if res != nil {
+		attrs = append(attrs, "push_lock_ms", res.Push.timings.lock.Milliseconds())
+	}
+	if res != nil && res.Push.timings.ran {
+		pt := res.Push.timings
+		attrs = append(attrs,
+			"status_ms", pt.status.Milliseconds(),
+			"insights_ms", pt.insights.Milliseconds(),
+		)
+		if sub.PRID != "" {
+			attrs = append(attrs, "comment_ms", pt.comment.Milliseconds())
+		}
+	}
+	attrs = append(attrs, "accept_ms", end.Sub(t.accepted).Milliseconds())
 	if !t.started.IsZero() {
 		attrs = append(attrs, "total_ms", end.Sub(t.started).Milliseconds())
 	}
