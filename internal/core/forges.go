@@ -277,8 +277,11 @@ func (f *Forges) installationForge(ctx context.Context, ws *store.Workspace, for
 	if ws.GitHubAppBroken {
 		// Minting works again (a lifted suspension, a restored key) —
 		// heal the flag so settings stops asking for a reconnect.
+		// Flag only: ws was read before the mint, and a full-row write
+		// from it would undo what an owner changed meanwhile (a rotated
+		// upload token).
 		ws.GitHubAppBroken = false
-		if err := f.Store.UpdateWorkspace(ctx, ws); err != nil {
+		if err := f.Store.SetGitHubAppBroken(ctx, ws.ID, ws.GitHubInstallationID, false); err != nil {
 			f.Log.Error("clearing github app broken flag", "workspace", ws.Prefix, "err", err)
 		}
 	}
@@ -309,7 +312,7 @@ func (f *Forges) markAppBroken(ctx context.Context, ws *store.Workspace, cause e
 		return
 	}
 	ws.GitHubAppBroken = true
-	if err := f.Store.UpdateWorkspace(ctx, ws); err != nil {
+	if err := f.Store.SetGitHubAppBroken(ctx, ws.ID, ws.GitHubInstallationID, true); err != nil {
 		f.Log.Error("marking github app broken", "workspace", ws.Prefix, "err", err)
 	}
 	f.MarkWorkspaceReposPrivate(ctx, ws)
@@ -342,6 +345,9 @@ func (f *Forges) grantForge(ctx context.Context, ws *store.Workspace, forgeName 
 		return nil
 	}
 	token, err := f.accessToken(ctx, g, ws)
+	if errors.Is(err, errGrantDisconnected) {
+		return nil
+	}
 	if err != nil {
 		if errors.Is(err, forge.ErrCredentialsRevoked) {
 			f.markGrantBroken(ctx, g, ws, err)
@@ -378,10 +384,15 @@ func (f *Forges) accessToken(ctx context.Context, g *grant, ws *store.Workspace)
 			return err
 		}
 		stored := fresh.Grant
+		if stored.Account == "" {
+			// Disconnected under our feet: nothing to refresh, and nothing
+			// to mark — the caller's copy of the grant is the one the
+			// owner just removed, and must not be written back.
+			return errGrantDisconnected
+		}
 		if stored.RefreshToken == "" {
-			// Disconnected under our feet, or the stored token could not
-			// be decrypted (rotated GOCOV_SECRET_KEY) — either way a
-			// reconnect is the fix.
+			// The stored token could not be decrypted (rotated
+			// GOCOV_SECRET_KEY): a reconnect is the fix.
 			return fmt.Errorf("%w: workspace %s has no usable grant", forge.ErrCredentialsRevoked, ws.Prefix)
 		}
 		got, err := g.connect.Refresh(ctx, stored.RefreshToken, RedirectURI(f.BaseURL, g.forge))
@@ -407,14 +418,15 @@ func (f *Forges) accessToken(ctx context.Context, g *grant, ws *store.Workspace)
 // markGrantBroken records the revoked grant so the settings page shows
 // "reconnect". The account name is kept — it says who to replace.
 func (f *Forges) markGrantBroken(ctx context.Context, g *grant, ws *store.Workspace, cause error) {
-	stored := ws.Grant
 	f.Log.Warn(g.forge+" grant revoked", "workspace", ws.Prefix,
-		"account", stored.Account, "err", cause)
-	if stored.Broken {
+		"account", ws.Grant.Account, "err", cause)
+	if ws.Grant.Broken {
 		return
 	}
-	stored.Broken = true
-	if err := f.Store.SetWorkspaceGrant(ctx, ws.ID, g.forge, stored); err != nil {
+	// Flag only, and only while the stored grant is still this account's:
+	// ws.Grant was read before the refresh, and writing it back would
+	// restore a grant an owner disconnected meanwhile.
+	if err := f.Store.MarkWorkspaceGrantBroken(ctx, ws.ID, g.forge, ws.Grant.Account); err != nil {
 		f.Log.Error("marking "+g.forge+" grant broken", "workspace", ws.Prefix, "err", err)
 	}
 	f.MarkWorkspaceReposPrivate(ctx, ws)
@@ -434,7 +446,7 @@ func (f *Forges) SetInstallationBroken(ctx context.Context, installationID int64
 			continue
 		}
 		ws.GitHubAppBroken = broken
-		if err := f.Store.UpdateWorkspace(ctx, ws); err != nil {
+		if err := f.Store.SetGitHubAppBroken(ctx, ws.ID, installationID, broken); err != nil {
 			f.Log.Error("github webhook: updating workspace", "workspace", ws.Prefix, "err", err)
 			continue
 		}
@@ -465,6 +477,11 @@ func (f *Forges) HasConnection(ctx context.Context, repo *store.Repo) bool {
 	}
 	return f.grants[ws.Forge] != nil && ws.Grant.Account != "" && !ws.Grant.Broken
 }
+
+// errGrantDisconnected is accessToken's answer when the grant was removed
+// between the caller's read and the refresh lock: no client, and nothing
+// to mark broken.
+var errGrantDisconnected = errors.New("grant disconnected")
 
 // MarkWorkspaceReposPrivate caches "private" for every repo the workspace
 // owns that is cached public — for when its forge connection goes away

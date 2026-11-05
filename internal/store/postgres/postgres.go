@@ -428,6 +428,36 @@ func (s *Store) setWorkspaceGrant(ctx context.Context, q querier, workspaceID in
 	return affected(q.Exec(ctx, sql, workspaceID, g.Account, sealed, g.Broken))
 }
 
+func (s *Store) SetGitHubAppBroken(ctx context.Context, workspaceID, installationID int64, broken bool) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE workspaces SET github_app_broken = $3
+		WHERE id = $1 AND forge = 'github' AND github_installation_id = $2 AND github_installation_id <> 0`,
+		workspaceID, installationID, broken)
+	return err
+}
+
+// markGrantBrokenSQL is the flag-only grant write per forge, guarded on
+// the grant still being the one that was found dead.
+var markGrantBrokenSQL = map[string]string{
+	"bitbucket": `
+		UPDATE workspaces SET bitbucket_grant_broken = TRUE
+		WHERE id = $1 AND forge = 'bitbucket' AND bitbucket_grant_account = $2
+			AND bitbucket_grant_account <> '' AND bitbucket_refresh_token <> ''`,
+	"gitlab": `
+		UPDATE workspaces SET gitlab_grant_broken = TRUE
+		WHERE id = $1 AND forge = 'gitlab' AND gitlab_grant_account = $2
+			AND gitlab_grant_account <> '' AND gitlab_refresh_token <> ''`,
+}
+
+func (s *Store) MarkWorkspaceGrantBroken(ctx context.Context, workspaceID int64, forge, account string) error {
+	sql, ok := markGrantBrokenSQL[forge]
+	if !ok {
+		return store.ErrNotFound
+	}
+	_, err := s.pool.Exec(ctx, sql, workspaceID, account)
+	return err
+}
+
 func (s *Store) DeleteWorkspace(ctx context.Context, id int64) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

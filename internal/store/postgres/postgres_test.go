@@ -474,5 +474,15 @@ func TestWorkspaceGrantStaysOnItsForge(t *testing.T) {
 }
 
 func TestContract(t *testing.T) {
-	storetest.Run(t, func(t *testing.T) store.Store { return newTestStore(t) })
+	storetest.Run(t, func(t *testing.T) store.Store {
+		st := newTestStore(t)
+		// With the at-rest cipher, as production runs, so contract cases
+		// can store grant refresh tokens.
+		box, err := secretbox.New(testSecretKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		st.SetCipher(box)
+		return st
+	})
 }

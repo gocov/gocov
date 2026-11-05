@@ -12,6 +12,7 @@ import (
 	"github.com/gocov/gocov/internal/forge"
 	bbforge "github.com/gocov/gocov/internal/forge/bitbucket"
 	forgefake "github.com/gocov/gocov/internal/forge/fake"
+	"github.com/gocov/gocov/internal/forge/github"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
 )
@@ -318,5 +319,118 @@ func TestTransientForgeFailureKeepsPublicAnswer(t *testing.T) {
 	}
 	if !f.HasConnection(ctx, repo) {
 		t.Error("HasConnection = false for a connected, unbroken grant")
+	}
+}
+
+// rotatingApp is a GitHub App whose token mint lets an owner rotate the
+// workspace's upload token mid-flight — the window between upkeep's read
+// of the workspace and its flag write — and then answers with mintErr.
+type rotatingApp struct {
+	st      *storemem.Store
+	mintErr error
+}
+
+func (a *rotatingApp) ForgeClient(ctx context.Context, _ int64) (forge.Forge, error) {
+	ws, err := a.st.WorkspaceByPrefix(ctx, "github", "acme")
+	if err != nil {
+		return nil, err
+	}
+	ws.Token = "rotated-new" // as handleAPIWorkspaceRotate does
+	if err := a.st.UpdateWorkspace(ctx, ws); err != nil {
+		return nil, err
+	}
+	if a.mintErr != nil {
+		return nil, a.mintErr
+	}
+	return forgefake.New(), nil
+}
+func (a *rotatingApp) InstallationAccount(context.Context, int64) (string, error) { return "acme", nil }
+func (a *rotatingApp) InstallURL(context.Context) (string, error)                 { return "", nil }
+func (a *rotatingApp) VerifyRunClaim(context.Context, int64, github.RunClaim) error {
+	return nil
+}
+
+// Healing or marking the App connection's broken flag must not write back
+// the rest of a workspace row read before the token mint: an upload token
+// rotated meanwhile (because it leaked, say) would come back to life.
+func TestAppFlagUpkeepKeepsARotationMadeMeanwhile(t *testing.T) {
+	for name, tc := range map[string]struct {
+		broken     bool
+		mintErr    error
+		wantBroken bool
+	}{
+		"heal":        {broken: true, wantBroken: false},
+		"mark broken": {broken: false, mintErr: forge.ErrCredentialsRevoked, wantBroken: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := t.Context()
+			st := storemem.New()
+			app := &rotatingApp{st: st, mintErr: tc.mintErr}
+			f := NewForges(st, slog.New(slog.NewTextHandler(io.Discard, nil)), "https://cov.example.com", app, nil)
+			ws := &store.Workspace{Forge: "github", Prefix: "acme", Token: "leaked-old", DefaultBranch: "main",
+				GitHubInstallationID: 7, GitHubAppBroken: tc.broken}
+			if err := st.CreateWorkspace(ctx, ws); err != nil {
+				t.Fatal(err)
+			}
+			read, err := st.WorkspaceByPrefix(ctx, "github", "acme")
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.Connected(ctx, read, "github")
+
+			if _, err := st.WorkspaceByToken(ctx, "leaked-old"); !errors.Is(err, store.ErrNotFound) {
+				t.Errorf("the rotated-away token authenticates again (err = %v)", err)
+			}
+			got, err := st.WorkspaceByToken(ctx, "rotated-new")
+			if err != nil {
+				t.Fatalf("the new token no longer authenticates: %v", err)
+			}
+			if got.GitHubAppBroken != tc.wantBroken {
+				t.Errorf("broken = %v, want %v", got.GitHubAppBroken, tc.wantBroken)
+			}
+		})
+	}
+}
+
+// disconnectingStore performs an owner's disconnect (disconnectWorkspace's
+// writes) the moment a refresh takes the grant lock: the read the caller
+// holds is from before it.
+type disconnectingStore struct {
+	*storemem.Store
+	f *Forges
+}
+
+func (s disconnectingStore) WithGrantLock(ctx context.Context, id int64, fn func(context.Context, store.GrantTx) error) error {
+	if err := s.Store.SetWorkspaceGrant(ctx, id, "bitbucket", store.Grant{}); err != nil {
+		return err
+	}
+	s.f.DropGrantToken("bitbucket", id)
+	return s.Store.WithGrantLock(ctx, id, fn)
+}
+
+// A disconnect that lands while an upload is on its way to refreshing the
+// grant must stay a disconnect: the upload gets no client, and the grant
+// it read is not written back — not even as "broken", which the next
+// upload would happily refresh from.
+func TestDisconnectDuringRefreshStaysDisconnected(t *testing.T) {
+	ctx := t.Context()
+	bb := &fakeBB{}
+	f, mem := newForges(t, bb)
+	ws := connectedWorkspace(t, mem, "acme")
+	f.Store = disconnectingStore{Store: mem, f: f}
+
+	if fg := f.Connected(ctx, ws, "bitbucket"); fg != nil {
+		t.Error("an upload racing a disconnect got a client")
+	}
+	f.Store = mem
+	stored, err := mem.WorkspaceByPrefix(ctx, "bitbucket", "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Grant != (store.Grant{}) {
+		t.Errorf("stored grant = %+v, want it left disconnected", stored.Grant)
+	}
+	if fg := f.Connected(ctx, stored, "bitbucket"); fg != nil || bb.refreshes != 0 {
+		t.Errorf("the next upload got a client (%v) or refreshed %d times; the disconnect was undone", fg != nil, bb.refreshes)
 	}
 }

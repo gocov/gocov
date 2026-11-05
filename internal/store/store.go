@@ -410,6 +410,18 @@ type Store interface {
 	// concurrent full-row settings save. forge must be the workspace's
 	// own; ErrNotFound otherwise, as for an unknown id.
 	SetWorkspaceGrant(ctx context.Context, workspaceID int64, forge string, g Grant) error
+	// SetGitHubAppBroken sets only the workspace's GitHub App broken flag,
+	// and only while the workspace is still connected to installationID;
+	// otherwise (disconnected, reconnected elsewhere) it does nothing.
+	// Connection upkeep writes the flag from a read made before a slow
+	// token mint, and a full-row write from that read would undo whatever
+	// an owner changed meanwhile — a rotated upload token above all.
+	SetGitHubAppBroken(ctx context.Context, workspaceID, installationID int64, broken bool) error
+	// MarkWorkspaceGrantBroken sets only the broken flag of the workspace's
+	// grant, and only while the grant stored is still account's and has a
+	// refresh token; otherwise (disconnected meanwhile) it does nothing,
+	// so marking a dead grant can never write a disconnected one back.
+	MarkWorkspaceGrantBroken(ctx context.Context, workspaceID int64, forge, account string) error
 	// WithGrantLock serializes refreshes of one workspace's Bitbucket or
 	// GitLab grant across every server instance sharing the store, not
 	// just within one process. Both forges rotate the refresh token on
