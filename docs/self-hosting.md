@@ -24,7 +24,7 @@ release notes read, not something a restart did to you:
 ```yaml
 services:
   server:
-    image: ghcr.io/gocov/gocov-server:v0.32.0
+    image: ghcr.io/gocov/gocov-server:v0.33.0
 ```
 <!-- x-release-please-end -->
 
