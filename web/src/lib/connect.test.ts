@@ -103,3 +103,17 @@ test("nothing is emitted for a missing context at all", () => {
   expect(out.actions).toEqual([]);
   expect(out.message).toContain("that organization");
 });
+
+test("an installation back without this browser's install state waits for the user's go-ahead", () => {
+  const out = connectOutcome("install_confirm", { installationId: "42" });
+  expect(out.tone).toBe("neutral");
+  expect(out.message).toMatch(/nothing was connected yet/);
+  expect(out.confirmInstallation).toBe("42");
+  expect(out.actions).toEqual([]);
+});
+
+test("a confirmation without a plausible installation offers nothing to confirm", () => {
+  const out = connectOutcome("install_confirm", { installationId: "42; drop" });
+  expect(out.confirmInstallation).toBeUndefined();
+  expect(out.title).toBe("No installation to connect");
+});

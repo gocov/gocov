@@ -307,7 +307,7 @@ func TestReportAPIBitbucketOIDC(t *testing.T) {
 		f, is := newBitbucketOIDCFixture(t, bbRepoUUID)
 		requireSignIn(f)
 		for range maxTokenlessPerRepoHour {
-			f.srv.tokenless.allow("acme/widgets", time.Now())
+			f.srv.tokenless.allow("bitbucket", "acme/widgets", time.Now())
 		}
 		if rec := getWith(f, path, is.mint(t, bbClaims(bbRepoUUID, auds))); rec.Code != http.StatusTooManyRequests {
 			t.Errorf("status = %d, want 429", rec.Code)

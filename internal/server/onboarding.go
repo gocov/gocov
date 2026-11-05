@@ -104,7 +104,8 @@ type onboardingDTO struct {
 	// Mode is "install" where the page shows the GitHub App prompt and
 	// "pick" where it lists the memberships read at sign-in.
 	Mode string `json:"mode"`
-	// InstallURL is set in install mode only; it points at GitHub.
+	// InstallURL is set in install mode only: /github/install, which
+	// sends the browser on to GitHub's install page.
 	InstallURL string             `json:"install_url"`
 	Rows       []onboardingRowDTO `json:"rows"`
 	// MembershipCount is how many workspaces the forge reported at login,
@@ -138,7 +139,7 @@ func (s *Server) handleAPIOnboarding(w http.ResponseWriter, r *http.Request) {
 	// app; the token forges pick from the sign-in snapshot.
 	if s.forges.GitHubApp != nil && u.Forge == "github" {
 		dto.Mode = "install"
-		dto.InstallURL = s.forges.InstallURL(r.Context())
+		dto.InstallURL = s.githubInstallURL(r)
 		s.writeJSON(w, dto)
 		return
 	}

@@ -23,8 +23,10 @@ not the button:
   the App and lands you back on gocov with the workspace connected. It is also how a GitHub workspace is created in
   the first place, so a workspace set up from the first screen arrives connected. Statuses, PR comments and check runs
   are authored by the app's bot identity (`gocov[bot]`), so there is no credential to enter and nothing tied to your
-  account. On the hosted service the install can even come first — installing from the GitHub Marketplace registers
-  the workspace on the spot.
+  account. On the hosted service the install can even come first: after installing from the GitHub Marketplace,
+  gocov asks you to confirm with **Connect installation**, and the workspace is registered when you click it. Any
+  install that did not start from gocov's own button asks the same way, so a link someone sends you cannot connect
+  or create a workspace without your click.
 - **Bitbucket** — click **Grant write access** and consent once on Bitbucket. Bitbucket has no app identity, so
   statuses and comments appear as the account that granted it (gocov states this at connect time). Teams with a
   bot account should sign the bot in and connect with it.

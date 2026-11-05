@@ -203,7 +203,7 @@ func (s *Server) oidcGrantsRead(w http.ResponseWriter, r *http.Request, repo *st
 		// spend this repo's rate-limit budget.
 		return false, true
 	}
-	if !s.tokenless.allow(repo.Slug, time.Now()) {
+	if !s.tokenless.allow("bitbucket", repo.Slug, time.Now()) {
 		httpError(w, http.StatusTooManyRequests, "OIDC rate limit reached for %s; try again later", repo.Slug)
 		return false, false
 	}

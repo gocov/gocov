@@ -1,4 +1,5 @@
-// The GitHub App install flow's terminal states. `/github/setup` decides in
+// The GitHub App install flow's terminal states, and the one that waits for
+// the user (install_confirm). `/github/setup` decides in
 // Go — it is the only thing that knows the installation's real account — and
 // sends the browser to /onboarding?connect=<code>[&ws=][&installation_id=].
 // The sentence and the ways out of each state are written here, the prose the
@@ -24,6 +25,12 @@ export interface ConnectOutcome {
   title: string;
   message: string;
   actions: ConnectAction[];
+  /**
+   * The installation to connect when the user confirms: set when GitHub
+   * sent the browser back without the state of an install it started here,
+   * so nothing was linked until the user says so.
+   */
+  confirmInstallation?: string;
 }
 
 /** A GitHub login: letters, digits and hyphens, up to 39 characters. */
@@ -102,6 +109,21 @@ export function connectOutcome(code: string, { ws, installationId }: ConnectCont
           "That address is where GitHub returns after the gocov app is installed; it does nothing on its " +
           "own. Start from “Install the gocov app” below.",
         actions: [],
+      };
+
+    case "install_confirm":
+      if (id === null) {
+        return connectOutcome("no_installation");
+      }
+      return {
+        tone: "neutral",
+        title: "Connect this installation?",
+        message:
+          "GitHub sent you back with an installation of the gocov app, but not from an install started " +
+          "here, so nothing was connected yet. Connect it if you just installed the app yourself; " +
+          "otherwise leave this page.",
+        actions: [],
+        confirmInstallation: id,
       };
 
     case "install_unconfirmed":

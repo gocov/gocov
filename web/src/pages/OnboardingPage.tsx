@@ -1,15 +1,21 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
-import { LinkButton, Notice } from "@/components/atoms";
+import { Button, LinkButton, Notice } from "@/components/atoms";
 import { QueryBoundary } from "@/components/molecules";
 import { WorkspacePicker } from "@/components/organisms/WorkspacePicker";
 import { apiPost, errorMessage } from "@/lib/api/client";
 import { onboardingQuery } from "@/lib/api/queries";
-import type { OnboardingInfo, RegisterInput, RegisterResult } from "@/lib/api/types";
+import type {
+  GitHubConnectInput,
+  GitHubConnectResult,
+  OnboardingInfo,
+  RegisterInput,
+  RegisterResult,
+} from "@/lib/api/types";
 import { connectOutcome, type ConnectOutcome } from "@/lib/connect";
 import { useOneShotParams } from "@/lib/oneShotParams";
 import { usePageTitle } from "@/lib/title";
-import { routes } from "@/lib/urls";
+import { leaveFor, routes } from "@/lib/urls";
 import "./OnboardingPage.css";
 import { track, type EventProps } from "@/lib/analytics";
 
@@ -53,6 +59,7 @@ function ConnectNotice({ outcome }: { outcome: ConnectOutcome }) {
           <strong>{outcome.title}</strong>
         </p>
         <p>{outcome.message}</p>
+        {outcome.confirmInstallation && <ConfirmInstallation id={outcome.confirmInstallation} />}
         {outcome.actions.length > 0 && (
           <div className="row">
             {outcome.actions.map((action) => (
@@ -64,6 +71,36 @@ function ConnectNotice({ outcome }: { outcome: ConnectOutcome }) {
         )}
       </div>
     </Notice>
+  );
+}
+
+/**
+ * The user's own go-ahead for an installation GitHub sent back without this
+ * browser's install state: a POST from this page, which the server accepts
+ * only same-origin, then wherever the server says the install ended.
+ */
+function ConfirmInstallation({ id }: { id: string }) {
+  const confirm = useMutation({
+    mutationFn: () =>
+      apiPost<GitHubConnectResult>("/github/connect", { installation_id: Number(id) } satisfies GitHubConnectInput),
+    onSuccess: (result) => leaveFor(result.redirect),
+  });
+  return (
+    <div className="stack stack-1">
+      {confirm.isError && (
+        <p>{errorMessage(confirm.error, "The installation could not be connected. Please try again.")}</p>
+      )}
+      <div className="row">
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={() => confirm.mutate()}
+          loading={confirm.isPending || confirm.isSuccess}
+        >
+          Connect installation
+        </Button>
+      </div>
+    </div>
   );
 }
 

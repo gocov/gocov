@@ -116,6 +116,8 @@ type Server struct {
 	mcp *mcp.Server
 	// tokenless rate-limits tokenless upload attempts per repo.
 	tokenless *tokenlessLimiter
+	// claimVerdicts remembers GitHub's answer to recent tokenless claims.
+	claimVerdicts *claimVerdicts
 	// preAuthUploads holds a slot per upload without a bearer token that
 	// is still reading its body (upload.go, maxPreAuthUploads).
 	preAuthUploads chan struct{}
@@ -198,6 +200,7 @@ func New(cfg Config) *Server {
 		forges:         forges,
 		webhookSecret:  cfg.GitHubWebhookSecret,
 		tokenless:      newTokenlessLimiter(),
+		claimVerdicts:  newClaimVerdicts(),
 		preAuthUploads: make(chan struct{}, maxPreAuthUploads),
 		oidc:           oidcVerifier,
 		gitlabIssuers:  gitlabIssuers,
@@ -246,6 +249,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /oauth/{forge}/start", s.handleOAuthStart)
 	s.mux.HandleFunc("GET /oauth/{forge}/callback", s.handleOAuthCallback)
 	s.mux.HandleFunc("POST /logout", s.handleLogout)
+	s.mux.HandleFunc("GET /github/install", s.handleGitHubInstall)
 	s.mux.HandleFunc("GET /github/setup", s.handleGitHubSetup)
 	if s.webhookSecret != "" {
 		s.mux.HandleFunc("POST /github/webhook", s.handleGitHubWebhook)

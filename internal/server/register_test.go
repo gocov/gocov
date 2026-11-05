@@ -399,12 +399,13 @@ func TestAPIRegisterRefusals(t *testing.T) {
 
 func TestAPIOnboardingInstallMode(t *testing.T) {
 	// GitHub with the App configured creates the workspace on GitHub's own
-	// install screen, so the app gets that URL instead of a picker.
+	// install screen, so the app gets the route that starts that install
+	// (with its state) instead of a picker.
 	f, sess := newGitHubAppFixture(t, true, false)
 	rec := get(f.fixture, "/api/ui/onboarding", sess)
 	wantStatus(t, rec, "GET onboarding", http.StatusOK)
 	got := decodeJSON[onboardingDTO](t, rec)
-	if got.Mode != "install" || got.InstallURL != "https://github.com/apps/gocov/installations/new" {
+	if got.Mode != "install" || got.InstallURL != githubInstallPath {
 		t.Errorf("onboarding = %+v, want the install prompt", got)
 	}
 	if len(got.Rows) != 0 || !strings.Contains(rec.Body.String(), `"rows":[]`) {

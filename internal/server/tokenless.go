@@ -22,16 +22,27 @@ import (
 	"github.com/gocov/gocov/internal/store"
 )
 
-// maxTokenlessPerRepoHour caps verified-or-not tokenless attempts per
-// repo per hour. Each attempt can cost up to three GitHub API calls from
-// the installation's 5000/h budget; the cap keeps a flood from a public
+// maxTokenlessPerRepoHour caps tokenless verification attempts per repo
+// per hour. Each attempt can cost up to three GitHub API calls from the
+// installation's 5000/h budget; the cap keeps a flood from a public
 // repo's spectators well below that while leaving room for real matrix
-// builds (the parts-per-commit cap is 50).
+// builds (the parts-per-commit cap is 50). The same counter, keyed apart
+// per forge, bounds the Bitbucket OIDC repo-identity checks (oidc.go,
+// reportapi.go).
+//
+// Known limit: the server cannot tell a genuine claim from a made-up one
+// without asking GitHub, so an anonymous caller sending a new, invented
+// run id every time still uses up a repo's attempts for the hour and
+// delays genuine fork-PR uploads until the window resets. What keeps that
+// small: a claim already decided is answered from claimVerdicts without
+// an attempt (so neither replays nor a real run's further parts count),
+// and checks that cost nothing run before an attempt is charged.
 const maxTokenlessPerRepoHour = 60
 
-// tokenlessLimiter is a fixed-window per-repo counter. One instance lives
-// on the Server; a multi-instance deployment would rate-limit per
-// instance, which only loosens the bound, never blocks a real upload.
+// tokenlessLimiter is a fixed-window counter per forge and repo. One
+// instance lives on the Server; a multi-instance deployment would
+// rate-limit per instance, which only loosens the bound, never blocks a
+// real upload.
 type tokenlessLimiter struct {
 	mu     sync.Mutex
 	window time.Time
@@ -42,20 +53,71 @@ func newTokenlessLimiter() *tokenlessLimiter {
 	return &tokenlessLimiter{counts: map[string]int{}}
 }
 
-// allow consumes one attempt for the repo and reports whether it fit the
-// current window.
-func (l *tokenlessLimiter) allow(slug string, now time.Time) bool {
+// allow consumes one attempt for the forge's repo and reports whether it
+// fit the current window. The forge is part of the key: a GitHub and a
+// Bitbucket repo of the same name are different repos.
+func (l *tokenlessLimiter) allow(forgeName, slug string, now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if now.Sub(l.window) >= time.Hour {
 		l.window = now
 		clear(l.counts)
 	}
-	if l.counts[slug] >= maxTokenlessPerRepoHour {
+	key := forgeName + ":" + slug
+	if l.counts[key] >= maxTokenlessPerRepoHour {
 		return false
 	}
-	l.counts[slug]++
+	l.counts[key]++
 	return true
+}
+
+// claimVerdictTTL is how long a decided claim is answered from memory. A
+// rejection is GitHub's definitive word on that exact claim; an acceptance
+// covers a run that is in progress, which a fork PR's parts arrive within.
+// Short either way: a run can finish, and a PR can move on.
+const claimVerdictTTL = 5 * time.Minute
+
+// maxClaimVerdicts bounds the cache; past it, it starts over.
+const maxClaimVerdicts = 10_000
+
+// claimVerdicts remembers GitHub's answer to each exact claim for a few
+// minutes, so that the same claim sent again — a replay, or a real run's
+// next part — costs neither a verification attempt nor an API call. It is
+// keyed by the whole claim, never by the run id alone: a rejection for a
+// claim naming a real run with a wrong SHA must not shut that run out.
+type claimVerdicts struct {
+	mu sync.Mutex
+	m  map[github.RunClaim]claimVerdict
+}
+
+type claimVerdict struct {
+	rejected string // GitHub's reason; empty when the claim held up
+	until    time.Time
+}
+
+func newClaimVerdicts() *claimVerdicts {
+	return &claimVerdicts{m: map[github.RunClaim]claimVerdict{}}
+}
+
+// get returns the remembered verdict for the claim, if one is still fresh.
+func (c *claimVerdicts) get(claim github.RunClaim, now time.Time) (claimVerdict, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	v, ok := c.m[claim]
+	if !ok || now.After(v.until) {
+		return claimVerdict{}, false
+	}
+	return v, true
+}
+
+// put remembers a definitive verdict for the claim.
+func (c *claimVerdicts) put(claim github.RunClaim, rejected string, now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.m) >= maxClaimVerdicts {
+		clear(c.m)
+	}
+	c.m[claim] = claimVerdict{rejected: rejected, until: now.Add(claimVerdictTTL)}
 }
 
 // tokenlessClaim is the request's claim after local validation, plus what
@@ -134,20 +196,33 @@ func (s *Server) authTokenless(w http.ResponseWriter, r *http.Request) (*tokenle
 		httpError(w, http.StatusForbidden, "tokenless uploads are GitHub-only; %s is on %s", repo.Slug, repo.Forge)
 		return nil, nil, false
 	}
-	if !s.tokenless.allow(repo.Slug, time.Now()) {
-		httpError(w, http.StatusTooManyRequests, "tokenless upload rate limit reached for %s; try again later", repo.Slug)
-		return nil, nil, false
-	}
+	// Everything that costs nothing comes before an attempt is charged.
 	ws := s.forges.WorkspaceFor(ctx, repo.Slug, "github")
 	if ws == nil || ws.GitHubInstallationID == 0 {
 		httpError(w, http.StatusForbidden, "tokenless uploads need the gocov GitHub App installed on %s; a workspace owner can connect it from the workspace settings", ownerOf(repo.Slug))
+		return nil, nil, false
+	}
+	now := time.Now()
+	if v, ok := s.claimVerdicts.get(claim, now); ok {
+		// GitHub already answered this exact claim: answer the same,
+		// without an attempt or an API call.
+		if v.rejected != "" {
+			httpError(w, http.StatusForbidden, "tokenless upload rejected: %s", v.rejected)
+			return nil, nil, false
+		}
+		return &tokenlessClaim{runID: claim.RunID, runAttempt: claim.RunAttempt}, repo, true
+	}
+	if !s.tokenless.allow("github", repo.Slug, now) {
+		httpError(w, http.StatusTooManyRequests, "tokenless upload rate limit reached for %s; try again later", repo.Slug)
 		return nil, nil, false
 	}
 
 	err = s.forges.VerifyGitHubRunClaim(ctx, ws, claim)
 	switch rejected, definitive := errors.AsType[*github.ClaimRejectedError](err); {
 	case err == nil:
+		s.claimVerdicts.put(claim, "", now)
 	case definitive:
+		s.claimVerdicts.put(claim, rejected.Reason, now)
 		s.log.Warn("tokenless upload rejected", "repo", repo.Slug, "run", claim.RunID, "reason", rejected.Reason)
 		httpError(w, http.StatusForbidden, "tokenless upload rejected: %s", rejected.Reason)
 		return nil, nil, false

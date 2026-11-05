@@ -245,7 +245,7 @@ func (s *Server) oidcResolveBitbucket(w http.ResponseWriter, r *http.Request, to
 	// connection, so — like the fork-PR path (tokenless.go) — rate-limit it
 	// per repo before making it: a valid token replayed with a victim's slug
 	// must not be able to hammer that workspace's Bitbucket connection.
-	if !s.tokenless.allow(slug, time.Now()) {
+	if !s.tokenless.allow("bitbucket", slug, time.Now()) {
 		httpError(w, http.StatusTooManyRequests, "OIDC upload rate limit reached for %s; try again later", slug)
 		return nil, false
 	}

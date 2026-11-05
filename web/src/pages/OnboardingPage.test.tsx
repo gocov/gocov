@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { OnboardingInfo, RegisterInput, RegisterResult } from "@/lib/api/types";
+import * as urls from "@/lib/urls";
 import { mockApi, renderPage } from "@/test/render";
 import OnboardingPage from "./OnboardingPage";
 
@@ -126,4 +127,26 @@ test("no connect parameter, no notice", async () => {
   renderPage(<OnboardingPage />, at);
   expect(await screen.findByRole("heading", { name: "Choose a workspace" })).toBeInTheDocument();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+test("an installation to confirm is connected only by the user's click, then the browser goes where the server says", async () => {
+  const user = userEvent.setup();
+  let posted: unknown = null;
+  const leave = vi.spyOn(urls, "leaveFor").mockImplementation(() => {});
+  mockApi({
+    "GET /onboarding": { ...info, forge: "github", mode: "install", install_url: "/github/install", rows: [] },
+    "POST /github/connect": (init: RequestInit | undefined) => {
+      posted = JSON.parse(String(init?.body));
+      return { redirect: "/w/github/acme" };
+    },
+  });
+  renderPage(<OnboardingPage />, { route: "onboarding", path: "/onboarding?connect=install_confirm&installation_id=42" });
+
+  const connect = await screen.findByRole("button", { name: "Connect installation" });
+  expect(screen.getByText(/nothing was connected yet/)).toBeInTheDocument();
+  expect(posted).toBeNull();
+  await user.click(connect);
+  await waitFor(() => expect(leave).toHaveBeenCalledWith("/w/github/acme"));
+  expect(posted).toEqual({ installation_id: 42 });
+  leave.mockRestore();
 });

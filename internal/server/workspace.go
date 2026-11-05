@@ -163,7 +163,7 @@ func (s *Server) connectURL(r *http.Request, ws *store.Workspace) string {
 		return ""
 	}
 	if ws.Forge == "github" {
-		return s.forges.InstallURL(r.Context())
+		return s.githubInstallURL(r)
 	}
 	return workspaceConnectURL(ws)
 }

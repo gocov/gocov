@@ -155,7 +155,7 @@ func (f *githubAppFixture) connectWorkspace(t *testing.T, installationID int64) 
 func TestGitHubSetupConnectsWorkspace(t *testing.T) {
 	f, sess := newGitHubAppFixture(t, false, true)
 
-	rec := get(f.fixture, "/github/setup?installation_id=42&setup_action=install", sess)
+	rec := afterInstall(t, f, sess, "/github/setup?installation_id=42&setup_action=install")
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
@@ -185,7 +185,7 @@ func TestGitHubSetupReconnectClearsBroken(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if rec := get(f.fixture, "/github/setup?installation_id=42", sess); rec.Code != http.StatusSeeOther {
+	if rec := afterInstall(t, f, sess, "/github/setup?installation_id=42"); rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	ws = f.reloadWorkspace(t, "acme")
@@ -207,7 +207,7 @@ func TestGitHubSetupRejectsForeignInstallation(t *testing.T) {
 	}
 	f.app.accounts[7] = "evilcorp"
 
-	wantConnectOutcome(t, get(f.fixture, "/github/setup?installation_id=7", sess), "not_your_workspace", "evilcorp")
+	wantConnectOutcome(t, afterInstall(t, f, sess, "/github/setup?installation_id=7"), "not_your_workspace", "evilcorp")
 	if ws := f.reloadWorkspace(t, "evilcorp"); ws.GitHubInstallationID != 0 {
 		t.Error("foreign installation must not connect anything")
 	}
@@ -219,7 +219,7 @@ func TestGitHubSetupRejectsForeignInstallation(t *testing.T) {
 	// the org's OAuth-app policy page (the usual cause — a restricted org
 	// gocov can't see) and a re-auth back to this same install for the
 	// stale-snapshot case.
-	q := wantConnectOutcome(t, get(f.fixture, "/github/setup?installation_id=8", sess), "not_your_workspace", "strangers")
+	q := wantConnectOutcome(t, afterInstall(t, f, sess, "/github/setup?installation_id=8"), "not_your_workspace", "strangers")
 	if q.Get("installation_id") != "8" {
 		t.Errorf("denial query = %v, want the installation to come back to", q)
 	}
@@ -232,11 +232,11 @@ func TestGitHubSetupBadRequests(t *testing.T) {
 	f, sess := newGitHubAppFixture(t, false, true)
 
 	wantConnectOutcome(t, get(f.fixture, "/github/setup", sess), "no_installation", "")
-	wantConnectOutcome(t, get(f.fixture, "/github/setup?installation_id=abc", sess), "no_installation", "")
+	wantConnectOutcome(t, afterInstall(t, f, sess, "/github/setup?installation_id=abc"), "no_installation", "")
 	// GitHub cannot confirm the installation (unknown id).
-	wantConnectOutcome(t, get(f.fixture, "/github/setup?installation_id=99", sess), "install_unconfirmed", "")
+	wantConnectOutcome(t, afterInstall(t, f, sess, "/github/setup?installation_id=99"), "install_unconfirmed", "")
 	// An install request by a non-admin member: nothing to link yet.
-	wantConnectOutcome(t, get(f.fixture, "/github/setup?setup_action=request", sess), "install_requested", "")
+	wantConnectOutcome(t, afterInstall(t, f, sess, "/github/setup?setup_action=request"), "install_requested", "")
 }
 
 func TestGitHubSetupWithoutApp404s(t *testing.T) {
@@ -255,7 +255,7 @@ func TestGitHubSetupClaimsWorkspaceHosted(t *testing.T) {
 	f, sess := newGitHubAppFixture(t, true, false)
 	f.app.accounts[7] = "janedev"
 
-	rec := get(f.fixture, "/github/setup?installation_id=7", sess)
+	rec := afterInstall(t, f, sess, "/github/setup?installation_id=7")
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
@@ -280,7 +280,7 @@ func TestGitHubSetupClaimPrivateMode(t *testing.T) {
 	f, sess := newGitHubAppFixture(t, false, true)
 	f.app.accounts[7] = "janedev"
 
-	rec := get(f.fixture, "/github/setup?installation_id=7", sess)
+	rec := afterInstall(t, f, sess, "/github/setup?installation_id=7")
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
@@ -307,7 +307,7 @@ func TestGitHubSetupClaimBesideAnotherForgesNamesake(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec := get(f.fixture, "/github/setup?installation_id=42", sess)
+	rec := afterInstall(t, f, sess, "/github/setup?installation_id=42")
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
@@ -327,7 +327,7 @@ func TestGitHubSetupClaimDeniedNonMember(t *testing.T) {
 	f, sess := newGitHubAppFixture(t, false, true)
 	f.app.accounts[7] = "stranger" // not in the identity's Workspaces
 
-	wantConnectOutcome(t, get(f.fixture, "/github/setup?installation_id=7", sess), "not_your_workspace", "stranger")
+	wantConnectOutcome(t, afterInstall(t, f, sess, "/github/setup?installation_id=7"), "not_your_workspace", "stranger")
 	if _, err := f.store.WorkspaceByPrefix(t.Context(), "github", "stranger"); err == nil {
 		t.Error("an unvouched account must not be registered")
 	}
@@ -340,7 +340,7 @@ func TestGitHubSetupIsOwnersOnly(t *testing.T) {
 	f, sess := newGitHubAppFixture(t, false, true)
 	demote(t, f.fixture, "acme")
 
-	q := wantConnectOutcome(t, get(f.fixture, "/github/setup?installation_id=42", sess), "owners_only", "acme")
+	q := wantConnectOutcome(t, afterInstall(t, f, sess, "/github/setup?installation_id=42"), "owners_only", "acme")
 	if q.Get("installation_id") != "42" {
 		t.Errorf("denial query = %v, want the installation to come back to after a re-auth", q)
 	}
@@ -363,7 +363,7 @@ func TestGitHubSetupClaimNeedsAnOwnerOnTheForge(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wantConnectOutcome(t, get(f.fixture, "/github/setup?installation_id=7", sess), "owners_only", "janedev")
+	wantConnectOutcome(t, afterInstall(t, f, sess, "/github/setup?installation_id=7"), "owners_only", "janedev")
 	if _, err := f.store.WorkspaceByPrefix(t.Context(), "github", "janedev"); err == nil {
 		t.Error("a member's install must not register the workspace")
 	}
@@ -506,7 +506,7 @@ func TestGitHubReportingStates(t *testing.T) {
 	f, sess := newGitHubAppFixture(t, false, true)
 
 	got := decodeJSON[workspaceSettingsDTO](t, get(f.fixture, "/api/ui/workspace-settings/github/acme", sess))
-	if !got.Reporting.Available || got.Reporting.State != "off" || got.Reporting.ConnectURL != f.app.installURL {
+	if !got.Reporting.Available || got.Reporting.State != "off" || got.Reporting.ConnectURL != githubInstallPath {
 		t.Errorf("unconnected reporting = %+v, want the install link", got.Reporting)
 	}
 
@@ -522,7 +522,7 @@ func TestGitHubReportingStates(t *testing.T) {
 		t.Fatal(err)
 	}
 	got = decodeJSON[workspaceSettingsDTO](t, get(f.fixture, "/api/ui/workspace-settings/github/acme", sess))
-	if got.Reporting.State != "broken" || got.Reporting.ConnectURL != f.app.installURL {
+	if got.Reporting.State != "broken" || got.Reporting.ConnectURL != githubInstallPath {
 		t.Errorf("broken reporting = %+v, want the reinstall link", got.Reporting)
 	}
 }
@@ -544,4 +544,136 @@ func wantConnectOutcome(t *testing.T, rec *httptest.ResponseRecorder, outcome, w
 		t.Errorf("connect outcome = %q/%q, want %q/%q", q.Get("connect"), q.Get("ws"), outcome, ws)
 	}
 	return q
+}
+
+// afterInstall plays GitHub's round trip the way a browser does: the
+// install starts at /github/install (which sets the state cookie and
+// hands the state to GitHub), and GitHub returns to the given setup path
+// with that state appended.
+func afterInstall(t *testing.T, f *githubAppFixture, sess *http.Cookie, setupPath string) *httptest.ResponseRecorder {
+	t.Helper()
+	start := get(f.fixture, "/github/install", sess)
+	if start.Code != http.StatusFound {
+		t.Fatalf("GET /github/install: status = %d, body = %s", start.Code, start.Body)
+	}
+	to, err := url.Parse(start.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := to.Query().Get("state")
+	if state == "" {
+		t.Fatalf("install redirect %q carries no state", to)
+	}
+	sep := "?"
+	if strings.Contains(setupPath, "?") {
+		sep = "&"
+	}
+	return get(f.fixture, setupPath+sep+"state="+url.QueryEscape(state), sess, cookieNamed(t, start, githubInstallCookie))
+}
+
+// GET /github/install remembers a fresh state and sends the browser to
+// GitHub's install page carrying it, so the way back can be told apart
+// from a link someone else made.
+func TestGitHubInstallStartsWithState(t *testing.T) {
+	f, sess := newGitHubAppFixture(t, false, true)
+	rec := get(f.fixture, "/github/install", sess)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	to, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := cookieNamed(t, rec, githubInstallCookie)
+	if !strings.HasPrefix(to.String(), f.app.installURL+"?") || to.Query().Get("state") == "" || to.Query().Get("state") != c.Value {
+		t.Errorf("redirect = %q with cookie %q, want the install page carrying the cookie's state", to, c.Value)
+	}
+	if !c.HttpOnly || c.SameSite != http.SameSiteLaxMode {
+		t.Errorf("state cookie %+v, want HttpOnly and SameSite=Lax", c)
+	}
+}
+
+// A link to /github/setup that did not come back from an install this
+// browser started — sent by someone else, followed cross-site with the
+// session cookie — changes nothing: no installation is (re)linked and no
+// workspace registered. The browser lands on onboarding to confirm.
+func TestGitHubSetupWithoutInstallStateChangesNothing(t *testing.T) {
+	t.Run("relink after a disconnect", func(t *testing.T) {
+		f, sess := newGitHubAppFixture(t, false, true)
+		for _, path := range []string{"/github/setup?installation_id=42", "/github/setup?installation_id=42&state=guessed"} {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req.Header.Set("Sec-Fetch-Site", "cross-site")
+			req.AddCookie(sess)
+			if path != "/github/setup?installation_id=42" {
+				req.AddCookie(&http.Cookie{Name: githubInstallCookie, Value: "the-real-state"})
+			}
+			rec := httptest.NewRecorder()
+			f.srv.ServeHTTP(rec, req)
+			wantConnectOutcome(t, rec, "install_confirm", "")
+			if id := f.reloadWorkspace(t, "acme").GitHubInstallationID; id != 0 {
+				t.Errorf("%s: installation id = %d, want it left unlinked", path, id)
+			}
+		}
+	})
+	t.Run("claim in hosted mode", func(t *testing.T) {
+		f, sess := newGitHubAppFixture(t, true, false)
+		wantConnectOutcome(t, get(f.fixture, "/github/setup?installation_id=7", sess), "install_confirm", "")
+		if _, err := f.store.WorkspaceByPrefix(t.Context(), "github", "janedev"); err == nil {
+			t.Error("a setup link without install state registered a workspace")
+		}
+	})
+}
+
+// The confirmation is a POST under the cross-origin guard: from gocov's
+// own page it connects like the setup redirect would, from another site
+// it is refused, and it validates its input.
+func TestAPIGitHubConnectConfirms(t *testing.T) {
+	f, sess := newGitHubAppFixture(t, false, true)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/ui/github/connect", strings.NewReader(`{"installation_id":42}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	req.AddCookie(sess)
+	rec := httptest.NewRecorder()
+	f.srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden || f.reloadWorkspace(t, "acme").GitHubInstallationID != 0 {
+		t.Fatalf("cross-site confirm: status = %d, installation = %d; want 403 and nothing linked", rec.Code, f.reloadWorkspace(t, "acme").GitHubInstallationID)
+	}
+
+	rec = postJSON(t, f.fixture, "/api/ui/github/connect", githubConnectInput{InstallationID: 0}, sess)
+	wantStatus(t, rec, "confirm without an installation", http.StatusBadRequest)
+
+	rec = postJSON(t, f.fixture, "/api/ui/github/connect", githubConnectInput{InstallationID: 42}, sess)
+	wantStatus(t, rec, "confirm", http.StatusOK)
+	if got := decodeJSON[githubConnectResult](t, rec); got.Redirect != "/w/github/acme" {
+		t.Errorf("redirect = %q, want the workspace's dashboard", got.Redirect)
+	}
+	if id := f.reloadWorkspace(t, "acme").GitHubInstallationID; id != 42 {
+		t.Errorf("installation id = %d, want 42", id)
+	}
+
+	// The same rules as the redirect: an installation on someone else's
+	// account goes nowhere.
+	f.app.accounts[7] = "evilcorp"
+	rec = postJSON(t, f.fixture, "/api/ui/github/connect", githubConnectInput{InstallationID: 7}, sess)
+	wantStatus(t, rec, "confirm a foreign installation", http.StatusOK)
+	if got := decodeJSON[githubConnectResult](t, rec); !strings.Contains(got.Redirect, "connect=not_your_workspace") {
+		t.Errorf("redirect = %q, want the not_your_workspace outcome", got.Redirect)
+	}
+}
+
+// The state rides as a query parameter of the install page however its
+// URL is spelled, including one that already carries a query.
+func TestGitHubInstallKeepsAnExistingQuery(t *testing.T) {
+	f, sess := newGitHubAppFixture(t, false, true)
+	f.app.installURL = "https://github.com/apps/gocov/installations/new?target_id=5"
+	f.srv.forges.GitHubApp = f.app
+	rec := get(f.fixture, "/github/install", sess)
+	to, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if to.Query().Get("target_id") != "5" || to.Query().Get("state") != cookieNamed(t, rec, githubInstallCookie).Value {
+		t.Errorf("redirect = %q, want target_id kept and the state added", to)
+	}
 }

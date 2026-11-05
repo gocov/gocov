@@ -395,7 +395,8 @@ export interface OnboardingInfo {
   account: string;
   /**
    * "install": GitHub with the App configured — the workspace is created by
-   * installing the app at `install_url` (a forge URL; GitHub sends the
+   * installing the app at `install_url` (gocov's /github/install, which
+   * forwards to GitHub's install page; GitHub sends the
    * browser back to the server afterwards).
    * "pick": choose from the memberships read at sign-in (`rows`).
    */
@@ -473,3 +474,13 @@ export interface SetupStatus {
   reports_posted: string;
 }
 
+
+/** POST /api/ui/github/connect: confirming an installation GitHub sent back. */
+export interface GitHubConnectInput {
+  installation_id: number;
+}
+
+/** Where the browser goes once the confirmation is handled. */
+export interface GitHubConnectResult {
+  redirect: string;
+}
