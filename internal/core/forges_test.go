@@ -255,3 +255,40 @@ func TestForWithoutAConnection(t *testing.T) {
 		t.Errorf("forge = %#v, want nil", fg)
 	}
 }
+
+// A connection that breaks takes the public answers of its workspace's
+// repos with it — nothing can re-verify them any more — but leaves repos
+// a more specific workspace owns, and repos already private, alone.
+func TestRevokedGrantClosesTheWorkspacesPublicRepos(t *testing.T) {
+	bb := &fakeBB{err: forge.ErrCredentialsRevoked}
+	f, st := newForges(t, bb)
+	ws := connectedWorkspace(t, st, "acme")
+	ctx := t.Context()
+	if err := st.CreateWorkspace(ctx, &store.Workspace{Forge: "bitbucket", Prefix: "acme/sub", Token: "sub-tok", DefaultBranch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	repos := map[string]string{"acme/widgets": store.VisibilityPublic, "acme/sub/proj": store.VisibilityPublic, "acme/secret": store.VisibilityPrivate}
+	for slug, vis := range repos {
+		r := &store.Repo{Forge: "bitbucket", Slug: slug, Token: "tok-" + slug, DefaultBranch: "main"}
+		if err := st.CreateRepo(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.SetRepoVisibility(ctx, r.ID, vis, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if fg := f.Connected(ctx, ws, "bitbucket"); fg != nil {
+		t.Fatal("a revoked grant handed out a client")
+	}
+	for slug, want := range map[string]string{"acme/widgets": store.VisibilityPrivate, "acme/sub/proj": store.VisibilityPublic, "acme/secret": store.VisibilityPrivate} {
+		got, err := st.RepoBySlug(ctx, "bitbucket", slug)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Visibility != want {
+			t.Errorf("%s: visibility = %q, want %q", slug, got.Visibility, want)
+		}
+	}
+}

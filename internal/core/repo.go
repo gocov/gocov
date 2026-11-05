@@ -225,14 +225,31 @@ func (p *Pipeline) endVisibilityRefresh(repoID int64) {
 // ReverifyVisibility re-asks the repo's visibility through its
 // workspace's forge connection right now — the shared re-check behind
 // the serve-path staleness TTL and webhook-announced flips that must be
-// verified before they can open pages. Without a connection nothing
-// changes: the cached answer keeps its age.
+// verified before they can open pages. Without a connection a public
+// answer cannot be re-verified, so it is dropped: the repo counts as
+// private until a connection says otherwise.
 func (p *Pipeline) ReverifyVisibility(ctx context.Context, repo *store.Repo) {
 	fg := p.forgeFor(ctx, repo)
 	if fg == nil {
+		p.closeUnverifiable(ctx, repo)
 		return
 	}
 	p.refreshVisibilityOnce(ctx, fg, repo)
+}
+
+// closeUnverifiable caches "private" for a repo cached public that no
+// forge connection can re-verify. Opening pages takes a forge's word, and
+// a stale word is not good enough: the repo may have gone private since.
+func (p *Pipeline) closeUnverifiable(ctx context.Context, repo *store.Repo) {
+	if repo.Visibility != store.VisibilityPublic {
+		return
+	}
+	if err := p.Store.SetRepoVisibility(ctx, repo.ID, store.VisibilityPrivate, time.Now()); err != nil {
+		p.Log.Error("caching repo visibility", "repo", repo.Slug, "err", err)
+		return
+	}
+	p.Log.Info("repo visibility changed", "repo", repo.Slug, "visibility", store.VisibilityPrivate, "source", "no forge connection")
+	repo.Visibility = store.VisibilityPrivate
 }
 
 // MarkRepoPrivate caches a private flip the forge announced out of band
@@ -261,11 +278,7 @@ func (p *Pipeline) MarkRepoPrivate(ctx context.Context, repo *store.Repo) {
 // forge answer changes anything (RefreshVisibility keeps the last known
 // state on transient errors). Reports whether a re-check was started.
 func (p *Pipeline) ReverifyVisibilityIfStale(repo *store.Repo) bool {
-	if p.Forges == nil || !p.Forges.Capable(repo.Forge) ||
-		visibilityFresh(repo, defaultVisibilityServeTTL) {
-		// The Capable check keeps a forge this deployment has no
-		// connector for from scheduling work whose outcome — no client,
-		// keep the last known state — is already decided.
+	if visibilityFresh(repo, defaultVisibilityServeTTL) {
 		return false
 	}
 	if !p.claimVisibilityRecheck(repo.ID) {

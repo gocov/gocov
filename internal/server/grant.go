@@ -210,6 +210,7 @@ func (s *Server) disconnectWorkspace(w http.ResponseWriter, r *http.Request, ws 
 		return false
 	}
 	s.forges.DropGrantToken(g.forge, ws.ID)
+	s.forges.MarkWorkspaceReposPrivate(r.Context(), ws)
 	s.log.Info(g.forge+" workspace disconnected", "workspace", ws.Prefix, "user", actor)
 	return true
 }

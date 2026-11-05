@@ -15,7 +15,10 @@ Two things, both of which you control:
   anonymously — so a repo flipped private on the forge closes its pages within a day even if its CI never uploads
   again — and on GitHub, instances receiving the App's webhooks close (and reopen) the pages the moment the
   visibility changes. A repo flipped public opens the same way: by the webhook or the next upload. A repo whose
-  workspace has no [forge connection](connecting.md) counts as private: gocov never guesses.
+  workspace has no [forge connection](connecting.md) counts as private: gocov never guesses. Disconnecting the
+  workspace, or its connection breaking (a revoked grant, an uninstalled or suspended GitHub App), closes its repos'
+  pages at once; they reopen when the restored connection next confirms the repo public — by the webhook, or by an
+  upload once that answer is an hour old.
 - **The switch is on.** Repo settings grow a **Public reports** switch for public repos, on by default. A workspace
   owner turning it off closes the pages to members only, immediately. Private repos don't show the switch and are never
   served publicly.

@@ -2,9 +2,12 @@ package core
 
 import (
 	"errors"
+	"strconv"
+	"strings"
 	"testing"
 
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
+	"github.com/gocov/gocov/internal/ignore"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 )
@@ -158,5 +161,35 @@ func TestAcceptRefusesAllIgnored(t *testing.T) {
 	}
 	if uploads, _ := p.Store.ListUploads(t.Context(), repo.ID, 0, 10); len(uploads) != 0 {
 		t.Errorf("refused upload was stored: %d rows", len(uploads))
+	}
+}
+
+// Ignore patterns from an upload against long report paths cost the
+// product of their lengths; Accept caps that work and refuses the upload
+// with ignore.ErrTooCostly instead of spending it, and nothing lands.
+func TestAcceptRefusesTooCostlyIgnorePatterns(t *testing.T) {
+	old := maxIgnoreWork
+	maxIgnoreWork = 1 << 22
+	t.Cleanup(func() { maxIgnoreWork = old })
+	p, st, repo := newPipeline(t, store.Gate{})
+	p.Blobs = blobmem.New()
+
+	pats := make([]string, ignore.MaxPatterns)
+	for i := range pats {
+		pats[i] = "*" + strings.Repeat("a", ignore.MaxPatternLength-2) + "b"
+	}
+	pr := &profile.Profile{}
+	for i := range 64 {
+		pr.Files = append(pr.Files, prof(strings.Repeat("a", 16<<10)+strconv.Itoa(i)+".go", 1, 2).Files...)
+	}
+	_, err := p.Accept(t.Context(), Submission{
+		Repo: repo, Commit: "c1", Branch: "main", Part: "default", Format: "go",
+		Raw: []byte("mode: set\n"), Profile: pr, Ignore: pats,
+	})
+	if !errors.Is(err, ignore.ErrTooCostly) {
+		t.Fatalf("Accept err = %v, want ignore.ErrTooCostly", err)
+	}
+	if ups, _ := st.ListUploads(t.Context(), repo.ID, 0, 10); len(ups) != 0 {
+		t.Errorf("%d uploads landed, want none", len(ups))
 	}
 }

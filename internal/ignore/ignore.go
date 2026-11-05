@@ -21,15 +21,28 @@
 //   - A pattern that matches a directory matches everything under it:
 //     `cmd/preview` and `cmd/preview/**` ignore the same files.
 //
-// Matching is linear in the pattern and path lengths — a pattern from an
-// upload request is untrusted input applied to every file of the report.
+// A pattern from an upload request is untrusted input applied to every
+// file of the report, and matching one pattern against one path costs up
+// to the product of their lengths (a `*` before a long literal is tried
+// at every offset of every segment), so the counts and lengths below do
+// not bound the work on their own. A caller matching untrusted input
+// sets a work budget with Limit; matching past it stops and Err reports
+// ErrTooCostly.
 package ignore
 
 import (
+	"errors"
 	"fmt"
 	"path"
 	"strings"
+	"sync/atomic"
 )
+
+// ErrTooCostly is what Err reports once matching has used up the budget
+// set with Limit: the patterns and the paths they were matched against
+// were too expensive to compare, and the matches after that point were
+// not computed.
+var ErrTooCostly = errors.New("ignore patterns are too costly to match against this report's file paths; use fewer or simpler patterns")
 
 // Limits on what a settings form or an upload may submit. Patterns are
 // matched against every file of every upload, and anyone holding an
@@ -44,6 +57,29 @@ const (
 // Rules is a compiled, validated pattern list.
 type Rules struct {
 	patterns [][]string // each pattern split into segments
+
+	// budget is the work left, in segMatch cost units, when Limit set
+	// one; nil means unlimited. Shared by every Match on these rules,
+	// from any goroutine.
+	budget *atomic.Int64
+}
+
+// Limit caps the total matching work every later Match on r may do, in
+// cost units of roughly one byte comparison each. Once it is spent, Match
+// reports false without comparing and Err returns ErrTooCostly.
+func (r *Rules) Limit(units int64) {
+	b := new(atomic.Int64)
+	b.Store(units)
+	r.budget = b
+}
+
+// Err reports ErrTooCostly once the budget set with Limit has run out,
+// and nil otherwise. Matches made after that point are not to be trusted.
+func (r *Rules) Err() error {
+	if r != nil && r.budget != nil && r.budget.Load() < 0 {
+		return ErrTooCostly
+	}
+	return nil
 }
 
 // Parse splits free-form input — one pattern per line, or a comma-separated
@@ -143,7 +179,7 @@ func (r *Rules) Match(p, prefix string) bool {
 func (r *Rules) match(p string) bool {
 	segs := strings.Split(strings.Trim(p, "/"), "/")
 	for _, pat := range r.patterns {
-		if matchSegments(pat, segs) {
+		if matchSegments(pat, segs, r.budget) {
 			return true
 		}
 	}
@@ -157,9 +193,11 @@ func (r *Rules) match(p string) bool {
 //
 // It is the classic single-backtrack wildcard loop: on a mismatch, the
 // most recent `**` absorbs one more segment and matching resumes after it.
-// Revisiting earlier `**`s can never help, so the cost is bounded by
-// len(pat)·len(segs) whatever the pattern looks like.
-func matchSegments(pat, segs []string) bool {
+// Revisiting earlier `**`s can never help, so the number of segment
+// comparisons is bounded by len(pat)·len(segs) whatever the pattern looks
+// like; each comparison is charged to budget (nil: unlimited), and a
+// spent budget ends the match as a mismatch.
+func matchSegments(pat, segs []string, budget *atomic.Int64) bool {
 	pi, si := 0, 0
 	starPi, starSi := -1, 0
 	for si < len(segs) {
@@ -169,6 +207,8 @@ func matchSegments(pat, segs []string) bool {
 		case pat[pi] == "**":
 			starPi, starSi = pi, si
 			pi++
+		case !charge(budget, pat[pi], segs[si]):
+			return false
 		case segMatch(pat[pi], segs[si]):
 			pi++
 			si++
@@ -185,6 +225,21 @@ func matchSegments(pat, segs []string) bool {
 		pi++
 	}
 	return pi == len(pat)
+}
+
+// charge takes the cost of comparing pattern segment pat with path
+// segment seg from budget, reporting false when the budget is spent. A
+// wildcard segment costs up to len(pat)·len(seg) in path.Match, a literal
+// one about len(seg); the constant is the call's own overhead.
+func charge(budget *atomic.Int64, pat, seg string) bool {
+	if budget == nil {
+		return true
+	}
+	cost := int64(len(seg)) + 1
+	if strings.ContainsAny(pat, "*?[\\") {
+		cost *= int64(len(pat)) + 1
+	}
+	return budget.Add(-(cost + 8)) >= 0
 }
 
 // segMatch matches one pattern segment against one path segment. The

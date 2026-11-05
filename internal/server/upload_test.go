@@ -1,11 +1,14 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -916,5 +919,73 @@ func TestCloverAndSimpleCovSourcesAndDownloads(t *testing.T) {
 				t.Errorf("content-disposition = %q, want the %s name", cd, tc.filename)
 			}
 		})
+	}
+}
+
+// Uploads without a bearer token are read before they can be refused, so
+// how many may be reading at once is bounded: past the bound they get a
+// 503 to retry, while bearer-token uploads, refused before their body is
+// read, are unaffected.
+func TestUploadWithoutBearerTokenIsBounded(t *testing.T) {
+	f := newFixture(t, nil)
+	for range cap(f.srv.preAuthUploads) {
+		f.srv.preAuthUploads <- struct{}{}
+	}
+	fields := map[string]string{"repo": "acme/widgets", "commit": "c1"}
+	rec := doUpload(t, f, "", fields, testProfile)
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" {
+		t.Fatalf("anonymous upload past the bound: status = %d, Retry-After = %q, body = %s", rec.Code, rec.Header().Get("Retry-After"), rec.Body)
+	}
+	if rec := doUpload(t, f, "secret-token", fields, testProfile); rec.Code != http.StatusCreated {
+		t.Fatalf("bearer upload while the bound is reached: status = %d, body = %s", rec.Code, rec.Body)
+	}
+	for range cap(f.srv.preAuthUploads) {
+		<-f.srv.preAuthUploads
+	}
+	if rec := doUpload(t, f, "", fields, testProfile); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous upload with a free slot: status = %d, want 401 for the missing credential; body = %s", rec.Code, rec.Body)
+	}
+	if n := len(f.srv.preAuthUploads); n != 0 {
+		t.Errorf("%d pre-auth slots still held after the requests ended", n)
+	}
+}
+
+// An anonymous upload's body is parsed before its credential is checked;
+// it must not be held in memory meanwhile, or a few clients streaming
+// large bodies could exhaust the server before being refused.
+func TestAnonymousUploadBodyIsNotHeldInMemory(t *testing.T) {
+	f := newFixture(t, nil)
+	const size = 16 << 20
+	pr, pw := io.Pipe()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/upload", pr)
+	req.Header.Set("Content-Type", "multipart/form-data; boundary=XB")
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() { f.srv.ServeHTTP(rec, req); close(done) }()
+
+	var before, held runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	if _, err := io.WriteString(pw, "--XB\r\nContent-Disposition: form-data; name=\"profile\"; filename=\"c.out\"\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	chunk := bytes.Repeat([]byte("a"), 1<<20)
+	for range size >> 20 {
+		if _, err := pw.Write(chunk); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runtime.GC()
+	runtime.ReadMemStats(&held)
+	if _, err := io.WriteString(pw, "\r\n--XB--\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	pw.Close()
+	<-done
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body = %s", rec.Code, rec.Body)
+	}
+	if grew := int64(held.HeapInuse) - int64(before.HeapInuse); grew > size/4 {
+		t.Errorf("heap grew by %d MiB while a %d MiB anonymous body was read; it should spill to disk", grew>>20, size>>20)
 	}
 }

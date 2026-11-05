@@ -312,6 +312,7 @@ func (f *Forges) markAppBroken(ctx context.Context, ws *store.Workspace, cause e
 	if err := f.Store.UpdateWorkspace(ctx, ws); err != nil {
 		f.Log.Error("marking github app broken", "workspace", ws.Prefix, "err", err)
 	}
+	f.MarkWorkspaceReposPrivate(ctx, ws)
 }
 
 // InstallURL resolves the app's public install page, best effort: a
@@ -416,6 +417,7 @@ func (f *Forges) markGrantBroken(ctx context.Context, g *grant, ws *store.Worksp
 	if err := f.Store.SetWorkspaceGrant(ctx, ws.ID, g.forge, stored); err != nil {
 		f.Log.Error("marking "+g.forge+" grant broken", "workspace", ws.Prefix, "err", err)
 	}
+	f.MarkWorkspaceReposPrivate(ctx, ws)
 }
 
 // SetInstallationBroken marks every workspace on the given installation
@@ -438,5 +440,37 @@ func (f *Forges) SetInstallationBroken(ctx context.Context, installationID int64
 		}
 		f.Log.Info("github installation flag set via webhook",
 			"workspace", ws.Prefix, "installation", installationID, "broken", broken)
+		if broken {
+			f.MarkWorkspaceReposPrivate(ctx, ws)
+		}
+	}
+}
+
+// MarkWorkspaceReposPrivate caches "private" for every repo the workspace
+// owns that is cached public — for when its forge connection goes away
+// (disconnected, revoked, uninstalled, suspended). A public answer is only
+// trusted while a connection can re-verify it: without one a repo flipped
+// private on the forge would stay open indefinitely. Repos under the
+// prefix that a more specific workspace (a GitLab subgroup) owns keep
+// their answer, since their own connection still vouches for it. The
+// next refresh through a restored connection reopens public repos.
+func (f *Forges) MarkWorkspaceReposPrivate(ctx context.Context, ws *store.Workspace) {
+	repos, err := f.Store.ListWorkspaceRepos(ctx, ws.Forge, ws.Prefix)
+	if err != nil {
+		f.Log.Error("listing workspace repos to close", "workspace", ws.Prefix, "err", err)
+		return
+	}
+	for _, repo := range repos {
+		if repo.Visibility != store.VisibilityPublic {
+			continue
+		}
+		if owner, err := f.LookupWorkspace(ctx, repo.Slug, repo.Forge); err != nil || owner == nil || owner.ID != ws.ID {
+			continue
+		}
+		if err := f.Store.SetRepoVisibility(ctx, repo.ID, store.VisibilityPrivate, time.Now()); err != nil {
+			f.Log.Error("caching repo visibility", "repo", repo.Slug, "err", err)
+			continue
+		}
+		f.Log.Info("repo visibility changed", "repo", repo.Slug, "visibility", store.VisibilityPrivate, "source", "connection lost")
 	}
 }

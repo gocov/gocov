@@ -28,6 +28,28 @@ import (
 // maxUploadBytes bounds the whole multipart request body.
 const maxUploadBytes = 64 << 20
 
+// formMemory is how much of a multipart upload is held in memory while it
+// is parsed; file parts beyond it spill to temporary files, which the HTTP
+// server removes when the request ends. It is well under maxUploadBytes so
+// that an upload whose credential is a form field — read only after the
+// whole body is parsed — cannot make the server hold the body in memory
+// before it knows who sent it. (The standard library still allows up to
+// 10 MiB of non-file fields on top; maxPreAuthUploads bounds that.)
+const formMemory = 1 << 20
+
+// maxPreAuthUploads bounds how many uploads without a bearer token may be
+// reading and parsing their body at once. Their credential is a form
+// field, so the body must be read before the request can be refused, and
+// without a bound any number of anonymous clients could each hold one
+// open. A slot is held only until the credential is checked; past the
+// bound the request gets a 503 to retry.
+const maxPreAuthUploads = 16
+
+// uploadReadTimeout is how long an upload may take to send its body, so a
+// client trickling bytes cannot hold a request (and a pre-auth slot)
+// open indefinitely. Generous for a 64 MB profile from any CI runner.
+const uploadReadTimeout = 2 * time.Minute
+
 // maxPartsPerCommit caps how many distinct parts one commit's merged report
 // is built from. It bounds recompute cost (every upload re-reads and
 // re-merges every part under the lock) and catches the -part $CI_JOB_ID
@@ -150,6 +172,9 @@ func baseName(p string) string {
 // uploader, tell the forge — with each step's detail one call away.
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+	// Not every ResponseWriter supports deadlines (test recorders do not);
+	// the read is still capped by maxUploadBytes either way.
+	_ = http.NewResponseController(w).SetReadDeadline(start.Add(uploadReadTimeout))
 	token, hasToken := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	var authedRepo *store.Repo
 	var ws *store.Workspace
@@ -163,22 +188,9 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		// No bearer token. The credential is a form field, so parse the body
-		// once and dispatch: a forge OIDC identity token (a repo's own CI,
-		// oidc.go), or a fork-PR workflow-run claim (tokenless.go).
-		if !s.parseUploadBody(w, r) {
-			return
-		}
 		var ok bool
-		switch {
-		case r.FormValue("oidc_token") != "":
-			if authedRepo, ok = s.authOIDC(w, r); !ok {
-				return
-			}
-		default:
-			if claim, authedRepo, ok = s.authTokenless(w, r); !ok {
-				return
-			}
+		if claim, authedRepo, ok = s.authFormCredential(w, r); !ok {
+			return
 		}
 	}
 	req, ok := s.readUploadRequest(w, r, authedRepo, ws)
@@ -224,6 +236,12 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 				s.log.Error("releasing tokenless claim", "repo", req.repo.Slug, "run", claim.runID, "err", relErr)
 			}
 		}
+		if errors.Is(err, ignore.ErrTooCostly) {
+			// The patterns, matched against this report's paths, cost
+			// more than one upload may spend: the input's fault.
+			httpError(w, http.StatusUnprocessableEntity, "%v", err)
+			return
+		}
 		if errors.Is(err, core.ErrAllIgnored) {
 			// Bad input, not a server fault: the patterns left nothing
 			// to measure. Say so rather than landing a 0% report.
@@ -263,6 +281,31 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// authFormCredential authenticates an upload without a bearer token. The
+// credential is a form field, so it parses the body once and dispatches: a
+// forge OIDC identity token (a repo's own CI, oidc.go), or a fork-PR
+// workflow-run claim (tokenless.go). It holds one of maxPreAuthUploads
+// slots while it does, and writes the error response itself; a false
+// return means the response is written.
+func (s *Server) authFormCredential(w http.ResponseWriter, r *http.Request) (*tokenlessClaim, *store.Repo, bool) {
+	select {
+	case s.preAuthUploads <- struct{}{}:
+		defer func() { <-s.preAuthUploads }()
+	default:
+		w.Header().Set("Retry-After", "5")
+		httpError(w, http.StatusServiceUnavailable, "too many uploads without a bearer token in progress; retry shortly")
+		return nil, nil, false
+	}
+	if !s.parseUploadBody(w, r) {
+		return nil, nil, false
+	}
+	if r.FormValue("oidc_token") != "" {
+		repo, ok := s.authOIDC(w, r)
+		return nil, repo, ok
+	}
+	return s.authTokenless(w, r)
+}
+
 // parseUploadBody caps and parses the multipart request body, writing the
 // error response itself; a false return means the response is written.
 // ParseMultipartForm is idempotent, so the later readUploadRequest re-parse
@@ -270,7 +313,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 // before the request proper is validated.
 func (s *Server) parseUploadBody(w http.ResponseWriter, r *http.Request) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
-	if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
+	if err := r.ParseMultipartForm(formMemory); err != nil {
 		httpError(w, http.StatusBadRequest, "invalid multipart form: %v", err)
 		return false
 	}
@@ -306,7 +349,7 @@ type uploadRequest struct {
 // validation does: is this upload one we accept at all?
 func (s *Server) readUploadRequest(w http.ResponseWriter, r *http.Request, authedRepo *store.Repo, ws *store.Workspace) (*uploadRequest, bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
-	if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
+	if err := r.ParseMultipartForm(formMemory); err != nil {
 		httpError(w, http.StatusBadRequest, "invalid multipart form: %v", err)
 		return nil, false
 	}
