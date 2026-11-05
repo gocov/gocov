@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	github.com/bykclk/env v0.0.0-20260922141159-370b99bd07bf
-	github.com/jackc/pgx/v5 v5.11.0
+	github.com/jackc/pgx/v5 v5.12.0
 )
 
 require (
