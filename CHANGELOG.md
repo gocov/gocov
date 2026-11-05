@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.0](https://github.com/gocov/gocov/compare/v0.32.0...v0.33.0) (2026-11-05)
+
+
+### Features
+
+* split push_ms into the status-lock wait and each forge surface ([#271](https://github.com/gocov/gocov/issues/271)) ([cd635c0](https://github.com/gocov/gocov/commit/cd635c03ff8eadf181492ddbf00dae87aebec378))
+
 ## [0.32.0](https://github.com/gocov/gocov/compare/v0.31.0...v0.32.0) (2026-11-05)
 
 
