@@ -48,6 +48,7 @@ func Run(t *testing.T, newStore func(*testing.T) store.Store) {
 	t.Run("UsersNeverAliasForgeWorkspaces", func(t *testing.T) { usersNeverAliasForgeWorkspaces(t, newStore) })
 	t.Run("NamesAreScopedPerForge", func(t *testing.T) { namesAreScopedPerForge(t, newStore) })
 	t.Run("WorkspaceGrantStaysOnItsForge", func(t *testing.T) { workspaceGrantStaysOnItsForge(t, newStore) })
+	t.Run("ConnectionFlagWritesAreNarrow", func(t *testing.T) { connectionFlagWritesAreNarrow(t, newStore) })
 }
 
 func repoLifecycle(t *testing.T, newStore func(*testing.T) store.Store) {
@@ -1694,5 +1695,65 @@ func workspaceGrantStaysOnItsForge(t *testing.T, newStore func(*testing.T) store
 	}
 	if got, _ := s.WorkspaceByPrefix(ctx, "gitlab", "acme"); got.Grant.Account != "covbot" {
 		t.Errorf("grant = %+v, want covbot untouched", got.Grant)
+	}
+}
+
+// The connection-upkeep flag writes change their flag and nothing else,
+// and only while the connection they were decided on is still the stored
+// one: a read made before a slow forge call must not undo a rotated upload
+// token, nor bring back a disconnected grant.
+func connectionFlagWritesAreNarrow(t *testing.T, newStore func(*testing.T) store.Store) {
+	ctx := t.Context()
+	s := newStore(t)
+	gh := &store.Workspace{Forge: "github", Prefix: "acme", Token: "tok-1", GitHubInstallationID: 7}
+	if err := s.CreateWorkspace(ctx, gh); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetGitHubAppBroken(ctx, gh.ID, 7, true); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.WorkspaceByPrefix(ctx, "github", "acme")
+	if !got.GitHubAppBroken || got.Token != "tok-1" {
+		t.Errorf("after SetGitHubAppBroken: %+v, want broken with the token untouched", got)
+	}
+	// Reconnected to another installation meanwhile: no effect.
+	if err := s.SetGitHubAppBroken(ctx, gh.ID, 8, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.WorkspaceByPrefix(ctx, "github", "acme"); !got.GitHubAppBroken {
+		t.Error("a flag write for another installation changed the workspace")
+	}
+
+	bb := &store.Workspace{Forge: "bitbucket", Prefix: "team", Token: "tok-2"}
+	if err := s.CreateWorkspace(ctx, bb); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetWorkspaceGrant(ctx, bb.ID, "bitbucket", store.Grant{Account: "covbot", RefreshToken: "rt"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkWorkspaceGrantBroken(ctx, bb.ID, "bitbucket", "someone-else"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.WorkspaceByPrefix(ctx, "bitbucket", "team"); got.Grant.Broken {
+		t.Error("marking another account's grant broken changed this one")
+	}
+	if err := s.MarkWorkspaceGrantBroken(ctx, bb.ID, "bitbucket", "covbot"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.WorkspaceByPrefix(ctx, "bitbucket", "team"); !got.Grant.Broken || got.Grant.Account != "covbot" || got.Grant.RefreshToken != "rt" {
+		t.Errorf("grant = %+v, want covbot's grant kept and marked broken", got.Grant)
+	}
+	// Disconnected meanwhile: marking does not bring anything back.
+	if err := s.SetWorkspaceGrant(ctx, bb.ID, "bitbucket", store.Grant{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkWorkspaceGrantBroken(ctx, bb.ID, "bitbucket", "covbot"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.WorkspaceByPrefix(ctx, "bitbucket", "team"); got.Grant != (store.Grant{}) {
+		t.Errorf("grant = %+v after marking a disconnected grant, want it empty", got.Grant)
+	}
+	if err := s.MarkWorkspaceGrantBroken(ctx, gh.ID, "github", "covbot"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("MarkWorkspaceGrantBroken(github) = %v, want ErrNotFound", err)
 	}
 }

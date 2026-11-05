@@ -336,6 +336,28 @@ func (s *Store) SetWorkspaceGrant(_ context.Context, workspaceID int64, forge st
 	return nil
 }
 
+func (s *Store) SetGitHubAppBroken(_ context.Context, workspaceID, installationID int64, broken bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if w, ok := s.workspaces[workspaceID]; ok && w.Forge == "github" && installationID != 0 && w.GitHubInstallationID == installationID {
+		w.GitHubAppBroken = broken
+	}
+	return nil
+}
+
+func (s *Store) MarkWorkspaceGrantBroken(_ context.Context, workspaceID int64, forge, account string) error {
+	if forge != "bitbucket" && forge != "gitlab" {
+		return store.ErrNotFound
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if w, ok := s.workspaces[workspaceID]; ok && w.Forge == forge && account != "" &&
+		w.Grant.Account == account && w.Grant.RefreshToken != "" {
+		w.Grant.Broken = true
+	}
+	return nil
+}
+
 func (s *Store) DeleteWorkspace(_ context.Context, id int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
