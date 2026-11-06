@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { CodeBlock, Mono, Notice } from "@/components/atoms";
 import { CopyButton, SecretField, SegmentedControl } from "@/components/molecules";
 import { track } from "@/lib/analytics";
-import type { SetupInfo } from "@/lib/api/types";
+import type { Forge, SetupInfo } from "@/lib/api/types";
 import { forgeLabel } from "@/lib/format";
 import { readStored, writeStored } from "@/lib/storage";
 import { buildSnippet, languageSpec, languagesFor, tokenWhere, type LanguageId } from "@/lib/snippets";
@@ -13,10 +13,13 @@ import "./SnippetPanel.css";
 /** The picked language outlives the page; a stale or unreadable value is Go. */
 const STORAGE_KEY = "gocov.setup.language";
 
-/** Exported so the card around the panel can name the language in an event. */
-export function storedLanguage(): LanguageId {
+/**
+ * Exported so the card around the panel can name the language in an event.
+ * With a forge it is the language that forge's recipe shows, as the panel does.
+ */
+export function storedLanguage(forge?: Forge): LanguageId {
   const saved = readStored("localStorage", STORAGE_KEY);
-  return saved ? languageSpec(saved).id : "go";
+  return saved ? languageSpec(saved, forge).id : "go";
 }
 
 const rememberLanguage = (id: LanguageId) => writeStored("localStorage", STORAGE_KEY, id);

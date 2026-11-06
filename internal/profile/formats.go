@@ -2,6 +2,7 @@ package profile
 
 import (
 	"io"
+	"path"
 	"slices"
 	"strings"
 )
@@ -24,6 +25,11 @@ type Format struct {
 	// never measured themselves, so their absence from a report is no
 	// finding either.
 	TestSuffixes []string
+	// TestDirs are directories (with a trailing slash) whose files are
+	// tests wherever they sit in the tree, for languages that put tests in
+	// a directory rather than name them: Rust's tests/ and benches/,
+	// Python's and Elixir's test directories, sbt's src/test/.
+	TestDirs []string
 	// Paths, when set, lists the files a report names more cheaply than a
 	// full parse; FilePaths falls back to the parser without it.
 	Paths func(r io.Reader) ([]string, error)
@@ -84,9 +90,25 @@ func hasAnySuffix(path string, suffixes []string) bool {
 	return slices.ContainsFunc(suffixes, func(s string) bool { return strings.HasSuffix(path, s) })
 }
 
-// familyOf returns the index of path's language family, or -1.
-func familyOf(path string) int {
-	return slices.IndexFunc(languageFamilies, func(exts []string) bool { return hasAnySuffix(path, exts) })
+// familyByExt maps each family extension to its family's index.
+var familyByExt = func() map[string]int {
+	m := map[string]int{}
+	for i, exts := range languageFamilies {
+		for _, ext := range exts {
+			m[ext] = i
+		}
+	}
+	return m
+}()
+
+// familyOf returns the index of path's language family, or -1. It goes by
+// the exact extension, so one family's extension ending another's (".c"
+// and ".cc") cannot land a file in the wrong one.
+func familyOf(p string) int {
+	if i, ok := familyByExt[path.Ext(p)]; ok {
+		return i
+	}
+	return -1
 }
 
 // ExpectsCoverage returns the test diff coverage applies to a changed
@@ -118,7 +140,12 @@ func (f Format) ExpectsCoverage(p *Profile) func(path string) bool {
 // IsTestFile reports whether path names a test file of this format's
 // languages.
 func (f Format) IsTestFile(path string) bool {
-	return hasAnySuffix(path, f.TestSuffixes)
+	if hasAnySuffix(path, f.TestSuffixes) {
+		return true
+	}
+	return slices.ContainsFunc(f.TestDirs, func(dir string) bool {
+		return strings.HasPrefix(path, dir) || strings.Contains(path, "/"+dir)
+	})
 }
 
 var formats = []Format{
@@ -128,10 +155,12 @@ var formats = []Format{
 	// flutter test (Dart), lcov_ex (Elixir) and lcov/gcov (C, C++) write.
 	{Name: "lcov", Parser: LCOVParser{}, Filename: "lcov.info",
 		SourceExts:   slices.Concat(jsExts, []string{".rs", ".dart"}, elixirExts, nativeExts),
-		TestSuffixes: append(jsTestSuffixes(), "_test.dart", "_test.exs")},
+		TestSuffixes: append(jsTestSuffixes(), "_test.dart", "_test.exs"),
+		TestDirs:     []string{"tests/", "test/", "benches/"}},
 	{Name: "jacoco", Parser: JaCoCoParser{}, Filename: "jacoco.xml", SourceExts: jvmExts},
 	{Name: "cobertura", Parser: CoberturaParser{}, Filename: "cobertura.xml",
-		SourceExts: slices.Concat([]string{".py", ".cs", ".php", ".rs", ".scala"}, nativeExts)},
+		SourceExts: slices.Concat([]string{".py", ".cs", ".php", ".rs", ".scala"}, nativeExts),
+		TestDirs:   []string{"tests/", "test/", "benches/"}},
 	// Clover comes from PHPUnit, from Istanbul/Jest and from OpenClover
 	// for the JVM, so it counts all three families as source.
 	{Name: "clover", Parser: CloverParser{}, Filename: "clover.xml",

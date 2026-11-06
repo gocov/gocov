@@ -73,7 +73,7 @@ export function SetupChecklist({ info, status, listeningSince, onReveal, onCopie
   const { forge, prefix } = info.workspace;
   const forgeName = forgeLabel(forge);
   const auth = info.tokenless ? "oidc" : "token";
-  const events = { forge, auth, language: storedLanguage() };
+  const events = { forge, auth, language: storedLanguage(forge) };
 
   const copied = listeningSince !== null;
   const elapsed = useElapsed(listeningSince);

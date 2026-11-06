@@ -54,6 +54,12 @@ func TestIsTestFile(t *testing.T) {
 		{"xccov", "AppTests/LoginViewModelTests.swift", true},
 		{"xccov", "App/Networking/Requests.swift", false},
 		{"xccov", "AppSpecs/LoginViewModelSpec.swift", true},
+		{"lcov", "tests/api.rs", true}, // Rust integration tests
+		{"lcov", "crates/core/benches/parse.rs", true},
+		{"lcov", "src/contest.rs", false},        // a name, not a directory
+		{"cobertura", "tests/test_app.py", true}, // Python's tests directory
+		{"cobertura", "src/test/scala/AppSpec.scala", true},
+		{"cobertura", "myapp/latest/app.py", false},
 	} {
 		f, _ := Lookup(tc.format)
 		if got := f.IsTestFile(tc.path); got != tc.want {
