@@ -80,7 +80,7 @@ func TestEverySourceExtHasOneFamily(t *testing.T) {
 	}
 }
 
-func TestUnmeasuredSource(t *testing.T) {
+func TestExpectsCoverage(t *testing.T) {
 	lcov, _ := Lookup("lcov")
 	frontend := &Profile{Files: []File{{Path: "web/src/app.ts"}}}
 	rust := &Profile{Files: []File{{Path: "src/lib.rs"}}}
@@ -99,8 +99,8 @@ func TestUnmeasuredSource(t *testing.T) {
 		{"non-source never counts", frontend, "README.md", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := lcov.UnmeasuredSource(tc.report)(tc.path); got != tc.want {
-				t.Errorf("UnmeasuredSource(%q) = %v, want %v", tc.path, got, tc.want)
+			if got := lcov.ExpectsCoverage(tc.report)(tc.path); got != tc.want {
+				t.Errorf("ExpectsCoverage(%q) = %v, want %v", tc.path, got, tc.want)
 			}
 		})
 	}
@@ -108,12 +108,12 @@ func TestUnmeasuredSource(t *testing.T) {
 	// Swift and Objective-C build together: either one measured counts
 	// for both.
 	xccov, _ := Lookup("xccov")
-	if !xccov.UnmeasuredSource(&Profile{Files: []File{{Path: "App/View.swift"}}})("App/Legacy.m") {
+	if !xccov.ExpectsCoverage(&Profile{Files: []File{{Path: "App/View.swift"}}})("App/Legacy.m") {
 		t.Error("an Objective-C file missing from a Swift report should count")
 	}
 	// A format without source extensions counts every non-test file.
 	bare := Format{TestSuffixes: []string{"_test.go"}}
-	if !bare.UnmeasuredSource(frontend)("docs/x.md") || bare.UnmeasuredSource(frontend)("a_test.go") {
+	if !bare.ExpectsCoverage(frontend)("docs/x.md") || bare.ExpectsCoverage(frontend)("a_test.go") {
 		t.Error("a format without source extensions should count every non-test file")
 	}
 }

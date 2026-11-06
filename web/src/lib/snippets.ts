@@ -20,8 +20,8 @@ export interface LanguageSpec {
   test: string;
   /** Where it leaves it. */
   file: string;
-  /** The container the GitLab and Bitbucket recipes run in. */
-  image: string;
+  /** The container the GitLab and Bitbucket recipes run in; absent for a language only GitHub runs. */
+  image?: string;
   /** The forges whose recipe can run it; omitted means all of them. */
   forges?: Forge[];
   /** The GitHub runner the job needs, when ubuntu will not do. */
@@ -94,7 +94,6 @@ export const languages: LanguageSpec[] = [
       " -enableCodeCoverage YES -resultBundlePath TestResults.xcresult" +
       " && xcrun xccov view --archive --json TestResults.xcresult > xccov.json",
     file: "xccov.json",
-    image: "",
     forges: ["github"],
     runner: "macos-15",
   },
