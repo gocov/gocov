@@ -2,6 +2,7 @@ package profile
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -126,11 +127,12 @@ func TestMerge(t *testing.T) {
 // lone part's stored files without merging them (core.MergeParts, which
 // checks Canonical and merges anything that is not).
 func TestMergeOfOneParsedProfileKeepsItsCoverage(t *testing.T) {
-	for _, tc := range []struct {
+	type sample struct {
 		name   string
 		parser Parser
 		input  string
-	}{
+	}
+	cases := []sample{
 		// -coverpkg runs repeat every block once per test binary.
 		{"go", GoParser{}, "mode: count\n" +
 			"m/a.go:1.1,2.2 1 0\nm/a.go:1.1,2.2 1 3\nm/a.go:4.1,5.2 2 0\n" +
@@ -143,7 +145,17 @@ func TestMergeOfOneParsedProfileKeepsItsCoverage(t *testing.T) {
 		{"clover istanbul", CloverParser{}, cloverIstanbulSample},
 		{"simplecov", SimpleCovParser{}, simplecovModernSample},
 		{"simplecov legacy", SimpleCovParser{}, simplecovLegacySample},
-	} {
+		{"opencover", OpenCoverParser{}, openCoverSample},
+		{"xccov", XccovParser{}, xccovSample},
+	}
+	// Every registered format is held to this, so a new parser cannot be
+	// added without a sample here.
+	for _, f := range formats {
+		if !slices.ContainsFunc(cases, func(tc sample) bool { return reflect.TypeOf(tc.parser) == reflect.TypeOf(f.Parser) }) {
+			t.Errorf("format %s has no sample in this test", f.Name)
+		}
+	}
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			p, err := tc.parser.Parse(strings.NewReader(tc.input))
 			if err != nil {
