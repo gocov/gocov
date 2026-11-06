@@ -47,7 +47,7 @@ Everything hangs off four interfaces, each with a production implementation and 
 | `store.Store` (normalized coverage model, workspaces/repos/gates) | `store/postgres` | `store/memory` |
 | `forge.Forge` (build statuses, PR comments, check runs) | `forge/{bitbucket,github,gitlab}` | `forge/fake` |
 | `blobstore.Store` (raw uploaded profiles) | `blobstore/postgres` | `blobstore/memory` |
-| `profile.Parser` (one per format: go, lcov, jacoco, cobertura, clover, simplecov) | `internal/profile` | — |
+| `profile.Parser` (one per format: go, lcov, jacoco, cobertura, clover, simplecov, opencover) | `internal/profile` | — |
 
 New formats, forges, or storage backends slot in behind these interfaces. The line that matters most: `internal/core` is the coverage pipeline and imports no HTTP (a test enforces it); `internal/server` is the transport around it — the upload API, the UI's JSON API and the shell of the single-page app in `web/`. `internal/diffcov` computes diff coverage against forge-fetched diffs, `internal/auth` handles OAuth sign-in per forge, `internal/secretbox` encrypts stored grant refresh tokens, and `internal/config` is the single declaration of every environment variable. SQL migrations are numbered files under `internal/store/postgres/migrations/`.
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"encoding/json"
 	"os"
@@ -8,6 +9,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/gocov/gocov/internal/profile"
 )
 
 // buildInfo is the CI metadata attached to an upload.
@@ -268,4 +271,49 @@ func moduleFromGoMod(path string) string {
 		}
 	}
 	return ""
+}
+
+// checkoutPrefix finds the repo's checkout directory at the head of a
+// report's absolute paths — OpenCover records every file by its full path
+// on the machine the tests ran on — so the server can map them to
+// repo-relative diff paths. top is the git toplevel. The prefix comes back
+// spelled as the report spells it (Windows drive letters and directory
+// names may differ in case from git's), and is "" when no path lies under
+// the checkout, as when the tests ran in a container with its own mount
+// point: an unmatched prefix would turn diff coverage's suffix matching
+// off for nothing.
+func checkoutPrefix(paths []string, top string) string {
+	top = strings.TrimSuffix(strings.ReplaceAll(top, `\`, "/"), "/")
+	if top == "" {
+		return ""
+	}
+	for _, p := range paths {
+		if len(p) > len(top) && p[len(top)] == '/' && strings.EqualFold(p[:len(top)], top) {
+			return p[:len(top)]
+		}
+	}
+	return ""
+}
+
+// reportPrefix is checkoutPrefix over a raw report of the given format,
+// with the toplevel from git; any failure yields "", leaving the server's
+// suffix matching to line paths up.
+func reportPrefix(format string, data []byte, git gitFunc) string {
+	f, ok := profile.Lookup(format)
+	if !ok {
+		return ""
+	}
+	top, err := git("rev-parse", "--show-toplevel")
+	if err != nil {
+		return ""
+	}
+	prof, err := f.Parser.Parse(bytes.NewReader(data))
+	if err != nil {
+		return ""
+	}
+	paths := make([]string, len(prof.Files))
+	for i, file := range prof.Files {
+		paths[i] = file.Path
+	}
+	return checkoutPrefix(paths, top)
 }

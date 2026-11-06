@@ -65,19 +65,20 @@ func Percent(covered, total int64) float64 {
 
 // Parser turns a raw coverage report into the normalized model.
 // There is one implementation per format: go, lcov, jacoco, cobertura,
-// clover and simplecov.
+// clover, simplecov and opencover.
 type Parser interface {
 	Parse(r io.Reader) (*Profile, error)
 }
 
 // Detect guesses the profile format from its content, so uploads do not
 // have to name it explicitly. Returns "go", "lcov", "jacoco", "cobertura",
-// "clover", "simplecov" or "" when unknown. Go cover profiles start with a
-// "mode:" line; LCOV tracefiles consist of TN:/SF:/DA: records; JaCoCo XML
-// reports have a <report> root (usually preceded by a JACOCO doctype);
-// SimpleCov resultsets are JSON with a "coverage" key. Clover and
-// Cobertura both use a <coverage> root: Clover names itself in a clover
-// attribute or wraps its data in <project>, Cobertura in a doctype or in
+// "clover", "simplecov", "opencover" or "" when unknown. Go cover profiles
+// start with a "mode:" line; LCOV tracefiles consist of TN:/SF:/DA:
+// records; JaCoCo XML reports have a <report> root (usually preceded by a
+// JACOCO doctype); SimpleCov resultsets are JSON with a "coverage" key;
+// OpenCover reports have a <CoverageSession> root. Clover and Cobertura
+// both use a <coverage> root: Clover names itself in a clover attribute or
+// wraps its data in <project>, Cobertura in a doctype or in
 // <packages>/<sources>, and a bare <coverage> root with neither falls back
 // to Cobertura.
 func Detect(data []byte) string {
@@ -93,6 +94,8 @@ func Detect(data []byte) string {
 		switch {
 		case strings.HasPrefix(line, "mode:"):
 			return "go"
+		case strings.Contains(line, "<CoverageSession"):
+			return "opencover"
 		case strings.HasPrefix(line, "TN:"), strings.HasPrefix(line, "SF:"):
 			return "lcov"
 		case strings.Contains(line, "JACOCO"), strings.Contains(line, "<report"):

@@ -60,6 +60,10 @@ var formats = []Format{
 	// since the name follows the commit ("abc1234-resultset.json").
 	{Name: "simplecov", Parser: SimpleCovParser{}, Filename: "resultset.json", SourceExts: []string{".rb", ".rake"},
 		TestSuffixes: []string{"_spec.rb", "_test.rb"}},
+	// .NET test projects live apart from the code they test and follow no
+	// file-suffix convention, so OpenCover names no test files.
+	{Name: "opencover", Parser: OpenCoverParser{}, Filename: "coverage.opencover.xml",
+		SourceExts: []string{".cs", ".vb", ".fs"}},
 }
 
 // Names lists the registered formats' names, in registry order — for

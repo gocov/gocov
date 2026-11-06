@@ -78,7 +78,7 @@ func run(args []string) error {
 	branch := fs.String("branch", "", "branch name (default: auto-detect)")
 	pr := fs.String("pr", "", "pull request id (default: auto-detect)")
 	format := fs.String("format", "", "coverage profile format: "+strings.Join(profile.Names(), ", ")+" (default: detect from content)")
-	pathPrefix := fs.String("path-prefix", "", "prefix mapping profile paths to repo paths, e.g. the Go module path (default: from go.mod)")
+	pathPrefix := fs.String("path-prefix", "", "prefix mapping profile paths to repo paths, e.g. the Go module path (default: from go.mod for Go, the checkout directory for OpenCover)")
 	part := fs.String("part", cfg.Part, "name this slice of the commit's coverage (e.g. backend, frontend) when uploading from separate CI jobs (or $GOCOV_PART)")
 	ignorePats := patternList{patterns: ignore.Parse(cfg.Ignore)}
 	fs.Var(&ignorePats, "ignore", "leave files matching this pattern out of the report, e.g. 'cmd/preview/**' or '*_mock.go'; repeatable or comma-separated (or $GOCOV_IGNORE)")
@@ -161,8 +161,13 @@ func run(args []string) error {
 		return fmt.Errorf("could not detect the coverage format of %s: pass -format %s", profilePath, strings.Join(profile.Names(), "|"))
 	}
 	prefix := *pathPrefix
-	if prefix == "" && resolvedFormat == "go" {
-		prefix = moduleFromGoMod("go.mod")
+	if prefix == "" {
+		switch resolvedFormat {
+		case "go":
+			prefix = moduleFromGoMod("go.mod")
+		case "opencover":
+			prefix = reportPrefix(resolvedFormat, profileData, runGit)
+		}
 	}
 
 	resp, err := upload(uploadRequest{

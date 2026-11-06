@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -317,5 +318,55 @@ func TestFill(t *testing.T) {
 	want := buildInfo{Repo: "a/b", Commit: "c2", Branch: "main", PRID: "5"}
 	if b != want {
 		t.Errorf("fill() = %+v, want %+v", b, want)
+	}
+}
+
+func TestCheckoutPrefix(t *testing.T) {
+	tests := []struct {
+		name  string
+		paths []string
+		top   string
+		want  string
+	}{
+		{"linux runner", []string{"/home/runner/work/app/app/src/Foo.cs"}, "/home/runner/work/app/app", "/home/runner/work/app/app"},
+		{"trailing slash on top", []string{"/w/app/src/Foo.cs"}, "/w/app/", "/w/app"},
+		{"windows drive letter case kept from the report", []string{"c:/build/app/src/Foo.cs"}, `C:\build\app`, "c:/build/app"},
+		{"files outside the checkout skipped", []string{"/root/.nuget/x/Lib.cs", "/w/app/src/Foo.cs"}, "/w/app", "/w/app"},
+		{"sibling directory sharing a name prefix", []string{"/w/app-tests/Foo.cs"}, "/w/app", ""},
+		{"tests ran in a container", []string{"/src/Foo.cs"}, "/home/runner/work/app/app", ""},
+		{"relative paths", []string{"src/Foo.cs"}, "/w/app", ""},
+		{"no toplevel", []string{"/w/app/src/Foo.cs"}, "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := checkoutPrefix(tt.paths, tt.top); got != tt.want {
+				t.Errorf("checkoutPrefix() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestReportPrefix(t *testing.T) {
+	report := []byte(`<CoverageSession><Modules><Module>
+  <Files><File uid="1" fullPath="D:\a\app\app\src\Foo.cs" /></Files>
+  <Classes><Class><Methods><Method><SequencePoints>
+    <SequencePoint vc="1" sl="1" el="1" fileid="1" />
+  </SequencePoints></Method></Methods></Class></Classes>
+</Module></Modules></CoverageSession>`)
+	git := func(args ...string) (string, error) {
+		if strings.Join(args, " ") != "rev-parse --show-toplevel" {
+			t.Fatalf("unexpected git %v", args)
+		}
+		return "D:/a/app/app", nil
+	}
+	if got := reportPrefix("opencover", report, git); got != "D:/a/app/app" {
+		t.Errorf("reportPrefix() = %q", got)
+	}
+	noGit := func(...string) (string, error) { return "", errors.New("not a git repository") }
+	if got := reportPrefix("opencover", report, noGit); got != "" {
+		t.Errorf("reportPrefix() without git = %q, want empty", got)
+	}
+	if got := reportPrefix("opencover", []byte("not xml"), git); got != "" {
+		t.Errorf("reportPrefix() of a broken report = %q, want empty", got)
 	}
 }

@@ -12,6 +12,7 @@ snippets below show the plain CLI; in CI, the same file goes in the `files:` of 
 | Cobertura XML   | coverage.py / pytest-cov; also coverlet, gcovr      |
 | Clover XML      | PHPUnit, Istanbul                                   |
 | SimpleCov       | RSpec / minitest with simplecov                     |
+| OpenCover XML   | Coverlet, OpenCover (.NET)                          |
 
 ## Go
 
@@ -65,6 +66,21 @@ gocov upload clover.xml
 bundle exec rspec               # with simplecov enabled
 gocov upload coverage/.resultset.json
 ```
+
+## C# / .NET
+
+```sh
+dotnet test --collect:"XPlat Code Coverage" --results-directory coverage \
+  -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
+gocov upload coverage/*/coverage.opencover.xml
+```
+
+Coverlet writes each run under a directory with a generated name, hence the wildcard; with more than one test project,
+upload each report as its own [part](parts.md). Coverlet's Cobertura output (the collector's default) works too.
+
+OpenCover records every file by its absolute path on the machine the tests ran on. The CLI recognizes the git checkout
+directory at the head of those paths and maps them to repo paths itself; when the tests ran somewhere else, such as a
+container, pass that directory as `-path-prefix`.
 
 ## Several languages in one repo
 
