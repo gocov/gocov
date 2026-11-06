@@ -255,7 +255,7 @@ func TestUploadValidation(t *testing.T) {
 		{"repo mismatch", map[string]string{"repo": "other/repo", "commit": "c"}, testProfile, http.StatusForbidden},
 		{"missing commit", map[string]string{}, testProfile, http.StatusBadRequest},
 		{"missing profile file", map[string]string{"commit": "c"}, "", http.StatusBadRequest},
-		{"unknown format", map[string]string{"commit": "c", "format": "opencover"}, testProfile, http.StatusBadRequest},
+		{"unknown format", map[string]string{"commit": "c", "format": "teamcity"}, testProfile, http.StatusBadRequest},
 		{"malformed profile", map[string]string{"commit": "c"}, "not a profile", http.StatusUnprocessableEntity},
 		{"part with slash", map[string]string{"commit": "c", "part": "back/end"}, testProfile, http.StatusBadRequest},
 		{"part leading dash", map[string]string{"commit": "c", "part": "-backend"}, testProfile, http.StatusBadRequest},

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 )
 
 // SimpleCovParser parses SimpleCov .resultset.json files, Ruby's de facto
@@ -37,7 +36,7 @@ func (SimpleCovParser) Parse(r io.Reader) (*Profile, error) {
 			if len(counts) > maxLineNumber {
 				return nil, fmt.Errorf("simplecov: too many lines in %s", name)
 			}
-			path := strings.TrimPrefix(strings.ReplaceAll(name, `\`, "/"), "./")
+			path := normalizePath(name)
 			lines := files[path]
 			if lines == nil {
 				lines = map[int]int{}

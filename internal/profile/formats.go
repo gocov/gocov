@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"io"
 	"slices"
 	"strings"
 )
@@ -23,6 +24,25 @@ type Format struct {
 	// never measured themselves, so their absence from a report is no
 	// finding either.
 	TestSuffixes []string
+	// Paths, when set, lists the files a report names more cheaply than a
+	// full parse; FilePaths falls back to the parser without it.
+	Paths func(r io.Reader) ([]string, error)
+}
+
+// FilePaths lists the source files a report of this format names.
+func (f Format) FilePaths(r io.Reader) ([]string, error) {
+	if f.Paths != nil {
+		return f.Paths(r)
+	}
+	p, err := f.Parser.Parse(r)
+	if err != nil {
+		return nil, err
+	}
+	paths := make([]string, len(p.Files))
+	for i, file := range p.Files {
+		paths[i] = file.Path
+	}
+	return paths, nil
 }
 
 // jsExts are the JavaScript family's source extensions, whose test files
@@ -60,6 +80,10 @@ var formats = []Format{
 	// since the name follows the commit ("abc1234-resultset.json").
 	{Name: "simplecov", Parser: SimpleCovParser{}, Filename: "resultset.json", SourceExts: []string{".rb", ".rake"},
 		TestSuffixes: []string{"_spec.rb", "_test.rb"}},
+	// .NET test projects live apart from the code they test and follow no
+	// file-suffix convention, so OpenCover names no test files.
+	{Name: "opencover", Parser: OpenCoverParser{}, Filename: "coverage.opencover.xml",
+		SourceExts: []string{".cs", ".vb", ".fs"}, Paths: openCoverPaths},
 }
 
 // Names lists the registered formats' names, in registry order — for

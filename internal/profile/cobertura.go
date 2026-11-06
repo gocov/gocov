@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 )
 
 // CoberturaParser parses Cobertura XML reports — the format emitted by
@@ -49,7 +48,7 @@ func (CoberturaParser) Parse(r io.Reader) (*Profile, error) {
 				return nil, errors.New("cobertura: class without a filename")
 			}
 			// Windows-generated reports may use backslashes.
-			path := strings.TrimPrefix(strings.ReplaceAll(cls.Filename, `\`, "/"), "./")
+			path := normalizePath(cls.Filename)
 			lines := files[path]
 			if lines == nil {
 				lines = map[int]int{}
