@@ -119,10 +119,12 @@ func TestMerge(t *testing.T) {
 	})
 }
 
-// Merging a single parsed profile must not change its coverage: every
-// parser already collapses repeated blocks and files, and the commit
-// recompute relies on it to skip reading a lone part's files, taking the
-// totals its upload row recorded instead.
+// Merging a single parsed profile must not change it: every parser
+// already collapses repeated blocks and files, and leaves each file's
+// blocks in Merge's order. The commit recompute relies on it to take a
+// lone part's totals from its upload row, and the commit pages to show a
+// lone part's stored files without merging them (core.MergeParts, which
+// checks Canonical and merges anything that is not).
 func TestMergeOfOneParsedProfileKeepsItsCoverage(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -153,6 +155,16 @@ func TestMergeOfOneParsedProfileKeepsItsCoverage(t *testing.T) {
 			}
 			if cov, total := Merge(p).Coverage(); cov != wantCov || total != wantTotal {
 				t.Errorf("Merge(p) = %d/%d, want p's own %d/%d", cov, total, wantCov, wantTotal)
+			}
+			seen := map[string]bool{}
+			for _, f := range p.Files {
+				if seen[f.Path] {
+					t.Errorf("%s reported twice", f.Path)
+				}
+				seen[f.Path] = true
+				if !Canonical(f.Blocks) {
+					t.Errorf("%s: blocks not in Merge's order, or a position twice: %+v", f.Path, f.Blocks)
+				}
 			}
 		})
 	}

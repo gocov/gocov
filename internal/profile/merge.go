@@ -62,13 +62,31 @@ func Merge(profiles ...*Profile) *Profile {
 		for _, b := range blocks {
 			merged = append(merged, b)
 		}
-		slices.SortFunc(merged, func(a, b Block) int {
-			if c := cmp.Compare(a.StartLine, b.StartLine); c != 0 {
-				return c
-			}
-			return cmp.Compare(a.StartCol, b.StartCol)
-		})
+		slices.SortFunc(merged, comparePos)
 		out.Files = append(out.Files, File{Path: path, Blocks: merged})
 	}
 	return out
+}
+
+// comparePos orders blocks by position: start, then end, so that blocks
+// sharing a start have one order too.
+func comparePos(a, b Block) int {
+	return cmp.Or(
+		cmp.Compare(a.StartLine, b.StartLine),
+		cmp.Compare(a.StartCol, b.StartCol),
+		cmp.Compare(a.EndLine, b.EndLine),
+		cmp.Compare(a.EndCol, b.EndCol),
+	)
+}
+
+// Canonical reports whether a file's blocks are as Merge leaves them: in
+// position order, no position twice — so merging them again changes
+// nothing.
+func Canonical(blocks []Block) bool {
+	for i := 1; i < len(blocks); i++ {
+		if comparePos(blocks[i-1], blocks[i]) >= 0 {
+			return false
+		}
+	}
+	return true
 }

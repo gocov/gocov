@@ -182,19 +182,34 @@ func mergedCoverage(ctx context.Context, tx partFiles, parts []*store.Upload) (c
 // parts report counts once, covered when any part ran it (profile.Merge);
 // each merged file belongs to the newest upload that reported it.
 //
-// Files all of one upload are their own merge — every parser keys blocks
-// by position and files by path, so merging one profile changes nothing —
-// and come back as they are, sorted by path in place: the common
-// single-part commit's pages skip re-merging every block.
+// Files all of one upload — the common single-part commit — are their
+// own merge when they are canonical, as every parser leaves them (one row
+// per path, blocks in profile.Merge's order with no position twice): they
+// come back as they are, in path order, without re-merging every block.
+// Rows that are not canonical are merged, so the answer never depends on
+// the shortcut. The input slice is not reordered either way.
 func MergeParts(files []*store.UploadFile) []*store.UploadFile {
 	if len(files) > 0 && !slices.ContainsFunc(files, func(f *store.UploadFile) bool { return f.UploadID != files[0].UploadID }) {
-		slices.SortFunc(files, func(a, b *store.UploadFile) int { return cmp.Compare(a.Path, b.Path) })
-		return files
+		sorted := slices.SortedFunc(slices.Values(files), func(a, b *store.UploadFile) int { return cmp.Compare(a.Path, b.Path) })
+		if canonicalFiles(sorted) {
+			return sorted
+		}
 	}
 	return mergeAll(files)
 }
 
-// mergeAll is MergeParts for files of more than one upload.
+// canonicalFiles reports whether files sorted by path name each path once
+// and keep their blocks canonical (profile.Canonical).
+func canonicalFiles(sorted []*store.UploadFile) bool {
+	for i, f := range sorted {
+		if i > 0 && f.Path == sorted[i-1].Path || !profile.Canonical(f.Blocks) {
+			return false
+		}
+	}
+	return true
+}
+
+// mergeAll is MergeParts without the shortcut.
 func mergeAll(files []*store.UploadFile) []*store.UploadFile {
 	owner := make(map[string]int64, len(files))
 	all := &profile.Profile{Files: make([]profile.File, 0, len(files))}

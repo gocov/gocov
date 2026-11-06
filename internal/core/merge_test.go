@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gocov/gocov/internal/diffcov"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
@@ -234,48 +233,59 @@ func TestRecomputeComparesTheSameParts(t *testing.T) {
 	}
 }
 
-// Files all of one upload skip the merge. Every format's parser must make
-// that safe — keying blocks by position and files by path — so each
-// format's sample, with its files out of order and a block reported twice
-// where the format allows it, comes back exactly as merging gives it.
+// Files all of one upload skip the merge when they are canonical, as the
+// parsers leave them (profile's TestMergeOfOneParsedProfileKeepsItsCoverage
+// holds every format to that), and are merged when they are not: either
+// way MergeParts answers what merging gives, and leaves its input alone.
 func TestMergePartsLonePartIsItsOwnMerge(t *testing.T) {
-	samples := map[string]string{
-		"go": "mode: count\n" +
-			"example.com/m/z.go:1.1,3.2 2 1\n" +
-			"example.com/m/a.go:1.1,5.2 6 3\n" +
-			"example.com/m/a.go:7.1,9.2 2 0\n" +
-			"example.com/m/z.go:1.1,3.2 2 4\n" + // as go test -coverpkg repeats it
-			"example.com/m/m/b.go:1.1,2.2 1 0\n",
-		"lcov": "SF:src/z.js\nDA:1,1\nDA:2,0\nend_of_record\n" +
-			"SF:src/a.js\nDA:3,0\nDA:1,2\nDA:1,1\nend_of_record\n",
+	file := func(path string, blocks ...profile.Block) *store.UploadFile {
+		f := newUploadFile(&profile.File{Path: path, Blocks: blocks})
+		f.UploadID = 7
+		return f
 	}
-	for name, body := range samples {
-		t.Run(name, func(t *testing.T) {
-			format, ok := profile.Lookup(name)
-			if !ok {
-				t.Fatalf("no %s format", name)
+	b := func(line, stmts, count int) profile.Block {
+		return profile.Block{StartLine: line, StartCol: 1, EndLine: line, EndCol: 9, NumStmts: stmts, Count: count}
+	}
+	for _, tc := range []struct {
+		name     string
+		files    []*store.UploadFile
+		shortcut bool
+	}{
+		{"canonical, out of path order", []*store.UploadFile{
+			file("z.go", b(1, 2, 1), b(3, 1, 0)),
+			file("a.go", b(1, 6, 3), b(7, 2, 0)),
+			file("m/b.go", b(1, 1, 0)),
+		}, true},
+		{"a block stored twice", []*store.UploadFile{
+			file("a.go", b(1, 2, 1), b(1, 2, 4), b(3, 1, 0)),
+		}, false},
+		{"blocks out of order", []*store.UploadFile{
+			file("a.go", b(3, 1, 0), b(1, 2, 1)),
+		}, false},
+		{"a path stored twice", []*store.UploadFile{
+			file("a.go", b(1, 2, 0)),
+			file("a.go", b(1, 2, 1), b(3, 1, 0)),
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := slices.Clone(tc.files)
+			want := mergeAll(slices.Clone(tc.files))
+			got := MergeParts(in)
+			if !slices.Equal(in, tc.files) {
+				t.Error("MergeParts reordered its input")
 			}
-			prof, err := format.Parser.Parse(strings.NewReader(body))
-			if err != nil {
-				t.Fatal(err)
-			}
-			files := make([]*store.UploadFile, len(prof.Files))
-			for i := range prof.Files {
-				files[i] = newUploadFile(&prof.Files[i])
-				files[i].UploadID = 7
-			}
-			want := mergeAll(slices.Clone(files))
-			got := MergeParts(files)
 			if len(got) != len(want) {
 				t.Fatalf("%d files, want %d", len(got), len(want))
 			}
 			for i := range want {
 				g, w := got[i], want[i]
 				if g.Path != w.Path || g.UploadID != w.UploadID || g.Pct != w.Pct ||
-					g.CoveredStmts != w.CoveredStmts || g.TotalStmts != w.TotalStmts ||
-					!slices.Equal(diffcov.MissedSpans(g.Blocks), diffcov.MissedSpans(w.Blocks)) {
+					g.CoveredStmts != w.CoveredStmts || g.TotalStmts != w.TotalStmts || !slices.Equal(g.Blocks, w.Blocks) {
 					t.Errorf("file %d = %+v, want the merge's %+v", i, g, w)
 				}
+			}
+			if took := len(got) > 0 && slices.Contains(tc.files, got[0]); took != tc.shortcut {
+				t.Errorf("returned the stored rows = %v, want %v", took, tc.shortcut)
 			}
 		})
 	}

@@ -3,6 +3,7 @@ package profile
 import (
 	"bytes"
 	"encoding/json"
+	"strconv"
 )
 
 // UnmarshalBlocks decodes a JSON array of blocks — how the store keeps a
@@ -83,7 +84,10 @@ func (s *blockScanner) take(c byte) bool {
 
 // jsonbKeys is how Postgres prints a stored block's keys: ordered by
 // length, then bytes, with a space after every colon and comma.
-var jsonbKeys = [...]string{`{"count": `, `, "end_col": `, `, "end_line": `, `, "num_stmts": `, `, "start_col": `, `, "start_line": `}
+var jsonbKeys = [...][]byte{
+	[]byte(`{"count": `), []byte(`, "end_col": `), []byte(`, "end_line": `),
+	[]byte(`, "num_stmts": `), []byte(`, "start_col": `), []byte(`, "start_line": `),
+}
 
 // jsonbBlock scans a block printed exactly the way Postgres prints one,
 // matching its keys as one run of literals instead of key by key; on any
@@ -93,7 +97,7 @@ func (s *blockScanner) jsonbBlock() (Block, bool) {
 	start := s.i
 	var v [len(jsonbKeys)]int
 	for k, lit := range jsonbKeys {
-		if !bytes.HasPrefix(s.data[s.i:], []byte(lit)) {
+		if !bytes.HasPrefix(s.data[s.i:], lit) {
 			s.i = start
 			return Block{}, false
 		}
@@ -178,10 +182,11 @@ func (s *blockScanner) key() ([]byte, bool) {
 	return nil, false
 }
 
-// maxIntDigits keeps a scanned integer exact in an int on every platform
-// gocov builds for; longer numbers go to json.Unmarshal, which reports
-// the overflow.
-const maxIntDigits = 9
+// maxIntDigits keeps a scanned integer exact in an int: 18 digits on a
+// 64-bit platform, where a Go profile's hot loop can run past a billion,
+// 9 on a 32-bit one. Longer numbers go to json.Unmarshal, which reports
+// any overflow.
+const maxIntDigits = 9 * strconv.IntSize / 32
 
 // int scans a JSON integer after optional whitespace: an optional minus,
 // then digits. A fraction or exponent after it fails the caller's next

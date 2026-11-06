@@ -42,6 +42,9 @@ func TestUnmarshalBlocksAgreesWithEncodingJSON(t *testing.T) {
 		`[{"count": 1, "count": 2}]`, // the last of a repeated key wins
 		`[{"count": -0}]`,
 		`[{"count": 999999999}]`,
+		`[{"count": 1234567890}]`, // a hot loop's count, past 32 bits' 9 digits
+		`[{"count": 999999999999999999}]`,
+		`[{"count": -999999999999999999}]`,
 		// left to json.Unmarshal
 		`null`,
 		`[null]`,
@@ -103,4 +106,18 @@ func BenchmarkUnmarshalBlocks(b *testing.B) {
 			}
 		}
 	})
+}
+
+// What the store writes stays on the fast path, a hot loop's count past
+// a billion included; json.Unmarshal is for the rest.
+func TestStoredBlocksTakeTheFastPath(t *testing.T) {
+	for _, in := range []string{
+		jsonbBlocks(3),
+		`[{"count": 1234567890, "end_col": 9, "end_line": 2, "num_stmts": 1, "start_col": 2, "start_line": 1}]`,
+		`[{"start_line":1,"start_col":2,"end_line":2,"end_col":9,"num_stmts":1,"count":3}]`, // json.Marshal's order
+	} {
+		if _, ok := scanBlocks([]byte(in)); !ok {
+			t.Errorf("%s fell back to json.Unmarshal", in)
+		}
+	}
 }
