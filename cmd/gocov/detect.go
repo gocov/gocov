@@ -274,8 +274,9 @@ func moduleFromGoMod(path string) string {
 }
 
 // checkoutPrefix finds the repo's checkout directory at the head of a
-// report's absolute paths — OpenCover records every file by its full path
-// on the machine the tests ran on — so the server can map them to
+// report's absolute paths — the formats marked AbsolutePaths (OpenCover,
+// xccov) record every file by its full path on the machine the tests ran
+// on — so the server can map them to
 // repo-relative diff paths. top is the git toplevel. The prefix comes back
 // spelled as the report spells it (Windows drive letters and directory
 // names may differ in case from git's), and is "" when no path lies under

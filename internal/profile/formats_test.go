@@ -50,6 +50,7 @@ func TestIsTestFile(t *testing.T) {
 		{"jacoco", "src/test/java/FooTest.java", false}, // no convention claimed
 		{"xccov", "AppTests/LoginViewModelTests.swift", true},
 		{"xccov", "App/Networking/Requests.swift", false},
+		{"xccov", "AppSpecs/LoginViewModelSpec.swift", true},
 	} {
 		f, _ := Lookup(tc.format)
 		if got := f.IsTestFile(tc.path); got != tc.want {

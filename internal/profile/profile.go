@@ -132,8 +132,8 @@ func Detect(data []byte) string {
 
 // normalizePath turns a report path into the slash-separated form the
 // rest of the pipeline matches on: Windows-generated reports use
-// backslashes. Shared by the parsers of formats written on Windows too
-// (cobertura, clover, simplecov, opencover).
+// backslashes. Shared by the parsers that read paths verbatim from the
+// report (cobertura, clover, simplecov, opencover, xccov).
 func normalizePath(p string) string {
 	return strings.TrimPrefix(strings.ReplaceAll(p, `\`, "/"), "./")
 }

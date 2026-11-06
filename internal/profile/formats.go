@@ -89,10 +89,12 @@ var formats = []Format{
 	{Name: "opencover", Parser: OpenCoverParser{}, Filename: "coverage.opencover.xml",
 		SourceExts: []string{".cs", ".vb", ".fs"}, Paths: openCoverPaths, AbsolutePaths: true},
 	// XCTest cases live in files named after the type they test plus
-	// "Tests", by Xcode's template and by convention.
+	// "Tests" (Xcode's template), Quick specs plus "Spec". Headers are not
+	// source here: they rarely hold an executable line, so xccov seldom
+	// lists them, and every changed one would read as unmeasured code.
 	{Name: "xccov", Parser: XccovParser{}, Filename: "xccov.json",
-		SourceExts:   []string{".swift", ".m", ".mm", ".c", ".cc", ".cpp", ".h"},
-		TestSuffixes: []string{"Tests.swift", "Tests.m"}, Paths: xccovPaths, AbsolutePaths: true},
+		SourceExts:   []string{".swift", ".m", ".mm", ".c", ".cc", ".cpp"},
+		TestSuffixes: []string{"Tests.swift", "Spec.swift", "Tests.m", "Tests.mm"}, Paths: xccovPaths, AbsolutePaths: true},
 }
 
 // Names lists the registered formats' names, in registry order — for
