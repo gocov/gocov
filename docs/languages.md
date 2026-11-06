@@ -7,9 +7,9 @@ snippets below show the plain CLI; in CI, the same file goes in the `files:` of 
 | Format          | Written by                                          |
 |-----------------|-----------------------------------------------------|
 | Go cover profile| `go test -coverprofile`                             |
-| LCOV            | Jest, Vitest, nyc, c8, and most JS/TS tools         |
+| LCOV            | Jest, Vitest, nyc, c8; cargo-llvm-cov, flutter test, lcov_ex, lcov |
 | JaCoCo XML      | Maven, Gradle, Android                              |
-| Cobertura XML   | coverage.py / pytest-cov; also coverlet, gcovr      |
+| Cobertura XML   | coverage.py / pytest-cov; also coverlet, gcovr, sbt-scoverage |
 | Clover XML      | PHPUnit, Istanbul                                   |
 | SimpleCov       | RSpec / minitest with simplecov                     |
 | OpenCover XML   | Coverlet, OpenCover (.NET)                          |
@@ -97,6 +97,47 @@ Export with `--archive`: it has the coverage of every line. The `--report` outpu
 function, so gocov refuses it. Like OpenCover, xccov records absolute paths, and the CLI maps them to repo paths the
 same way.
 
+## Rust
+
+```sh
+cargo llvm-cov --lcov --output-path lcov.info
+gocov upload lcov.info
+```
+
+`cargo tarpaulin --out Lcov` works too.
+
+## Dart / Flutter
+
+```sh
+flutter test --coverage
+gocov upload coverage/lcov.info
+```
+
+## C / C++
+
+Build and run the tests with coverage instrumentation (`--coverage` for GCC and Clang), then let gcovr collect it:
+
+```sh
+gcovr --cobertura coverage.xml
+gocov upload coverage.xml
+```
+
+An LCOV tracefile from `lcov --capture` works too.
+
+## Elixir
+
+```sh
+mix lcov                        # with the lcov_ex package
+gocov upload cover/lcov.info
+```
+
+## Scala
+
+```sh
+sbt coverage test coverageReport
+gocov upload target/scala-*/coverage-report/cobertura.xml
+```
+
 ## Several languages in one repo
 
 Upload each report as its own [part](parts.md) — a backend suite, a frontend suite, an e2e run — and gocov merges
@@ -106,3 +147,6 @@ them into one report per commit:
 gocov upload -part backend  coverage.out
 gocov upload -part frontend coverage/lcov.info
 ```
+
+Each part only answers for the languages it measures: a frontend's LCOV does not flag the Rust files a second LCOV part
+covers as untested.

@@ -1,4 +1,4 @@
-import { buildSnippet, checklist, docsRecipe, languages, languageSpec, snippetFilename, tokenWhere } from "./snippets";
+import { buildSnippet, checklist, docsRecipe, languagesFor, languageSpec, snippetFilename, tokenWhere } from "./snippets";
 import type { LanguageId, SnippetInput } from "./snippets";
 
 const base: SnippetInput = {
@@ -159,12 +159,37 @@ test("the language swaps the image too where the snippet names one", () => {
 });
 
 test("no snippet ever passes a format flag — the CLI detects it", () => {
-  for (const l of languages) {
-    for (const forge of ["github", "gitlab", "bitbucket"]) {
+  for (const forge of ["github", "gitlab", "bitbucket"]) {
+    for (const l of languagesFor(forge)) {
       expect(code({ forge, language: l.id })).not.toContain("-format");
       expect(code({ forge, language: l.id })).toContain(l.file);
     }
   }
+});
+
+test(".NET copies Coverlet's report to a fixed path every recipe can name", () => {
+  expect(testCommand("dotnet", { forge: "github" })).toContain("Format=opencover && cp coverage/*/coverage.opencover.xml .");
+  expect(testCommand("dotnet", { forge: "github" })).toContain("    files: coverage.opencover.xml");
+  expect(testCommand("dotnet", { forge: "bitbucket" })).toContain("image: mcr.microsoft.com/dotnet/sdk:10.0");
+  expect(testCommand("dotnet", { forge: "gitlab", gitlabCatalog: true })).toContain("    paths: [coverage.opencover.xml]");
+});
+
+test("Swift is a GitHub recipe on a macOS runner", () => {
+  const out = testCommand("swift", { forge: "github" });
+  expect(out.split("\n")[0]).toBe("# in a job with runs-on: macos-15");
+  expect(out).toContain("xcrun xccov view --archive --json TestResults.xcresult > xccov.json");
+  expect(out).toContain("    files: xccov.json");
+  expect(testCommand("swift", { forge: "github", tokenless: true }).split("\n")[0]).toBe(
+    "# in a job with runs-on: macos-15",
+  );
+  // GitLab and Bitbucket recipes run in Linux containers: no Swift there.
+  for (const forge of ["gitlab", "bitbucket"]) {
+    expect(languagesFor(forge).map((l) => l.id)).not.toContain("swift");
+    expect(languageSpec("swift", forge).id).toBe("go");
+    expect(testCommand("swift", { forge })).toContain("go test ./...");
+  }
+  // Other languages carry no runner note.
+  expect(testCommand("go", { forge: "github" })).not.toContain("runs-on");
 });
 
 test("an unknown stored language falls back to Go", () => {

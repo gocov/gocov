@@ -1,6 +1,9 @@
 package profile
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestEveryDetectableFormatIsRegistered(t *testing.T) {
 	// The upload API dispatches on these names, and Detect hands them
@@ -51,10 +54,72 @@ func TestIsTestFile(t *testing.T) {
 		{"xccov", "AppTests/LoginViewModelTests.swift", true},
 		{"xccov", "App/Networking/Requests.swift", false},
 		{"xccov", "AppSpecs/LoginViewModelSpec.swift", true},
+		{"lcov", "tests/api.rs", true}, // Rust integration tests
+		{"lcov", "crates/core/benches/parse.rs", true},
+		{"lcov", "src/contest.rs", false},        // a name, not a directory
+		{"cobertura", "tests/test_app.py", true}, // Python's tests directory
+		{"cobertura", "src/test/scala/AppSpec.scala", true},
+		{"cobertura", "myapp/latest/app.py", false},
 	} {
 		f, _ := Lookup(tc.format)
 		if got := f.IsTestFile(tc.path); got != tc.want {
 			t.Errorf("%s IsTestFile(%q) = %v, want %v", tc.format, tc.path, got, tc.want)
 		}
+	}
+}
+
+// Diff coverage decides by family whether a report should have measured a
+// file, so a source extension outside every family would never count.
+func TestEverySourceExtHasOneFamily(t *testing.T) {
+	for _, f := range formats {
+		for _, ext := range f.SourceExts {
+			n := 0
+			for _, fam := range languageFamilies {
+				if slices.Contains(fam, ext) {
+					n++
+				}
+			}
+			if n != 1 {
+				t.Errorf("%s: source extension %s is in %d language families, want 1", f.Name, ext, n)
+			}
+		}
+	}
+}
+
+func TestExpectsCoverage(t *testing.T) {
+	lcov, _ := Lookup("lcov")
+	frontend := &Profile{Files: []File{{Path: "web/src/app.ts"}}}
+	rust := &Profile{Files: []File{{Path: "src/lib.rs"}}}
+	for _, tc := range []struct {
+		name   string
+		report *Profile
+		path   string
+		want   bool
+	}{
+		{"js file missing from a js report", frontend, "web/src/new.tsx", true},
+		{"rust file is another part's business", frontend, "src/main.rs", false},
+		{"rust file missing from a rust report", rust, "src/main.rs", true},
+		{"ts file is another part's business", rust, "web/src/app.ts", false},
+		{"test file never counts", frontend, "web/src/app.test.ts", false},
+		{"dart test never counts", &Profile{Files: []File{{Path: "lib/main.dart"}}}, "test/widget_test.dart", false},
+		{"non-source never counts", frontend, "README.md", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := lcov.ExpectsCoverage(tc.report)(tc.path); got != tc.want {
+				t.Errorf("ExpectsCoverage(%q) = %v, want %v", tc.path, got, tc.want)
+			}
+		})
+	}
+
+	// Swift and Objective-C build together: either one measured counts
+	// for both.
+	xccov, _ := Lookup("xccov")
+	if !xccov.ExpectsCoverage(&Profile{Files: []File{{Path: "App/View.swift"}}})("App/Legacy.m") {
+		t.Error("an Objective-C file missing from a Swift report should count")
+	}
+	// A format without source extensions counts every non-test file.
+	bare := Format{TestSuffixes: []string{"_test.go"}}
+	if !bare.ExpectsCoverage(frontend)("docs/x.md") || bare.ExpectsCoverage(frontend)("a_test.go") {
+		t.Error("a format without source extensions should count every non-test file")
 	}
 }

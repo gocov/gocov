@@ -3,20 +3,23 @@ import { Link } from "react-router";
 import { CodeBlock, Mono, Notice } from "@/components/atoms";
 import { CopyButton, SecretField, SegmentedControl } from "@/components/molecules";
 import { track } from "@/lib/analytics";
-import type { SetupInfo } from "@/lib/api/types";
+import type { Forge, SetupInfo } from "@/lib/api/types";
 import { forgeLabel } from "@/lib/format";
 import { readStored, writeStored } from "@/lib/storage";
-import { buildSnippet, languageSpec, languages, tokenWhere, type LanguageId } from "@/lib/snippets";
+import { buildSnippet, languageSpec, languagesFor, tokenWhere, type LanguageId } from "@/lib/snippets";
 import { routes } from "@/lib/urls";
 import "./SnippetPanel.css";
 
 /** The picked language outlives the page; a stale or unreadable value is Go. */
 const STORAGE_KEY = "gocov.setup.language";
 
-/** Exported so the card around the panel can name the language in an event. */
-export function storedLanguage(): LanguageId {
+/**
+ * Exported so the card around the panel can name the language in an event.
+ * With a forge it is the language that forge's recipe shows, as the panel does.
+ */
+export function storedLanguage(forge?: Forge): LanguageId {
   const saved = readStored("localStorage", STORAGE_KEY);
-  return saved ? languageSpec(saved).id : "go";
+  return saved ? languageSpec(saved, forge).id : "go";
 }
 
 const rememberLanguage = (id: LanguageId) => writeStored("localStorage", STORAGE_KEY, id);
@@ -36,10 +39,13 @@ interface Props {
  * itself — folds away behind the single primary action.
  */
 export function SnippetPanel({ info, onReveal, onCopied }: Props) {
-  const [language, setLanguage] = useState<LanguageId>(storedLanguage);
+  const [picked, setLanguage] = useState<LanguageId>(storedLanguage);
   const [tokenOpen, setTokenOpen] = useState(false);
 
   const { forge, prefix } = info.workspace;
+  // A remembered language this forge's recipe cannot run (Swift outside
+  // GitHub) shows as Go, without forgetting the choice.
+  const language = languageSpec(picked, forge).id;
   const forgeName = forgeLabel(forge);
   // The alternative path rewrites the snippet while it is open: what is on
   // screen is always what the chosen authentication needs.
@@ -61,7 +67,7 @@ export function SnippetPanel({ info, onReveal, onCopied }: Props) {
   );
 
   function pickLanguage(value: string) {
-    const id = languageSpec(value).id;
+    const id = languageSpec(value, forge).id;
     setLanguage(id);
     rememberLanguage(id);
     track("language_selected", { ...events, language: id });
@@ -110,7 +116,7 @@ export function SnippetPanel({ info, onReveal, onCopied }: Props) {
         label="Language"
         value={language}
         onChange={pickLanguage}
-        options={languages.map((l) => ({ value: l.id, label: l.label }))}
+        options={languagesFor(forge).map((l) => ({ value: l.id, label: l.label }))}
       />
 
       <p className="SnippetPanel__auth">

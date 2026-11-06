@@ -45,9 +45,10 @@ pull request, a gate that can block the merge, and a badge that is one line of m
   [the tour](docs/pull-requests.md)
 - **Coverage gate:** per-repo minimums for total and diff coverage plus a drop tolerance; a failed gate pushes a
   FAILED status your forge's merge checks can block on
-- **Any language:** Go cover profiles, LCOV (Jest, Vitest, nyc, c8), JaCoCo XML (Maven, Gradle, Android), Cobertura
-  XML (coverage.py/pytest-cov, coverlet, gcovr), Clover XML (PHPUnit, Istanbul), SimpleCov resultsets (Ruby),
-  OpenCover XML (Coverlet, OpenCover) and xccov JSON (Xcode) — detected from the uploaded content, no flag needed
+- **Any language:** Go cover profiles, LCOV (Jest, Vitest, nyc, c8, cargo-llvm-cov, flutter test, lcov_ex), JaCoCo XML
+  (Maven, Gradle, Android), Cobertura XML (coverage.py/pytest-cov, coverlet, gcovr, sbt-scoverage), Clover XML
+  (PHPUnit, Istanbul), SimpleCov resultsets (Ruby), OpenCover XML (Coverlet, OpenCover) and xccov JSON (Xcode) —
+  detected from the uploaded content, no flag needed
 - **Web UI:** repo list, per-file coverage, line-by-line source view with hit counts, coverage trend chart, SVG badge
   per repo, sign-in with your forge account — a React single-page app compiled at build time and embedded in the
   server binary, so running gocov is still one binary and Postgres

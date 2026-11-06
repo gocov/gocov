@@ -218,15 +218,15 @@ func (p *Pipeline) diffCoverage(ctx context.Context, fg forge.Forge, repo *store
 	// docs, configs etc. are expected to be absent from the profile. So
 	// are test files, which no report measures, and ignored files — they
 	// were dropped from the profile above, and flagging them as untested
-	// would count them against the PR after all.
-	f, _ := profile.Lookup(format)
-	exts := f.SourceExts
-	result.UnmatchedFiles = slices.DeleteFunc(result.UnmatchedFiles, func(p string) bool {
-		if ignored.Match(p, "") || f.IsTestFile(p) { // diff paths are repo-relative already
-			return true
-		}
-		return len(exts) > 0 && !slices.ContainsFunc(exts, func(ext string) bool { return strings.HasSuffix(p, ext) })
-	})
+	// would count them against the PR after all. So are files of a
+	// language this report does not measure, which another part covers.
+	if len(result.UnmatchedFiles) > 0 {
+		f, _ := profile.Lookup(format)
+		expected := f.ExpectsCoverage(prof)
+		result.UnmatchedFiles = slices.DeleteFunc(result.UnmatchedFiles, func(p string) bool {
+			return ignored.Match(p, "") || !expected(p) // diff paths are repo-relative already
+		})
+	}
 	return result, "computed"
 }
 

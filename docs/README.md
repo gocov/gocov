@@ -3,7 +3,8 @@
 gocov tracks your test coverage and puts it where your team already works: a build status and delta on every
 commit, a diff-coverage comment on every pull request, a gate that can block merges, and a badge for the README.
 It works with GitHub, Bitbucket Cloud and GitLab, and accepts coverage reports from Go, JavaScript/TypeScript,
-Java/Kotlin, Python, PHP, Ruby, C#/.NET and Swift/Objective-C — the format is detected automatically.
+Java/Kotlin, Scala, Python, PHP, Ruby, C#/.NET, Swift/Objective-C, Rust, Dart/Flutter, C/C++ and Elixir — the
+format is detected automatically.
 
 Use the hosted service at [app.gocov.dev](https://app.gocov.dev/?ref=docs), or
 [run your own instance](self-hosting.md) — same binary, same docs.
