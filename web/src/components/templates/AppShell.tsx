@@ -24,9 +24,6 @@ export function AppShell() {
           <NavLink to="/" className="AppShell__brand">
             <Logo /> gocov
           </NavLink>
-          <NavLink to="/" end className="AppShell__link">
-            Repositories
-          </NavLink>
           <span className="spacer" />
           <a className="AppShell__link row hide-sm" href={server.docs()} target="_blank" rel="noopener">
             Docs <Icon name="external" size={12} />
