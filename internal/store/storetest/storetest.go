@@ -28,7 +28,7 @@ func Run(t *testing.T, newStore func(*testing.T) store.Store) {
 	t.Run("PublicRepoRefs", func(t *testing.T) { publicRepoRefs(t, newStore) })
 	t.Run("DeleteWorkspaceCascade", func(t *testing.T) { deleteWorkspaceCascade(t, newStore) })
 	t.Run("CommitReportLifecycle", func(t *testing.T) { commitReportLifecycle(t, newStore) })
-	t.Run("TryPushStatus", func(t *testing.T) { tryPushStatus(t, newStore) })
+	t.Run("PushLease", func(t *testing.T) { pushLease(t, newStore) })
 	t.Run("UserLifecycle", func(t *testing.T) { userLifecycle(t, newStore) })
 	t.Run("SessionLifecycle", func(t *testing.T) { sessionLifecycle(t, newStore) })
 	t.Run("MCPAuthLifecycle", func(t *testing.T) { mcpAuthLifecycle(t, newStore) })
@@ -637,80 +637,118 @@ func commitReportLifecycle(t *testing.T, newStore func(*testing.T) store.Store) 
 	}
 }
 
-func tryPushStatus(t *testing.T, newStore func(*testing.T) store.Store) {
+func pushLease(t *testing.T, newStore func(*testing.T) store.Store) {
 	st := newStore(t)
 	ctx := t.Context()
 	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
 	if err := st.CreateRepo(ctx, repo); err != nil {
 		t.Fatal(err)
 	}
-	noop := func(context.Context) error { return nil }
-
-	// Nothing to push before the report exists.
-	if pushed, err := st.TryPushStatus(ctx, repo.ID, "c1", 5, noop); err != nil || pushed {
-		t.Fatalf("push on missing report = %v, %v (want false)", pushed, err)
-	}
-	if err := st.UpsertCommitReport(ctx, &store.CommitReport{RepoID: repo.ID, CommitSHA: "c1", Branch: "main", PartCount: 1}); err != nil {
-		t.Fatal(err)
-	}
-
-	// A version pushes only if it is at least the last successful one.
-	steps := []struct {
-		version int64
-		want    bool
-	}{
-		{5, true},  // first push
-		{5, true},  // equal — a re-upload of the same part may re-push
-		{3, false}, // older push arriving late — must be skipped
-		{7, true},  // newer recompute pushes
-	}
-	for _, s := range steps {
-		if pushed, err := st.TryPushStatus(ctx, repo.ID, "c1", s.version, noop); err != nil || pushed != s.want {
-			t.Errorf("push v%d = %v (want %v), err %v", s.version, pushed, s.want, err)
+	report := func(sha string) {
+		t.Helper()
+		if err := st.UpsertCommitReport(ctx, &store.CommitReport{RepoID: repo.ID, CommitSHA: sha, Branch: "main", PartCount: 1}); err != nil {
+			t.Fatal(err)
 		}
 	}
+	// upload lands one upload of the commit; its id is the version a push
+	// of it claims at.
+	upload := func(sha string) int64 {
+		t.Helper()
+		u := &store.Upload{RepoID: repo.ID, CommitSHA: sha, Branch: "main", Part: "default", Format: "go"}
+		if err := st.CreateUpload(ctx, u, nil); err != nil {
+			t.Fatal(err)
+		}
+		return u.ID
+	}
+	claim := func(sha string, v int64, lease time.Duration, want store.PushClaim) time.Time {
+		t.Helper()
+		got, until, err := st.ClaimPush(ctx, repo.ID, sha, v, lease)
+		if err != nil || got != want {
+			t.Fatalf("claim %s v%d = %v, %v; want %v", sha, v, got, err, want)
+		}
+		if (got == store.PushClaimed) == until.IsZero() {
+			t.Fatalf("claim %s v%d = %v with lease %v", sha, v, got, until)
+		}
+		return until
+	}
+	finish := func(sha string, v int64, lease time.Time, pushed, wantAgain bool) {
+		t.Helper()
+		again, err := st.FinishPush(ctx, repo.ID, sha, v, lease, pushed)
+		if err != nil || again != wantAgain {
+			t.Fatalf("finish %s v%d = %v, %v; want again=%v", sha, v, again, err, wantAgain)
+		}
+	}
+	const long = time.Minute
 
-	// A failed push does not advance the version — a later part can retry.
-	boom := errors.New("forge down")
-	if _, err := st.TryPushStatus(ctx, repo.ID, "c1", 9, func(context.Context) error { return boom }); !errors.Is(err, boom) {
-		t.Fatalf("failed push err = %v, want boom", err)
-	}
-	// Version is still 7 (not 9): a push at 8 must still succeed.
-	if pushed, err := st.TryPushStatus(ctx, repo.ID, "c1", 8, noop); err != nil || !pushed {
-		t.Errorf("push v8 after failed v9 = %v, %v (want true; failed push must not burn the version)", pushed, err)
-	}
+	// Nothing to push before the report exists.
+	claim("c1", 1, long, store.PushSuperseded)
+	report("c1")
 
-	// Concurrent pushes serialize, so the forge never sees an older push land
-	// after a newer one: whatever pushes last is the highest version that ran.
-	if err := st.UpsertCommitReport(ctx, &store.CommitReport{RepoID: repo.ID, CommitSHA: "c2", Branch: "main", PartCount: 1}); err != nil {
-		t.Fatal(err)
-	}
+	// A version pushes only if it is at least the last one that landed.
+	u1 := upload("c1")
+	finish("c1", u1, claim("c1", u1, long, store.PushClaimed), true, false)
+	finish("c1", u1, claim("c1", u1, long, store.PushClaimed), true, false) // a re-upload may re-push
+
+	// A newer upload of the commit sends the push round again.
+	u2 := upload("c1")
+	finish("c1", u1, claim("c1", u1, long, store.PushClaimed), true, true)
+	finish("c1", u2, claim("c1", u2, long, store.PushClaimed), true, false)
+	claim("c1", u1, long, store.PushSuperseded) // an older push arriving late
+
+	// An upload arriving while a push holds the lease queues behind it,
+	// and the holder is told to go round again.
+	l2 := claim("c1", u2, long, store.PushClaimed)
+	u3 := upload("c1")
+	claim("c1", u3, long, store.PushQueued)
+	finish("c1", u2, l2, true, true)
+	finish("c1", u3, claim("c1", u3, long, store.PushClaimed), true, false)
+
+	// A failed push records nothing, so a later part retries.
+	u4 := upload("c1")
+	finish("c1", u4, claim("c1", u4, long, store.PushClaimed), false, false)
+	finish("c1", u3, claim("c1", u3, long, store.PushClaimed), true, true)
+
+	// A lapsed lease is free: a push whose task died blocks the commit for
+	// its lease at most. The dead holder's late finish leaves the new
+	// lease alone, is not told to go round, and its version still counts.
+	report("c2")
+	v1 := upload("c2")
+	l1 := claim("c2", v1, 20*time.Millisecond, store.PushClaimed)
+	time.Sleep(60 * time.Millisecond)
+	v2 := upload("c2")
+	lv2 := claim("c2", v2, long, store.PushClaimed)
+	finish("c2", v1, l1, true, false)
+	claim("c2", v2, long, store.PushQueued) // the new holder's lease survived
+	finish("c2", v2, lv2, true, false)
+	claim("c2", v1, long, store.PushSuperseded) // v2 landed
+
+	// Concurrent claims: exactly one holds the lease, every other queues.
+	report("c4")
+	w := upload("c4")
 	var mu sync.Mutex
-	var order []int64
+	got := map[store.PushClaim]int{}
+	var lease time.Time
 	var wg sync.WaitGroup
-	for _, v := range []int64{100, 101, 102, 103, 104} {
+	for range 5 {
 		wg.Go(func() {
-			_, _ = st.TryPushStatus(ctx, repo.ID, "c2", v, func(context.Context) error {
-				mu.Lock()
-				order = append(order, v)
-				mu.Unlock()
-				return nil
-			})
+			c, until, err := st.ClaimPush(ctx, repo.ID, "c4", w, long)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			got[c]++
+			if c == store.PushClaimed {
+				lease = until
+			}
 		})
 	}
 	wg.Wait()
-	if len(order) == 0 {
-		t.Fatal("no push ran")
+	if got[store.PushClaimed] != 1 || got[store.PushQueued] != 4 {
+		t.Fatalf("concurrent claims = %v, want one claimed and four queued", got)
 	}
-	last, maxV := order[len(order)-1], int64(0)
-	for _, v := range order {
-		if v > maxV {
-			maxV = v
-		}
-	}
-	if last != maxV {
-		t.Errorf("last push was v%d but v%d pushed earlier — a stale status won: %v", last, maxV, order)
-	}
+	finish("c4", w, lease, true, false)
 }
 
 func userLifecycle(t *testing.T, newStore func(*testing.T) store.Store) {

@@ -8,14 +8,15 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/forge"
@@ -56,8 +57,12 @@ func TestUploadStatusPushSuperseded(t *testing.T) {
 	// Simulate a newer concurrent recompute having already pushed a higher
 	// version. A subsequent upload (lower version) must not overwrite the
 	// forge status with its now-stale view.
-	if pushed, err := f.store.TryPushStatus(ctx, f.repo.ID, "c1", 1<<30, func(context.Context) error { return nil }); err != nil || !pushed {
-		t.Fatalf("setup push = %v, %v", pushed, err)
+	claim, lease, err := f.store.ClaimPush(ctx, f.repo.ID, "c1", 1<<30, time.Minute)
+	if err != nil || claim != store.PushClaimed {
+		t.Fatalf("setup claim = %v, %v", claim, err)
+	}
+	if _, err := f.store.FinishPush(ctx, f.repo.ID, "c1", 1<<30, lease, true); err != nil {
+		t.Fatal(err)
 	}
 
 	better := "mode: set\nexample.com/m/a.go:1.1,5.2 10 3\n" // 100%
@@ -371,5 +376,40 @@ func TestCodeInsightsFailureIsolation(t *testing.T) {
 	if len(broken.forge.CommentCalls) != 1 ||
 		broken.forge.CommentCalls[0].Body != healthy.forge.CommentCalls[0].Body {
 		t.Errorf("PR comment diverged")
+	}
+}
+
+// A part uploaded while another part of its commit is still pushing gets
+// its answer at once, every surface queued, and the forge still ends on
+// the two parts merged.
+func TestUploadQueuedBehindAConcurrentPush(t *testing.T) {
+	f := newFixture(t, map[string]string{})
+	entered, release := f.forge.HoldFirstStatus()
+
+	backend := "mode: set\nexample.com/m/a.go:1.1,5.2 8 1\nexample.com/m/a.go:7.1,9.2 2 0\n"  // 8/10
+	frontend := "mode: set\nexample.com/m/b.go:1.1,5.2 2 1\nexample.com/m/b.go:7.1,9.2 8 0\n" // 2/10
+	first := make(chan *httptest.ResponseRecorder)
+	go func() {
+		first <- doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "part": "backend"}, backend)
+	}()
+	<-entered
+
+	var resp uploadResponse
+	rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "part": "frontend"}, frontend)
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated || resp.BuildStatus != core.Queued || resp.CodeInsights != core.Queued {
+		t.Fatalf("second upload = %d, build %q, insights %q; want both queued", rec.Code, resp.BuildStatus, resp.CodeInsights)
+	}
+
+	close(release)
+	<-first
+	if err := f.srv.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	calls := f.forge.StatusCalls
+	if len(calls) != 2 || calls[1].Status.Description != "coverage: 50.0%" {
+		t.Errorf("status calls = %+v, want the follow-up to post both parts merged", calls)
 	}
 }

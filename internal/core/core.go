@@ -46,6 +46,10 @@ type Pipeline struct {
 	// deployment configuration (that lives in internal/config).
 	VisibilityUploadTTL time.Duration
 
+	// bg runs the work that goes on after a request is answered: forge
+	// push follow-ups and visibility re-checks (background.go).
+	bg background
+
 	// visMu guards the in-process visibility-refresh state: visChecks is
 	// when each repo's background re-check was last attempted (the serving
 	// path's rate limit, pruned as entries age out), visInFlight the repos

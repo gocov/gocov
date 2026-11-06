@@ -324,6 +324,12 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("ok\n"))
 }
 
+// Drain lets the work the pipeline goes on with after answering requests
+// (forge push follow-ups, visibility re-checks) finish, then cuts it short
+// shortly before ctx's deadline (core.Pipeline.Drain). Call it after the
+// HTTP server has shut down and before the store closes.
+func (s *Server) Drain(ctx context.Context) error { return s.pipeline.Drain(ctx) }
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.handler.ServeHTTP(w, r)
 }

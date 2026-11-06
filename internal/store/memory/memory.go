@@ -28,8 +28,8 @@ type Store struct {
 	reports    map[int64]*store.CommitReport // merged reports, keyed by report ID
 	crLocks    map[string]*sync.Mutex        // per-commit recompute locks
 	grantLocks map[int64]*sync.Mutex         // per-workspace grant-refresh locks
-	crPush     map[string]*sync.Mutex        // per-commit status-push locks
-	crStatus   map[string]int64              // last pushed status version, keyed repoID:sha
+	crLease    map[string]time.Time          // per-commit push lease expiry, keyed by commitKey
+	crStatus   map[string]int64              // last pushed status version, keyed by commitKey
 	workspaces map[int64]*store.Workspace
 	users      map[int64]*store.User
 	sessions   map[string]*store.Session      // keyed by token hash
@@ -48,7 +48,7 @@ func New() *Store {
 		reports:    map[int64]*store.CommitReport{},
 		crLocks:    map[string]*sync.Mutex{},
 		grantLocks: map[int64]*sync.Mutex{},
-		crPush:     map[string]*sync.Mutex{},
+		crLease:    map[string]time.Time{},
 		crStatus:   map[string]int64{},
 		workspaces: map[int64]*store.Workspace{},
 		users:      map[int64]*store.User{},
@@ -771,7 +771,7 @@ func (s *Store) LatestUploadsPerPart(_ context.Context, repoID int64, commitSHA 
 }
 
 func (s *Store) WithCommitReportTx(ctx context.Context, repoID int64, commitSHA string, fn func(context.Context, store.CommitTx) error) error {
-	m := s.mutexFor(s.crLocks, fmt.Sprintf("%d:%s", repoID, commitSHA))
+	m := s.mutexFor(s.crLocks, commitKey(repoID, commitSHA))
 	m.Lock()
 	defer m.Unlock()
 	// The store's own methods satisfy store.CommitTx; the per-commit mutex
@@ -863,31 +863,41 @@ func (s *Store) latestCommitReport(repoID int64, branch string, beforeID int64, 
 	return copyCommitReport(latest), nil
 }
 
-func (s *Store) TryPushStatus(ctx context.Context, repoID int64, commitSHA string, version int64, push func(context.Context) error) (bool, error) {
-	key := fmt.Sprintf("%d:%s", repoID, commitSHA)
-	// Serialize the whole check-push-advance per commit, mirroring the
-	// Postgres advisory lock.
-	m := s.mutexFor(s.crPush, key)
-	m.Lock()
-	defer m.Unlock()
+func (s *Store) ClaimPush(_ context.Context, repoID int64, commitSHA string, version int64, lease time.Duration) (store.PushClaim, time.Time, error) {
+	key := commitKey(repoID, commitSHA)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.commitReportLocked(repoID, commitSHA) == nil || version < s.crStatus[key] {
+		return store.PushSuperseded, time.Time{}, nil
+	}
+	now := time.Now()
+	if s.crLease[key].After(now) {
+		return store.PushQueued, time.Time{}, nil
+	}
+	s.crLease[key] = now.Add(lease)
+	return store.PushClaimed, s.crLease[key], nil
+}
 
+func (s *Store) FinishPush(_ context.Context, repoID int64, commitSHA string, version int64, lease time.Time, pushed bool) (bool, error) {
+	key := commitKey(repoID, commitSHA)
 	s.mu.Lock()
-	exists := s.commitReportLocked(repoID, commitSHA) != nil
-	cur := s.crStatus[key]
-	s.mu.Unlock()
-	if !exists {
-		return false, nil // no report to attach a status to
+	defer s.mu.Unlock()
+	if s.commitReportLocked(repoID, commitSHA) == nil {
+		return false, nil
 	}
-	if version < cur {
-		return false, nil // a newer push already owns the status
+	if pushed && version > s.crStatus[key] {
+		s.crStatus[key] = version
 	}
-	if err := push(ctx); err != nil {
-		return false, err // version not advanced, so a retry can push
+	if !s.crLease[key].Equal(lease) {
+		return false, nil // lapsed and taken by another push
 	}
-	s.mu.Lock()
-	s.crStatus[key] = version
-	s.mu.Unlock()
-	return true, nil
+	delete(s.crLease, key)
+	for _, u := range s.uploads {
+		if u.RepoID == repoID && u.CommitSHA == commitSHA && u.ID > version {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (s *Store) CommitParts(_ context.Context, repoID int64, commitSHA string) ([]string, error) {
@@ -962,6 +972,12 @@ func (s *Store) ReleaseTokenlessUpload(_ context.Context, repoID, runID, runAtte
 	defer s.mu.Unlock()
 	delete(s.tokenless, tokenlessKey(repoID, runID, runAttempt, part))
 	return nil
+}
+
+// commitKey keys the per-commit maps (recompute locks, push leases, pushed
+// versions) the same way.
+func commitKey(repoID int64, commitSHA string) string {
+	return fmt.Sprintf("%d:%s", repoID, commitSHA)
 }
 
 func tokenlessKey(repoID, runID, runAttempt int64, part string) string {

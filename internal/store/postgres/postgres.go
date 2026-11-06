@@ -1095,9 +1095,8 @@ func (c *commitReportTx) UpsertCommitReport(ctx context.Context, cr *store.Commi
 
 // advisoryKey hashes a namespace and (id, name) into the signed 64-bit
 // space Postgres advisory locks use. The namespace keeps the recompute
-// lock, the status-push lock and the grant-refresh lock (keyed by
-// workspace id, with an empty name) in separate spaces so they never block
-// each other for the same id.
+// lock and the grant-refresh lock (keyed by workspace id, with an empty
+// name) in separate spaces so they never block each other for the same id.
 func advisoryKey(namespace string, id int64, name string) int64 {
 	h := fnv.New64a()
 	fmt.Fprintf(h, "%s:%d:%s", namespace, id, name)
@@ -1167,48 +1166,64 @@ func (s *Store) latestPassedCommitReport(ctx context.Context, q querier, repoID 
 		repoID, branch, excludeCommit, beforeID))
 }
 
-// TryPushStatus serializes the forge status/PR-comment push for one commit
-// under a per-commit advisory lock and runs push only when version is at
-// least the last successfully pushed version, advancing the stored version
-// only after push returns nil. Serializing the whole check-push-advance —
-// rather than just claiming a version before an unordered push — means the
-// forge can't be left on a stale status by a slow older push landing last,
-// and a failed push (push returns an error) leaves the version untouched so
-// a later part retries. Returns whether push ran.
-//
-// push runs while the lock's transaction is held, so it must be bounded by
-// ctx; it performs the forge HTTP itself. When no report row exists yet
-// there is nothing to attach a status to and push does not run.
-func (s *Store) TryPushStatus(ctx context.Context, repoID int64, commitSHA string, version int64, push func(context.Context) error) (bool, error) {
-	var pushed bool
-	err := s.withAdvisoryLock(ctx, advisoryKey("status", repoID, commitSHA), func(tx pgx.Tx) error {
-		var cur int64
-		err := tx.QueryRow(ctx,
-			"SELECT status_pushed_version FROM commit_reports WHERE repo_id = $1 AND commit_sha = $2",
-			repoID, commitSHA).Scan(&cur)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil // no report to attach a status to
-		}
-		if err != nil {
-			return err
-		}
-		if version < cur {
-			return nil // a newer push already owns the status
-		}
-		if err := push(ctx); err != nil {
-			return err // rolled back: version not advanced, so a retry can push
-		}
-		if _, err := tx.Exec(ctx,
-			"UPDATE commit_reports SET status_pushed_version = $3 WHERE repo_id = $1 AND commit_sha = $2",
-			repoID, commitSHA, version); err != nil {
-			return err
-		}
-		pushed = true
-		return nil
-	})
-	// pushed is set only once the version is advanced, so a failed commit
-	// reports (true, err) exactly as before: push ran, the stamp did not land.
-	return pushed, err
+// ClaimPush takes the commit's push lease in one statement, so claims
+// from both tasks of a rolling deploy serialize on the report row's lock
+// for that statement only — never across the forge calls. A free lease
+// (none, or lapsed) is taken; a held one is left as it is, and the claim
+// writes nothing.
+func (s *Store) ClaimPush(ctx context.Context, repoID int64, commitSHA string, version int64, lease time.Duration) (store.PushClaim, time.Time, error) {
+	var free bool
+	var until *time.Time
+	err := s.pool.QueryRow(ctx, `
+		WITH cur AS (
+			SELECT push_lease_until IS NULL OR push_lease_until <= now() AS free
+			FROM commit_reports
+			WHERE repo_id = $1 AND commit_sha = $2 AND status_pushed_version <= $3
+			FOR UPDATE
+		), taken AS (
+			UPDATE commit_reports c SET push_lease_until = now() + make_interval(secs => $4)
+			FROM cur
+			WHERE cur.free AND c.repo_id = $1 AND c.commit_sha = $2
+			RETURNING c.push_lease_until
+		)
+		SELECT cur.free, (SELECT push_lease_until FROM taken) FROM cur`,
+		repoID, commitSHA, version, lease.Seconds()).Scan(&free, &until)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return store.PushSuperseded, time.Time{}, nil // no report, or a newer push landed
+	case err != nil:
+		return 0, time.Time{}, err
+	case free && until != nil:
+		return store.PushClaimed, *until, nil
+	default:
+		return store.PushQueued, time.Time{}, nil
+	}
+}
+
+// FinishPush records the version, releases the lease if it is still the
+// caller's (its expiry is the token) and says whether the commit has a
+// newer upload, all in one statement.
+func (s *Store) FinishPush(ctx context.Context, repoID int64, commitSHA string, version int64, lease time.Time, pushed bool) (bool, error) {
+	var again bool
+	err := s.pool.QueryRow(ctx, `
+		WITH cur AS (
+			SELECT push_lease_until IS NOT DISTINCT FROM $4::timestamptz AS mine
+			FROM commit_reports
+			WHERE repo_id = $1 AND commit_sha = $2
+			FOR UPDATE
+		)
+		UPDATE commit_reports c SET
+			status_pushed_version = CASE WHEN $5 THEN GREATEST(c.status_pushed_version, $3) ELSE c.status_pushed_version END,
+			push_lease_until = CASE WHEN cur.mine THEN NULL ELSE c.push_lease_until END
+		FROM cur
+		WHERE c.repo_id = $1 AND c.commit_sha = $2
+		RETURNING cur.mine AND EXISTS (
+			SELECT 1 FROM uploads u WHERE u.repo_id = $1 AND u.commit_sha = $2 AND u.id > $3)`,
+		repoID, commitSHA, version, lease, pushed).Scan(&again)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil // the report is gone
+	}
+	return again, err
 }
 
 func (s *Store) ClaimTokenlessUpload(ctx context.Context, repoID, runID, runAttempt int64, part string) (bool, error) {

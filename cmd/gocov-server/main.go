@@ -78,6 +78,13 @@ func run(args []string) error {
 // message instead of being killed mid-request by Docker.
 const healthProbeTimeout = server.HealthTimeout + 500*time.Millisecond
 
+// stopBudget is everything a stopping server gets: the HTTP drain, then
+// the background work (forge push follow-ups) on what is left, which
+// cuts itself short in time to unwind before the deadline. It stays under
+// ECS's 30 s stopTimeout (deploy/ecs/task-definition.json), past which
+// the task is killed.
+const stopBudget = 28 * time.Second
+
 // healthcheck asks the server we are running next to whether it is well,
 // and reports the answer as an exit status. It exists because the runtime
 // image is distroless: there is no wget or curl in the container for a
@@ -174,9 +181,10 @@ func serve() error {
 		return err
 	}
 
+	app := server.New(srvCfg)
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           server.New(srvCfg),
+		Handler:           app,
 		ReadHeaderTimeout: 10 * time.Second,
 		// Close idle keep-alive connections rather than holding them open
 		// for as long as a client likes. (Request bodies are bounded per
@@ -198,10 +206,16 @@ func serve() error {
 		// process the default way if shutdown hangs.
 		stop()
 		log.Info("shutting down")
-		shutCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		stopCtx, cancel := context.WithTimeout(context.Background(), stopBudget)
 		defer cancel()
-		if err := httpSrv.Shutdown(shutCtx); err != nil {
+		if err := httpSrv.Shutdown(stopCtx); err != nil {
 			return fmt.Errorf("shutdown: %w", err)
+		}
+		// Background work for requests already answered, before the
+		// deferred pool close it still needs. Cutting it short is not a
+		// failed shutdown.
+		if err := app.Drain(stopCtx); err != nil {
+			log.Warn("shutdown: background work", "err", err)
 		}
 		return nil
 	}

@@ -292,11 +292,11 @@ func (p *Pipeline) ReverifyVisibilityIfStale(repo *store.Repo) bool {
 	// Detached copy and context: the check outlives the request, and the
 	// request's repo struct must not be written from another goroutine.
 	r := *repo
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), visibilityRecheckTimeout)
+	p.bg.Go(func(ctx context.Context) {
+		ctx, cancel := context.WithTimeout(ctx, visibilityRecheckTimeout)
 		defer cancel()
 		p.ReverifyVisibility(ctx, &r)
-	}()
+	})
 	return true
 }
 

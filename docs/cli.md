@@ -131,7 +131,8 @@ matched by suffix and usually need nothing. Symptoms and details:
 
 A successful upload prints the totals the server computed — coverage, delta, how many files the
 [ignore patterns](ignoring-files.md) dropped (when any did), diff coverage, and the status of each forge surface
-(`build status`, `pr comment`, `code insights`: `posted`, or `skipped` with the reason) plus the gate verdict:
+(`build status`, `pr comment`, `code insights`: `posted`, `skipped` with the reason, or `queued` when another upload
+of the same commit was pushing and carries this one — see [parts](parts.md)) plus the gate verdict:
 
 ```
 uploaded: 82.0% (1230/1500 statements), delta +0.4%
