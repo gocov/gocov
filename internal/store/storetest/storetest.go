@@ -711,6 +711,18 @@ func pushLease(t *testing.T, newStore func(*testing.T) store.Store) {
 	time.Sleep(60 * time.Millisecond)
 	finish("c3", 32, claim("c3", 32, long, store.PushClaimed), true, true)
 
+	// A holder that stops going round marks the commit pending; the next
+	// claim is a plain one, and its finish says to go round again.
+	report("c5")
+	if err := st.MarkPushPending(ctx, repo.ID, "c5"); err != nil {
+		t.Fatal(err)
+	}
+	finish("c5", 50, claim("c5", 50, long, store.PushClaimed), true, true)
+	finish("c5", 51, claim("c5", 51, long, store.PushClaimed), true, false)
+	if err := st.MarkPushPending(ctx, repo.ID, "no-report"); err != nil {
+		t.Errorf("marking a commit without a report = %v, want a no-op", err)
+	}
+
 	// Concurrent claims: exactly one holds the lease, every other queues.
 	report("c4")
 	var mu sync.Mutex

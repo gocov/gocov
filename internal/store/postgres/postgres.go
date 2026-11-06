@@ -1234,6 +1234,13 @@ func (s *Store) FinishPush(ctx context.Context, repoID int64, commitSHA string, 
 	return false, err
 }
 
+func (s *Store) MarkPushPending(ctx context.Context, repoID int64, commitSHA string) error {
+	_, err := s.pool.Exec(ctx,
+		"UPDATE commit_reports SET push_dirty = true WHERE repo_id = $1 AND commit_sha = $2",
+		repoID, commitSHA)
+	return err
+}
+
 func (s *Store) ClaimTokenlessUpload(ctx context.Context, repoID, runID, runAttempt int64, part string) (bool, error) {
 	tag, err := s.pool.Exec(ctx,
 		`INSERT INTO tokenless_claims (repo_id, run_id, run_attempt, part)

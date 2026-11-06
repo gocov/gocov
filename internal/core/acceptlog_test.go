@@ -127,12 +127,10 @@ func TestAcceptLogsFailingStage(t *testing.T) {
 
 // The push is split in the log into the lease claim and each surface's
 // round trip; the PR comment only for a PR, only the claim when no
-// surface reached the forge (superseded, queued), nothing without a forge
-// connection, and the rounds when the upload pushed again for others.
+// surface reached the forge (superseded, queued), and nothing without a
+// forge connection.
 func TestAcceptLogSplitsThePush(t *testing.T) {
-	ran := pushTimings{ran: true, rounds: 1, claim: 3 * time.Millisecond, status: 400 * time.Millisecond, insights: 700 * time.Millisecond, comment: 900 * time.Millisecond}
-	again := ran
-	again.rounds = 3
+	ran := pushTimings{tried: true, ran: true, claim: 3 * time.Millisecond, status: 400 * time.Millisecond, insights: 700 * time.Millisecond, comment: 900 * time.Millisecond}
 	for _, tc := range []struct {
 		name    string
 		prID    string
@@ -141,9 +139,8 @@ func TestAcceptLogSplitsThePush(t *testing.T) {
 	}{
 		{"pr", "7", ran, map[string]float64{"push_claim_ms": 3, "status_ms": 400, "insights_ms": 700, "comment_ms": 900}},
 		{"branch build", "", ran, map[string]float64{"push_claim_ms": 3, "status_ms": 400, "insights_ms": 700}},
-		{"queued", "7", pushTimings{rounds: 1, claim: 3 * time.Millisecond}, map[string]float64{"push_claim_ms": 3}},
+		{"queued", "7", pushTimings{tried: true, claim: 3 * time.Millisecond}, map[string]float64{"push_claim_ms": 3}},
 		{"no forge", "7", pushTimings{}, map[string]float64{}},
-		{"pushed again", "", again, map[string]float64{"push_claim_ms": 3, "status_ms": 400, "insights_ms": 700, "push_rounds": 3}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
@@ -153,7 +150,7 @@ func TestAcceptLogSplitsThePush(t *testing.T) {
 			p.logAccept(sub, newAcceptTimings(time.Time{}), res, nil)
 
 			line := findLog(t, logLines(t, &buf), "upload accepted")
-			for _, k := range []string{"push_claim_ms", "status_ms", "insights_ms", "comment_ms", "push_rounds"} {
+			for _, k := range []string{"push_claim_ms", "status_ms", "insights_ms", "comment_ms"} {
 				want, ok := tc.want[k]
 				got, present := line[k]
 				switch {

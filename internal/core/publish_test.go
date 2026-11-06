@@ -448,8 +448,9 @@ func (g *gatedForge) PostBuildStatus(ctx context.Context, repoSlug, commitSHA st
 }
 
 // An upload landing while another upload of its commit pushes does not
-// wait: it reports queued, and the push in flight goes round again with
-// the commit's newest state, so the forge ends on both parts merged.
+// wait: it reports queued. The push in flight answers its own upload, then
+// goes round again in the background with the commit's newest state, so
+// the forge ends on both parts merged.
 func TestPushQueuesBehindAPushInFlight(t *testing.T) {
 	p, st, repo := newPipeline(t, store.Gate{})
 	ctx := t.Context()
@@ -475,9 +476,11 @@ func TestPushQueuesBehindAPushInFlight(t *testing.T) {
 	}
 
 	close(fg.release)
-	res := <-first
-	if res.BuildStatus != "posted" || res.timings.rounds != 2 {
-		t.Errorf("first push = %+v (rounds %d), want posted in 2 rounds", res, res.timings.rounds)
+	if res := <-first; res.BuildStatus != "posted" {
+		t.Errorf("first push = %+v, want posted", res)
+	}
+	if err := p.WaitPushes(ctx); err != nil {
+		t.Fatal(err)
 	}
 	if n := len(fg.StatusCalls); n != 2 {
 		t.Fatalf("%d status calls, want 2", n)
@@ -485,14 +488,68 @@ func TestPushQueuesBehindAPushInFlight(t *testing.T) {
 	if got := fg.StatusCalls[1].Status.Description; got != "coverage: 50.0%" {
 		t.Errorf("last status = %q, want both parts merged (coverage: 50.0%%)", got)
 	}
-	// The lease is free again: the commit's next upload pushes at once.
-	if claim, _, err := st.ClaimPush(ctx, repo.ID, "c1", front.ID, time.Minute); err != nil || claim != store.PushClaimed {
-		t.Errorf("claim after the rounds = %v, %v; want the lease released", claim, err)
+	// The lease is free again and nothing is left waiting: the commit's
+	// next push is a plain one.
+	claim, lease, err := st.ClaimPush(ctx, repo.ID, "c1", front.ID, time.Minute)
+	if err != nil || claim != store.PushClaimed {
+		t.Fatalf("claim after the follow-up = %v, %v; want the lease released", claim, err)
+	}
+	if again, err := st.FinishPush(ctx, repo.ID, "c1", front.ID, lease, true); err != nil || again {
+		t.Errorf("finish after the follow-up = %v, %v; want nothing left waiting", again, err)
 	}
 }
 
+// A follow-up that cannot reload the commit does not drop the uploads
+// that queued: it marks the commit, and the next push claimed for it is
+// told to go round again.
+func TestPushFollowUpFailureLeavesTheCommitPending(t *testing.T) {
+	p, st, repo := newPipeline(t, store.Gate{})
+	ctx := t.Context()
+	fg := &gatedForge{Forge: fake.New(), entered: make(chan struct{}), release: make(chan struct{})}
+
+	back := addPart(t, st, repo, "c1", "backend", 8, 10)
+	backMerged, err := p.Recompute(ctx, repo, back)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := make(chan PushResult)
+	go func() { first <- p.Push(ctx, fg, repo, back, backMerged) }()
+	<-fg.entered
+	front := addPart(t, st, repo, "c1", "frontend", 2, 10)
+	frontMerged, err := p.Recompute(ctx, repo, front)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q := p.Push(ctx, fg, repo, front, frontMerged); q.BuildStatus != Queued {
+		t.Fatalf("second push = %q, want queued", q.BuildStatus)
+	}
+
+	p.Store = reloadErrStore{st} // the follow-up's reload fails
+	close(fg.release)
+	<-first
+	if err := p.WaitPushes(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(fg.StatusCalls); n != 1 {
+		t.Fatalf("%d status calls, want only the holder's own", n)
+	}
+	claim, lease, err := st.ClaimPush(ctx, repo.ID, "c1", front.ID, time.Minute)
+	if err != nil || claim != store.PushClaimed {
+		t.Fatalf("next claim = %v, %v", claim, err)
+	}
+	if again, err := st.FinishPush(ctx, repo.ID, "c1", front.ID, lease, true); err != nil || !again {
+		t.Errorf("next finish = %v, %v; want it told to go round again", again, err)
+	}
+}
+
+type reloadErrStore struct{ store.Store }
+
+func (reloadErrStore) LatestUploadsPerPart(context.Context, int64, string) ([]*store.Upload, error) {
+	return nil, errors.New("pool closed")
+}
+
 // A push that cannot claim says so on every surface rather than leaving
-// them blank, and does not go round again.
+// them blank.
 func TestPushReportsAClaimFailure(t *testing.T) {
 	p, st, repo := newPipeline(t, store.Gate{})
 	u := addBranchPart(t, st, repo, "c1", "feature", "7", "default", 8, 10)
@@ -502,8 +559,8 @@ func TestPushReportsAClaimFailure(t *testing.T) {
 	}
 	p.Store = claimErrStore{st}
 	res := p.Push(t.Context(), fake.New(), repo, u, merged)
-	if !strings.HasPrefix(res.BuildStatus, "error: ") || res.PRComment != res.BuildStatus || res.timings.rounds != 1 {
-		t.Errorf("push = %+v, want an error on every surface in one round", res)
+	if !strings.HasPrefix(res.BuildStatus, "error: ") || res.PRComment != res.BuildStatus || res.timings.ran {
+		t.Errorf("push = %+v, want an error on every surface and nothing pushed", res)
 	}
 }
 

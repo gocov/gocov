@@ -174,9 +174,10 @@ func serve() error {
 		return err
 	}
 
+	app := server.New(srvCfg)
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           server.New(srvCfg),
+		Handler:           app,
 		ReadHeaderTimeout: 10 * time.Second,
 		// Close idle keep-alive connections rather than holding them open
 		// for as long as a client likes. (Request bodies are bounded per
@@ -202,6 +203,12 @@ func serve() error {
 		defer cancel()
 		if err := httpSrv.Shutdown(shutCtx); err != nil {
 			return fmt.Errorf("shutdown: %w", err)
+		}
+		// Forge pushes still going round for uploads already answered: let
+		// them land before the pool closes. One cut off leaves its commit
+		// for the commit's next upload.
+		if err := app.WaitPushes(shutCtx); err != nil {
+			return fmt.Errorf("shutdown: waiting for forge pushes: %w", err)
 		}
 		return nil
 	}

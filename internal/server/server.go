@@ -324,6 +324,11 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("ok\n"))
 }
 
+// WaitPushes waits for the forge pushes the pipeline is still making in
+// the background for uploads already answered, or for ctx. Call it after
+// the HTTP server has shut down, so a follow-up is not cut off half way.
+func (s *Server) WaitPushes(ctx context.Context) error { return s.pipeline.WaitPushes(ctx) }
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.handler.ServeHTTP(w, r)
 }

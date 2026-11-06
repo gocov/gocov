@@ -561,6 +561,10 @@ type Store interface {
 	// claim and push the commit's newest state. A lease that has expired
 	// and been claimed by another push is left alone, and again is false.
 	FinishPush(ctx context.Context, repoID int64, commitSHA string, version int64, lease time.Time, pushed bool) (again bool, err error)
+	// MarkPushPending marks the commit as having uploads the forge has not
+	// seen, for a holder that stops going round before the queue is empty:
+	// the next push claimed for the commit is then told to go round again.
+	MarkPushPending(ctx context.Context, repoID int64, commitSHA string) error
 	// CommitParts returns the distinct part names uploaded for a commit —
 	// a cheap read (no blocks/diff) for the per-commit parts cap.
 	CommitParts(ctx context.Context, repoID int64, commitSHA string) ([]string, error)

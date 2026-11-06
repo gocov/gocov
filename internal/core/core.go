@@ -46,6 +46,10 @@ type Pipeline struct {
 	// deployment configuration (that lives in internal/config).
 	VisibilityUploadTTL time.Duration
 
+	// pushes tracks the background follow-up pushes (publish.go), so a
+	// shutting-down server can wait for them (WaitPushes).
+	pushes sync.WaitGroup
+
 	// visMu guards the in-process visibility-refresh state: visChecks is
 	// when each repo's background re-check was last attempted (the serving
 	// path's rate limit, pruned as entries age out), visInFlight the repos

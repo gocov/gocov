@@ -879,7 +879,7 @@ func (s *Store) ClaimPush(_ context.Context, repoID int64, commitSHA string, ver
 	}
 	l := s.crLease[key]
 	now := time.Now()
-	if !l.until.IsZero() && l.until.After(now) {
+	if l.until.After(now) {
 		l.dirty = true
 		s.crLease[key] = l
 		return store.PushQueued, time.Time{}, nil
@@ -902,6 +902,19 @@ func (s *Store) FinishPush(_ context.Context, repoID int64, commitSHA string, ve
 	}
 	delete(s.crLease, key)
 	return l.dirty, nil
+}
+
+func (s *Store) MarkPushPending(_ context.Context, repoID int64, commitSHA string) error {
+	key := fmt.Sprintf("%d:%s", repoID, commitSHA)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.commitReportLocked(repoID, commitSHA) == nil {
+		return nil
+	}
+	l := s.crLease[key]
+	l.dirty = true
+	s.crLease[key] = l
+	return nil
 }
 
 func (s *Store) CommitParts(_ context.Context, repoID int64, commitSHA string) ([]string, error) {

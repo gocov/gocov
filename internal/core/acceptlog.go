@@ -60,11 +60,10 @@ func (p *Pipeline) logAccept(sub Submission, t *acceptTimings, res *Result, err 
 		"push_ms", t.push.Milliseconds(),
 	)
 	// push_ms split: claiming the commit's push lease, then each surface's
-	// forge round trip (side by side, so a round takes as long as the
+	// forge round trip (side by side, so the push takes as long as the
 	// slowest). Left out without a forge connection; the surfaces are left
-	// out when none reached the forge (superseded, queued). push_rounds
-	// appears when uploads queued behind this one and it pushed again.
-	if pt := res.pushTimings(); pt.rounds > 0 {
+	// out when none reached the forge (superseded, queued).
+	if pt := res.pushTimings(); pt.tried {
 		attrs = append(attrs, "push_claim_ms", pt.claim.Milliseconds())
 		if pt.ran {
 			attrs = append(attrs,
@@ -74,9 +73,6 @@ func (p *Pipeline) logAccept(sub Submission, t *acceptTimings, res *Result, err 
 			if sub.PRID != "" {
 				attrs = append(attrs, "comment_ms", pt.comment.Milliseconds())
 			}
-		}
-		if pt.rounds > 1 {
-			attrs = append(attrs, "push_rounds", pt.rounds)
 		}
 	}
 	attrs = append(attrs, "accept_ms", end.Sub(t.accepted).Milliseconds())
