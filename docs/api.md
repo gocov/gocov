@@ -120,7 +120,7 @@ another repo. A credential that is not one at all (an unknown token, or an OIDC 
   when there is nothing to compare with.
 - `diff` is the [diff coverage](pull-requests.md) of a pull-request commit, `null` otherwise. `uncovered` lists
   only the changed files with changed lines no test ran, as the human `lines` and as inclusive `[start, end]`
-  `spans`; `unmatched_files` are changed files the coverage data does not mention.
+  `spans`; `unmatched_files` are changed source files the coverage data does not mention, in a language it measures.
 - `404` also answers a commit with no report yet, or a branch with none.
 
 Fields are only ever added: a client should ignore the ones it does not know.

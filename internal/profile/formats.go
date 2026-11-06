@@ -61,6 +61,58 @@ func jsTestSuffixes() []string {
 	return out
 }
 
+// languageFamilies groups source extensions by the language — or the set
+// of languages one build compiles together, like Swift with Objective-C —
+// that a single test run measures. Every source extension of every format
+// is in exactly one family.
+var languageFamilies = [][]string{
+	{".go"},
+	jsExts,
+	{".java", ".kt", ".kts", ".scala", ".groovy"},
+	{".py"},
+	{".cs", ".vb", ".fs"},
+	{".php"},
+	{".rb", ".rake"},
+	{".rs"},
+	{".dart"},
+	{".ex", ".exs"},
+	{".c", ".cc", ".cpp", ".m", ".mm", ".swift"},
+}
+
+// familyOf returns the index of path's language family, or -1.
+func familyOf(path string) int {
+	return slices.IndexFunc(languageFamilies, func(exts []string) bool {
+		return slices.ContainsFunc(exts, func(ext string) bool { return strings.HasSuffix(path, ext) })
+	})
+}
+
+// UnmeasuredSource returns the test diff coverage applies to a changed
+// file that report p has no data for: does its absence mean untested
+// code? It does when the file is one of the format's sources, is not a
+// test file, and belongs to a language family p measures. That last part
+// keeps formats several languages write apart: a frontend's LCOV says
+// nothing about the Rust files a separate LCOV upload covers, so a changed
+// .rs file is no finding against it. A format without source extensions
+// counts every changed non-test file.
+func (f Format) UnmeasuredSource(p *Profile) func(path string) bool {
+	measured := map[int]bool{}
+	for _, file := range p.Files {
+		measured[familyOf(file.Path)] = true
+	}
+	return func(path string) bool {
+		if f.IsTestFile(path) {
+			return false
+		}
+		if len(f.SourceExts) == 0 {
+			return true
+		}
+		if !slices.ContainsFunc(f.SourceExts, func(ext string) bool { return strings.HasSuffix(path, ext) }) {
+			return false
+		}
+		return measured[familyOf(path)]
+	}
+}
+
 // IsTestFile reports whether path names a test file of this format's
 // languages.
 func (f Format) IsTestFile(path string) bool {
@@ -70,11 +122,15 @@ func (f Format) IsTestFile(path string) bool {
 var formats = []Format{
 	{Name: "go", Parser: GoParser{}, Filename: "coverage.out", SourceExts: []string{".go"},
 		TestSuffixes: []string{"_test.go"}},
-	{Name: "lcov", Parser: LCOVParser{}, Filename: "lcov.info", SourceExts: jsExts, TestSuffixes: jsTestSuffixes()},
+	// LCOV is JavaScript's format, and also what cargo-llvm-cov (Rust),
+	// flutter test (Dart), lcov_ex (Elixir) and lcov/gcov (C, C++) write.
+	{Name: "lcov", Parser: LCOVParser{}, Filename: "lcov.info",
+		SourceExts:   slices.Concat(jsExts, []string{".rs", ".dart", ".ex", ".exs", ".c", ".cc", ".cpp", ".swift", ".m", ".mm"}),
+		TestSuffixes: append(jsTestSuffixes(), "_test.dart", "_test.exs")},
 	{Name: "jacoco", Parser: JaCoCoParser{}, Filename: "jacoco.xml",
 		SourceExts: []string{".java", ".kt", ".kts", ".scala", ".groovy"}},
 	{Name: "cobertura", Parser: CoberturaParser{}, Filename: "cobertura.xml",
-		SourceExts: []string{".py", ".cs", ".php", ".cpp", ".cc", ".c"}},
+		SourceExts: []string{".py", ".cs", ".php", ".cpp", ".cc", ".c", ".rs", ".scala", ".swift", ".m", ".mm"}},
 	// Clover comes from PHPUnit, from Istanbul/Jest and from OpenClover
 	// for the JVM, so it counts all three families as source.
 	{Name: "clover", Parser: CloverParser{}, Filename: "clover.xml",

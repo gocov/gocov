@@ -10,7 +10,7 @@
 
 import type { Forge } from "./api/types";
 
-export type LanguageId = "go" | "js" | "java" | "python" | "php" | "ruby";
+export type LanguageId = "go" | "js" | "java" | "python" | "php" | "ruby" | "dotnet" | "swift";
 
 export interface LanguageSpec {
   id: LanguageId;
@@ -22,6 +22,10 @@ export interface LanguageSpec {
   file: string;
   /** The container the GitLab and Bitbucket recipes run in. */
   image: string;
+  /** The forges whose recipe can run it; omitted means all of them. */
+  forges?: Forge[];
+  /** The GitHub runner the job needs, when ubuntu will not do. */
+  runner?: string;
 }
 
 /** Straight from docs/languages.md: what each tool writes, and where. */
@@ -68,10 +72,44 @@ export const languages: LanguageSpec[] = [
     file: "coverage/.resultset.json",
     image: "ruby:3.4",
   },
+  {
+    // Coverlet writes under a directory with a generated name; copying the
+    // report to a fixed path keeps every recipe's file a plain path.
+    id: "dotnet",
+    label: "C# / .NET",
+    test:
+      'dotnet test --collect:"XPlat Code Coverage" --results-directory coverage' +
+      " -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover" +
+      " && cp coverage/*/coverage.opencover.xml .",
+    file: "coverage.opencover.xml",
+    image: "mcr.microsoft.com/dotnet/sdk:10.0",
+  },
+  {
+    // xcodebuild needs macOS: the GitLab and Bitbucket recipes run in Linux
+    // containers, so Swift is a GitHub recipe on a macOS runner.
+    id: "swift",
+    label: "Swift",
+    test:
+      "xcodebuild test -scheme App -destination 'platform=iOS Simulator,name=iPhone 16'" +
+      " -enableCodeCoverage YES -resultBundlePath TestResults.xcresult" +
+      " && xcrun xccov view --archive --json TestResults.xcresult > xccov.json",
+    file: "xccov.json",
+    image: "",
+    forges: ["github"],
+    runner: "macos-15",
+  },
 ];
 
-/** Unknown ids (a stale localStorage value) fall back to Go. */
-export const languageSpec = (id: string): LanguageSpec => languages.find((l) => l.id === id) ?? languages[0]!;
+/** The languages whose recipe runs on this forge. */
+export const languagesFor = (forge: Forge): LanguageSpec[] =>
+  languages.filter((l) => !l.forges || l.forges.includes(forge));
+
+/**
+ * Unknown ids (a stale localStorage value) fall back to Go, and so does a
+ * language the given forge's recipe cannot run.
+ */
+export const languageSpec = (id: string, forge?: Forge): LanguageSpec =>
+  (forge === undefined ? languages : languagesFor(forge)).find((l) => l.id === id) ?? languages[0]!;
 
 export interface SnippetInput {
   forge: Forge;
@@ -99,8 +137,10 @@ type Line = string | false | null | undefined;
 const join = (lines: Line[]) => lines.filter((l): l is string => typeof l === "string").join("\n");
 
 function githubCode(o: SnippetInput, l: LanguageSpec): string {
+  const runner = l.runner && `# in a job with runs-on: ${l.runner}`;
   if (o.tokenless) {
     return join([
+      runner,
       "permissions:",
       "  contents: read",
       "  id-token: write   # the job's identity token; no secret needed",
@@ -113,6 +153,7 @@ function githubCode(o: SnippetInput, l: LanguageSpec): string {
     ]);
   }
   return join([
+    runner,
     `- run: ${l.test}`,
     "- uses: gocov/gocov-action@v1",
     "  with:",
@@ -208,7 +249,7 @@ export function snippetFilename(forge: Forge): string {
 
 /** The whole recipe for one forge, language and authentication mode. */
 export function buildSnippet(o: SnippetInput): Snippet {
-  const l = languageSpec(o.language);
+  const l = languageSpec(o.language, o.forge);
   const filename = snippetFilename(o.forge);
   if (o.forge === "gitlab") return { filename, code: o.gitlabCatalog ? gitlabCatalogCode(o, l) : gitlabRawCode(o, l) };
   if (o.forge === "bitbucket") return { filename, code: bitbucketCode(o, l) };
