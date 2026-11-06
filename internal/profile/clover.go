@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 )
 
 // CloverParser parses Clover XML reports — PHPUnit's --coverage-clover
@@ -65,7 +64,7 @@ func (CloverParser) Parse(r io.Reader) (*Profile, error) {
 		if name == "" {
 			return nil, errors.New("clover: file without a name")
 		}
-		path := strings.TrimPrefix(strings.ReplaceAll(name, `\`, "/"), "./")
+		path := normalizePath(name)
 		lines := files[path]
 		if lines == nil {
 			lines = map[int]int{}

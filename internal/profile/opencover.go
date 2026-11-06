@@ -4,7 +4,6 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
-	"strings"
 )
 
 // OpenCoverParser parses OpenCover XML reports — written by OpenCover
@@ -71,24 +70,23 @@ func (OpenCoverParser) Parse(r io.Reader) (*Profile, error) {
 		return nil, fmt.Errorf("opencover: %w", err)
 	}
 
-	session := map[string]string{} // uid -> path, across modules
-	for _, m := range report.Modules {
+	session := map[string]string{}                           // uid -> path, across modules
+	locals := make([]map[string]string, len(report.Modules)) // uid -> path, per module
+	for i, m := range report.Modules {
+		locals[i] = make(map[string]string, len(m.Files))
 		for _, f := range m.Files {
 			if f.UID != "" && f.FullPath != "" {
-				session[f.UID] = normalizePath(f.FullPath)
+				path := normalizePath(f.FullPath)
+				locals[i][f.UID] = path
+				session[f.UID] = path
 			}
 		}
 	}
 
 	files := map[string]map[int]int{} // path -> line -> summed hits
 	marks := 0
-	for _, m := range report.Modules {
-		local := make(map[string]string, len(m.Files))
-		for _, f := range m.Files {
-			if f.UID != "" && f.FullPath != "" {
-				local[f.UID] = normalizePath(f.FullPath)
-			}
-		}
+	for i, m := range report.Modules {
+		local := locals[i]
 		for _, cls := range m.Classes {
 			for _, meth := range cls.Methods {
 				for _, sp := range meth.SequencePoints {
@@ -131,11 +129,4 @@ func (OpenCoverParser) Parse(r io.Reader) (*Profile, error) {
 	}
 
 	return fromLineHits("opencover", files)
-}
-
-// normalizePath turns a report path into the slash-separated form the
-// rest of the pipeline matches on: Windows-generated reports use
-// backslashes.
-func normalizePath(p string) string {
-	return strings.TrimPrefix(strings.ReplaceAll(p, `\`, "/"), "./")
 }
