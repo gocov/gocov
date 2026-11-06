@@ -274,8 +274,9 @@ func moduleFromGoMod(path string) string {
 }
 
 // checkoutPrefix finds the repo's checkout directory at the head of a
-// report's absolute paths — OpenCover records every file by its full path
-// on the machine the tests ran on — so the server can map them to
+// report's absolute paths — the formats marked AbsolutePaths (OpenCover,
+// xccov) record every file by its full path on the machine the tests ran
+// on — so the server can map them to
 // repo-relative diff paths. top is the git toplevel. The prefix comes back
 // spelled as the report spells it (Windows drive letters and directory
 // names may differ in case from git's), and is "" when no path lies under
@@ -295,15 +296,11 @@ func checkoutPrefix(paths []string, top string) string {
 	return ""
 }
 
-// reportPrefix is checkoutPrefix over a raw report of the given format,
+// reportPrefix is checkoutPrefix over a raw report of format f,
 // with the checkout from git; any failure yields "", leaving the server's
 // suffix matching to line paths up. Inside a submodule the checkout is the
 // superproject's, since that is the repo the diff paths are relative to.
-func reportPrefix(format string, data []byte, git gitFunc) string {
-	f, ok := profile.Lookup(format)
-	if !ok {
-		return ""
-	}
+func reportPrefix(f profile.Format, data []byte, git gitFunc) string {
 	paths, err := f.FilePaths(bytes.NewReader(data))
 	if err != nil || len(paths) == 0 {
 		return ""

@@ -1,6 +1,6 @@
 // The CI recipe, built in the browser from SetupInfo. The four snippets are
 // the ones the old onboarding wizard rendered server-side, with one thing
-// added: a language dimension, because gocov reads seven formats and the
+// added: a language dimension, because gocov reads eight formats and the
 // wizard only ever showed Go. The CLI detects the format from the file, so
 // nothing here passes -format; only the test command and the file path move.
 //

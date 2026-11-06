@@ -31,7 +31,7 @@ interface Props {
 
 /**
  * The one thing setup actually asks of someone: this file, in your repo. The
- * language picker is here because gocov reads seven formats and the old wizard
+ * language picker is here because gocov reads eight formats and the old wizard
  * only ever showed Go; everything else — where a secret goes, the token
  * itself — folds away behind the single primary action.
  */

@@ -4,7 +4,6 @@
 package profile
 
 import (
-	"bufio"
 	"bytes"
 	"io"
 	"strings"
@@ -65,28 +64,41 @@ func Percent(covered, total int64) float64 {
 
 // Parser turns a raw coverage report into the normalized model.
 // There is one implementation per format: go, lcov, jacoco, cobertura,
-// clover, simplecov and opencover.
+// clover, simplecov, opencover and xccov.
 type Parser interface {
 	Parse(r io.Reader) (*Profile, error)
 }
 
+// detectWindow is how much of a report Detect reads.
+const detectWindow = 64 * 1024
+
 // Detect guesses the profile format from its content, so uploads do not
 // have to name it explicitly. Returns "go", "lcov", "jacoco", "cobertura",
-// "clover", "simplecov", "opencover" or "" when unknown. Go cover profiles
-// start with a "mode:" line; LCOV tracefiles consist of TN:/SF:/DA:
-// records; JaCoCo XML reports have a <report> root (usually preceded by a
-// JACOCO doctype); SimpleCov resultsets are JSON with a "coverage" key;
-// OpenCover reports have a <CoverageSession> root. Clover and Cobertura
-// both use a <coverage> root: Clover names itself in a clover attribute or
-// wraps its data in <project>, Cobertura in a doctype or in
-// <packages>/<sources>, and a bare <coverage> root with neither falls back
-// to Cobertura.
+// "clover", "simplecov", "opencover", "xccov" or "" when unknown. Go cover
+// profiles start with a "mode:" line; LCOV tracefiles consist of
+// TN:/SF:/DA: records; JaCoCo XML reports have a <report> root (usually
+// preceded by a JACOCO doctype); SimpleCov resultsets are JSON with a
+// "coverage" key; OpenCover reports have a <CoverageSession> root; xccov
+// archive reports are a JSON object of per-line entries with an
+// "isExecutable" key. Clover and Cobertura both use a <coverage> root:
+// Clover names itself in a clover attribute or wraps its data in
+// <project>, Cobertura in a doctype or in <packages>/<sources>, and a bare
+// <coverage> root with neither falls back to Cobertura.
 func Detect(data []byte) string {
-	sc := bufio.NewScanner(bytes.NewReader(data))
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	// Every marker sits in a report's first lines, so only its head is
+	// read — a window rather than a line limit, since some writers put a
+	// whole report on one line.
+	head := data[:min(len(data), detectWindow)]
+	if detectXccov(head) {
+		return "xccov"
+	}
 	sawCoverageRoot := false
-	for seen := 0; sc.Scan() && seen < 10; {
-		line := strings.TrimSpace(strings.TrimRight(sc.Text(), "\r"))
+	seen := 0
+	for raw := range bytes.Lines(head) {
+		if seen == 10 {
+			break
+		}
+		line := strings.TrimSpace(string(raw))
 		if line == "" {
 			continue
 		}
@@ -120,8 +132,8 @@ func Detect(data []byte) string {
 
 // normalizePath turns a report path into the slash-separated form the
 // rest of the pipeline matches on: Windows-generated reports use
-// backslashes. Shared by the parsers of formats written on Windows too
-// (cobertura, clover, simplecov, opencover).
+// backslashes. Shared by the parsers that read paths verbatim from the
+// report (cobertura, clover, simplecov, opencover, xccov).
 func normalizePath(p string) string {
 	return strings.TrimPrefix(strings.ReplaceAll(p, `\`, "/"), "./")
 }

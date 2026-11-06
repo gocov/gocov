@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gocov/gocov/internal/profile"
 )
 
 func TestDetectBuild(t *testing.T) {
@@ -347,6 +349,7 @@ func TestCheckoutPrefix(t *testing.T) {
 }
 
 func TestReportPrefix(t *testing.T) {
+	opencover, _ := profile.Lookup("opencover")
 	report := []byte(`<CoverageSession><Modules><Module>
   <Files><File uid="1" fullPath="D:\a\app\app\src\Foo.cs" /></Files>
   <Classes><Class><Methods><Method><SequencePoints>
@@ -363,11 +366,11 @@ func TestReportPrefix(t *testing.T) {
 		t.Fatalf("unexpected git %v", args)
 		return "", nil
 	}
-	if got := reportPrefix("opencover", report, git); got != "D:/a/app/app" {
+	if got := reportPrefix(opencover, report, git); got != "D:/a/app/app" {
 		t.Errorf("reportPrefix() = %q", got)
 	}
 	noGit := func(...string) (string, error) { return "", errors.New("not a git repository") }
-	if got := reportPrefix("opencover", report, noGit); got != "" {
+	if got := reportPrefix(opencover, report, noGit); got != "" {
 		t.Errorf("reportPrefix() without git = %q, want empty", got)
 	}
 	// Inside a submodule the diff paths are the superproject's.
@@ -377,10 +380,26 @@ func TestReportPrefix(t *testing.T) {
 		}
 		return "D:/a/app/app", nil
 	}
-	if got := reportPrefix("opencover", report, submodule); got != "D:/a/app" {
+	if got := reportPrefix(opencover, report, submodule); got != "D:/a/app" {
 		t.Errorf("reportPrefix() in a submodule = %q, want the superproject", got)
 	}
-	if got := reportPrefix("opencover", []byte("not xml"), git); got != "" {
+	if got := reportPrefix(opencover, []byte("not xml"), git); got != "" {
 		t.Errorf("reportPrefix() of a broken report = %q, want empty", got)
+	}
+}
+
+// xccov reports record absolute macOS paths too; the CLI maps them the
+// same way.
+func TestReportPrefixXccov(t *testing.T) {
+	xccov, _ := profile.Lookup("xccov")
+	report := []byte(`{"/Users/runner/work/app/app/Sources/App/Foo.swift":[{"isExecutable":true,"line":3,"executionCount":1}]}`)
+	git := func(args ...string) (string, error) {
+		if strings.Join(args, " ") == "rev-parse --show-toplevel" {
+			return "/Users/runner/work/app/app", nil
+		}
+		return "", nil
+	}
+	if got := reportPrefix(xccov, report, git); got != "/Users/runner/work/app/app" {
+		t.Errorf("reportPrefix() = %q", got)
 	}
 }
