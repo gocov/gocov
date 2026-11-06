@@ -53,6 +53,16 @@ func TestXccovParserParse(t *testing.T) {
 			},
 		},
 		{
+			// Each file's entries decode on their own: a count from one
+			// file must not leak onto another file's entry that has none.
+			name:  "files decode independently",
+			input: `{"a.swift":[{"isExecutable":true,"line":1,"executionCount":7}],"b.swift":[{"isExecutable":true,"line":1}]}`,
+			want: map[string]fileWant{
+				"a.swift": {covered: 1, total: 1, blocks: 1},
+				"b.swift": {covered: 0, total: 1, blocks: 1},
+			},
+		},
+		{
 			name:    "report schema refused with a pointer to --archive",
 			input:   `{"coveredLines":10,"executableLines":20,"lineCoverage":0.5,"targets":[{"name":"App.app","files":[]}]}`,
 			wantErr: "--archive",
@@ -143,6 +153,8 @@ func TestDetectXccov(t *testing.T) {
 		{"archive report", xccovSample, "xccov"},
 		{"pretty-printed", "{\n  \"/a/B.swift\" : [\n    {\n      \"isExecutable\" : false,\n      \"line\" : 1\n    }\n  ]\n}\n", "xccov"},
 		{"single line past the scanner's limit", long, "xccov"},
+		// The window applies to every format, not only xccov.
+		{"minified cobertura past the scanner's old limit", `<?xml version="1.0"?><coverage line-rate="1"><packages>` + strings.Repeat(" ", 5<<20) + `</packages></coverage>`, "cobertura"},
 		{"report schema", `{"coveredLines":1,"executableLines":2,"lineCoverage":0.5,"targets":[]}`, "xccov"},
 		// The other JSON format must stay itself.
 		{"simplecov still simplecov", `{"RSpec": {"coverage": {"/app/a.rb": {"lines": [1, null]}}, "timestamp": 1}}`, "simplecov"},

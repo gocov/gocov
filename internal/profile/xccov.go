@@ -31,25 +31,55 @@ type xccovLine struct {
 var errXccovReport = errors.New("xccov: this is the --report output, which has no per-line data; " +
 	"export with xcrun xccov view --archive --json instead")
 
+// isXccovReportKey reports whether a top-level key belongs to the --report
+// schema, whose totals sit where the archive schema has file paths; no
+// real source path is one of these bare names.
+func isXccovReportKey(k string) bool {
+	switch k {
+	case "coveredLines", "executableLines", "lineCoverage", "targets":
+		return true
+	}
+	return false
+}
+
+// walkXccov streams an archive report's top-level object, calling fn with
+// each file's path while the decoder sits on that file's entries; fn must
+// consume them. Streaming keeps a large single-line report from being held
+// twice over, as decoding it into a map first would.
+func walkXccov(r io.Reader, fn func(path string, dec *json.Decoder) error) error {
+	dec := json.NewDecoder(r)
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return errors.New("xccov: not a JSON object")
+	}
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return fmt.Errorf("xccov: %w", err)
+		}
+		key, _ := tok.(string)
+		if isXccovReportKey(key) {
+			return errXccovReport
+		}
+		if err := fn(normalizePath(key), dec); err != nil {
+			return err
+		}
+	}
+	if _, err := dec.Token(); err != nil {
+		return fmt.Errorf("xccov: %w", err)
+	}
+	return nil
+}
+
 // Parse implements Parser. Repeated entries for one line sum.
 func (XccovParser) Parse(r io.Reader) (*Profile, error) {
-	var report map[string]json.RawMessage
-	if err := json.NewDecoder(r).Decode(&report); err != nil {
-		return nil, fmt.Errorf("xccov: %w", err)
-	}
-	if _, ok := report["targets"]; ok {
-		if _, ok := report["executableLines"]; ok {
-			return nil, errXccovReport
-		}
-	}
-
 	files := map[string]map[int]int{} // path -> line -> summed hits
-	for name, raw := range report {
+	err := walkXccov(r, func(path string, dec *json.Decoder) error {
+		// A fresh slice per file: decoding into a reused one would leave a
+		// previous file's executionCount on entries that omit it.
 		var entries []xccovLine
-		if err := json.Unmarshal(raw, &entries); err != nil {
-			return nil, fmt.Errorf("xccov: file %s: %w", name, err)
+		if err := dec.Decode(&entries); err != nil {
+			return fmt.Errorf("xccov: file %s: %w", path, err)
 		}
-		path := normalizePath(name)
 		lines := files[path]
 		if lines == nil {
 			lines = map[int]int{}
@@ -60,51 +90,42 @@ func (XccovParser) Parse(r io.Reader) (*Profile, error) {
 				continue
 			}
 			if e.Line <= 0 || e.Line > maxLineNumber {
-				return nil, fmt.Errorf("xccov: malformed line number %d in %s", e.Line, path)
+				return fmt.Errorf("xccov: malformed line number %d in %s", e.Line, path)
 			}
 			if e.ExecutionCount < 0 {
-				return nil, fmt.Errorf("xccov: negative execution count in %s line %d", path, e.Line)
+				return fmt.Errorf("xccov: negative execution count in %s line %d", path, e.Line)
 			}
 			lines[e.Line] += e.ExecutionCount
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-
 	return fromLineHits("xccov", files)
 }
 
 // xccovPaths lists the files an xccov archive report names — its top-level
 // keys — skipping over each file's line entries without decoding them.
 func xccovPaths(r io.Reader) ([]string, error) {
-	dec := json.NewDecoder(r)
-	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
-		return nil, errors.New("xccov: not a JSON object")
-	}
 	var paths []string
-	for dec.More() {
-		tok, err := dec.Token()
-		if err != nil {
-			return nil, fmt.Errorf("xccov: %w", err)
-		}
-		key, _ := tok.(string)
+	err := walkXccov(r, func(path string, dec *json.Decoder) error {
 		var skip json.RawMessage
 		if err := dec.Decode(&skip); err != nil {
-			return nil, fmt.Errorf("xccov: %w", err)
+			return fmt.Errorf("xccov: %w", err)
 		}
-		if key == "targets" || key == "executableLines" {
-			return nil, errXccovReport
-		}
-		paths = append(paths, normalizePath(key))
-	}
-	return paths, nil
+		paths = append(paths, path)
+		return nil
+	})
+	return paths, err
 }
 
-// detectXccov recognizes xccov JSON from the head of the data rather than
-// line by line: xccov writes its JSON on a single line, which for a real
-// project is longer than Detect's line scanner takes. The --report schema
-// is claimed too, so its upload gets the parser's pointer to --archive
-// instead of "unknown format".
-func detectXccov(data []byte) bool {
-	head := data[:min(len(data), 64*1024)]
+// detectXccov recognizes xccov JSON in the head of a report as a whole,
+// not line by line: xccov writes one line, and pretty-printed its markers
+// sit lines below the opening brace. The --report schema is claimed too,
+// so its upload gets the parser's pointer to --archive instead of
+// "unknown format"; as a substring guess it wants both of its keys.
+func detectXccov(head []byte) bool {
 	if t := bytes.TrimSpace(head); len(t) == 0 || t[0] != '{' {
 		return false
 	}
