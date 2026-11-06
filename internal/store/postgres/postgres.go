@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/secretbox"
 	"github.com/gocov/gocov/internal/store"
 )
@@ -1005,7 +1006,8 @@ func queryUploadFiles(ctx context.Context, q querier, sql string, args ...any) (
 		if err := rows.Scan(&f.UploadID, &f.Path, &f.Pct, &f.CoveredStmts, &f.TotalStmts, &blocks); err != nil {
 			return nil, err
 		}
-		if err := json.Unmarshal(blocks, &f.Blocks); err != nil {
+		var err error
+		if f.Blocks, err = profile.UnmarshalBlocks(blocks); err != nil {
 			return nil, fmt.Errorf("upload %d file %s: bad blocks: %w", f.UploadID, f.Path, err)
 		}
 		out = append(out, &f)
