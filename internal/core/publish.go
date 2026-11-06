@@ -413,21 +413,39 @@ func (p *Pipeline) Push(ctx context.Context, fg forge.Forge, repo *store.Repo, u
 	}
 	res, again := p.pushRound(ctx, fg, repo, upload, rc)
 	if again {
-		p.pushes.Go(func() { p.followUp(context.WithoutCancel(ctx), fg, repo, upload.CommitSHA) })
+		p.pushes.Go(func() { p.followUp(p.followUpContext(), repo, upload.CommitSHA) })
 	}
 	return res
 }
 
+// followUpContext is the context every follow-up runs under: no request's,
+// so a follow-up outlives the upload that started it, and cancelled only
+// by DrainPushes.
+func (p *Pipeline) followUpContext() context.Context {
+	p.pushInit.Do(func() { p.pushCtx, p.pushStop = context.WithCancel(context.Background()) })
+	return p.pushCtx
+}
+
 // followUp pushes the commit again for the uploads that queued behind a
 // push, round after round while more queue. It runs after the holder's
-// upload has been answered, so no CI job waits on its siblings' pushes.
-// If it stops with work left — the reload failed, or the rounds ran out —
-// it marks the commit so the next claim goes round again instead of the
-// queued uploads being lost.
-func (p *Pipeline) followUp(ctx context.Context, fg forge.Forge, repo *store.Repo, commitSHA string) {
+// upload has been answered, so no CI job waits on its siblings' pushes,
+// and resolves the repo's forge client afresh each round, since a round
+// may come long after the request whose client it was. If it stops with
+// work left — the reload failed, the rounds ran out, or DrainPushes cut
+// it short — it marks the commit so the next claim goes round again
+// instead of the queued uploads being lost.
+func (p *Pipeline) followUp(ctx context.Context, repo *store.Repo, commitSHA string) {
 	start := time.Now()
 	rounds, again := 0, true
-	for again && rounds < maxFollowUpRounds {
+	for again && rounds < maxFollowUpRounds && ctx.Err() == nil {
+		fg := p.forgeFor(ctx, repo)
+		if fg == nil {
+			// The connection went away: nothing can be pushed until it is
+			// back, and the commit's next upload finds that out itself.
+			p.Log.Warn("forge push follow-up: no forge connection", "repo", repo.Slug, "commit", commitSHA)
+			again = false
+			break
+		}
 		latest, merged, err := p.latestMerged(ctx, repo, commitSHA)
 		if err != nil {
 			p.Log.Warn("forge push follow-up: reloading the commit", "repo", repo.Slug, "commit", commitSHA, "err", err)
@@ -435,9 +453,12 @@ func (p *Pipeline) followUp(ctx context.Context, fg forge.Forge, repo *store.Rep
 		}
 		_, again = p.pushRound(ctx, fg, repo, latest, merged)
 		rounds++
+		if ctx.Err() != nil {
+			again = true // the round may have been cut short; let the next claim make sure
+		}
 	}
 	if again {
-		mctx, cancel := context.WithTimeout(ctx, finishPushTimeout)
+		mctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishPushTimeout)
 		err := p.Store.MarkPushPending(mctx, repo.ID, commitSHA)
 		cancel()
 		p.Log.Warn("forge push follow-up stopped with uploads waiting; the commit's next upload pushes them",
@@ -447,17 +468,39 @@ func (p *Pipeline) followUp(ctx context.Context, fg forge.Forge, repo *store.Rep
 		"rounds", rounds, "ms", time.Since(start).Milliseconds())
 }
 
-// WaitPushes waits for the background follow-up pushes to finish, or for
-// ctx. A server shutting down calls it after its last request is done, so
-// a follow-up is not cut off half way.
-func (p *Pipeline) WaitPushes(ctx context.Context) error {
-	done := make(chan struct{})
-	go func() { p.pushes.Wait(); close(done) }()
+// ErrPushesCut is DrainPushes' answer when follow-ups were still running
+// at its deadline: they were cut short, and each marked its commit for the
+// commit's next upload. ErrPushesAbandoned: some did not even finish that
+// within the grace period, and their commits may not be marked.
+var (
+	ErrPushesCut       = errors.New("forge push follow-ups cut short; their commits are marked for their next upload")
+	ErrPushesAbandoned = errors.New("forge push follow-ups did not stop in time; their commits may show a stale status until their next upload")
+)
+
+// DrainPushes waits for the background follow-up pushes until ctx is
+// done, then cuts the stragglers short and gives them finishPushTimeout
+// to release their leases and mark their commits. A server shutting down
+// calls it after its last request is done and before it closes the store,
+// which the stragglers still need.
+func (p *Pipeline) DrainPushes(ctx context.Context) error {
+	p.idleOnce.Do(func() {
+		p.pushIdle = make(chan struct{})
+		go func() { p.pushes.Wait(); close(p.pushIdle) }()
+	})
 	select {
-	case <-done:
+	case <-p.pushIdle:
 		return nil
 	case <-ctx.Done():
-		return ctx.Err()
+	}
+	p.followUpContext() // make sure there is a context to cancel
+	p.pushStop()
+	grace := time.NewTimer(finishPushTimeout + time.Second)
+	defer grace.Stop()
+	select {
+	case <-p.pushIdle:
+		return ErrPushesCut
+	case <-grace.C:
+		return ErrPushesAbandoned
 	}
 }
 

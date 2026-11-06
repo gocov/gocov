@@ -13,6 +13,7 @@
 package core
 
 import (
+	"context"
 	"log/slog"
 	"sync"
 	"time"
@@ -47,8 +48,15 @@ type Pipeline struct {
 	VisibilityUploadTTL time.Duration
 
 	// pushes tracks the background follow-up pushes (publish.go), so a
-	// shutting-down server can wait for them (WaitPushes).
-	pushes sync.WaitGroup
+	// shutting-down server can drain them (DrainPushes). pushInit sets up
+	// pushCtx, which every follow-up runs under and DrainPushes cancels to
+	// cut the stragglers short, and pushIdle, closed once pushes is done.
+	pushes   sync.WaitGroup
+	pushInit sync.Once
+	pushCtx  context.Context
+	pushStop context.CancelFunc
+	idleOnce sync.Once
+	pushIdle chan struct{}
 
 	// visMu guards the in-process visibility-refresh state: visChecks is
 	// when each repo's background re-check was last attempted (the serving

@@ -78,6 +78,12 @@ func run(args []string) error {
 // message instead of being killed mid-request by Docker.
 const healthProbeTimeout = server.HealthTimeout + 500*time.Millisecond
 
+// pushDrainTimeout is how long a stopping server lets the background forge
+// pushes run after its HTTP drain (up to 15 s) before cutting them short,
+// which takes up to another 6 s: 27 s in all, inside ECS's 30 s
+// stopTimeout (deploy/ecs/task-definition.json).
+const pushDrainTimeout = 6 * time.Second
+
 // healthcheck asks the server we are running next to whether it is well,
 // and reports the answer as an exit status. It exists because the runtime
 // image is distroless: there is no wget or curl in the container for a
@@ -204,11 +210,15 @@ func serve() error {
 		if err := httpSrv.Shutdown(shutCtx); err != nil {
 			return fmt.Errorf("shutdown: %w", err)
 		}
-		// Forge pushes still going round for uploads already answered: let
-		// them land before the pool closes. One cut off leaves its commit
-		// for the commit's next upload.
-		if err := app.WaitPushes(shutCtx); err != nil {
-			return fmt.Errorf("shutdown: waiting for forge pushes: %w", err)
+		// Forge pushes still going round for uploads already answered get
+		// a budget of their own, then are cut short and mark their commits
+		// for the next upload — all before the deferred pool close, and
+		// with the HTTP drain inside ECS's 30 s stop timeout. Neither
+		// outcome is a failed shutdown.
+		drainCtx, cancelDrain := context.WithTimeout(context.Background(), pushDrainTimeout)
+		defer cancelDrain()
+		if err := app.DrainPushes(drainCtx); err != nil {
+			log.Warn("shutdown: forge pushes", "err", err)
 		}
 		return nil
 	}
