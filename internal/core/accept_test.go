@@ -2,11 +2,13 @@ package core
 
 import (
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
 	blobmem "github.com/gocov/gocov/internal/blobstore/memory"
+	"github.com/gocov/gocov/internal/forge/fake"
 	"github.com/gocov/gocov/internal/ignore"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
@@ -191,5 +193,30 @@ func TestAcceptRefusesTooCostlyIgnorePatterns(t *testing.T) {
 	}
 	if ups, _ := st.ListUploads(t.Context(), repo.ID, 0, 10); len(ups) != 0 {
 		t.Errorf("%d uploads landed, want none", len(ups))
+	}
+}
+
+// A changed file the report has no data for is flagged only when the
+// report should have measured it: a source file of a language it measures.
+// A frontend's LCOV answers for TypeScript, not for the Rust a second part
+// covers, nor for docs, tests or ignored files.
+func TestDiffCoverageFlagsOnlyExpectedFiles(t *testing.T) {
+	newFile := func(path string) string {
+		return "diff --git a/" + path + " b/" + path + "\n--- /dev/null\n+++ b/" + path + "\n@@ -0,0 +1 @@\n+x\n"
+	}
+	fg := &fake.Forge{DiffText: newFile("web/src/new.ts") + newFile("src/lib.rs") +
+		newFile("README.md") + newFile("web/src/app.test.ts") + newFile("web/src/gen/api.ts")}
+	rules, err := ignore.Compile([]string{"web/src/gen/**"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frontend := prof("web/src/app.ts", 1, 2)
+
+	result, status := (&Pipeline{}).diffCoverage(t.Context(), fg, &store.Repo{Slug: "acme/app"}, "7", frontend, "lcov", "", rules)
+	if status != "computed" {
+		t.Fatalf("status = %q", status)
+	}
+	if want := []string{"web/src/new.ts"}; !slices.Equal(result.UnmatchedFiles, want) {
+		t.Errorf("unmatched = %v, want %v", result.UnmatchedFiles, want)
 	}
 }
