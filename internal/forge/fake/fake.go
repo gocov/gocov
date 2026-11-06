@@ -71,6 +71,12 @@ type Forge struct {
 	RepoID    string
 	RepoIDErr error
 
+	// StatusHook, when set, runs before each PostBuildStatus is recorded,
+	// with the call's number (from 1); an error it returns is the call's.
+	// It lets a test hold a push in flight (HoldFirstStatus).
+	StatusHook func(ctx context.Context, n int) error
+	statusN    int
+
 	StatusCalls        []StatusCall
 	CommentCalls       []CommentCall
 	UpdateCalls        []UpdateCall
@@ -97,7 +103,30 @@ type DiffCall struct {
 // New returns an empty fake forge.
 func New() *Forge { return &Forge{} }
 
-func (f *Forge) PostBuildStatus(_ context.Context, repoSlug, commitSHA string, status forge.BuildStatus) error {
+// HoldFirstStatus makes the first PostBuildStatus wait: entered is closed
+// when it starts, and it goes on once the caller closes release.
+func (f *Forge) HoldFirstStatus() (entered, release chan struct{}) {
+	entered, release = make(chan struct{}), make(chan struct{})
+	f.StatusHook = func(_ context.Context, n int) error {
+		if n == 1 {
+			close(entered)
+			<-release
+		}
+		return nil
+	}
+	return entered, release
+}
+
+func (f *Forge) PostBuildStatus(ctx context.Context, repoSlug, commitSHA string, status forge.BuildStatus) error {
+	f.mu.Lock()
+	f.statusN++
+	n, hook := f.statusN, f.StatusHook
+	f.mu.Unlock()
+	if hook != nil {
+		if err := hook(ctx, n); err != nil {
+			return err
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.StatusErr != nil {

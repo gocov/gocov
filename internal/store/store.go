@@ -547,24 +547,20 @@ type Store interface {
 	// claim is a lease on the commit's report row, good for lease.
 	//
 	// PushClaimed: the caller pushes, then calls FinishPush with the
-	// returned lease. PushQueued: another push holds the lease; the commit
-	// is marked so that push goes round again with the newest state, which
-	// carries this version too. PushSuperseded: there is no report, or a
-	// newer version has already been pushed. An expired lease counts as
-	// free, so a push that died (its task gone mid-request) blocks the
-	// commit for lease at most.
+	// returned lease. PushQueued: another push holds the lease, and its
+	// FinishPush will see this upload as newer than what it pushed.
+	// PushSuperseded: there is no report, or a newer version has already
+	// been pushed. An expired lease counts as free, so a push that died
+	// (its task gone mid-request) blocks the commit for lease at most.
 	ClaimPush(ctx context.Context, repoID int64, commitSHA string, version int64, lease time.Duration) (PushClaim, time.Time, error)
-	// FinishPush releases the lease ClaimPush returned. pushed says the
-	// build status reached the forge: only then is version recorded, so a
+	// FinishPush releases the lease ClaimPush returned, unless it lapsed
+	// and was claimed by another push. pushed says the build status reached
+	// the forge: only then is version recorded (it only ever rises), so a
 	// failed push leaves it for a later part to retry. again reports that
-	// an upload queued behind this push meanwhile, and the caller should
-	// claim and push the commit's newest state. A lease that has expired
-	// and been claimed by another push is left alone, and again is false.
+	// the caller still held the lease and the commit has an upload newer
+	// than version — one that queued, or is still on its way — so the
+	// caller should push the commit's newest state.
 	FinishPush(ctx context.Context, repoID int64, commitSHA string, version int64, lease time.Time, pushed bool) (again bool, err error)
-	// MarkPushPending marks the commit as having uploads the forge has not
-	// seen, for a holder that stops going round before the queue is empty:
-	// the next push claimed for the commit is then told to go round again.
-	MarkPushPending(ctx context.Context, repoID int64, commitSHA string) error
 	// CommitParts returns the distinct part names uploaded for a commit —
 	// a cheap read (no blocks/diff) for the per-commit parts cap.
 	CommitParts(ctx context.Context, repoID int64, commitSHA string) ([]string, error)
@@ -594,7 +590,7 @@ const (
 	PushSuperseded PushClaim = iota
 	// PushClaimed: the caller holds the lease and pushes.
 	PushClaimed
-	// PushQueued: another push holds the lease and will go round again.
+	// PushQueued: another push holds the lease and goes round again.
 	PushQueued
 )
 

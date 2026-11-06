@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -443,31 +442,13 @@ func newConnectedPipeline(t *testing.T, fg forge.Forge) (*Pipeline, *storemem.St
 	return &Pipeline{Store: st, Log: forges.Log, Forges: forges, BaseURL: "https://cov.example.com"}, st, repo
 }
 
-// gatedForge holds the first build status until release is closed, so a
-// test can land a second upload while a push is in flight.
-type gatedForge struct {
-	*fake.Forge
-	entered chan struct{}
-	release chan struct{}
-	once    sync.Once
-}
-
-func (g *gatedForge) PostBuildStatus(ctx context.Context, repoSlug, commitSHA string, status forge.BuildStatus) error {
-	first := false
-	g.once.Do(func() { first = true })
-	if first {
-		close(g.entered)
-		<-g.release
-	}
-	return g.Forge.PostBuildStatus(ctx, repoSlug, commitSHA, status)
-}
-
 // An upload landing while another upload of its commit pushes does not
 // wait: it reports queued. The push in flight answers its own upload, then
 // goes round again in the background with the commit's newest state, so
 // the forge ends on both parts merged.
 func TestPushQueuesBehindAPushInFlight(t *testing.T) {
-	fg := &gatedForge{Forge: fake.New(), entered: make(chan struct{}), release: make(chan struct{})}
+	fg := fake.New()
+	entered, release := fg.HoldFirstStatus()
 	p, st, repo := newConnectedPipeline(t, fg)
 	ctx := t.Context()
 
@@ -478,7 +459,7 @@ func TestPushQueuesBehindAPushInFlight(t *testing.T) {
 	}
 	first := make(chan PushResult)
 	go func() { first <- p.Push(ctx, fg, repo, back, backMerged) }()
-	<-fg.entered
+	<-entered
 
 	front := addPart(t, st, repo, "c1", "frontend", 2, 10)
 	frontMerged, err := p.Recompute(ctx, repo, front)
@@ -490,11 +471,11 @@ func TestPushQueuesBehindAPushInFlight(t *testing.T) {
 		t.Errorf("second push = %+v, want queued on every surface", queued)
 	}
 
-	close(fg.release)
+	close(release)
 	if res := <-first; res.BuildStatus != "posted" {
 		t.Errorf("first push = %+v, want posted", res)
 	}
-	if err := p.DrainPushes(ctx); err != nil {
+	if err := p.Drain(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if n := len(fg.StatusCalls); n != 2 {
@@ -503,22 +484,38 @@ func TestPushQueuesBehindAPushInFlight(t *testing.T) {
 	if got := fg.StatusCalls[1].Status.Description; got != "coverage: 50.0%" {
 		t.Errorf("last status = %q, want both parts merged (coverage: 50.0%%)", got)
 	}
-	// The lease is free again and nothing is left waiting: the commit's
-	// next push is a plain one.
+	// The lease is free again and the forge has seen the newest upload:
+	// the commit's next push is a plain one.
 	claim, lease, err := st.ClaimPush(ctx, repo.ID, "c1", front.ID, time.Minute)
 	if err != nil || claim != store.PushClaimed {
 		t.Fatalf("claim after the follow-up = %v, %v; want the lease released", claim, err)
 	}
 	if again, err := st.FinishPush(ctx, repo.ID, "c1", front.ID, lease, true); err != nil || again {
-		t.Errorf("finish after the follow-up = %v, %v; want nothing left waiting", again, err)
+		t.Errorf("finish after the follow-up = %v, %v; want nothing left", again, err)
 	}
 }
 
-// A follow-up that cannot reload the commit does not drop the uploads
-// that queued: it marks the commit, and the next push claimed for it is
-// told to go round again.
-func TestPushFollowUpFailureLeavesTheCommitPending(t *testing.T) {
-	fg := &gatedForge{Forge: fake.New(), entered: make(chan struct{}), release: make(chan struct{})}
+// commitBehind pushes the commit at version, and reports whether the
+// store then says the forge is behind the commit's newest upload.
+func commitBehind(t *testing.T, st store.Store, repo *store.Repo, version int64) bool {
+	t.Helper()
+	claim, lease, err := st.ClaimPush(t.Context(), repo.ID, "c1", version, time.Minute)
+	if err != nil || claim != store.PushClaimed {
+		t.Fatalf("claim v%d = %v, %v", version, claim, err)
+	}
+	again, err := st.FinishPush(t.Context(), repo.ID, "c1", version, lease, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return again
+}
+
+// A follow-up that cannot reload the commit stops, and loses nothing:
+// the upload the forge has not seen is still newer than what was pushed,
+// so the commit's next push is told to go round.
+func TestPushFollowUpFailureLosesNothing(t *testing.T) {
+	fg := fake.New()
+	entered, release := fg.HoldFirstStatus()
 	p, st, repo := newConnectedPipeline(t, fg)
 	ctx := t.Context()
 
@@ -529,7 +526,7 @@ func TestPushFollowUpFailureLeavesTheCommitPending(t *testing.T) {
 	}
 	first := make(chan PushResult)
 	go func() { first <- p.Push(ctx, fg, repo, back, backMerged) }()
-	<-fg.entered
+	<-entered
 	front := addPart(t, st, repo, "c1", "frontend", 2, 10)
 	frontMerged, err := p.Recompute(ctx, repo, front)
 	if err != nil {
@@ -540,20 +537,16 @@ func TestPushFollowUpFailureLeavesTheCommitPending(t *testing.T) {
 	}
 
 	p.Store = reloadErrStore{st} // the follow-up's reload fails
-	close(fg.release)
+	close(release)
 	<-first
-	if err := p.DrainPushes(ctx); err != nil {
+	if err := p.Drain(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if n := len(fg.StatusCalls); n != 1 {
 		t.Fatalf("%d status calls, want only the holder's own", n)
 	}
-	claim, lease, err := st.ClaimPush(ctx, repo.ID, "c1", front.ID, time.Minute)
-	if err != nil || claim != store.PushClaimed {
-		t.Fatalf("next claim = %v, %v", claim, err)
-	}
-	if again, err := st.FinishPush(ctx, repo.ID, "c1", front.ID, lease, true); err != nil || !again {
-		t.Errorf("next finish = %v, %v; want it told to go round again", again, err)
+	if !commitBehind(t, st, repo, back.ID) {
+		t.Error("the store says the forge is up to date; the frontend upload was lost")
 	}
 }
 
@@ -585,64 +578,51 @@ func (claimErrStore) ClaimPush(context.Context, int64, string, int64, time.Durat
 	return 0, time.Time{}, errors.New("pool closed")
 }
 
-// stuckForge answers the first build status and hangs every later one
-// until its context ends: a forge that stops answering mid follow-up.
-type stuckForge struct {
-	*fake.Forge
-	calls atomic.Int32
-	stuck chan struct{} // closed when a later call starts hanging
-}
-
-func (f *stuckForge) PostBuildStatus(ctx context.Context, repoSlug, commitSHA string, status forge.BuildStatus) error {
-	if f.calls.Add(1) > 1 {
-		close(f.stuck)
+// A shutdown that runs out of patience cuts a follow-up short instead of
+// waiting out a forge that stopped answering, early enough for it to
+// release its lease, and loses nothing: the upload it was pushing is still
+// newer than what the forge has.
+func TestDrainCutsAStuckFollowUpShort(t *testing.T) {
+	fg := fake.New()
+	stuck := make(chan struct{})
+	fg.StatusHook = func(ctx context.Context, n int) error {
+		if n == 1 {
+			return nil
+		}
+		close(stuck)
 		<-ctx.Done()
 		return ctx.Err()
 	}
-	return f.Forge.PostBuildStatus(ctx, repoSlug, commitSHA, status)
-}
-
-// A shutdown that runs out of patience cuts the follow-ups short instead
-// of waiting out the forge, and each one cut marks its commit, so the
-// queued uploads reach the forge with the commit's next push.
-func TestDrainPushesCutsStragglersShort(t *testing.T) {
-	fg := &stuckForge{Forge: fake.New(), stuck: make(chan struct{})}
 	p, st, repo := newConnectedPipeline(t, fg)
 	ctx := t.Context()
 
+	// The frontend part is in before the backend's push finishes, so the
+	// push goes round again for it — and that round hangs.
 	back := addPart(t, st, repo, "c1", "backend", 8, 10)
 	backMerged, err := p.Recompute(ctx, repo, back)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A frontend part waiting behind an earlier push: the holder's push
-	// finishes with work left, so a follow-up starts.
 	front := addPart(t, st, repo, "c1", "frontend", 2, 10)
 	if _, err := p.Recompute(ctx, repo, front); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.MarkPushPending(ctx, repo.ID, "c1"); err != nil {
 		t.Fatal(err)
 	}
 	if res := p.Push(ctx, fg, repo, back, backMerged); res.BuildStatus != "posted" {
 		t.Fatalf("holder push = %q, want posted", res.BuildStatus)
 	}
-	<-fg.stuck
+	<-stuck
 
-	dctx, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	unwind := finishPushTimeout + time.Second
+	dctx, cancel := context.WithTimeout(ctx, unwind+20*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	if err := p.DrainPushes(dctx); !errors.Is(err, ErrPushesCut) {
-		t.Fatalf("drain = %v, want ErrPushesCut", err)
+	if err := p.Drain(dctx); !errors.Is(err, errBackgroundCut) {
+		t.Fatalf("drain = %v, want the follow-up cut short", err)
 	}
-	if d := time.Since(start); d > statusPushTimeout/2 {
-		t.Errorf("drain took %v, want it to cut the hung round short", d)
+	if d := time.Since(start); d > unwind {
+		t.Errorf("drain took %v, want it to cut the hung round short, not wait out its unwind time", d)
 	}
-	claim, lease, err := st.ClaimPush(ctx, repo.ID, "c1", front.ID, time.Minute)
-	if err != nil || claim != store.PushClaimed {
-		t.Fatalf("next claim = %v, %v; want the lease released", claim, err)
-	}
-	if again, err := st.FinishPush(ctx, repo.ID, "c1", front.ID, lease, true); err != nil || !again {
-		t.Errorf("next finish = %v, %v; want the cut commit marked to go round again", again, err)
+	if !commitBehind(t, st, repo, back.ID) {
+		t.Error("the store says the forge is up to date; the frontend upload was lost")
 	}
 }

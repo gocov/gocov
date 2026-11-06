@@ -1095,9 +1095,8 @@ func (c *commitReportTx) UpsertCommitReport(ctx context.Context, cr *store.Commi
 
 // advisoryKey hashes a namespace and (id, name) into the signed 64-bit
 // space Postgres advisory locks use. The namespace keeps the recompute
-// lock, the status-push lock and the grant-refresh lock (keyed by
-// workspace id, with an empty name) in separate spaces so they never block
-// each other for the same id.
+// lock and the grant-refresh lock (keyed by workspace id, with an empty
+// name) in separate spaces so they never block each other for the same id.
 func advisoryKey(namespace string, id int64, name string) int64 {
 	h := fnv.New64a()
 	fmt.Fprintf(h, "%s:%d:%s", namespace, id, name)
@@ -1170,75 +1169,61 @@ func (s *Store) latestPassedCommitReport(ctx context.Context, q querier, repoID 
 // ClaimPush takes the commit's push lease in one statement, so claims
 // from both tasks of a rolling deploy serialize on the report row's lock
 // for that statement only — never across the forge calls. A free lease
-// (none, or lapsed) is taken; a held one marks the row dirty so its holder
-// pushes again. A dirty mark left by a holder that died is kept through
-// the next claim, so that push goes round again too.
+// (none, or lapsed) is taken; a held one is left as it is, and the claim
+// writes nothing.
 func (s *Store) ClaimPush(ctx context.Context, repoID int64, commitSHA string, version int64, lease time.Duration) (store.PushClaim, time.Time, error) {
 	var free bool
-	var until time.Time
+	var until *time.Time
 	err := s.pool.QueryRow(ctx, `
 		WITH cur AS (
 			SELECT push_lease_until IS NULL OR push_lease_until <= now() AS free
 			FROM commit_reports
 			WHERE repo_id = $1 AND commit_sha = $2 AND status_pushed_version <= $3
 			FOR UPDATE
+		), taken AS (
+			UPDATE commit_reports c SET push_lease_until = now() + make_interval(secs => $4)
+			FROM cur
+			WHERE cur.free AND c.repo_id = $1 AND c.commit_sha = $2
+			RETURNING c.push_lease_until
 		)
-		UPDATE commit_reports c SET
-			push_lease_until = CASE WHEN cur.free THEN now() + make_interval(secs => $4) ELSE c.push_lease_until END,
-			push_dirty = c.push_dirty OR NOT cur.free
-		FROM cur
-		WHERE c.repo_id = $1 AND c.commit_sha = $2
-		RETURNING cur.free, c.push_lease_until`,
+		SELECT cur.free, (SELECT push_lease_until FROM taken) FROM cur`,
 		repoID, commitSHA, version, lease.Seconds()).Scan(&free, &until)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return store.PushSuperseded, time.Time{}, nil // no report, or a newer push landed
 	case err != nil:
 		return 0, time.Time{}, err
-	case free:
-		return store.PushClaimed, until, nil
+	case free && until != nil:
+		return store.PushClaimed, *until, nil
 	default:
 		return store.PushQueued, time.Time{}, nil
 	}
 }
 
-// FinishPush releases the lease if it is still the caller's (its expiry
-// is the token), reading and clearing the dirty mark in the same
-// statement. A lease that lapsed and was taken by another push is not
-// touched; a successful push still records its version, which only ever
-// rises.
+// FinishPush records the version, releases the lease if it is still the
+// caller's (its expiry is the token) and says whether the commit has a
+// newer upload, all in one statement.
 func (s *Store) FinishPush(ctx context.Context, repoID int64, commitSHA string, version int64, lease time.Time, pushed bool) (bool, error) {
 	var again bool
 	err := s.pool.QueryRow(ctx, `
 		WITH cur AS (
-			SELECT push_dirty AS dirty FROM commit_reports
-			WHERE repo_id = $1 AND commit_sha = $2 AND push_lease_until = $4
+			SELECT push_lease_until IS NOT DISTINCT FROM $4::timestamptz AS mine
+			FROM commit_reports
+			WHERE repo_id = $1 AND commit_sha = $2
 			FOR UPDATE
 		)
 		UPDATE commit_reports c SET
 			status_pushed_version = CASE WHEN $5 THEN GREATEST(c.status_pushed_version, $3) ELSE c.status_pushed_version END,
-			push_lease_until = NULL,
-			push_dirty = false
+			push_lease_until = CASE WHEN cur.mine THEN NULL ELSE c.push_lease_until END
 		FROM cur
 		WHERE c.repo_id = $1 AND c.commit_sha = $2
-		RETURNING cur.dirty`,
+		RETURNING cur.mine AND EXISTS (
+			SELECT 1 FROM uploads u WHERE u.repo_id = $1 AND u.commit_sha = $2 AND u.id > $3)`,
 		repoID, commitSHA, version, lease, pushed).Scan(&again)
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return again, err
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil // the report is gone
 	}
-	if pushed {
-		_, err = s.pool.Exec(ctx, `
-			UPDATE commit_reports SET status_pushed_version = GREATEST(status_pushed_version, $3)
-			WHERE repo_id = $1 AND commit_sha = $2`, repoID, commitSHA, version)
-	}
-	return false, err
-}
-
-func (s *Store) MarkPushPending(ctx context.Context, repoID int64, commitSHA string) error {
-	_, err := s.pool.Exec(ctx,
-		"UPDATE commit_reports SET push_dirty = true WHERE repo_id = $1 AND commit_sha = $2",
-		repoID, commitSHA)
-	return err
+	return again, err
 }
 
 func (s *Store) ClaimTokenlessUpload(ctx context.Context, repoID, runID, runAttempt int64, part string) (bool, error) {

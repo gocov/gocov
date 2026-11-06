@@ -650,6 +650,16 @@ func pushLease(t *testing.T, newStore func(*testing.T) store.Store) {
 			t.Fatal(err)
 		}
 	}
+	// upload lands one upload of the commit; its id is the version a push
+	// of it claims at.
+	upload := func(sha string) int64 {
+		t.Helper()
+		u := &store.Upload{RepoID: repo.ID, CommitSHA: sha, Branch: "main", Part: "default", Format: "go"}
+		if err := st.CreateUpload(ctx, u, nil); err != nil {
+			t.Fatal(err)
+		}
+		return u.ID
+	}
 	claim := func(sha string, v int64, lease time.Duration, want store.PushClaim) time.Time {
 		t.Helper()
 		got, until, err := st.ClaimPush(ctx, repo.ID, sha, v, lease)
@@ -671,68 +681,57 @@ func pushLease(t *testing.T, newStore func(*testing.T) store.Store) {
 	const long = time.Minute
 
 	// Nothing to push before the report exists.
-	claim("c1", 5, long, store.PushSuperseded)
+	claim("c1", 1, long, store.PushSuperseded)
 	report("c1")
 
 	// A version pushes only if it is at least the last one that landed.
-	finish("c1", 5, claim("c1", 5, long, store.PushClaimed), true, false)
-	finish("c1", 5, claim("c1", 5, long, store.PushClaimed), true, false) // a re-upload may re-push
-	claim("c1", 3, long, store.PushSuperseded)                            // an older push arriving late
+	u1 := upload("c1")
+	finish("c1", u1, claim("c1", u1, long, store.PushClaimed), true, false)
+	finish("c1", u1, claim("c1", u1, long, store.PushClaimed), true, false) // a re-upload may re-push
+
+	// A newer upload of the commit sends the push round again.
+	u2 := upload("c1")
+	finish("c1", u1, claim("c1", u1, long, store.PushClaimed), true, true)
+	finish("c1", u2, claim("c1", u2, long, store.PushClaimed), true, false)
+	claim("c1", u1, long, store.PushSuperseded) // an older push arriving late
 
 	// An upload arriving while a push holds the lease queues behind it,
 	// and the holder is told to go round again.
-	l7 := claim("c1", 7, long, store.PushClaimed)
-	claim("c1", 8, long, store.PushQueued)
-	claim("c1", 6, long, store.PushQueued) // older, but the holder's next round carries it anyway
-	finish("c1", 7, l7, true, true)
-	finish("c1", 8, claim("c1", 8, long, store.PushClaimed), true, false) // the mark is cleared
+	l2 := claim("c1", u2, long, store.PushClaimed)
+	u3 := upload("c1")
+	claim("c1", u3, long, store.PushQueued)
+	finish("c1", u2, l2, true, true)
+	finish("c1", u3, claim("c1", u3, long, store.PushClaimed), true, false)
 
 	// A failed push records nothing, so a later part retries.
-	finish("c1", 10, claim("c1", 10, long, store.PushClaimed), false, false)
-	finish("c1", 9, claim("c1", 9, long, store.PushClaimed), true, false)
+	u4 := upload("c1")
+	finish("c1", u4, claim("c1", u4, long, store.PushClaimed), false, false)
+	finish("c1", u3, claim("c1", u3, long, store.PushClaimed), true, true)
 
 	// A lapsed lease is free: a push whose task died blocks the commit for
 	// its lease at most. The dead holder's late finish leaves the new
-	// lease alone but its version still counts.
+	// lease alone, is not told to go round, and its version still counts.
 	report("c2")
-	l20 := claim("c2", 20, 20*time.Millisecond, store.PushClaimed)
+	v1 := upload("c2")
+	l1 := claim("c2", v1, 20*time.Millisecond, store.PushClaimed)
 	time.Sleep(60 * time.Millisecond)
-	l21 := claim("c2", 21, long, store.PushClaimed)
-	finish("c2", 20, l20, true, false)
-	claim("c2", 22, long, store.PushQueued) // the new holder's lease survived
-	finish("c2", 21, l21, true, true)
-	claim("c2", 19, long, store.PushSuperseded) // v21 landed
-
-	// A queue mark left by a holder that lapsed is kept through the next
-	// claim, so the upload that queued still reaches the forge.
-	report("c3")
-	claim("c3", 30, 20*time.Millisecond, store.PushClaimed)
-	claim("c3", 31, long, store.PushQueued)
-	time.Sleep(60 * time.Millisecond)
-	finish("c3", 32, claim("c3", 32, long, store.PushClaimed), true, true)
-
-	// A holder that stops going round marks the commit pending; the next
-	// claim is a plain one, and its finish says to go round again.
-	report("c5")
-	if err := st.MarkPushPending(ctx, repo.ID, "c5"); err != nil {
-		t.Fatal(err)
-	}
-	finish("c5", 50, claim("c5", 50, long, store.PushClaimed), true, true)
-	finish("c5", 51, claim("c5", 51, long, store.PushClaimed), true, false)
-	if err := st.MarkPushPending(ctx, repo.ID, "no-report"); err != nil {
-		t.Errorf("marking a commit without a report = %v, want a no-op", err)
-	}
+	v2 := upload("c2")
+	lv2 := claim("c2", v2, long, store.PushClaimed)
+	finish("c2", v1, l1, true, false)
+	claim("c2", v2, long, store.PushQueued) // the new holder's lease survived
+	finish("c2", v2, lv2, true, false)
+	claim("c2", v1, long, store.PushSuperseded) // v2 landed
 
 	// Concurrent claims: exactly one holds the lease, every other queues.
 	report("c4")
+	w := upload("c4")
 	var mu sync.Mutex
 	got := map[store.PushClaim]int{}
 	var lease time.Time
-	var holder int64
 	var wg sync.WaitGroup
-	for _, v := range []int64{100, 101, 102, 103, 104} {
+	for range 5 {
 		wg.Go(func() {
-			c, until, err := st.ClaimPush(ctx, repo.ID, "c4", v, long)
+			c, until, err := st.ClaimPush(ctx, repo.ID, "c4", w, long)
 			if err != nil {
 				t.Error(err)
 				return
@@ -741,7 +740,7 @@ func pushLease(t *testing.T, newStore func(*testing.T) store.Store) {
 			defer mu.Unlock()
 			got[c]++
 			if c == store.PushClaimed {
-				lease, holder = until, v
+				lease = until
 			}
 		})
 	}
@@ -749,7 +748,7 @@ func pushLease(t *testing.T, newStore func(*testing.T) store.Store) {
 	if got[store.PushClaimed] != 1 || got[store.PushQueued] != 4 {
 		t.Fatalf("concurrent claims = %v, want one claimed and four queued", got)
 	}
-	finish("c4", holder, lease, true, true)
+	finish("c4", w, lease, true, false)
 }
 
 func userLifecycle(t *testing.T, newStore func(*testing.T) store.Store) {

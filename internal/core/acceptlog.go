@@ -59,11 +59,12 @@ func (p *Pipeline) logAccept(sub Submission, t *acceptTimings, res *Result, err 
 		"recompute_ms", t.recompute.Milliseconds(),
 		"push_ms", t.push.Milliseconds(),
 	)
-	// push_ms split: claiming the commit's push lease, then each surface's
-	// forge round trip (side by side, so the push takes as long as the
-	// slowest). Left out without a forge connection; the surfaces are left
-	// out when none reached the forge (superseded, queued).
-	if pt := res.pushTimings(); pt.tried {
+	// push_ms split: claiming the commit's push lease (0 without a forge
+	// connection), then each surface's forge round trip (side by side, so
+	// the push takes as long as the slowest), left out when none reached
+	// the forge.
+	if res != nil {
+		pt := res.Push.timings
 		attrs = append(attrs, "push_claim_ms", pt.claim.Milliseconds())
 		if pt.ran {
 			attrs = append(attrs,
@@ -87,12 +88,4 @@ func (p *Pipeline) logAccept(sub Submission, t *acceptTimings, res *Result, err 
 		"parts", len(res.Merged.Parts),
 		"build_status", res.Push.BuildStatus,
 	)...)
-}
-
-// pushTimings is the push's split, zero when the upload did not land.
-func (r *Result) pushTimings() pushTimings {
-	if r == nil {
-		return pushTimings{}
-	}
-	return r.Push.timings
 }

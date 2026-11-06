@@ -33,13 +33,14 @@ const pushLease = 30 * time.Second
 // maxFollowUpRounds bounds the pushes one holder makes after its own for
 // uploads that queued behind it. Every round carries all of the commit's
 // parts so far, so a burst of queued uploads costs one round, not one each,
-// and a round needs an upload that queued during the one before; the bound
-// is a backstop. A holder that stops early leaves the commit marked, and
-// the commit's next claim goes round again.
+// and a round needs an upload that arrived during the one before; the
+// bound is a backstop. A follow-up that stops early loses nothing: the
+// uploads the forge has not seen are newer than the version it recorded,
+// and the commit's next push finds them.
 const maxFollowUpRounds = 20
 
 // finishPushTimeout bounds releasing the lease. It runs even after the
-// request is gone, so a disconnected client does not leave the commit
+// request is gone or the push was cut short, so neither leaves the commit
 // blocked for the lease's full length.
 const finishPushTimeout = 5 * time.Second
 
@@ -384,10 +385,10 @@ type PushResult struct {
 // pushTimings splits a push's time for the accept log: claiming the
 // commit's push lease (one statement), then each surface's forge round
 // trip. The surfaces run side by side, so a push takes as long as the
-// slowest. tried is false without a forge connection; ran is false when
-// no surface reached the forge — superseded, queued, or the claim failed.
+// slowest. ran is false when no surface reached the forge — no
+// connection, superseded, queued, or the claim failed.
 type pushTimings struct {
-	tried, ran                bool
+	ran                       bool
 	claim                     time.Duration
 	status, insights, comment time.Duration
 }
@@ -413,38 +414,27 @@ func (p *Pipeline) Push(ctx context.Context, fg forge.Forge, repo *store.Repo, u
 	}
 	res, again := p.pushRound(ctx, fg, repo, upload, rc)
 	if again {
-		p.pushes.Go(func() { p.followUp(p.followUpContext(), repo, upload.CommitSHA) })
+		p.bg.Go(func(ctx context.Context) { p.followUp(ctx, repo, upload.CommitSHA) })
 	}
 	return res
 }
 
-// followUpContext is the context every follow-up runs under: no request's,
-// so a follow-up outlives the upload that started it, and cancelled only
-// by DrainPushes.
-func (p *Pipeline) followUpContext() context.Context {
-	p.pushInit.Do(func() { p.pushCtx, p.pushStop = context.WithCancel(context.Background()) })
-	return p.pushCtx
-}
-
-// followUp pushes the commit again for the uploads that queued behind a
-// push, round after round while more queue. It runs after the holder's
-// upload has been answered, so no CI job waits on its siblings' pushes,
-// and resolves the repo's forge client afresh each round, since a round
-// may come long after the request whose client it was. If it stops with
-// work left — the reload failed, the rounds ran out, or DrainPushes cut
-// it short — it marks the commit so the next claim goes round again
-// instead of the queued uploads being lost.
+// followUp pushes the commit again for the uploads that arrived while a
+// push was in flight, round after round while more arrive. It runs after
+// the holder's upload has been answered, so no CI job waits on its
+// siblings' pushes, and resolves the repo's forge client afresh each
+// round, since a round may come long after the request whose client it
+// was. Stopping early — the reload failed, the rounds ran out, Drain cut
+// it short — loses nothing: the commit's next push finds the uploads the
+// forge has not seen.
 func (p *Pipeline) followUp(ctx context.Context, repo *store.Repo, commitSHA string) {
 	start := time.Now()
 	rounds, again := 0, true
 	for again && rounds < maxFollowUpRounds && ctx.Err() == nil {
 		fg := p.forgeFor(ctx, repo)
 		if fg == nil {
-			// The connection went away: nothing can be pushed until it is
-			// back, and the commit's next upload finds that out itself.
 			p.Log.Warn("forge push follow-up: no forge connection", "repo", repo.Slug, "commit", commitSHA)
-			again = false
-			break
+			return
 		}
 		latest, merged, err := p.latestMerged(ctx, repo, commitSHA)
 		if err != nil {
@@ -453,55 +443,13 @@ func (p *Pipeline) followUp(ctx context.Context, repo *store.Repo, commitSHA str
 		}
 		_, again = p.pushRound(ctx, fg, repo, latest, merged)
 		rounds++
-		if ctx.Err() != nil {
-			again = true // the round may have been cut short; let the next claim make sure
-		}
 	}
 	if again {
-		mctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishPushTimeout)
-		err := p.Store.MarkPushPending(mctx, repo.ID, commitSHA)
-		cancel()
-		p.Log.Warn("forge push follow-up stopped with uploads waiting; the commit's next upload pushes them",
-			"repo", repo.Slug, "commit", commitSHA, "rounds", rounds, "mark_err", err)
+		p.Log.Warn("forge push follow-up stopped with uploads the forge has not seen; the commit's next upload pushes them",
+			"repo", repo.Slug, "commit", commitSHA, "rounds", rounds)
 	}
 	p.Log.Info("forge push follow-up", "repo", repo.Slug, "commit", commitSHA,
 		"rounds", rounds, "ms", time.Since(start).Milliseconds())
-}
-
-// ErrPushesCut is DrainPushes' answer when follow-ups were still running
-// at its deadline: they were cut short, and each marked its commit for the
-// commit's next upload. ErrPushesAbandoned: some did not even finish that
-// within the grace period, and their commits may not be marked.
-var (
-	ErrPushesCut       = errors.New("forge push follow-ups cut short; their commits are marked for their next upload")
-	ErrPushesAbandoned = errors.New("forge push follow-ups did not stop in time; their commits may show a stale status until their next upload")
-)
-
-// DrainPushes waits for the background follow-up pushes until ctx is
-// done, then cuts the stragglers short and gives them finishPushTimeout
-// to release their leases and mark their commits. A server shutting down
-// calls it after its last request is done and before it closes the store,
-// which the stragglers still need.
-func (p *Pipeline) DrainPushes(ctx context.Context) error {
-	p.idleOnce.Do(func() {
-		p.pushIdle = make(chan struct{})
-		go func() { p.pushes.Wait(); close(p.pushIdle) }()
-	})
-	select {
-	case <-p.pushIdle:
-		return nil
-	case <-ctx.Done():
-	}
-	p.followUpContext() // make sure there is a context to cancel
-	p.pushStop()
-	grace := time.NewTimer(finishPushTimeout + time.Second)
-	defer grace.Stop()
-	select {
-	case <-p.pushIdle:
-		return ErrPushesCut
-	case <-grace.C:
-		return ErrPushesAbandoned
-	}
 }
 
 // pushRound claims the commit's push lease at upload's version, pushes
@@ -538,7 +486,6 @@ func (p *Pipeline) pushRound(ctx context.Context, fg forge.Forge, repo *store.Re
 			p.Log.Warn("forge push release", "repo", repo.Slug, "commit", upload.CommitSHA, "err", err)
 		}
 	}
-	res.timings.tried = true
 	res.timings.claim = claimed
 	return res, again
 }
@@ -566,13 +513,8 @@ func (p *Pipeline) latestMerged(ctx context.Context, repo *store.Repo, commitSHA
 // They are independent requests (forge clients hold no mutable state) and
 // each writes only its own result field, so they run concurrently: the
 // push, which holds the commit's push lease, takes as long as the slowest
-// surface rather than the sum of all three. Without a client — the
-// workspace has no working connection — every surface is skipped.
+// surface rather than the sum of all three.
 func (p *Pipeline) pushSurfaces(ctx context.Context, fg forge.Forge, repo *store.Repo, u *store.Upload, link string, deltaPct *float64, gate Verdict) PushResult {
-	if fg == nil {
-		p.Log.Debug("code insights skipped: no forge connection", "repo", repo.Slug)
-		return everySurface("skipped", u.PRID != "")
-	}
 	res := PushResult{timings: pushTimings{ran: true}}
 	var wg sync.WaitGroup
 	t := &res.timings

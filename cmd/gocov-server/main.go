@@ -78,11 +78,12 @@ func run(args []string) error {
 // message instead of being killed mid-request by Docker.
 const healthProbeTimeout = server.HealthTimeout + 500*time.Millisecond
 
-// pushDrainTimeout is how long a stopping server lets the background forge
-// pushes run after its HTTP drain (up to 15 s) before cutting them short,
-// which takes up to another 6 s: 27 s in all, inside ECS's 30 s
-// stopTimeout (deploy/ecs/task-definition.json).
-const pushDrainTimeout = 6 * time.Second
+// stopBudget is everything a stopping server gets: the HTTP drain, then
+// the background work (forge push follow-ups) on what is left, which
+// cuts itself short in time to unwind before the deadline. It stays under
+// ECS's 30 s stopTimeout (deploy/ecs/task-definition.json), past which
+// the task is killed.
+const stopBudget = 28 * time.Second
 
 // healthcheck asks the server we are running next to whether it is well,
 // and reports the answer as an exit status. It exists because the runtime
@@ -205,20 +206,16 @@ func serve() error {
 		// process the default way if shutdown hangs.
 		stop()
 		log.Info("shutting down")
-		shutCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		stopCtx, cancel := context.WithTimeout(context.Background(), stopBudget)
 		defer cancel()
-		if err := httpSrv.Shutdown(shutCtx); err != nil {
+		if err := httpSrv.Shutdown(stopCtx); err != nil {
 			return fmt.Errorf("shutdown: %w", err)
 		}
-		// Forge pushes still going round for uploads already answered get
-		// a budget of their own, then are cut short and mark their commits
-		// for the next upload — all before the deferred pool close, and
-		// with the HTTP drain inside ECS's 30 s stop timeout. Neither
-		// outcome is a failed shutdown.
-		drainCtx, cancelDrain := context.WithTimeout(context.Background(), pushDrainTimeout)
-		defer cancelDrain()
-		if err := app.DrainPushes(drainCtx); err != nil {
-			log.Warn("shutdown: forge pushes", "err", err)
+		// Background work for requests already answered, before the
+		// deferred pool close it still needs. Cutting it short is not a
+		// failed shutdown.
+		if err := app.Drain(stopCtx); err != nil {
+			log.Warn("shutdown: background work", "err", err)
 		}
 		return nil
 	}

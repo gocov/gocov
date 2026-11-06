@@ -8,7 +8,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,13 +15,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/forge"
-	forgefake "github.com/gocov/gocov/internal/forge/fake"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -382,31 +379,12 @@ func TestCodeInsightsFailureIsolation(t *testing.T) {
 	}
 }
 
-// holdingForge holds the first build status until release is closed.
-type holdingForge struct {
-	*forgefake.Forge
-	entered, release chan struct{}
-	once             sync.Once
-}
-
-func (h *holdingForge) PostBuildStatus(ctx context.Context, repoSlug, commitSHA string, status forge.BuildStatus) error {
-	first := false
-	h.once.Do(func() { first = true })
-	if first {
-		close(h.entered)
-		<-h.release
-	}
-	return h.Forge.PostBuildStatus(ctx, repoSlug, commitSHA, status)
-}
-
 // A part uploaded while another part of its commit is still pushing gets
 // its answer at once, every surface queued, and the forge still ends on
 // the two parts merged.
 func TestUploadQueuedBehindAConcurrentPush(t *testing.T) {
 	f := newFixture(t, map[string]string{})
-	hf := &holdingForge{Forge: f.forge, entered: make(chan struct{}), release: make(chan struct{})}
-	f.srv = New(Config{Store: f.store, Blobs: f.blobs, BaseURL: "https://gocov.example",
-		BitbucketConnect: &fakeBBConnect{grantForge: hf}})
+	entered, release := f.forge.HoldFirstStatus()
 
 	backend := "mode: set\nexample.com/m/a.go:1.1,5.2 8 1\nexample.com/m/a.go:7.1,9.2 2 0\n"  // 8/10
 	frontend := "mode: set\nexample.com/m/b.go:1.1,5.2 2 1\nexample.com/m/b.go:7.1,9.2 8 0\n" // 2/10
@@ -414,7 +392,7 @@ func TestUploadQueuedBehindAConcurrentPush(t *testing.T) {
 	go func() {
 		first <- doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "part": "backend"}, backend)
 	}()
-	<-hf.entered
+	<-entered
 
 	var resp uploadResponse
 	rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "part": "frontend"}, frontend)
@@ -425,9 +403,9 @@ func TestUploadQueuedBehindAConcurrentPush(t *testing.T) {
 		t.Fatalf("second upload = %d, build %q, insights %q; want both queued", rec.Code, resp.BuildStatus, resp.CodeInsights)
 	}
 
-	close(hf.release)
+	close(release)
 	<-first
-	if err := f.srv.DrainPushes(t.Context()); err != nil {
+	if err := f.srv.Drain(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	calls := f.forge.StatusCalls
