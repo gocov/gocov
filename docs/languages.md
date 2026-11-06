@@ -13,6 +13,7 @@ snippets below show the plain CLI; in CI, the same file goes in the `files:` of 
 | Clover XML      | PHPUnit, Istanbul                                   |
 | SimpleCov       | RSpec / minitest with simplecov                     |
 | OpenCover XML   | Coverlet, OpenCover (.NET)                          |
+| xccov JSON      | Xcode (Swift, Objective-C)                          |
 
 ## Go
 
@@ -82,6 +83,19 @@ each project's report as its own [part](parts.md). Coverlet's Cobertura output (
 OpenCover records every file by its absolute path on the machine the tests ran on. The CLI recognizes the git checkout
 directory at the head of those paths and maps them to repo paths itself; when the tests ran somewhere else, such as a
 container, pass that directory as `-path-prefix`.
+
+## Swift / Objective-C
+
+```sh
+xcodebuild test -scheme App -destination 'platform=iOS Simulator,name=iPhone 16' \
+  -enableCodeCoverage YES -resultBundlePath TestResults.xcresult
+xcrun xccov view --archive --json TestResults.xcresult > xccov.json
+gocov upload xccov.json
+```
+
+Export with `--archive`: it has the coverage of every line. The `--report` output only has totals per target and
+function, so gocov refuses it. Like OpenCover, xccov records absolute paths, and the CLI maps them to repo paths the
+same way.
 
 ## Several languages in one repo
 

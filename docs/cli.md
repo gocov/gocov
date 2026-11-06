@@ -30,8 +30,8 @@ variables, falling back to `git`.
 | `-commit`      | auto-detect                      | commit SHA. The one value that has no fallback: if detection fails, the upload asks for it     |
 | `-branch`      | auto-detect                      | branch name                                                                                    |
 | `-pr`          | auto-detect                      | pull request id; enables [diff coverage](pull-requests.md)                                     |
-| `-format`      | detect from content              | `go`, `lcov`, `jacoco`, `cobertura`, `clover`, `simplecov` or `opencover`                      |
-| `-path-prefix` | from `go.mod` for Go, the checkout for OpenCover | prefix mapping profile paths to repo paths, e.g. the Go module path — see below |
+| `-format`      | detect from content              | `go`, `lcov`, `jacoco`, `cobertura`, `clover`, `simplecov`, `opencover` or `xccov`             |
+| `-path-prefix` | from `go.mod` for Go, the checkout for OpenCover and xccov | prefix mapping profile paths to repo paths, e.g. the Go module path — see below |
 | `-part`        | `$GOCOV_PART`, else `default`    | names this slice of the commit's coverage when several jobs upload — see [Parts](parts.md)     |
 | `-ignore`      | `$GOCOV_IGNORE`, else none       | leave matching files out of the report, e.g. `cmd/preview/**`; repeatable or comma-separated — see [Ignoring files](ignoring-files.md) |
 | `-fail-on-gate`| off                              | exit non-zero when the server reports a failed [coverage gate](coverage-gate.md)               |
@@ -123,8 +123,8 @@ server's reason (`gocov: tokenless upload rejected — …`) and exits 0.
 
 Diff coverage matches the paths in the profile against the paths in the PR's diff. When the profile records paths
 under a prefix the repo doesn't have — a Go module path, a CI checkout directory — set `-path-prefix` to that prefix
-so the two line up. For Go profiles the CLI fills it from `go.mod` automatically; for OpenCover reports, which record
-every file by its absolute path, it fills in the git checkout directory when the report's paths lie under it. JaCoCo's
+so the two line up. For Go profiles the CLI fills it from `go.mod` automatically; for OpenCover and xccov reports, which
+record every file by its absolute path, it fills in the git checkout directory when the report's paths lie under it. JaCoCo's
 package-qualified paths are matched by suffix and usually need nothing. Symptoms and details:
 [Why coverage changed](coverage-changed.md).
 

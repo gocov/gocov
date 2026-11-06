@@ -6,7 +6,7 @@ func TestEveryDetectableFormatIsRegistered(t *testing.T) {
 	// The upload API dispatches on these names, and Detect hands them
 	// out; dropping one silently turns every upload of that format into
 	// a 400.
-	for _, name := range []string{"go", "lcov", "jacoco", "cobertura", "clover", "simplecov", "opencover"} {
+	for _, name := range []string{"go", "lcov", "jacoco", "cobertura", "clover", "simplecov", "opencover", "xccov"} {
 		f, ok := Lookup(name)
 		if !ok || f.Parser == nil || f.Name != name {
 			t.Errorf("Lookup(%q) = %+v, %v; want a registered parser", name, f, ok)
@@ -48,6 +48,8 @@ func TestIsTestFile(t *testing.T) {
 		{"simplecov", "spec/models/user_spec.rb", true},
 		{"simplecov", "app/models/user.rb", false},
 		{"jacoco", "src/test/java/FooTest.java", false}, // no convention claimed
+		{"xccov", "AppTests/LoginViewModelTests.swift", true},
+		{"xccov", "App/Networking/Requests.swift", false},
 	} {
 		f, _ := Lookup(tc.format)
 		if got := f.IsTestFile(tc.path); got != tc.want {

@@ -295,15 +295,11 @@ func checkoutPrefix(paths []string, top string) string {
 	return ""
 }
 
-// reportPrefix is checkoutPrefix over a raw report of the given format,
+// reportPrefix is checkoutPrefix over a raw report of format f,
 // with the checkout from git; any failure yields "", leaving the server's
 // suffix matching to line paths up. Inside a submodule the checkout is the
 // superproject's, since that is the repo the diff paths are relative to.
-func reportPrefix(format string, data []byte, git gitFunc) string {
-	f, ok := profile.Lookup(format)
-	if !ok {
-		return ""
-	}
+func reportPrefix(f profile.Format, data []byte, git gitFunc) string {
 	paths, err := f.FilePaths(bytes.NewReader(data))
 	if err != nil || len(paths) == 0 {
 		return ""

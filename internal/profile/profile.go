@@ -65,23 +65,27 @@ func Percent(covered, total int64) float64 {
 
 // Parser turns a raw coverage report into the normalized model.
 // There is one implementation per format: go, lcov, jacoco, cobertura,
-// clover, simplecov and opencover.
+// clover, simplecov, opencover and xccov.
 type Parser interface {
 	Parse(r io.Reader) (*Profile, error)
 }
 
 // Detect guesses the profile format from its content, so uploads do not
 // have to name it explicitly. Returns "go", "lcov", "jacoco", "cobertura",
-// "clover", "simplecov", "opencover" or "" when unknown. Go cover profiles
-// start with a "mode:" line; LCOV tracefiles consist of TN:/SF:/DA:
-// records; JaCoCo XML reports have a <report> root (usually preceded by a
-// JACOCO doctype); SimpleCov resultsets are JSON with a "coverage" key;
-// OpenCover reports have a <CoverageSession> root. Clover and Cobertura
-// both use a <coverage> root: Clover names itself in a clover attribute or
-// wraps its data in <project>, Cobertura in a doctype or in
-// <packages>/<sources>, and a bare <coverage> root with neither falls back
-// to Cobertura.
+// "clover", "simplecov", "opencover", "xccov" or "" when unknown. Go cover
+// profiles start with a "mode:" line; LCOV tracefiles consist of
+// TN:/SF:/DA: records; JaCoCo XML reports have a <report> root (usually
+// preceded by a JACOCO doctype); SimpleCov resultsets are JSON with a
+// "coverage" key; OpenCover reports have a <CoverageSession> root; xccov
+// archive reports are a JSON object of per-line entries with an
+// "isExecutable" key. Clover and Cobertura both use a <coverage> root:
+// Clover names itself in a clover attribute or wraps its data in
+// <project>, Cobertura in a doctype or in <packages>/<sources>, and a bare
+// <coverage> root with neither falls back to Cobertura.
 func Detect(data []byte) string {
+	if detectXccov(data) {
+		return "xccov"
+	}
 	sc := bufio.NewScanner(bytes.NewReader(data))
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	sawCoverageRoot := false

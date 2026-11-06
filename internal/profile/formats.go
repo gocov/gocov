@@ -27,6 +27,10 @@ type Format struct {
 	// Paths, when set, lists the files a report names more cheaply than a
 	// full parse; FilePaths falls back to the parser without it.
 	Paths func(r io.Reader) ([]string, error)
+	// AbsolutePaths marks formats that record each file by its absolute
+	// path on the machine the tests ran on, for which the CLI looks for
+	// the checkout directory to send as the path prefix.
+	AbsolutePaths bool
 }
 
 // FilePaths lists the source files a report of this format names.
@@ -83,7 +87,12 @@ var formats = []Format{
 	// .NET test projects live apart from the code they test and follow no
 	// file-suffix convention, so OpenCover names no test files.
 	{Name: "opencover", Parser: OpenCoverParser{}, Filename: "coverage.opencover.xml",
-		SourceExts: []string{".cs", ".vb", ".fs"}, Paths: openCoverPaths},
+		SourceExts: []string{".cs", ".vb", ".fs"}, Paths: openCoverPaths, AbsolutePaths: true},
+	// XCTest cases live in files named after the type they test plus
+	// "Tests", by Xcode's template and by convention.
+	{Name: "xccov", Parser: XccovParser{}, Filename: "xccov.json",
+		SourceExts:   []string{".swift", ".m", ".mm", ".c", ".cc", ".cpp", ".h"},
+		TestSuffixes: []string{"Tests.swift", "Tests.m"}, Paths: xccovPaths, AbsolutePaths: true},
 }
 
 // Names lists the registered formats' names, in registry order — for
