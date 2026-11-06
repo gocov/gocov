@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.34.0](https://github.com/gocov/gocov/compare/v0.33.0...v0.34.0) (2026-11-06)
+
+
+### Features
+
+* accept OpenCover XML coverage reports ([#275](https://github.com/gocov/gocov/issues/275)) ([48a3a89](https://github.com/gocov/gocov/commit/48a3a895f4762f242d6bb430f1523c1f08272200))
+* accept Xcode xccov JSON coverage reports ([#276](https://github.com/gocov/gocov/issues/276)) ([42c739a](https://github.com/gocov/gocov/commit/42c739a917b29b4539dc585c00df01ad725d11b2))
+* cover Rust, Dart, C/C++, Elixir and Scala, and add .NET and Swift to setup ([#279](https://github.com/gocov/gocov/issues/279)) ([e04202c](https://github.com/gocov/gocov/commit/e04202c4d5e4e0b893701dd029b260ddc37f65c9))
+
+
+### Performance Improvements
+
+* claim the forge push through a lease, not a lock held across the forge ([#273](https://github.com/gocov/gocov/issues/273)) ([295d800](https://github.com/gocov/gocov/commit/295d80062ba348ea71ce31ba3bf5f508e2de304d))
+* decode stored coverage blocks by hand, and skip re-merging a single part ([#277](https://github.com/gocov/gocov/issues/277)) ([1b056f3](https://github.com/gocov/gocov/commit/1b056f352ca42e18780a4017fb26774d5a90dabb))
+
 ## [0.33.0](https://github.com/gocov/gocov/compare/v0.32.0...v0.33.0) (2026-11-05)
 
 
