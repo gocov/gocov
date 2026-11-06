@@ -6,9 +6,11 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/gocov/gocov/internal/diffcov"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
@@ -229,5 +231,52 @@ func TestRecomputeComparesTheSameParts(t *testing.T) {
 	wantDelta(m, 5)
 	if m.Verdict.Failed() {
 		t.Errorf("gate failed against a partial baseline: %v", m.Verdict.Failures)
+	}
+}
+
+// Files all of one upload skip the merge. Every format's parser must make
+// that safe — keying blocks by position and files by path — so each
+// format's sample, with its files out of order and a block reported twice
+// where the format allows it, comes back exactly as merging gives it.
+func TestMergePartsLonePartIsItsOwnMerge(t *testing.T) {
+	samples := map[string]string{
+		"go": "mode: count\n" +
+			"example.com/m/z.go:1.1,3.2 2 1\n" +
+			"example.com/m/a.go:1.1,5.2 6 3\n" +
+			"example.com/m/a.go:7.1,9.2 2 0\n" +
+			"example.com/m/z.go:1.1,3.2 2 4\n" + // as go test -coverpkg repeats it
+			"example.com/m/m/b.go:1.1,2.2 1 0\n",
+		"lcov": "SF:src/z.js\nDA:1,1\nDA:2,0\nend_of_record\n" +
+			"SF:src/a.js\nDA:3,0\nDA:1,2\nDA:1,1\nend_of_record\n",
+	}
+	for name, body := range samples {
+		t.Run(name, func(t *testing.T) {
+			format, ok := profile.Lookup(name)
+			if !ok {
+				t.Fatalf("no %s format", name)
+			}
+			prof, err := format.Parser.Parse(strings.NewReader(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			files := make([]*store.UploadFile, len(prof.Files))
+			for i := range prof.Files {
+				files[i] = newUploadFile(&prof.Files[i])
+				files[i].UploadID = 7
+			}
+			want := mergeAll(slices.Clone(files))
+			got := MergeParts(files)
+			if len(got) != len(want) {
+				t.Fatalf("%d files, want %d", len(got), len(want))
+			}
+			for i := range want {
+				g, w := got[i], want[i]
+				if g.Path != w.Path || g.UploadID != w.UploadID || g.Pct != w.Pct ||
+					g.CoveredStmts != w.CoveredStmts || g.TotalStmts != w.TotalStmts ||
+					!slices.Equal(diffcov.MissedSpans(g.Blocks), diffcov.MissedSpans(w.Blocks)) {
+					t.Errorf("file %d = %+v, want the merge's %+v", i, g, w)
+				}
+			}
+		})
 	}
 }

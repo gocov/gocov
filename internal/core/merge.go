@@ -7,6 +7,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -152,10 +153,9 @@ type partFiles interface {
 }
 
 // mergedCoverage counts the covered and total statements of the parts
-// merged together. A lone part is its own merge: every parser keys blocks
-// by position and files by path, so merging one profile changes nothing,
-// and its upload row already carries the totals — the common single-part
-// commit reads no files at all. Several parts are read in one query and
+// merged together. A lone part is its own merge (MergeParts), and its
+// upload row already carries the totals — the common single-part commit
+// reads no files at all. Several parts are read in one query and
 // merged, so a block two parts both report counts once.
 func mergedCoverage(ctx context.Context, tx partFiles, parts []*store.Upload) (covered, total int64, err error) {
 	if len(parts) == 1 {
@@ -181,7 +181,21 @@ func mergedCoverage(ctx context.Context, tx partFiles, parts []*store.Upload) (c
 // (mergedCoverage), for the pages that list those files. A block several
 // parts report counts once, covered when any part ran it (profile.Merge);
 // each merged file belongs to the newest upload that reported it.
+//
+// Files all of one upload are their own merge — every parser keys blocks
+// by position and files by path, so merging one profile changes nothing —
+// and come back as they are, sorted by path in place: the common
+// single-part commit's pages skip re-merging every block.
 func MergeParts(files []*store.UploadFile) []*store.UploadFile {
+	if len(files) > 0 && !slices.ContainsFunc(files, func(f *store.UploadFile) bool { return f.UploadID != files[0].UploadID }) {
+		slices.SortFunc(files, func(a, b *store.UploadFile) int { return cmp.Compare(a.Path, b.Path) })
+		return files
+	}
+	return mergeAll(files)
+}
+
+// mergeAll is MergeParts for files of more than one upload.
+func mergeAll(files []*store.UploadFile) []*store.UploadFile {
 	owner := make(map[string]int64, len(files))
 	all := &profile.Profile{Files: make([]profile.File, 0, len(files))}
 	for _, f := range files {

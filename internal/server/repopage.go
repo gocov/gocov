@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -193,10 +192,7 @@ func (s *Server) loadCommitFilesView(ctx context.Context, repo *store.Repo, late
 }
 
 // commitFiles reads a commit's merged files: the latest upload of each of
-// its parts, keyed by id, and their files merged (core.MergeParts). A lone
-// part is its own merge — the rule the commit's totals are counted by
-// (core's mergedCoverage) — so a single-part commit, the common case, skips
-// re-merging every block of its files and is only put in path order.
+// its parts, keyed by id, and their files merged (core.MergeParts).
 func (s *Server) commitFiles(ctx context.Context, repoID int64, commitSHA string) (map[int64]*store.Upload, []*store.UploadFile, error) {
 	parts, err := s.store.LatestUploadsPerPart(ctx, repoID, commitSHA)
 	if err != nil {
@@ -211,10 +207,6 @@ func (s *Server) commitFiles(ctx context.Context, repoID int64, commitSHA string
 	files, err := s.store.PartFiles(ctx, ids)
 	if err != nil {
 		return nil, nil, err
-	}
-	if len(parts) == 1 {
-		slices.SortFunc(files, func(a, b *store.UploadFile) int { return strings.Compare(a.Path, b.Path) })
-		return uploads, files, nil
 	}
 	return uploads, core.MergeParts(files), nil
 }

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -350,49 +349,5 @@ func TestAPIRepoSettingsButtonOnOpenInstance(t *testing.T) {
 				t.Errorf("repo settings = %d, want the open instance's 404", rec.Code)
 			}
 		})
-	}
-}
-
-// A single-part commit's files skip the merge: they must be what merging
-// them would give — the same rows, in path order — or the repo page's
-// card would disagree with the commit's totals.
-func TestCommitFilesSinglePartIsItsOwnMerge(t *testing.T) {
-	f := newFixture(t, nil)
-	// Files out of path order, a block reported twice (as go test
-	// -coverpkg does across packages) and one never run.
-	profile := `mode: count
-example.com/m/z.go:1.1,3.2 2 1
-example.com/m/a.go:1.1,5.2 6 3
-example.com/m/a.go:7.1,9.2 2 0
-example.com/m/z.go:1.1,3.2 2 4
-example.com/m/m/b.go:1.1,2.2 1 0
-`
-	if rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c1"}, profile); rec.Code != http.StatusCreated {
-		t.Fatalf("upload = %d %s", rec.Code, rec.Body)
-	}
-	ctx := t.Context()
-	_, got, err := f.srv.commitFiles(ctx, f.repo.ID, "c1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	parts, err := f.store.LatestUploadsPerPart(ctx, f.repo.ID, "c1")
-	if err != nil || len(parts) != 1 {
-		t.Fatalf("parts = %v, %v", parts, err)
-	}
-	stored, err := f.store.PartFiles(ctx, []int64{parts[0].ID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := core.MergeParts(stored)
-	if len(got) != len(want) {
-		t.Fatalf("%d files, want %d", len(got), len(want))
-	}
-	for i := range want {
-		g, w := got[i], want[i]
-		if g.Path != w.Path || g.UploadID != w.UploadID || g.Pct != w.Pct ||
-			g.CoveredStmts != w.CoveredStmts || g.TotalStmts != w.TotalStmts ||
-			uncoveredRanges(g.Blocks) != uncoveredRanges(w.Blocks) {
-			t.Errorf("file %d = %+v, want the merge's %+v", i, g, w)
-		}
 	}
 }
