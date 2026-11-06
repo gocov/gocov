@@ -2,6 +2,7 @@ package profile
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -101,24 +102,31 @@ func TestOpenCoverParserParse(t *testing.T) {
 			},
 		},
 		{
-			name: "file uid listed in another module resolves across the session",
-			input: `<CoverageSession><Modules>
-  <Module><Files><File uid="1" fullPath="src/Shared.cs" /></Files></Module>
-  <Module><Classes><Class><Methods><Method><SequencePoints>
+			name: "unresolvable and hidden points skipped, the rest kept",
+			input: `<CoverageSession><Modules><Module>
+  <Files><File uid="1" fullPath="src/Foo.cs" /><File uid="2" fullPath="" /></Files>
+  <Classes><Class><Methods><Method><SequencePoints>
     <SequencePoint vc="1" sl="1" el="0" fileid="1" />
-  </SequencePoints></Method></Methods></Class></Classes></Module>
-</Modules></CoverageSession>`,
+    <SequencePoint vc="1" sl="5" el="5" fileid="2" />
+    <SequencePoint vc="1" sl="6" el="6" fileid="9" />
+    <SequencePoint vc="1" sl="7" el="7" />
+    <SequencePoint vc="1" sl="12" el="16707566" fileid="1" />
+  </SequencePoints></Method></Methods></Class></Classes>
+</Module></Modules></CoverageSession>`,
 			want: map[string]fileWant{
 				// el="0" is read as a one-line point.
-				"src/Shared.cs": {covered: 1, total: 1, blocks: 1},
+				"src/Foo.cs": {covered: 1, total: 1, blocks: 1},
 			},
 		},
 		{
-			name: "unknown file uid",
-			input: `<CoverageSession><Modules><Module><Classes><Class><Methods><Method><SequencePoints>
-  <SequencePoint vc="1" sl="1" el="1" fileid="9" />
-</SequencePoints></Method></Methods></Class></Classes></Module></Modules></CoverageSession>`,
-			wantErr: "unknown file",
+			name: "file listed only by another module",
+			input: `<CoverageSession><Modules>
+  <Module><Files><File uid="1" fullPath="src/Shared.cs" /></Files></Module>
+  <Module><Classes><Class><Methods><Method><SequencePoints>
+    <SequencePoint vc="1" sl="1" el="1" fileid="1" />
+  </SequencePoints></Method></Methods></Class></Classes></Module>
+</Modules></CoverageSession>`,
+			wantErr: "no line coverage data",
 		},
 		{
 			name: "zero start line",
@@ -188,6 +196,27 @@ func TestOpenCoverParserBoundsLineSpans(t *testing.T) {
 	b.WriteString(`</SequencePoints></Method></Methods></Class></Classes></Module></Modules></CoverageSession>`)
 	if _, err := (OpenCoverParser{}).Parse(strings.NewReader(b.String())); err == nil || !strings.Contains(err.Error(), "span more than") {
 		t.Fatalf("Parse() error = %v, want the line-span bound", err)
+	}
+}
+
+// The CLI reads only the file list, without the per-line work of Parse.
+func TestOpenCoverFilePaths(t *testing.T) {
+	f, _ := Lookup("opencover")
+	got, err := f.FilePaths(strings.NewReader(openCoverSample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/home/runner/work/app/app/src/MyApp/Calculator.cs", "/home/runner/work/app/app/src/MyApp/Util.cs"}
+	if !slices.Equal(got, want) {
+		t.Errorf("FilePaths() = %v, want %v", got, want)
+	}
+	if _, err := f.FilePaths(strings.NewReader("<CoverageSession><Modules>")); err == nil {
+		t.Error("FilePaths() of a truncated report succeeded")
+	}
+	// A format without its own lister falls back to the parser.
+	cob, _ := Lookup("cobertura")
+	if got, err := cob.FilePaths(strings.NewReader(coberturaSample)); err != nil || !slices.Equal(got, []string{"myapp/app.py", "myapp/util.py"}) {
+		t.Errorf("cobertura FilePaths() = %v, %v", got, err)
 	}
 }
 

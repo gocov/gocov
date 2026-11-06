@@ -60,37 +60,31 @@ const openCoverHiddenLine = 0xFEEFEE
 // line about once, so this leaves room for codebases of millions of lines.
 const maxOpenCoverLineMarks = 4_000_000
 
-// Parse implements Parser. File uids resolve within their module first
-// and then across the session, since OpenCover numbers files per session
-// but lists them per module; a point without a fileid falls back to its
-// method's <FileRef>. Repeated entries for one path merge by summing hits.
+// Parse implements Parser. A point names its file by uid in a fileid
+// attribute, falling back to its method's <FileRef>; every module lists
+// the files its methods use, so the uid resolves within the module. A
+// point whose file cannot be resolved — an empty fullPath, a file of a
+// filtered module — is skipped rather than failing the whole report, as
+// is a hidden one. Repeated entries for one path merge by summing hits.
 func (OpenCoverParser) Parse(r io.Reader) (*Profile, error) {
 	var report openCoverSession
 	if err := xml.NewDecoder(r).Decode(&report); err != nil {
 		return nil, fmt.Errorf("opencover: %w", err)
 	}
 
-	session := map[string]string{}                           // uid -> path, across modules
-	locals := make([]map[string]string, len(report.Modules)) // uid -> path, per module
-	for i, m := range report.Modules {
-		locals[i] = make(map[string]string, len(m.Files))
-		for _, f := range m.Files {
-			if f.UID != "" && f.FullPath != "" {
-				path := normalizePath(f.FullPath)
-				locals[i][f.UID] = path
-				session[f.UID] = path
-			}
-		}
-	}
-
 	files := map[string]map[int]int{} // path -> line -> summed hits
 	marks := 0
-	for i, m := range report.Modules {
-		local := locals[i]
+	for _, m := range report.Modules {
+		local := make(map[string]string, len(m.Files)) // uid -> path
+		for _, f := range m.Files {
+			if f.UID != "" && f.FullPath != "" {
+				local[f.UID] = normalizePath(f.FullPath)
+			}
+		}
 		for _, cls := range m.Classes {
 			for _, meth := range cls.Methods {
 				for _, sp := range meth.SequencePoints {
-					if sp.SL == openCoverHiddenLine {
+					if sp.SL == openCoverHiddenLine || sp.EL == openCoverHiddenLine {
 						continue
 					}
 					uid := sp.FileID
@@ -99,10 +93,7 @@ func (OpenCoverParser) Parse(r io.Reader) (*Profile, error) {
 					}
 					path, ok := local[uid]
 					if !ok {
-						path, ok = session[uid]
-					}
-					if !ok {
-						return nil, fmt.Errorf("opencover: sequence point refers to unknown file %q", uid)
+						continue
 					}
 					end := max(sp.EL, sp.SL) // some writers leave el unset on one-line points
 					if sp.SL <= 0 || end > maxLineNumber {
@@ -129,4 +120,30 @@ func (OpenCoverParser) Parse(r io.Reader) (*Profile, error) {
 	}
 
 	return fromLineHits("opencover", files)
+}
+
+// openCoverPaths lists the files an OpenCover report names, reading only
+// the <File> elements' fullPath attributes as they stream past — for the
+// CLI, which wants the paths and none of the per-line work of Parse.
+func openCoverPaths(r io.Reader) ([]string, error) {
+	dec := xml.NewDecoder(r)
+	var paths []string
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			return paths, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("opencover: %w", err)
+		}
+		el, ok := tok.(xml.StartElement)
+		if !ok || el.Name.Local != "File" {
+			continue
+		}
+		for _, a := range el.Attr {
+			if a.Name.Local == "fullPath" && a.Value != "" {
+				paths = append(paths, normalizePath(a.Value))
+			}
+		}
+	}
 }

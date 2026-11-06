@@ -296,24 +296,23 @@ func checkoutPrefix(paths []string, top string) string {
 }
 
 // reportPrefix is checkoutPrefix over a raw report of the given format,
-// with the toplevel from git; any failure yields "", leaving the server's
-// suffix matching to line paths up.
+// with the checkout from git; any failure yields "", leaving the server's
+// suffix matching to line paths up. Inside a submodule the checkout is the
+// superproject's, since that is the repo the diff paths are relative to.
 func reportPrefix(format string, data []byte, git gitFunc) string {
 	f, ok := profile.Lookup(format)
 	if !ok {
 		return ""
 	}
-	top, err := git("rev-parse", "--show-toplevel")
-	if err != nil {
+	paths, err := f.FilePaths(bytes.NewReader(data))
+	if err != nil || len(paths) == 0 {
 		return ""
 	}
-	prof, err := f.Parser.Parse(bytes.NewReader(data))
-	if err != nil {
-		return ""
-	}
-	paths := make([]string, len(prof.Files))
-	for i, file := range prof.Files {
-		paths[i] = file.Path
+	top, err := git("rev-parse", "--show-superproject-working-tree")
+	if err != nil || top == "" {
+		if top, err = git("rev-parse", "--show-toplevel"); err != nil {
+			return ""
+		}
 	}
 	return checkoutPrefix(paths, top)
 }

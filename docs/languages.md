@@ -75,8 +75,9 @@ dotnet test --collect:"XPlat Code Coverage" --results-directory coverage \
 gocov upload coverage/*/coverage.opencover.xml
 ```
 
-Coverlet writes each run under a directory with a generated name, hence the wildcard; with more than one test project,
-upload each report as its own [part](parts.md). Coverlet's Cobertura output (the collector's default) works too.
+Coverlet writes each run under a directory with a generated name, hence the wildcard. `gocov upload` takes one file,
+so the wildcard must match one: start from an empty `coverage` directory, and with more than one test project upload
+each project's report as its own [part](parts.md). Coverlet's Cobertura output (the collector's default) works too.
 
 OpenCover records every file by its absolute path on the machine the tests ran on. The CLI recognizes the git checkout
 directory at the head of those paths and maps them to repo paths itself; when the tests ran somewhere else, such as a

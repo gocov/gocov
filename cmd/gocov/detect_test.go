@@ -354,10 +354,14 @@ func TestReportPrefix(t *testing.T) {
   </SequencePoints></Method></Methods></Class></Classes>
 </Module></Modules></CoverageSession>`)
 	git := func(args ...string) (string, error) {
-		if strings.Join(args, " ") != "rev-parse --show-toplevel" {
-			t.Fatalf("unexpected git %v", args)
+		switch strings.Join(args, " ") {
+		case "rev-parse --show-superproject-working-tree":
+			return "", nil
+		case "rev-parse --show-toplevel":
+			return "D:/a/app/app", nil
 		}
-		return "D:/a/app/app", nil
+		t.Fatalf("unexpected git %v", args)
+		return "", nil
 	}
 	if got := reportPrefix("opencover", report, git); got != "D:/a/app/app" {
 		t.Errorf("reportPrefix() = %q", got)
@@ -365,6 +369,16 @@ func TestReportPrefix(t *testing.T) {
 	noGit := func(...string) (string, error) { return "", errors.New("not a git repository") }
 	if got := reportPrefix("opencover", report, noGit); got != "" {
 		t.Errorf("reportPrefix() without git = %q, want empty", got)
+	}
+	// Inside a submodule the diff paths are the superproject's.
+	submodule := func(args ...string) (string, error) {
+		if strings.Join(args, " ") == "rev-parse --show-superproject-working-tree" {
+			return "D:/a/app", nil
+		}
+		return "D:/a/app/app", nil
+	}
+	if got := reportPrefix("opencover", report, submodule); got != "D:/a/app" {
+		t.Errorf("reportPrefix() in a submodule = %q, want the superproject", got)
 	}
 	if got := reportPrefix("opencover", []byte("not xml"), git); got != "" {
 		t.Errorf("reportPrefix() of a broken report = %q, want empty", got)
