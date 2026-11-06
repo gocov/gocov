@@ -33,7 +33,10 @@ uploading, the merged report reflects only the parts received so far, so its tot
 until the last part lands, then correct itself. Each upload step's log says which parts its figure covers
 (`merged from 1 part so far: web`), so an interim total is easy to tell apart — see
 [CLI output](cli.md#output-and-exit-code). If a reviewer merges inside that window they may see an interim gate —
-sequence the gate check after all coverage jobs, or wait for the final status. A future
+sequence the gate check after all coverage jobs, or wait for the final status. Parts that finish at the same moment
+do not queue on each other: one upload updates the forge, and the others report its surfaces as `queued` and return at
+once. That update then goes round again with every part received meanwhile, so the forge always ends on the newest
+merged report. A future
 `expected_parts` setting will let a repo hold status until every part is in; until then the self-healing behaviour above
 is the model.
 

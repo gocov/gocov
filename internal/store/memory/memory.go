@@ -28,7 +28,7 @@ type Store struct {
 	reports    map[int64]*store.CommitReport // merged reports, keyed by report ID
 	crLocks    map[string]*sync.Mutex        // per-commit recompute locks
 	grantLocks map[int64]*sync.Mutex         // per-workspace grant-refresh locks
-	crPush     map[string]*sync.Mutex        // per-commit status-push locks
+	crLease    map[string]pushLease          // per-commit push lease, keyed repoID:sha
 	crStatus   map[string]int64              // last pushed status version, keyed repoID:sha
 	workspaces map[int64]*store.Workspace
 	users      map[int64]*store.User
@@ -48,7 +48,7 @@ func New() *Store {
 		reports:    map[int64]*store.CommitReport{},
 		crLocks:    map[string]*sync.Mutex{},
 		grantLocks: map[int64]*sync.Mutex{},
-		crPush:     map[string]*sync.Mutex{},
+		crLease:    map[string]pushLease{},
 		crStatus:   map[string]int64{},
 		workspaces: map[int64]*store.Workspace{},
 		users:      map[int64]*store.User{},
@@ -863,31 +863,45 @@ func (s *Store) latestCommitReport(repoID int64, branch string, beforeID int64, 
 	return copyCommitReport(latest), nil
 }
 
-func (s *Store) TryPushStatus(ctx context.Context, repoID int64, commitSHA string, version int64, push func(context.Context) error) (bool, error) {
-	key := fmt.Sprintf("%d:%s", repoID, commitSHA)
-	// Serialize the whole check-push-advance per commit, mirroring the
-	// Postgres advisory lock.
-	m := s.mutexFor(s.crPush, key)
-	m.Lock()
-	defer m.Unlock()
+// pushLease mirrors the Postgres columns: when the claim lapses (zero:
+// none) and whether an upload queued behind it.
+type pushLease struct {
+	until time.Time
+	dirty bool
+}
 
+func (s *Store) ClaimPush(_ context.Context, repoID int64, commitSHA string, version int64, lease time.Duration) (store.PushClaim, time.Time, error) {
+	key := fmt.Sprintf("%d:%s", repoID, commitSHA)
 	s.mu.Lock()
-	exists := s.commitReportLocked(repoID, commitSHA) != nil
-	cur := s.crStatus[key]
-	s.mu.Unlock()
-	if !exists {
-		return false, nil // no report to attach a status to
+	defer s.mu.Unlock()
+	if s.commitReportLocked(repoID, commitSHA) == nil || version < s.crStatus[key] {
+		return store.PushSuperseded, time.Time{}, nil
 	}
-	if version < cur {
-		return false, nil // a newer push already owns the status
+	l := s.crLease[key]
+	now := time.Now()
+	if !l.until.IsZero() && l.until.After(now) {
+		l.dirty = true
+		s.crLease[key] = l
+		return store.PushQueued, time.Time{}, nil
 	}
-	if err := push(ctx); err != nil {
-		return false, err // version not advanced, so a retry can push
-	}
+	l.until = now.Add(lease) // a dirty mark left by a lapsed holder is kept
+	s.crLease[key] = l
+	return store.PushClaimed, l.until, nil
+}
+
+func (s *Store) FinishPush(_ context.Context, repoID int64, commitSHA string, version int64, lease time.Time, pushed bool) (bool, error) {
+	key := fmt.Sprintf("%d:%s", repoID, commitSHA)
 	s.mu.Lock()
-	s.crStatus[key] = version
-	s.mu.Unlock()
-	return true, nil
+	defer s.mu.Unlock()
+	if pushed && version > s.crStatus[key] {
+		s.crStatus[key] = version
+	}
+	l := s.crLease[key]
+	if !l.until.Equal(lease) {
+		return false, nil // lapsed and taken by another push
+	}
+	delete(s.crLease, key)
+	return l.dirty, nil
 }
 
 func (s *Store) CommitParts(_ context.Context, repoID int64, commitSHA string) ([]string, error) {

@@ -73,7 +73,7 @@ func TestAcceptLogsStageTimings(t *testing.T) {
 			t.Errorf("%s = %v, want %v", k, line[k], v)
 		}
 	}
-	for _, k := range []string{"ignore_ms", "gate_base_ms", "blob_ms", "diff_ms", "insert_ms", "recompute_ms", "push_ms", "push_lock_ms", "accept_ms", "total_ms"} {
+	for _, k := range []string{"ignore_ms", "gate_base_ms", "blob_ms", "diff_ms", "insert_ms", "recompute_ms", "push_ms", "accept_ms", "total_ms"} {
 		if _, ok := line[k].(float64); !ok {
 			t.Errorf("%s missing or not a number: %v", k, line[k])
 		}
@@ -125,20 +125,25 @@ func TestAcceptLogsFailingStage(t *testing.T) {
 	}
 }
 
-// The push is split in the log into the lock wait and each surface's
-// round trip; the PR comment only for a PR, and only the lock wait when
-// no surface reached the forge (no connection, superseded).
+// The push is split in the log into the lease claim and each surface's
+// round trip; the PR comment only for a PR, only the claim when no
+// surface reached the forge (superseded, queued), nothing without a forge
+// connection, and the rounds when the upload pushed again for others.
 func TestAcceptLogSplitsThePush(t *testing.T) {
-	ran := pushTimings{ran: true, lock: 30 * time.Millisecond, status: 400 * time.Millisecond, insights: 700 * time.Millisecond, comment: 900 * time.Millisecond}
+	ran := pushTimings{ran: true, rounds: 1, claim: 3 * time.Millisecond, status: 400 * time.Millisecond, insights: 700 * time.Millisecond, comment: 900 * time.Millisecond}
+	again := ran
+	again.rounds = 3
 	for _, tc := range []struct {
 		name    string
 		prID    string
 		timings pushTimings
 		want    map[string]float64 // absent keys must be left out
 	}{
-		{"pr", "7", ran, map[string]float64{"push_lock_ms": 30, "status_ms": 400, "insights_ms": 700, "comment_ms": 900}},
-		{"branch build", "", ran, map[string]float64{"push_lock_ms": 30, "status_ms": 400, "insights_ms": 700}},
-		{"nothing pushed", "7", pushTimings{lock: 30 * time.Millisecond}, map[string]float64{"push_lock_ms": 30}},
+		{"pr", "7", ran, map[string]float64{"push_claim_ms": 3, "status_ms": 400, "insights_ms": 700, "comment_ms": 900}},
+		{"branch build", "", ran, map[string]float64{"push_claim_ms": 3, "status_ms": 400, "insights_ms": 700}},
+		{"queued", "7", pushTimings{rounds: 1, claim: 3 * time.Millisecond}, map[string]float64{"push_claim_ms": 3}},
+		{"no forge", "7", pushTimings{}, map[string]float64{}},
+		{"pushed again", "", again, map[string]float64{"push_claim_ms": 3, "status_ms": 400, "insights_ms": 700, "push_rounds": 3}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
@@ -148,7 +153,7 @@ func TestAcceptLogSplitsThePush(t *testing.T) {
 			p.logAccept(sub, newAcceptTimings(time.Time{}), res, nil)
 
 			line := findLog(t, logLines(t, &buf), "upload accepted")
-			for _, k := range []string{"push_lock_ms", "status_ms", "insights_ms", "comment_ms"} {
+			for _, k := range []string{"push_claim_ms", "status_ms", "insights_ms", "comment_ms", "push_rounds"} {
 				want, ok := tc.want[k]
 				got, present := line[k]
 				switch {

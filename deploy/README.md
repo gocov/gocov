@@ -108,11 +108,14 @@ Postgres integration tests and the race detector live in `ci.yml`.
 
 **Rolling means two tasks for a moment.** The new task must be healthy
 before the old one is stopped, so for ~30 seconds both serve traffic and
-share the database. Everything that must not run twice takes a Postgres
-advisory lock — the per-commit merge and status push always did, and the
-grant refresh (Bitbucket and GitLab rotate the refresh token on every
-use, so two concurrent refreshes would drop the grant) moved onto one for
-this migration. Deploys are zero-downtime as a result.
+share the database. Everything that must not run twice is serialized in
+Postgres: the per-commit merge and the grant refresh (Bitbucket and
+GitLab rotate the refresh token on every use, so two concurrent
+refreshes would drop the grant) take an advisory lock, and the
+per-commit forge push a lease on the commit's report row
+(`commit_reports.push_lease_until`, held for at most 30 seconds), so it
+holds no connection while it waits on the forge. Deploys are
+zero-downtime as a result.
 
 **Rollback**: dispatch `deploy.yml` by hand with any older release tag —
 same job, no build, about a minute. A rollout that fails its health check
@@ -125,11 +128,11 @@ recovery, not a redeploy.
 ### Operating it
 
 - **Logs**: `aws logs tail /gocov/server --follow` (or `--since 1h`).
-- **Where the time goes**: three log lines answer it. `upload accepted` (or `upload failed`, with the `stage` it failed in) is one line per upload with each pipeline stage's milliseconds — `push_ms` is the forge push, held on a database connection, and splits into `push_lock_ms` (waiting for the commit's status lock — a pool connection, then any other part's push of the same commit) and each surface's round trip, `status_ms`, `insights_ms` and, on a PR, `comment_ms` (these run side by side, so `push_ms` ≈ `push_lock_ms` + the slowest; they are left out when nothing reached the forge). `ui request` is one line per `/api/ui/` request with its route pattern, status and `ms`. `db pool stats` is a per-minute line of the connection pool (`db pool` at startup gives its size); `empty_acquires` above zero means requests waited for a connection. In CloudWatch Logs Insights:
+- **Where the time goes**: three log lines answer it. `upload accepted` (or `upload failed`, with the `stage` it failed in) is one line per upload with each pipeline stage's milliseconds — `push_ms` is the forge push, which holds no database connection while it waits on the forge, and splits into `push_claim_ms` (claiming the commit's push lease, one statement) and each surface's round trip, `status_ms`, `insights_ms` and, on a PR, `comment_ms` (these run side by side, so a round takes as long as the slowest; they are left out when nothing reached the forge — the upload was superseded, or `queued` behind another upload's push of the same commit). `push_rounds` appears when uploads queued behind this one and it pushed the commit again; the warning `forge push: rounds exhausted` means a burst outran its five rounds and the commit's next upload brings the forge up to date. `ui request` is one line per `/api/ui/` request with its route pattern, status and `ms`. `db pool stats` is a per-minute line of the connection pool (`db pool` at startup gives its size); `empty_acquires` above zero means requests waited for a connection. In CloudWatch Logs Insights:
   ```
-  parse @message /msg="upload accepted".* push_ms=(?<push>\d+) push_lock_ms=(?<lock>\d+).* total_ms=(?<total>\d+)/
+  parse @message /msg="upload accepted".* push_ms=(?<push>\d+).* total_ms=(?<total>\d+)/
   | filter ispresent(total)
-  | stats pct(total, 95), pct(push, 95), pct(lock, 95), count(*) by bin(1h)
+  | stats pct(total, 95), pct(push, 95), count(*) by bin(1h)
   ```
 - **What is running**: `aws ecs describe-services --cluster gocov --services gocov-server --query 'services[0].deployments'`.
 - **There is no shell to get into.** The image is distroless — no `sh`, so ECS Exec cannot start a session in it, and there is nothing on a task's disk to look at: the container writes nothing. Logs are the whole story.

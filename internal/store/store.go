@@ -540,14 +540,27 @@ type Store interface {
 	// absent). It feeds the dashboard's rows, which read neither diff
 	// coverage nor any other branch, so DiffCoverage is left unloaded.
 	DefaultBranchReports(ctx context.Context, repoIDs []int64, limit int) (map[int64][]*CommitReport, error)
-	// TryPushStatus serializes forge status/PR-comment pushes for one commit
-	// and runs push only if version is at least the last successfully pushed
-	// version, recording version only after push returns nil. It closes the
-	// window where a slow older push lands after a newer one, and a failed
-	// push leaves the version untouched so a later part retries. push runs
-	// with the per-commit lock held and does the forge HTTP itself, bounded
-	// by ctx. Returns whether push ran.
-	TryPushStatus(ctx context.Context, repoID int64, commitSHA string, version int64, push func(context.Context) error) (pushed bool, err error)
+	// ClaimPush asks to push the forge surfaces of a commit's merged report
+	// at version (the triggering upload's id). One push per commit runs at
+	// a time, so a slow older push can never land after a newer one, and
+	// none holds a database connection while it talks to the forge: the
+	// claim is a lease on the commit's report row, good for lease.
+	//
+	// PushClaimed: the caller pushes, then calls FinishPush with the
+	// returned lease. PushQueued: another push holds the lease; the commit
+	// is marked so that push goes round again with the newest state, which
+	// carries this version too. PushSuperseded: there is no report, or a
+	// newer version has already been pushed. An expired lease counts as
+	// free, so a push that died (its task gone mid-request) blocks the
+	// commit for lease at most.
+	ClaimPush(ctx context.Context, repoID int64, commitSHA string, version int64, lease time.Duration) (PushClaim, time.Time, error)
+	// FinishPush releases the lease ClaimPush returned. pushed says the
+	// build status reached the forge: only then is version recorded, so a
+	// failed push leaves it for a later part to retry. again reports that
+	// an upload queued behind this push meanwhile, and the caller should
+	// claim and push the commit's newest state. A lease that has expired
+	// and been claimed by another push is left alone, and again is false.
+	FinishPush(ctx context.Context, repoID int64, commitSHA string, version int64, lease time.Time, pushed bool) (again bool, err error)
 	// CommitParts returns the distinct part names uploaded for a commit —
 	// a cheap read (no blocks/diff) for the per-commit parts cap.
 	CommitParts(ctx context.Context, repoID int64, commitSHA string) ([]string, error)
@@ -567,6 +580,19 @@ type Store interface {
 	// land, so the CI job's retry is not locked out by its own failure.
 	ReleaseTokenlessUpload(ctx context.Context, repoID, runID, runAttempt int64, part string) error
 }
+
+// PushClaim is what ClaimPush decided.
+type PushClaim int
+
+const (
+	// PushSuperseded: nothing to push — no report, or a newer version
+	// already reached the forge.
+	PushSuperseded PushClaim = iota
+	// PushClaimed: the caller holds the lease and pushes.
+	PushClaimed
+	// PushQueued: another push holds the lease and will go round again.
+	PushQueued
+)
 
 // CommitTx is the store access available inside WithCommitReportTx. On
 // Postgres every call runs on the one locked transaction, so the recompute's

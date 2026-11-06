@@ -20,16 +20,30 @@ import (
 	"github.com/gocov/gocov/internal/store"
 )
 
-// statusPushTimeout bounds the serialized forge push: TryPushStatus holds a
-// per-commit lock (and its connection) across the forge HTTP calls, so a
-// hung forge must not pin them.
+// statusPushTimeout bounds one round of the forge push. No database
+// connection is held across it, but the commit's push lease is, and every
+// upload of the commit queues behind it.
 const statusPushTimeout = 20 * time.Second
 
-// errStatusPushFailed signals TryPushStatus that the build-status push did
-// not post, so the status version must not advance and a later part retries.
-// It never surfaces as an upload error — the response carries the per-surface
-// outcome.
-var errStatusPushFailed = errors.New("build status push failed")
+// pushLease is how long a claim on a commit's push stays good: past one
+// round's timeout, so a live push never loses it, and short, so a push
+// whose task died blocks the commit for no longer than this.
+const pushLease = 30 * time.Second
+
+// maxPushRounds bounds how often one upload pushes a commit again for
+// uploads that queued behind it. Every round carries all of the commit's
+// parts so far, so a burst of queued uploads costs one round, not one each.
+const maxPushRounds = 5
+
+// finishPushTimeout bounds releasing the lease. It runs even after the
+// request is gone, so a disconnected client does not leave the commit
+// blocked for the lease's full length.
+const finishPushTimeout = 5 * time.Second
+
+// Queued is what an upload reports for every surface when another upload
+// of the same commit was pushing: that push goes round again with the
+// commit's newest state, which includes this upload.
+const Queued = "queued: pushed with a concurrent upload of this commit"
 
 // pushBuildStatus posts a "coverage: X% (±Y)" build status to the repo's
 // forge; a failed coverage gate turns the state into FAILED so the forge
@@ -364,16 +378,17 @@ type PushResult struct {
 	timings pushTimings
 }
 
-// pushTimings splits a push's time for the accept log: how long it waited
-// for the commit's status lock (a pool connection, then the advisory lock
-// behind any other part's push), then each surface's forge round trip.
-// The surfaces run side by side, so the push takes as long as the slowest.
-// ran is false when no surface reached the forge — no connection, or the
-// push was superseded — and lock is then the whole wait.
+// pushTimings splits a push's time for the accept log: claiming the
+// commit's push lease (one statement), then each surface's forge round
+// trip. The surfaces run side by side, so a round takes as long as the
+// slowest. ran is false when no surface reached the forge — superseded,
+// queued, or the claim failed. rounds counts this upload's pushes of the
+// commit: more than one when uploads queued behind it.
 type pushTimings struct {
 	ran                       bool
-	lock                      time.Duration
+	claim                     time.Duration
 	status, insights, comment time.Duration
+	rounds                    int
 }
 
 // Push updates every forge surface for the commit and reports what each
@@ -381,58 +396,107 @@ type pushTimings struct {
 //
 // The pushes run after the locked recompute. Two parts of one commit can
 // push concurrently, and forge latency could let an older push land last
-// and pin the commit to a stale status. Serialize the push per commit and
-// gate it on this upload's version (its id, which rises with the
-// most-complete merged state): TryPushStatus runs the push only if it is
-// not older than the last successful one, and records the version only
-// after the push succeeds — so a failed push doesn't burn the version and
-// a later part retries.
+// and pin the commit to a stale status, so one push per commit runs at a
+// time, gated on this upload's version (its id): a claim on the commit's
+// push lease (store.ClaimPush). The lease is taken and released in one
+// statement each, so no connection waits on the forge. An upload that
+// finds the lease held queues instead of waiting; the holder then goes
+// round again with the commit's newest merged state, so the last word on
+// the forge is always the newest one. A failed build status records
+// nothing, and a later part retries.
 func (p *Pipeline) Push(ctx context.Context, fg forge.Forge, repo *store.Repo, upload *store.Upload, rc *Merged) PushResult {
-	merged, mergedDelta, mergedGate := rc.Upload, rc.Delta, rc.Verdict
-	var res PushResult
-
-	pushCtx, cancel := context.WithTimeout(ctx, statusPushTimeout)
-	defer cancel()
-	start := time.Now()
-	var lock time.Duration
-	pushed, err := p.Store.TryPushStatus(pushCtx, repo.ID, upload.CommitSHA, upload.ID, func(ctx context.Context) error {
-		lock = time.Since(start)
-		res = p.pushSurfaces(ctx, fg, repo, merged, p.reportURL(merged, len(rc.Parts)), mergedDelta, mergedGate)
-		// The build status gates merges; if it didn't post, signal failure so
-		// the version isn't advanced and a later part retries. Insights and
-		// PR comment are best effort and don't hold back the version.
-		if strings.HasPrefix(res.BuildStatus, "error") {
-			return errStatusPushFailed
-		}
-		return nil
-	})
-	switch {
-	case errors.Is(err, errStatusPushFailed):
-		// res already carries the per-surface outcome; nothing to do.
-	case err != nil:
-		// Lock/tx failure: the push may not have run. Report it rather than
-		// leaving the fields blank.
-		p.Log.Warn("status push lock", "repo", repo.Slug, "commit", upload.CommitSHA, "err", err)
-		if res.BuildStatus == "" {
-			res.BuildStatus = "error: " + err.Error()
-			res.CodeInsights = "error: " + err.Error()
-		}
-	case !pushed:
-		res = everySurface("skipped: superseded", merged.PRID != "")
+	if fg == nil {
+		p.Log.Debug("forge push skipped: no forge connection", "repo", repo.Slug)
+		return everySurface("skipped", upload.PRID != "")
 	}
-	if lock == 0 {
-		// push never ran (superseded, nothing to attach to, or no lock):
-		// all of the time went to getting there.
-		lock = time.Since(start)
+	res, again := p.pushRound(ctx, fg, repo, upload, rc)
+	rounds := 1
+	// Later rounds run on past a client that has gone: the uploads that
+	// queued behind this one are waiting on them.
+	bg := context.WithoutCancel(ctx)
+	for ; again && rounds < maxPushRounds; rounds++ {
+		latest, merged, err := p.latestMerged(bg, repo, upload.CommitSHA)
+		if err != nil {
+			p.Log.Warn("forge push: reloading the commit", "repo", repo.Slug, "commit", upload.CommitSHA, "err", err)
+			again = false
+			break
+		}
+		_, again = p.pushRound(bg, fg, repo, latest, merged)
 	}
-	res.timings.lock = lock
+	if again {
+		p.Log.Warn("forge push: rounds exhausted; the commit's next upload pushes it",
+			"repo", repo.Slug, "commit", upload.CommitSHA, "rounds", rounds)
+	}
+	res.timings.rounds = rounds
 	return res
+}
+
+// pushRound claims the commit's push lease at upload's version, pushes
+// rc's surfaces if it got it and releases it, reporting whether uploads
+// queued behind it meanwhile.
+func (p *Pipeline) pushRound(ctx context.Context, fg forge.Forge, repo *store.Repo, upload *store.Upload, rc *Merged) (PushResult, bool) {
+	merged := rc.Upload
+	start := time.Now()
+	claim, lease, err := p.Store.ClaimPush(ctx, repo.ID, upload.CommitSHA, upload.ID, pushLease)
+	claimed := time.Since(start)
+	var res PushResult
+	switch {
+	case err != nil:
+		p.Log.Warn("forge push claim", "repo", repo.Slug, "commit", upload.CommitSHA, "err", err)
+		res = everySurface("error: "+err.Error(), merged.PRID != "")
+	case claim == store.PushSuperseded:
+		res = everySurface("skipped: superseded", merged.PRID != "")
+	case claim == store.PushQueued:
+		res = everySurface(Queued, merged.PRID != "")
+	default:
+		pushCtx, cancel := context.WithTimeout(ctx, statusPushTimeout)
+		res = p.pushSurfaces(pushCtx, fg, repo, merged, p.reportURL(merged, len(rc.Parts)), rc.Delta, rc.Verdict)
+		cancel()
+		// The build status gates merges; only it holds back the version.
+		// Insights and the PR comment are best effort.
+		pushed := !strings.HasPrefix(res.BuildStatus, "error")
+		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishPushTimeout)
+		again, err := p.Store.FinishPush(fctx, repo.ID, upload.CommitSHA, upload.ID, lease, pushed)
+		cancel()
+		if err != nil {
+			// The lease lapses on its own; only the queued uploads' round is lost.
+			p.Log.Warn("forge push release", "repo", repo.Slug, "commit", upload.CommitSHA, "err", err)
+		}
+		res.timings.claim = claimed
+		return res, again
+	}
+	res.timings.claim = claimed
+	return res, false
+}
+
+// latestMerged is the commit's newest state for another push round: its
+// merged report recomputed for the newest upload, which every round's
+// version must be.
+func (p *Pipeline) latestMerged(ctx context.Context, repo *store.Repo, commitSHA string) (*store.Upload, *Merged, error) {
+	parts, err := p.Store.LatestUploadsPerPart(ctx, repo.ID, commitSHA)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(parts) == 0 {
+		return nil, nil, store.ErrNotFound
+	}
+	newest := parts[0]
+	for _, u := range parts[1:] {
+		if u.ID > newest.ID {
+			newest = u
+		}
+	}
+	merged, err := p.Recompute(ctx, repo, newest)
+	if err != nil {
+		return nil, nil, err
+	}
+	return newest, merged, nil
 }
 
 // pushSurfaces drives the three surfaces through the repo's forge client.
 // They are independent requests (forge clients hold no mutable state) and
 // each writes only its own result field, so they run concurrently: the
-// push, which holds the commit's status lock, takes as long as the slowest
+// push, which holds the commit's push lease, takes as long as the slowest
 // surface rather than the sum of all three. Without a client — the
 // workspace has no working connection — every surface is skipped.
 func (p *Pipeline) pushSurfaces(ctx context.Context, fg forge.Forge, repo *store.Repo, u *store.Upload, link string, deltaPct *float64, gate Verdict) PushResult {
