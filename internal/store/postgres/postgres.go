@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/secretbox"
 	"github.com/gocov/gocov/internal/store"
 )
@@ -990,6 +991,21 @@ func (s *Store) UploadFile(ctx context.Context, uploadID int64, path string) (*s
 	return files[0], nil
 }
 
+// blocksColumn decodes upload_files.blocks as pgx reads it: as a
+// pgtype.BytesScanner it gets the row's bytes in place, where a []byte
+// destination would copy every file's blocks first. Nothing it decodes
+// keeps a reference to them.
+type blocksColumn struct{ dst *[]profile.Block }
+
+func (c blocksColumn) ScanBytes(src []byte) error {
+	blocks, err := profile.UnmarshalBlocks(src)
+	if err != nil {
+		return fmt.Errorf("bad blocks: %w", err)
+	}
+	*c.dst = blocks
+	return nil
+}
+
 // queryUploadFiles runs a query over upload_files' columns and decodes
 // every row's blocks.
 func queryUploadFiles(ctx context.Context, q querier, sql string, args ...any) ([]*store.UploadFile, error) {
@@ -1001,12 +1017,8 @@ func queryUploadFiles(ctx context.Context, q querier, sql string, args ...any) (
 	var out []*store.UploadFile
 	for rows.Next() {
 		var f store.UploadFile
-		var blocks []byte
-		if err := rows.Scan(&f.UploadID, &f.Path, &f.Pct, &f.CoveredStmts, &f.TotalStmts, &blocks); err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(blocks, &f.Blocks); err != nil {
-			return nil, fmt.Errorf("upload %d file %s: bad blocks: %w", f.UploadID, f.Path, err)
+		if err := rows.Scan(&f.UploadID, &f.Path, &f.Pct, &f.CoveredStmts, &f.TotalStmts, blocksColumn{&f.Blocks}); err != nil {
+			return nil, fmt.Errorf("upload %d file %s: %w", f.UploadID, f.Path, err)
 		}
 		out = append(out, &f)
 	}

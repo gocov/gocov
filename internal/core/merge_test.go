@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"slices"
 	"strings"
 	"testing"
 
@@ -229,5 +230,63 @@ func TestRecomputeComparesTheSameParts(t *testing.T) {
 	wantDelta(m, 5)
 	if m.Verdict.Failed() {
 		t.Errorf("gate failed against a partial baseline: %v", m.Verdict.Failures)
+	}
+}
+
+// Files all of one upload skip the merge when they are canonical, as the
+// parsers leave them (profile's TestMergeOfOneParsedProfileKeepsItsCoverage
+// holds every format to that), and are merged when they are not: either
+// way MergeParts answers what merging gives, and leaves its input alone.
+func TestMergePartsLonePartIsItsOwnMerge(t *testing.T) {
+	file := func(path string, blocks ...profile.Block) *store.UploadFile {
+		f := newUploadFile(&profile.File{Path: path, Blocks: blocks})
+		f.UploadID = 7
+		return f
+	}
+	b := func(line, stmts, count int) profile.Block {
+		return profile.Block{StartLine: line, StartCol: 1, EndLine: line, EndCol: 9, NumStmts: stmts, Count: count}
+	}
+	for _, tc := range []struct {
+		name     string
+		files    []*store.UploadFile
+		shortcut bool
+	}{
+		{"canonical, out of path order", []*store.UploadFile{
+			file("z.go", b(1, 2, 1), b(3, 1, 0)),
+			file("a.go", b(1, 6, 3), b(7, 2, 0)),
+			file("m/b.go", b(1, 1, 0)),
+		}, true},
+		{"a block stored twice", []*store.UploadFile{
+			file("a.go", b(1, 2, 1), b(1, 2, 4), b(3, 1, 0)),
+		}, false},
+		{"blocks out of order", []*store.UploadFile{
+			file("a.go", b(3, 1, 0), b(1, 2, 1)),
+		}, false},
+		{"a path stored twice", []*store.UploadFile{
+			file("a.go", b(1, 2, 0)),
+			file("a.go", b(1, 2, 1), b(3, 1, 0)),
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := slices.Clone(tc.files)
+			want := mergeAll(slices.Clone(tc.files))
+			got := MergeParts(in)
+			if !slices.Equal(in, tc.files) {
+				t.Error("MergeParts reordered its input")
+			}
+			if len(got) != len(want) {
+				t.Fatalf("%d files, want %d", len(got), len(want))
+			}
+			for i := range want {
+				g, w := got[i], want[i]
+				if g.Path != w.Path || g.UploadID != w.UploadID || g.Pct != w.Pct ||
+					g.CoveredStmts != w.CoveredStmts || g.TotalStmts != w.TotalStmts || !slices.Equal(g.Blocks, w.Blocks) {
+					t.Errorf("file %d = %+v, want the merge's %+v", i, g, w)
+				}
+			}
+			if took := len(got) > 0 && slices.Contains(tc.files, got[0]); took != tc.shortcut {
+				t.Errorf("returned the stored rows = %v, want %v", took, tc.shortcut)
+			}
+		})
 	}
 }

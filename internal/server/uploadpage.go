@@ -270,13 +270,14 @@ func buildFilesView(diff *diffcov.Result, uploads map[int64]*store.Upload, files
 	}
 	rows := make([]sortedRow, 0, len(files))
 	for _, f := range files {
+		missed := diffcov.MissedSpans(f.Blocks)
 		row := sortedRow{fileRowDTO: fileRowDTO{
 			UploadID:     f.UploadID,
 			Path:         f.Path,
 			Coverage:     f.Pct,
 			CoveredStmts: f.CoveredStmts,
 			TotalStmts:   f.TotalStmts,
-			Uncovered:    uncoveredRanges(f.Blocks),
+			Uncovered:    formatRanges(missed),
 		}}
 		if hasBase {
 			if bf, ok := baseFiles[f.Path]; ok {
@@ -289,8 +290,9 @@ func buildFilesView(diff *diffcov.Result, uploads map[int64]*store.Upload, files
 					row.CoverageChanged = true
 				}
 				// Lines that ran at the baseline and miss now are a change
-				// even when the percentage holds.
-				if !row.CoverageChanged && len(regressedSpans(f.Blocks, bf.Blocks)) > 0 {
+				// even when the percentage holds; a file missing nothing
+				// needs no look at the baseline's blocks.
+				if !row.CoverageChanged && len(missed) > 0 && len(regressedFrom(missed, bf.Blocks)) > 0 {
 					row.CoverageChanged = true
 				}
 			} else {
@@ -402,7 +404,11 @@ const maxUncoveredRanges = 6
 // uncoveredRanges formats the ranges of executable lines nothing ran over
 // (diffcov.MissedSpans), e.g. "45-52, 88 +3 more".
 func uncoveredRanges(blocks []profile.Block) string {
-	merged := diffcov.MissedSpans(blocks)
+	return formatRanges(diffcov.MissedSpans(blocks))
+}
+
+// formatRanges is uncoveredRanges for spans already merged.
+func formatRanges(merged []diffcov.Span) string {
 	if len(merged) == 0 {
 		return ""
 	}
@@ -444,7 +450,13 @@ func lineCounts(blocks []profile.Block, limit int) map[int]int {
 // line-level diff. Spans rather than lines, because uploader-declared
 // blocks may claim millions of lines.
 func regressedSpans(cur, base []profile.Block) []diffcov.Span {
-	return diffcov.IntersectSpans(diffcov.MissedSpans(cur), diffcov.MergedSpans(base, diffcov.Ran))
+	return regressedFrom(diffcov.MissedSpans(cur), base)
+}
+
+// regressedFrom is regressedSpans for the file's missed spans already
+// merged (diffcov.MissedSpans).
+func regressedFrom(missed []diffcov.Span, base []profile.Block) []diffcov.Span {
+	return diffcov.IntersectSpans(missed, diffcov.MergedSpans(base, diffcov.Ran))
 }
 
 // handleUploadProfile implements GET /uploads/{id}/profile — the raw coverage
