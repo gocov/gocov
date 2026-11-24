@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.35.0](https://github.com/gocov/gocov/compare/v0.34.0...v0.35.0) (2026-11-24)
+
+
+### Features
+
+* **deploy:** serve a certificate of your own with GOCOV_TLS=certs ([#289](https://github.com/gocov/gocov/issues/289)) ([2709a6d](https://github.com/gocov/gocov/commit/2709a6d995a8c073476ac7967fe3077b85baa10b))
+
+
+### Bug Fixes
+
+* build with Go 1.27.4 for GO-2026-6859 ([#286](https://github.com/gocov/gocov/issues/286)) ([e001992](https://github.com/gocov/gocov/commit/e001992bce102ddbc02124c2a21497b37bdc5a64))
+
 ## [0.34.0](https://github.com/gocov/gocov/compare/v0.33.0...v0.34.0) (2026-11-06)
 
 
