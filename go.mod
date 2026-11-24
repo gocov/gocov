@@ -1,6 +1,6 @@
 module github.com/gocov/gocov
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/bykclk/env v0.0.0-20260922141159-370b99bd07bf
