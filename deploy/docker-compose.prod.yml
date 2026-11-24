@@ -10,7 +10,9 @@
 # ran on a single VM until September 2026 (it is on Fargate now, see
 # README.md), with the hostname swapped for yours: Caddy obtains and
 # renews the certificate itself, so open 80 and 443 and point GOCOV_HOST's
-# DNS at the machine.
+# DNS at the machine. A hostname only your network resolves gets no
+# public certificate; GOCOV_TLS=certs in .env serves one you supply from
+# certs/ instead (docs/self-hosting.md).
 #
 # Postgres is external by default — set DATABASE_URL in .env. For a small
 # instance, COMPOSE_PROFILES=db in .env runs Postgres here too, in a named
@@ -112,11 +114,24 @@ services:
       # The site address in the Caddyfile. A public hostname gets a
       # Let's Encrypt certificate; "localhost" gets one from Caddy's own CA.
       GOCOV_HOST: ${GOCOV_HOST:?set GOCOV_HOST in .env, e.g. gocov.example.com}
+      # auto: Caddy obtains the certificate for GOCOV_HOST itself. certs:
+      # it serves certs/gocov.crt and certs/gocov.key from this directory
+      # instead, for a hostname no public CA will issue for.
+      GOCOV_TLS: ${GOCOV_TLS:-auto}
     ports:
       - "80:80"
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Read only with GOCOV_TLS=certs. Gitignored, so a key put here
+      # never reaches a commit. Created empty when missing, so an instance
+      # on auto needs nothing here.
+      - type: bind
+        source: ./certs
+        target: /certs
+        read_only: true
+        bind:
+          create_host_path: true
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
