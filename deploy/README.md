@@ -13,7 +13,10 @@ bundled. From this directory:
    release to run, your hostname, the public URL and a secret key
    (`openssl rand -hex 32`).
 2. Point the hostname's DNS at this machine and open 80 and 443. Caddy
-   obtains and renews the certificate itself.
+   obtains and renews the certificate itself. A hostname no public CA will
+   issue for (an internal one) takes its certificate from `certs/` instead,
+   with `GOCOV_TLS=certs`; see
+   [A certificate of your own](../docs/self-hosting.md#a-certificate-of-your-own).
 3. Either put your Postgres DSN in `DATABASE_URL`, or uncomment the three
    bundled-Postgres lines (`COMPOSE_PROFILES=db`, a password, and the DSN
    that goes with it) to run Postgres 18 here, in a named volume.

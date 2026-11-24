@@ -58,7 +58,8 @@ that directory:
 1. `cp .env.example .env` and fill in the four required values: the release to run, your hostname, the public
    `https://` URL and a secret key (`openssl rand -hex 32`). Every other setting is listed there, commented out.
 2. Point the hostname's DNS at the machine and open 80 and 443. Caddy obtains and renews the certificate itself;
-   the `Caddyfile` next to the compose file is the one quoted below.
+   the `Caddyfile` next to the compose file has the proxy settings quoted below, plus the `GOCOV_TLS` switch for a
+   hostname only your own network resolves, which [brings its own certificate](#a-certificate-of-your-own) instead.
 3. Put your Postgres DSN in `DATABASE_URL`, or turn on the bundled one (see [Postgres](#postgres)).
 4. `docker compose -f docker-compose.prod.yml up -d`.
 
@@ -97,6 +98,24 @@ gocov.example.com {
 	}
 }
 ```
+
+### A certificate of your own
+
+Caddy's automatic certificate comes from a public CA, which only issues for a name in public DNS that it can reach on
+port 80 or 443. An instance on an internal hostname — a name in your own DNS zone or hosts files, under a company CA —
+cannot get one that way, so the production compose takes the certificate from you instead:
+
+1. Put the certificate in `deploy/certs/gocov.crt` (PEM, with any intermediates after it) and its key in
+   `deploy/certs/gocov.key`, mode 600. The directory is gitignored, so the key cannot end up in a commit. If the
+   stack has already run, Docker created it empty and owned by root for its mount, so copy the files in with `sudo`.
+2. Set `GOCOV_TLS=certs` in `.env` and run `docker compose -f docker-compose.prod.yml up -d` again.
+
+Caddy then serves that certificate for `GOCOV_HOST` and still redirects port 80 to HTTPS, but renews nothing: replace
+the two files before the certificate expires and `docker compose -f docker-compose.prod.yml restart caddy`. The
+certificate must name `GOCOV_HOST`, and every client must trust the CA that signed it — the browsers, and the CI jobs
+that upload. A job that uploads with curl from a container can pass the CA with `--cacert`; the CLI trusts what the
+system trusts, and on Linux `SSL_CERT_FILE` points it at another bundle — one that replaces the system's rather than
+adding to it, so build it from the system bundle with your CA appended.
 
 ## Postgres
 

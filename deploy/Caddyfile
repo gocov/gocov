@@ -1,9 +1,26 @@
 # TLS in front of the server, for docker-compose.prod.yml. The hostname is
-# GOCOV_HOST from .env; Caddy obtains and renews the certificate itself.
-# The body limit must stay above the server's own 64 MiB upload cap, or
-# the proxy rejects large reports before gocov sees them
-# (docs/self-hosting.md).
+# GOCOV_HOST from .env. Where the certificate comes from is GOCOV_TLS:
+# auto (the default) has Caddy obtain and renew one itself, which takes a
+# hostname in public DNS; certs serves the one in deploy/certs instead,
+# for a name no public CA will issue for, such as an internal hostname
+# under a company CA. The body limit must stay above the server's own
+# 64 MiB upload cap, or the proxy rejects large reports before gocov sees
+# them (docs/self-hosting.md).
+
+# One snippet per GOCOV_TLS value; the site imports the one it names, so
+# an unknown value fails at start-up instead of quietly meaning auto.
+(tls-auto) {
+	# Nothing to add: Caddy's automatic HTTPS manages the certificate.
+}
+
+(tls-certs) {
+	# deploy/certs, mounted read-only by the compose file.
+	tls /certs/gocov.crt /certs/gocov.key
+}
+
 {$GOCOV_HOST} {
+	import tls-{$GOCOV_TLS:auto}
+
 	request_body {
 		max_size 100MB
 	}
