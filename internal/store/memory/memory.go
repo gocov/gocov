@@ -794,7 +794,12 @@ func (s *Store) UpsertCommitReport(_ context.Context, cr *store.CommitReport) er
 	defer s.mu.Unlock()
 	now := time.Now()
 	if existing := s.commitReportLocked(cr.RepoID, cr.CommitSHA); existing != nil {
-		// Preserve id and first-seen created_at across recomputes.
+		// Preserve id and first-seen created_at across recomputes, and the
+		// branch and PR of a report on the default branch from a build of
+		// the branch itself (store.Store.UpsertCommitReport).
+		if repo, ok := s.repos[cr.RepoID]; ok && existing.PRID == "" && existing.Branch == repo.DefaultBranch {
+			cr.Branch, cr.PRID = existing.Branch, existing.PRID
+		}
 		cr.ID = existing.ID
 		cr.CreatedAt = existing.CreatedAt
 		cr.UpdatedAt = now

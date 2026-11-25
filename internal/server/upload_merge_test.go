@@ -254,3 +254,39 @@ func TestMergedGateSelfHeals(t *testing.T) {
 		t.Errorf("healed report should pass the gate, got %+v", cr)
 	}
 }
+
+// A commit built on the default branch stays there when another branch
+// uploads it too — a feature branch cut from it, then that branch's PR —
+// so the badge, the dashboard row and the trend keep it. The PR build's
+// own forge surfaces still speak for the PR.
+func TestMergedReportStaysOnDefaultBranch(t *testing.T) {
+	f := newFixture(t, map[string]string{})
+	for _, fields := range []map[string]string{
+		{"commit": "c1", "branch": "main"},
+		{"commit": "c1", "branch": "KLRS-15887"},
+		{"commit": "c1", "branch": "feat", "pr_id": "7"},
+	} {
+		if rec := doUpload(t, f, "secret-token", fields, testProfile); rec.Code != http.StatusCreated {
+			t.Fatalf("upload %v: %d %s", fields, rec.Code, rec.Body)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/badge/bitbucket/acme/widgets.svg", nil)
+	rec := httptest.NewRecorder()
+	f.srv.ServeHTTP(rec, req)
+	if svg := rec.Body.String(); !strings.Contains(svg, ">80.0%<") {
+		t.Errorf("badge = %s, want c1's 80.0%%", svg)
+	}
+	dash := decodeJSON[dashboardDTO](t, get(f, "/api/ui/dashboard"))
+	if len(dash.Repos) != 1 || dash.Repos[0].Coverage == nil || *dash.Repos[0].Coverage != 80 {
+		t.Errorf("dashboard rows = %+v, want c1's 80%%", dash.Repos)
+	}
+	page := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets"))
+	if len(page.Trend) != 1 || page.Trend[0].SHA != "c1" {
+		t.Errorf("main trend = %+v, want c1", page.Trend)
+	}
+
+	if len(f.forge.CommentCalls) != 1 || f.forge.CommentCalls[0].PRID != "7" {
+		t.Errorf("PR comments = %+v, want one, on PR 7", f.forge.CommentCalls)
+	}
+}

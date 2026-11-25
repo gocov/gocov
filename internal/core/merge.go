@@ -119,6 +119,10 @@ func (p *Pipeline) Recompute(ctx context.Context, repo *store.Repo, u *store.Upl
 			return fmt.Errorf("saving merged report: %w", err)
 		}
 
+		// The stored report may stay on the default branch when another
+		// branch uploads its commit (store.Store.UpsertCommitReport); the
+		// delta above and every forge surface speak for this upload — its
+		// branch, its PR — so they take u's, never cr's.
 		mergedUpload := &store.Upload{
 			ID:           u.ID,
 			RepoID:       repo.ID,

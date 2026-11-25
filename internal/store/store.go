@@ -515,6 +515,14 @@ type Store interface {
 	// UpsertCommitReport creates or replaces the merged report for
 	// (repo, commit), setting cr.ID, cr.CreatedAt and cr.UpdatedAt. The
 	// first-seen creation time is preserved across recomputes.
+	//
+	// So is a report on the repo's default branch with no PR — one a build
+	// of the branch itself put there: a later upsert of the commit from
+	// any other branch or PR (a branch cut from it, a fast-forward, a PR
+	// whose head it is) replaces its numbers but keeps its Branch and
+	// PRID, or the commit would drop out of the default branch's trend,
+	// dashboard row, badge and baselines. Anywhere else the newest upsert
+	// decides. cr.Branch and cr.PRID are set to what was stored.
 	UpsertCommitReport(ctx context.Context, cr *CommitReport) error
 	// CommitReport returns the merged report for a commit, or ErrNotFound.
 	CommitReport(ctx context.Context, repoID int64, commitSHA string) (*CommitReport, error)
