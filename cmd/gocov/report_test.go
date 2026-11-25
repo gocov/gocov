@@ -115,35 +115,30 @@ func TestReportDetectsFromCIAndGit(t *testing.T) {
 // too. -pr names one by hand, and -branch asks for no PR's view.
 func TestReportSendsTheDetectedPR(t *testing.T) {
 	srv, req := newReportServer(t, http.StatusOK, reportBody)
-	env := mapEnv(map[string]string{
-		"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "acme/widgets", "GITHUB_SHA": "abc123",
-		"GITHUB_REF": "refs/pull/7/merge",
-	})
+	run := func(ref string) envFunc {
+		return mapEnv(map[string]string{
+			"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "acme/widgets", "GITHUB_SHA": "abc123", "GITHUB_REF": ref,
+		})
+	}
+	pr, push := run("refs/pull/7/merge"), run("refs/heads/main")
 	for _, tc := range []struct {
+		env  envFunc
 		args []string
 		want string // the query sent
 	}{
-		{nil, "commit=abc123&pr_id=7"},
-		{[]string{"-pr", "9"}, "commit=abc123&pr_id=9"},
-		{[]string{"-commit", "def456"}, "commit=def456&pr_id=7"},
-		{[]string{"-branch", "main"}, "branch=main"},
-		{[]string{"-repo", "acme/widgets", "-commit", "def456", "-pr", "9"}, "commit=def456&pr_id=9"},
+		{pr, nil, "commit=abc123&pr_id=7"},
+		{pr, []string{"-pr", "9"}, "commit=abc123&pr_id=9"},
+		{pr, []string{"-commit", "def456"}, "commit=def456&pr_id=7"},
+		{pr, []string{"-branch", "main"}, "branch=main"},
+		{pr, []string{"-repo", "acme/widgets", "-commit", "def456", "-pr", "9"}, "commit=def456&pr_id=9"},
+		{push, nil, "commit=abc123"}, // a push build has no PR to name
 	} {
-		if err := runReport(append([]string{"-server", srv.URL}, tc.args...), &bytes.Buffer{}, env, noGit, http.DefaultClient); err != nil {
+		if err := runReport(append([]string{"-server", srv.URL}, tc.args...), &bytes.Buffer{}, tc.env, noGit, http.DefaultClient); err != nil {
 			t.Fatalf("%v: %v", tc.args, err)
 		}
 		if got := req.URL.Query().Encode(); got != tc.want {
 			t.Errorf("%v: query = %s, want %s", tc.args, got, tc.want)
 		}
-	}
-
-	// A push build has no PR to name.
-	push := mapEnv(map[string]string{"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "acme/widgets", "GITHUB_SHA": "abc123", "GITHUB_REF": "refs/heads/main"})
-	if err := runReport([]string{"-server", srv.URL}, &bytes.Buffer{}, push, noGit, http.DefaultClient); err != nil {
-		t.Fatal(err)
-	}
-	if got := req.URL.Query().Encode(); got != "commit=abc123" {
-		t.Errorf("push build: query = %s, want commit=abc123", got)
 	}
 }
 

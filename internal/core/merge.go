@@ -198,7 +198,7 @@ type latestParts interface {
 // default branch keeps the commit and u is another branch's or a PR's
 // build (Recompute). It keeps the stored branch, and so its baseline.
 func MergedReportFor(ctx context.Context, reports latestParts, repo *store.Repo, cr *store.CommitReport, u *store.Upload) (*store.CommitReport, error) {
-	if !defaultBuild(repo, cr.Branch, cr.PRID) || defaultBuild(repo, u.Branch, u.PRID) {
+	if !withholdsDiff(repo, cr, u) {
 		return cr, nil
 	}
 	parts, err := reports.LatestUploadsPerPart(ctx, repo.ID, cr.CommitSHA)
@@ -229,12 +229,17 @@ func MergedReportForPR(ctx context.Context, reports latestParts, repo *store.Rep
 			build = p
 		}
 	}
-	// A PR build is never the default branch's own, so MergedReportFor's
-	// rule reduces to whether the default branch keeps the commit.
-	if build == nil || !defaultBuild(repo, cr.Branch, cr.PRID) {
+	if build == nil || !withholdsDiff(repo, cr, build) {
 		return cr, build, nil
 	}
 	return withPartsDiff(repo, cr, parts), build, nil
+}
+
+// withholdsDiff reports whether cr is stored without the diff coverage u's
+// build gave it: the default branch keeps the commit, and u is another
+// branch's or a PR's build of it (Recompute).
+func withholdsDiff(repo *store.Repo, cr *store.CommitReport, u *store.Upload) bool {
+	return defaultBuild(repo, cr.Branch, cr.PRID) && !defaultBuild(repo, u.Branch, u.PRID)
 }
 
 // withPartsDiff is cr with the diff coverage of the commit's parts put

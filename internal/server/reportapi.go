@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -156,7 +155,7 @@ func (s *Server) loadReport(ctx context.Context, repo *store.Repo, commit, branc
 		TotalStatements:   shown.TotalStmts,
 		GateFailed:        shown.GateFailed,
 		Diff:              newReportAPIDiffDTO(shown.DiffCoverage),
-		ReportURL:         s.reportURL(build.ID, shown.PartCount),
+		ReportURL:         s.pipeline.ReportURL(build, shown.PartCount),
 	}
 	if base := core.CommitBaseline(ctx, s.store, repo, shown); base != nil {
 		rep.Base = &readapi.Base{Commit: base.CommitSHA, Coverage: base.TotalPct}
@@ -276,15 +275,4 @@ func spanPairs(spans []diffcov.Span) [][2]int {
 		out[i] = [2]int{sp.Start, sp.End}
 	}
 	return out
-}
-
-// reportURL is the page the forge surfaces link to for a report: the
-// page of the upload it is linked to, with every part merged when there is
-// more than one.
-func (s *Server) reportURL(uploadID int64, parts int) string {
-	url := fmt.Sprintf("%s/uploads/%d", strings.TrimSuffix(s.baseURL, "/"), uploadID)
-	if parts > 1 {
-		url += "?parts=merged"
-	}
-	return url
 }
