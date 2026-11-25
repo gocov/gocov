@@ -31,8 +31,9 @@ import (
 // not it exists.
 
 // handleReportAPI serves GET /api/v1/reports/{forge}/{slug...}: the merged
-// report of ?commit=, or else the newest report on ?branch= (the repo's
-// default branch when that is omitted too).
+// report of ?commit=, read as the build of PR ?pr_id= when one is named,
+// or else the newest report on ?branch= (the repo's default branch when
+// that is omitted too).
 func (s *Server) handleReportAPI(w http.ResponseWriter, r *http.Request) {
 	repo, err := s.store.RepoBySlug(r.Context(), r.PathValue("forge"), r.PathValue("slug"))
 	if errors.Is(err, store.ErrNotFound) {
@@ -59,7 +60,7 @@ func (s *Server) handleReportAPI(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	dto, err := s.loadReport(r.Context(), repo, r.FormValue("commit"), r.FormValue("branch"))
+	dto, err := s.loadReport(r.Context(), repo, r.FormValue("commit"), r.FormValue("branch"), r.FormValue("pr_id"))
 	var none noReportError
 	if errors.As(err, &none) {
 		httpError(w, http.StatusNotFound, "%s", none)
@@ -101,7 +102,15 @@ func (e noReportError) Error() string { return string(e) }
 // loadReport builds the read API's answer: the merged report of commit,
 // or else the newest report on branch (the repo's default branch when that
 // is empty too). A report that does not exist is a noReportError.
-func (s *Server) loadReport(ctx context.Context, repo *store.Repo, commit, branch string) (*readapi.Report, error) {
+//
+// With prID, commit reads as that PR's build stated it
+// (core.MergedReportForPR): a commit the default branch keeps gets the
+// PR's diff coverage and verdict back, and the answer names the PR's
+// build and links to its page, which states the same. Its baseline stays
+// the stored report's, as on that page. A PR that did not build the commit
+// leaves the stored report as it is, so a client may name the PR it runs
+// for without knowing who built the commit.
+func (s *Server) loadReport(ctx context.Context, repo *store.Repo, commit, branch, prID string) (*readapi.Report, error) {
 	var cr *store.CommitReport
 	if commit = strings.TrimSpace(commit); commit != "" {
 		var err error
@@ -123,23 +132,35 @@ func (s *Server) loadReport(ctx context.Context, repo *store.Repo, commit, branc
 		}
 		cr = reports[0]
 	}
+	// The answer names the build the report links to: the stored one's, or
+	// the PR's own when the commit reads as the PR's build stated it.
+	shown, build := cr, &store.Upload{ID: cr.UploadID, Branch: cr.Branch, PRID: cr.PRID}
+	if prID = strings.TrimSpace(prID); prID != "" && commit != "" {
+		view, prBuild, err := core.MergedReportForPR(ctx, s.store, repo, cr, prID)
+		if err != nil {
+			return nil, err
+		}
+		if prBuild != nil {
+			shown, build = view, prBuild
+		}
+	}
 	rep := &readapi.Report{
 		Repo:              readapi.Repo{Forge: repo.Forge, Slug: repo.Slug},
-		Commit:            cr.CommitSHA,
-		Branch:            cr.Branch,
-		PRID:              cr.PRID,
-		UpdatedAt:         cr.UpdatedAt,
-		Parts:             cr.PartCount,
-		Coverage:          cr.TotalPct,
-		CoveredStatements: cr.CoveredStmts,
-		TotalStatements:   cr.TotalStmts,
-		GateFailed:        cr.GateFailed,
-		Diff:              newReportAPIDiffDTO(cr.DiffCoverage),
-		ReportURL:         s.commitReportURL(cr),
+		Commit:            shown.CommitSHA,
+		Branch:            build.Branch,
+		PRID:              build.PRID,
+		UpdatedAt:         shown.UpdatedAt,
+		Parts:             shown.PartCount,
+		Coverage:          shown.TotalPct,
+		CoveredStatements: shown.CoveredStmts,
+		TotalStatements:   shown.TotalStmts,
+		GateFailed:        shown.GateFailed,
+		Diff:              newReportAPIDiffDTO(shown.DiffCoverage),
+		ReportURL:         s.reportURL(build.ID, shown.PartCount),
 	}
-	if base := core.CommitBaseline(ctx, s.store, repo, cr); base != nil {
+	if base := core.CommitBaseline(ctx, s.store, repo, shown); base != nil {
 		rep.Base = &readapi.Base{Commit: base.CommitSHA, Coverage: base.TotalPct}
-		rep.Delta = new(cr.TotalPct - base.TotalPct)
+		rep.Delta = new(shown.TotalPct - base.TotalPct)
 	}
 	return rep, nil
 }
@@ -257,11 +278,12 @@ func spanPairs(spans []diffcov.Span) [][2]int {
 	return out
 }
 
-// commitReportURL is the page the forge surfaces link to for this report:
-// its latest upload, with every part merged when there is more than one.
-func (s *Server) commitReportURL(cr *store.CommitReport) string {
-	url := fmt.Sprintf("%s/uploads/%d", strings.TrimSuffix(s.baseURL, "/"), cr.UploadID)
-	if cr.PartCount > 1 {
+// reportURL is the page the forge surfaces link to for a report: the
+// page of the upload it is linked to, with every part merged when there is
+// more than one.
+func (s *Server) reportURL(uploadID int64, parts int) string {
+	url := fmt.Sprintf("%s/uploads/%d", strings.TrimSuffix(s.baseURL, "/"), uploadID)
+	if parts > 1 {
 		url += "?parts=merged"
 	}
 	return url

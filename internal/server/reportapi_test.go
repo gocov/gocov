@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -107,6 +108,71 @@ func TestReportAPIBranchAndBaseline(t *testing.T) {
 	}
 	if got := decodeJSON[readapi.Report](t, get(f, "/api/v1/reports/bitbucket/acme/widgets?branch=feature")); got.Commit != "feed1234" {
 		t.Errorf("?branch=feature gave %q", got.Commit)
+	}
+}
+
+// A commit built on main and then by PR 7, whose diff fails the gate,
+// stays main's (core.Pipeline.Recompute): read by its SHA alone it has no
+// diff and passes. Read with PR 7 named it is the PR build's answer, the
+// one its comment gave: the PR's diff, the failure that diff causes, the
+// PR's branch and the page the comment links to. Naming a PR that did not
+// build the commit, or no commit, changes nothing.
+func TestReportAPIReadsAPRsView(t *testing.T) {
+	f := newFixture(t, map[string]string{})
+	f.repo.Gate = store.Gate{MinDiffCoverage: new(float64(90))}
+	if err := f.store.UpdateRepo(t.Context(), f.repo); err != nil {
+		t.Fatal(err)
+	}
+	f.forge.DiffText = testPRDiff
+	mainBuild := uploadPart(t, f, "c1", "main", "", "default", testProfile)
+	prBuild := uploadPart(t, f, "c1", "feat", "7", "default", testProfile)
+	if !strings.HasPrefix(prBuild.Gate, "failed: diff coverage") {
+		t.Fatalf("PR build gate = %q, want a diff coverage failure", prBuild.Gate)
+	}
+	read := func(query string) readapi.Report {
+		t.Helper()
+		rec := get(f, "/api/v1/reports/bitbucket/acme/widgets?"+query)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("?%s: status = %d: %s", query, rec.Code, rec.Body)
+		}
+		return decodeJSON[readapi.Report](t, rec)
+	}
+
+	main := read("commit=c1")
+	if main.Branch != "main" || main.PRID != "" || main.Diff != nil || main.GateFailed {
+		t.Errorf("by SHA = %s#%s diff %+v failed %v, want main's: no diff, passing", main.Branch, main.PRID, main.Diff, main.GateFailed)
+	}
+	if want := fmt.Sprintf("https://gocov.example/uploads/%d", mainBuild.ID); main.ReportURL != want {
+		t.Errorf("by SHA report_url = %q, want main's build %q", main.ReportURL, want)
+	}
+
+	pr := read("commit=c1&pr_id=7")
+	if pr.Branch != "feat" || pr.PRID != "7" || !pr.GateFailed {
+		t.Errorf("as PR 7 = %s#%s failed %v, want feat#7, failing", pr.Branch, pr.PRID, pr.GateFailed)
+	}
+	if pr.Diff == nil || pr.Diff.TotalLines != 3 || pr.Diff.CoveredLines != 2 || len(pr.Diff.Uncovered) != 1 {
+		t.Errorf("as PR 7 diff = %+v, want the PR's: 2 of 3 changed lines, one file uncovered", pr.Diff)
+	}
+	if want := fmt.Sprintf("https://gocov.example/uploads/%d", prBuild.ID); pr.ReportURL != want {
+		t.Errorf("as PR 7 report_url = %q, want the PR build's %q", pr.ReportURL, want)
+	}
+	// The same commit's numbers and baseline either way.
+	if pr.Coverage != main.Coverage || pr.Parts != main.Parts || !reflect.DeepEqual(pr.Base, main.Base) {
+		t.Errorf("as PR 7 = %.1f%% of %d parts base %+v, want main's %.1f%% of %d base %+v",
+			pr.Coverage, pr.Parts, pr.Base, main.Coverage, main.Parts, main.Base)
+	}
+
+	if other := read("commit=c1&pr_id=8"); !reflect.DeepEqual(other, main) {
+		t.Errorf("as PR 8, which never built c1 = %+v, want the stored report %+v", other, main)
+	}
+	if newest := read("pr_id=7"); !reflect.DeepEqual(newest, main) {
+		t.Errorf("pr_id without commit = %+v, want main's newest report %+v", newest, main)
+	}
+
+	// The MCP tool takes the PR the same way.
+	text, isErr := callMCP(t, f, "", `{"forge":"bitbucket","repo":"acme/widgets","commit":"c1","pr_id":"7"}`)
+	if isErr || !strings.Contains(text, "(feat, PR 7)") || !strings.Contains(text, "gate failed") || !strings.Contains(text, "uncovered changed lines:") {
+		t.Errorf("MCP as PR 7 (error %v):\n%s", isErr, text)
 	}
 }
 

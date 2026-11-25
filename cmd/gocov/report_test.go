@@ -110,6 +110,43 @@ func TestReportDetectsFromCIAndGit(t *testing.T) {
 	}
 }
 
+// In a PR's CI the detected PR goes with the commit, so the answer is the
+// commit as that PR's build saw it even when the default branch built it
+// too. -pr names one by hand, and -branch asks for no PR's view.
+func TestReportSendsTheDetectedPR(t *testing.T) {
+	srv, req := newReportServer(t, http.StatusOK, reportBody)
+	env := mapEnv(map[string]string{
+		"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "acme/widgets", "GITHUB_SHA": "abc123",
+		"GITHUB_REF": "refs/pull/7/merge",
+	})
+	for _, tc := range []struct {
+		args []string
+		want string // the query sent
+	}{
+		{nil, "commit=abc123&pr_id=7"},
+		{[]string{"-pr", "9"}, "commit=abc123&pr_id=9"},
+		{[]string{"-commit", "def456"}, "commit=def456&pr_id=7"},
+		{[]string{"-branch", "main"}, "branch=main"},
+		{[]string{"-repo", "acme/widgets", "-commit", "def456", "-pr", "9"}, "commit=def456&pr_id=9"},
+	} {
+		if err := runReport(append([]string{"-server", srv.URL}, tc.args...), &bytes.Buffer{}, env, noGit, http.DefaultClient); err != nil {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+		if got := req.URL.Query().Encode(); got != tc.want {
+			t.Errorf("%v: query = %s, want %s", tc.args, got, tc.want)
+		}
+	}
+
+	// A push build has no PR to name.
+	push := mapEnv(map[string]string{"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "acme/widgets", "GITHUB_SHA": "abc123", "GITHUB_REF": "refs/heads/main"})
+	if err := runReport([]string{"-server", srv.URL}, &bytes.Buffer{}, push, noGit, http.DefaultClient); err != nil {
+		t.Fatal(err)
+	}
+	if got := req.URL.Query().Encode(); got != "commit=abc123" {
+		t.Errorf("push build: query = %s, want commit=abc123", got)
+	}
+}
+
 func TestReportBranchAsksForTheNewestReport(t *testing.T) {
 	srv, req := newReportServer(t, http.StatusOK, reportBody)
 	if err := runReport([]string{"-server", srv.URL, "-forge", "github", "-repo", "acme/widgets", "-branch", "main"},

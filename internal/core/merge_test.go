@@ -346,12 +346,28 @@ func TestRecomputeKeepsADefaultBranchCommitThere(t *testing.T) {
 	if view, err := MergedReportFor(ctx, st, repo, cr, mainBuild); err != nil || view != cr {
 		t.Errorf("main build's view = %+v (%v), want the stored report", view, err)
 	}
+	// A reader naming the PR gets the same view and the PR's build; one
+	// naming a PR that did not build the commit gets the stored report.
+	if view, build, err := MergedReportForPR(ctx, st, repo, cr, "7"); err != nil || view.DiffCoverage == nil || !view.GateFailed || view.Branch != "main" || build == nil || build.ID != pr.ID {
+		t.Errorf("PR 7's view = %+v, build %+v (%v), want main's report with the PR's diff, failing, and the PR's build", view, build, err)
+	}
+	for _, prID := range []string{"8", ""} {
+		if view, build, err := MergedReportForPR(ctx, st, repo, cr, prID); err != nil || view != cr || build != nil {
+			t.Errorf("PR %q's view = %+v, build %+v (%v), want the stored report and no build", prID, view, build, err)
+		}
+	}
 
 	// A feature branch's commit follows its newest upload — onto its PR —
 	// until main builds it (a fast-forward), and stays there after.
-	recompute(addBranchPart(t, st, repo, "f1", "feat", "9", "default", 5, 10))
-	if cr := where("f1"); cr.Branch != "feat" || cr.PRID != "9" {
-		t.Errorf("f1 after its PR build sits on %s#%s, want feat#9", cr.Branch, cr.PRID)
+	prBuild := addBranchPart(t, st, repo, "f1", "feat", "9", "default", 5, 10)
+	recompute(prBuild)
+	f1 := where("f1")
+	if f1.Branch != "feat" || f1.PRID != "9" {
+		t.Errorf("f1 after its PR build sits on %s#%s, want feat#9", f1.Branch, f1.PRID)
+	}
+	// A report the PR's build left is already the PR's view.
+	if view, build, err := MergedReportForPR(ctx, st, repo, f1, "9"); err != nil || view != f1 || build == nil || build.ID != prBuild.ID {
+		t.Errorf("PR 9's view of its own report = %+v, build %+v (%v), want it as stored, and the PR's build", view, build, err)
 	}
 	recompute(addPart(t, st, repo, "f1", "default", 5, 10))
 	recompute(addBranchPart(t, st, repo, "f1", "feat", "9", "default", 5, 10))

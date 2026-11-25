@@ -85,7 +85,8 @@ For clients configured through a JSON file, such as Claude Desktop or Cursor:
 ```
 
 Started inside a checkout, the tool needs no arguments: it reads the checked-out commit. Started anywhere else,
-the agent passes `forge` and `repo`, plus `commit` or `branch`. For a private repo, add `"env": {"GOCOV_TOKEN":
+the agent passes `forge` and `repo`, plus `commit` or `branch`, and `pr_id` to read a commit as a pull request's
+build saw it. For a private repo, add `"env": {"GOCOV_TOKEN":
 "…"}` to the entry. The token is the same one described below.
 
 ## Private repos

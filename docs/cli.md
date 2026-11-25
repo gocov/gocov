@@ -64,7 +64,9 @@ report: https://app.gocov.dev/uploads/1114?parts=merged
 ```
 
 It finds the forge, repo and commit the way `upload` does — the CI environment, else `git` (the `origin` remote and
-`HEAD`) — so run it after the commit's CI has uploaded. A [public report](public-reports.md) needs no
+`HEAD`) — so run it after the commit's CI has uploaded. In a pull request's CI it finds the PR too, and reads the
+commit as that PR's build saw it: the PR's diff coverage and gate verdict, even when the default branch built the
+same commit and [keeps it](coverage-changed.md). A [public report](public-reports.md) needs no
 credential. A private repo is read with the credential its upload uses, found in the same order:
 `-token`/`$GOCOV_TOKEN`, then in CI the forge's [OIDC token](#uploading-without-a-token). A coding agent that
 runs in the repo's CI therefore reads the report with nothing more to set up. Anywhere else, give it the token.
@@ -76,6 +78,7 @@ runs in the repo's CI therefore reads the report with nothing more to set up. An
 | `-repo`   | auto-detect | repo slug, `workspace/repo`                                                    |
 | `-commit` | auto-detect | commit SHA                                                                     |
 | `-branch` | none        | report the newest commit on this branch instead                                |
+| `-pr`     | auto-detect | pull request id: read the commit as that PR's build saw it; ignored with `-branch` |
 | `-token`  | `$GOCOV_TOKEN` | the repo's or its workspace's upload token, to read a private repo          |
 | `-json`   | off         | print the [API's JSON answer](api.md#reading-a-report) as is                   |
 | `-server` | `$GOCOV_SERVER`, else the hosted service | the gocov instance to read from                   |
@@ -84,7 +87,8 @@ runs in the repo's CI therefore reads the report with nothing more to set up. An
 
 `gocov mcp` serves the same report to an [MCP](https://modelcontextprotocol.io) client (an editor or a desktop
 agent) over stdio, for clients that cannot run `gocov report` themselves. It offers one tool, `get_report`, whose
-optional arguments `forge`, `repo`, `commit`, `branch` and `format` (`text` or `json`) mirror the flags above.
+optional arguments `forge`, `repo`, `commit`, `branch`, `pr_id` and `format` (`text` or `json`) mirror the flags
+above.
 Whatever is left out is detected in the directory the client starts the server in. It takes `-server` and
 `-token` like `gocov report`, and finds a credential the same way. [Coding agents](coding-agents.md#as-a-local-command)
 shows how to register it. A client that takes a URL instead of a command uses the server's own
