@@ -169,6 +169,14 @@ func TestReportAPIReadsAPRsView(t *testing.T) {
 		t.Errorf("pr_id without commit = %+v, want main's newest report %+v", newest, main)
 	}
 
+	// A part only main uploaded joins the merge: the PR's view still
+	// carries its diff, and links the PR build's merged page.
+	uploadPart(t, f, "c1", "main", "", "frontend", frontendPart)
+	if two := read("commit=c1&pr_id=7"); two.Parts != 2 || two.Diff == nil || !two.GateFailed ||
+		two.ReportURL != fmt.Sprintf("https://gocov.example/uploads/%d?parts=merged", prBuild.ID) {
+		t.Errorf("two parts as PR 7 = %d parts diff %+v failed %v at %q, want the PR's diff and merged page", two.Parts, two.Diff, two.GateFailed, two.ReportURL)
+	}
+
 	// The MCP tool takes the PR the same way.
 	text, isErr := callMCP(t, f, "", `{"forge":"bitbucket","repo":"acme/widgets","commit":"c1","pr_id":"7"}`)
 	if isErr || !strings.Contains(text, "(feat, PR 7)") || !strings.Contains(text, "gate failed") || !strings.Contains(text, "uncovered changed lines:") {
