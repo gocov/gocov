@@ -36,7 +36,7 @@ func Run(t *testing.T, newStore func(*testing.T) store.Store) {
 	t.Run("RegisterWorkspace", func(t *testing.T) { registerWorkspace(t, newStore) })
 	t.Run("TokenlessClaims", func(t *testing.T) { tokenlessClaims(t, newStore) })
 	t.Run("CommitReportsExcludePRBuilds", func(t *testing.T) { commitReportsExcludePRBuilds(t, newStore) })
-	t.Run("CommitReportStaysOnDefaultBranch", func(t *testing.T) { commitReportStaysOnDefaultBranch(t, newStore) })
+	t.Run("CommitBuiltOn", func(t *testing.T) { commitBuiltOn(t, newStore) })
 	t.Run("GateBasePctRoundTrip", func(t *testing.T) { gateBasePctRoundTrip(t, newStore) })
 	t.Run("PartFilesReadsEveryPartAtOnce", func(t *testing.T) { partFilesReadsEveryPartAtOnce(t, newStore) })
 	t.Run("UploadFileReadsOneFile", func(t *testing.T) { uploadFileReadsOneFile(t, newStore) })
@@ -1196,87 +1196,48 @@ func commitReportsExcludePRBuilds(t *testing.T, newStore func(*testing.T) store.
 	}
 }
 
-// A commit's report stays on the default branch once a build of the
-// branch itself (no PR) reported it: the same commit uploaded again from
-// another branch — a feature branch cut from it, a fast-forward, a PR
-// whose head it is — replaces the numbers but not where the report sits,
-// or the commit would drop out of the default branch's trend, dashboard
-// row, badge and baseline. Anywhere else the newest upload still decides,
-// so a feature branch's commit moves onto its PR, and onto the default
-// branch when that branch builds it.
-func commitReportStaysOnDefaultBranch(t *testing.T, newStore func(*testing.T) store.Store) {
+// CommitBuiltOn answers whether a branch built a commit itself: an upload
+// of the commit on that branch, PR builds — a fork's "main" among them —
+// not counting. The recompute reads it to keep a default-branch commit on
+// its branch (core.Pipeline.Recompute).
+func commitBuiltOn(t *testing.T, newStore func(*testing.T) store.Store) {
 	st := newStore(t)
 	ctx := t.Context()
 	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
 	if err := st.CreateRepo(ctx, repo); err != nil {
 		t.Fatal(err)
 	}
-	upsert := func(commit, branch, pr string, pct float64, uploadID int64) *store.CommitReport {
-		t.Helper()
-		cr := &store.CommitReport{RepoID: repo.ID, CommitSHA: commit, Branch: branch, PRID: pr, TotalPct: pct, PartCount: 1, UploadID: uploadID}
-		if err := st.UpsertCommitReport(ctx, cr); err != nil {
+	for _, u := range []*store.Upload{
+		{CommitSHA: "c1", Branch: "main"},
+		{CommitSHA: "c1", Branch: "feat", PRID: "7"},
+		{CommitSHA: "f1", Branch: "feat", PRID: "7"},
+		{CommitSHA: "k1", Branch: "main", PRID: "3"},
+	} {
+		u.RepoID, u.Format = repo.ID, "go"
+		if err := st.CreateUpload(ctx, u, nil); err != nil {
 			t.Fatal(err)
 		}
-		return cr
 	}
-	where := func(commit string) string {
-		t.Helper()
-		cr, err := st.CommitReport(ctx, repo.ID, commit)
+	for _, tc := range []struct {
+		commit, branch string
+		want           bool
+	}{
+		{"c1", "main", true},
+		{"c1", "feat", false}, // only its PR built it there
+		{"f1", "main", false},
+		{"k1", "main", false}, // a PR build under main's name
+		{"zz", "main", false},
+	} {
+		err := st.WithCommitReportTx(ctx, repo.ID, tc.commit, func(ctx context.Context, tx store.CommitTx) error {
+			got, err := tx.CommitBuiltOn(ctx, repo.ID, tc.commit, tc.branch)
+			if err == nil && got != tc.want {
+				t.Errorf("CommitBuiltOn(%s, %s) = %v, want %v", tc.commit, tc.branch, got, tc.want)
+			}
+			return err
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		return cr.Branch + "#" + cr.PRID
-	}
-
-	upsert("c1", "main", "", 80, 1)
-	upsert("c1", "KLRS-15887", "", 81, 2)
-	last := upsert("c1", "feat", "7", 82, 3)
-	if got := where("c1"); got != "main#" {
-		t.Errorf("c1 after feature-branch and PR uploads sits on %s, want main#", got)
-	}
-	// The upsert hands back the row as stored, so its caller sees where
-	// the report went, not where it asked for.
-	if last.Branch != "main" || last.PRID != "" {
-		t.Errorf("upsert returned branch %q pr %q, want the stored main and no PR", last.Branch, last.PRID)
-	}
-	// Everything else is the newest recompute's.
-	if cr, err := st.CommitReport(ctx, repo.ID, "c1"); err != nil || cr.TotalPct != 82 || cr.UploadID != 3 {
-		t.Errorf("c1 report = %+v (%v), want the last upsert's 82%% and upload 3", cr, err)
-	}
-	latest, err := latestReports(ctx, st, []int64{repo.ID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := latest[repo.ID]; got == nil || got.CommitSHA != "c1" {
-		t.Errorf("latest default-branch report = %+v, want c1", got)
-	}
-	if trend, err := st.ListBranchCommitReports(ctx, repo.ID, "main", 0); err != nil || len(trend) != 1 || trend[0].CommitSHA != "c1" {
-		t.Errorf("main trend = %d reports (%v), want c1 alone", len(trend), err)
-	}
-	if base, err := st.LatestPassedCommitReport(ctx, repo.ID, "main", 0, "c2"); err != nil || base.CommitSHA != "c1" {
-		t.Errorf("main baseline = %+v (%v), want c1", base, err)
-	}
-
-	// A feature branch's commit follows its newest upload: onto its PR,
-	// then onto main once main builds it (a fast-forward merge), where it
-	// stays when the branch uploads it again.
-	upsert("f1", "feat", "", 60, 4)
-	upsert("f1", "feat", "9", 61, 5)
-	if got := where("f1"); got != "feat#9" {
-		t.Errorf("f1 after its PR build sits on %s, want feat#9", got)
-	}
-	upsert("f1", "main", "", 62, 6)
-	upsert("f1", "feat", "9", 63, 7)
-	if got := where("f1"); got != "main#" {
-		t.Errorf("f1 after main built it sits on %s, want main#", got)
-	}
-
-	// A PR build under the default branch's name — a fork's "main" — is
-	// not the branch's own build, so it pins nothing.
-	upsert("k1", "main", "3", 40, 8)
-	upsert("k1", "fork-feat", "", 41, 9)
-	if got := where("k1"); got != "fork-feat#" {
-		t.Errorf("k1 after a fork PR build then another branch sits on %s, want fork-feat#", got)
 	}
 }
 

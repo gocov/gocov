@@ -59,20 +59,16 @@ func (p *Pipeline) Recompute(ctx context.Context, repo *store.Repo, u *store.Upl
 			return fmt.Errorf("loading commit parts: %w", err)
 		}
 
-		diffs := make([]*diffcov.Result, 0, len(parts))
 		names := make([]string, 0, len(parts))
 		for _, p := range parts {
 			names = append(names, p.Part)
-			if p.DiffCoverage != nil {
-				diffs = append(diffs, p.DiffCoverage)
-			}
 		}
 		covered, total, err := mergedCoverage(ctx, tx, parts)
 		if err != nil {
 			return err
 		}
 		totalPct := profile.Percent(covered, total)
-		mergedDiff, diffConflicts := diffcov.Merge(diffs...)
+		mergedDiff, diffConflicts := partsDiff(parts)
 		var warnings []string
 		if len(diffConflicts) > 0 {
 			warnings = append(warnings, fmt.Sprintf(
@@ -115,14 +111,29 @@ func (p *Pipeline) Recompute(ctx context.Context, repo *store.Repo, u *store.Upl
 			PartCount:    len(parts),
 			UploadID:     u.ID,
 		}
+		// A commit the default branch built itself (no PR) stays that
+		// branch's, whatever branch or PR uploads it next — one cut from it,
+		// a fast-forward, a PR whose head it is — or it would drop out of the
+		// default branch's trend, dashboard row, badge and baselines. The
+		// later upload brings its numbers, but a PR's diff coverage is that
+		// PR's alone: the report keeps none, and the verdict it records is
+		// the one without it. The delta above and the forge surfaces speak
+		// for this upload — its branch, its PR, its diff — so they keep u's,
+		// and so does the page they link to (MergedReportFor).
+		if !defaultBuild(repo, u.Branch, u.PRID) {
+			built, err := tx.CommitBuiltOn(ctx, repo.ID, u.CommitSHA, repo.DefaultBranch)
+			if err != nil {
+				return fmt.Errorf("checking the default branch's builds: %w", err)
+			}
+			if built {
+				cr.Branch, cr.PRID, cr.DiffCoverage = repo.DefaultBranch, "", nil
+				cr.GateFailed = EvaluateGate(repo.Gate, totalPct, dropBase, nil).Failed()
+			}
+		}
 		if err := tx.UpsertCommitReport(ctx, cr); err != nil {
 			return fmt.Errorf("saving merged report: %w", err)
 		}
 
-		// The stored report may stay on the default branch when another
-		// branch uploads its commit (store.Store.UpsertCommitReport); the
-		// delta above and every forge surface speak for this upload — its
-		// branch, its PR — so they take u's, never cr's.
 		mergedUpload := &store.Upload{
 			ID:           u.ID,
 			RepoID:       repo.ID,
@@ -148,6 +159,51 @@ func (p *Pipeline) Recompute(ctx context.Context, repo *store.Repo, u *store.Upl
 		return nil, err
 	}
 	return result, nil
+}
+
+// defaultBuild reports whether branch and prID name a build of the repo's
+// default branch itself, not a PR's.
+func defaultBuild(repo *store.Repo, branch, prID string) bool {
+	return branch == repo.DefaultBranch && prID == ""
+}
+
+// partsDiff merges the diff coverage of a commit's parts, naming the
+// changed files they disagree on (diffcov.Merge); nil when none has any.
+func partsDiff(parts []*store.Upload) (*diffcov.Result, []string) {
+	diffs := make([]*diffcov.Result, 0, len(parts))
+	for _, p := range parts {
+		if p.DiffCoverage != nil {
+			diffs = append(diffs, p.DiffCoverage)
+		}
+	}
+	return diffcov.Merge(diffs...)
+}
+
+// latestParts is the one read MergedReportFor needs.
+type latestParts interface {
+	LatestUploadsPerPart(ctx context.Context, repoID int64, commitSHA string) ([]*store.Upload, error)
+}
+
+// MergedReportFor is a commit's merged report as upload u's build states
+// it — the page its forge surfaces link to. That is the stored report
+// itself, unless the default branch keeps the commit and u is a build of
+// another branch or a PR (Recompute): the stored report then holds no
+// diff coverage and judges the gate without one, so u's adds back the
+// diff coverage of the commit's parts and the verdict that diff gives.
+// It stays the default branch's report otherwise, measured against the
+// same baseline (CommitBaseline) as the views the repo page links to.
+func MergedReportFor(ctx context.Context, reports latestParts, repo *store.Repo, cr *store.CommitReport, u *store.Upload) (*store.CommitReport, error) {
+	if !defaultBuild(repo, cr.Branch, cr.PRID) || defaultBuild(repo, u.Branch, u.PRID) {
+		return cr, nil
+	}
+	parts, err := reports.LatestUploadsPerPart(ctx, repo.ID, cr.CommitSHA)
+	if err != nil {
+		return nil, fmt.Errorf("loading commit parts: %w", err)
+	}
+	view := *cr
+	view.DiffCoverage, _ = partsDiff(parts)
+	view.GateFailed = EvaluateGate(store.JudgedGate(cr.Gate, repo.Gate), cr.TotalPct, cr.GateBasePct, view.DiffCoverage).Failed()
+	return &view, nil
 }
 
 // partFiles is the one read a merge of several parts needs; both the

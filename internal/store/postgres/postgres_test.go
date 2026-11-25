@@ -181,10 +181,8 @@ func TestCommitReportBackfill(t *testing.T) {
 	}
 }
 
-// Reports that moved off the default branch before the recompute kept
-// them there go back: a commit with an upload on the default branch and no
-// PR returns to it, whatever branch or PR last uploaded it. Commits the
-// default branch never built stay where they are.
+// Migration 0030 moves back the reports that left the default branch
+// before the recompute kept them there; commits it never built stay put.
 func TestDefaultBranchReportsMoveBack(t *testing.T) {
 	pool := testpg.Pool(t)
 	st := postgres.New(pool)
@@ -203,8 +201,7 @@ func TestDefaultBranchReportsMoveBack(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Each report is written where the last upload left it under the old
-	// rule: a first upsert inserts as given.
+	// Each report sits where its last upload left it under the old rule.
 	report := func(commit, branch, pr string) {
 		t.Helper()
 		if err := st.UpsertCommitReport(ctx, &store.CommitReport{RepoID: repo.ID, CommitSHA: commit, Branch: branch, PRID: pr, PartCount: 1}); err != nil {
@@ -254,13 +251,6 @@ func TestDefaultBranchReportsMoveBack(t *testing.T) {
 		if commit == "b1ccbb0c2d" && !cr.UpdatedAt.Equal(before) {
 			t.Errorf("%s updated_at moved %v → %v; nothing was uploaded", commit, before, cr.UpdatedAt)
 		}
-	}
-	latest, err := st.DefaultBranchReports(ctx, []int64{repo.ID}, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := len(latest[repo.ID]); got != 2 {
-		t.Errorf("default-branch reports = %d, want b1ccbb0c2d and pr-head", got)
 	}
 }
 

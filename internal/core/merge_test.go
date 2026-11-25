@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gocov/gocov/internal/diffcov"
 	"github.com/gocov/gocov/internal/profile"
 	"github.com/gocov/gocov/internal/store"
 	storemem "github.com/gocov/gocov/internal/store/memory"
@@ -288,5 +289,81 @@ func TestMergePartsLonePartIsItsOwnMerge(t *testing.T) {
 				t.Errorf("returned the stored rows = %v, want %v", took, tc.shortcut)
 			}
 		})
+	}
+}
+
+// A commit the default branch built stays its report when other branches
+// upload it — a branch cut from it, then a PR whose head it is — in the
+// default branch's history, recording neither the PR nor the PR's diff
+// coverage or the gate failure that diff causes. The merged view the
+// forge gets is still the PR build's own.
+func TestRecomputeKeepsADefaultBranchCommitThere(t *testing.T) {
+	p, st, repo := newPipeline(t, store.Gate{MinDiffCoverage: pct(80)})
+	ctx := t.Context()
+	recompute := func(u *store.Upload) *Merged {
+		t.Helper()
+		merged, err := p.Recompute(ctx, repo, u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return merged
+	}
+	where := func(commit string) *store.CommitReport {
+		t.Helper()
+		cr, err := st.CommitReport(ctx, repo.ID, commit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cr
+	}
+
+	mainBuild := addPart(t, st, repo, "c1", "default", 8, 10)
+	recompute(mainBuild)
+	recompute(addBranchPart(t, st, repo, "c1", "KLRS-15887", "", "default", 8, 10))
+	pr := &store.Upload{RepoID: repo.ID, CommitSHA: "c1", Branch: "feat", PRID: "7", Format: "go", Part: "default",
+		TotalPct: 90, CoveredStmts: 9, TotalStmts: 10,
+		DiffCoverage: &diffcov.Result{Files: []diffcov.FileCoverage{{Path: "a.go", CoveredLines: 1, TotalLines: 10, UncoveredLines: []int{2, 3, 4, 5, 6, 7, 8, 9, 10}}}, CoveredLines: 1, TotalLines: 10}}
+	if err := st.CreateUpload(ctx, pr, nil); err != nil {
+		t.Fatal(err)
+	}
+	merged := recompute(pr)
+
+	cr := where("c1")
+	if cr.Branch != "main" || cr.PRID != "" || cr.DiffCoverage != nil || cr.GateFailed {
+		t.Errorf("c1 report = %s#%s diff %v failed %v, want main# with no diff, passing", cr.Branch, cr.PRID, cr.DiffCoverage, cr.GateFailed)
+	}
+	if cr.TotalPct != 90 || cr.UploadID != pr.ID {
+		t.Errorf("c1 report = %.1f%% from upload %d, want the PR build's 90%% from %d", cr.TotalPct, cr.UploadID, pr.ID)
+	}
+	if merged.Upload.Branch != "feat" || merged.Upload.PRID != "7" || merged.Upload.DiffCoverage == nil || !merged.Verdict.Failed() {
+		t.Errorf("merged view = %s#%s diff %v failed %v, want the PR's own: feat#7, its diff, failing",
+			merged.Upload.Branch, merged.Upload.PRID, merged.Upload.DiffCoverage, merged.Verdict.Failed())
+	}
+	// The page the PR's surfaces link to reads the PR's diff back; the
+	// default branch's own build reads the report as stored.
+	if view, err := MergedReportFor(ctx, st, repo, cr, pr); err != nil || view.DiffCoverage == nil || !view.GateFailed || view.Branch != "main" {
+		t.Errorf("PR build's view = %+v (%v), want main's report with the PR's diff, failing", view, err)
+	}
+	if view, err := MergedReportFor(ctx, st, repo, cr, mainBuild); err != nil || view != cr {
+		t.Errorf("main build's view = %+v (%v), want the stored report", view, err)
+	}
+
+	// A feature branch's commit follows its newest upload — onto its PR —
+	// until main builds it (a fast-forward), and stays there after.
+	recompute(addBranchPart(t, st, repo, "f1", "feat", "9", "default", 5, 10))
+	if cr := where("f1"); cr.Branch != "feat" || cr.PRID != "9" {
+		t.Errorf("f1 after its PR build sits on %s#%s, want feat#9", cr.Branch, cr.PRID)
+	}
+	recompute(addPart(t, st, repo, "f1", "default", 5, 10))
+	recompute(addBranchPart(t, st, repo, "f1", "feat", "9", "default", 5, 10))
+	if cr := where("f1"); cr.Branch != "main" || cr.PRID != "" {
+		t.Errorf("f1 after main built it sits on %s#%s, want main#", cr.Branch, cr.PRID)
+	}
+
+	// A PR build under main's name — a fork's "main" — is not main's own.
+	recompute(addBranchPart(t, st, repo, "k1", "main", "3", "default", 5, 10))
+	recompute(addBranchPart(t, st, repo, "k1", "fork-feat", "", "default", 5, 10))
+	if cr := where("k1"); cr.Branch != "fork-feat" || cr.PRID != "" {
+		t.Errorf("k1 sits on %s#%s, want fork-feat#", cr.Branch, cr.PRID)
 	}
 }

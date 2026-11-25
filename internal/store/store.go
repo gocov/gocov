@@ -515,14 +515,6 @@ type Store interface {
 	// UpsertCommitReport creates or replaces the merged report for
 	// (repo, commit), setting cr.ID, cr.CreatedAt and cr.UpdatedAt. The
 	// first-seen creation time is preserved across recomputes.
-	//
-	// So is a report on the repo's default branch with no PR — one a build
-	// of the branch itself put there: a later upsert of the commit from
-	// any other branch or PR (a branch cut from it, a fast-forward, a PR
-	// whose head it is) replaces its numbers but keeps its Branch and
-	// PRID, or the commit would drop out of the default branch's trend,
-	// dashboard row, badge and baselines. Anywhere else the newest upsert
-	// decides. cr.Branch and cr.PRID are set to what was stored.
 	UpsertCommitReport(ctx context.Context, cr *CommitReport) error
 	// CommitReport returns the merged report for a commit, or ErrNotFound.
 	CommitReport(ctx context.Context, repoID int64, commitSHA string) (*CommitReport, error)
@@ -613,6 +605,9 @@ type CommitTx interface {
 	// merge keys blocks by path and position, so it needs none.
 	PartFiles(ctx context.Context, uploadIDs []int64) ([]*UploadFile, error)
 	LatestPassedCommitReport(ctx context.Context, repoID int64, branch string, beforeID int64, excludeCommit string) (*CommitReport, error)
+	// CommitBuiltOn reports whether the commit has an upload on branch
+	// that is not a PR build — whether branch built it itself.
+	CommitBuiltOn(ctx context.Context, repoID int64, commitSHA, branch string) (bool, error)
 	UpsertCommitReport(ctx context.Context, cr *CommitReport) error
 }
 

@@ -1,13 +1,10 @@
--- A commit's merged report used to follow the newest upload of the commit,
--- so a commit the default branch had built moved off it as soon as another
--- branch uploaded the same commit — a branch cut from it, a fast-forward, a
--- PR whose head it is — leaving a gap in the default branch's trend and,
--- for its newest commit, a blank dashboard row and badge until the default
--- branch uploaded the commit again. The recompute now keeps such a report
--- on the default branch (store.Store.UpsertCommitReport); this moves back
--- the reports that left before it did: every report not on its repo's
--- default branch as a build of the branch itself, whose commit has an
--- upload on that branch with no PR.
+-- A commit's merged report used to follow its newest upload, so a commit
+-- the default branch had built left that branch's trend, dashboard row and
+-- badge as soon as another branch or PR uploaded the same commit. The
+-- recompute now keeps it there (core.Pipeline.Recompute); this moves back
+-- the reports that left before it did: every report whose commit has an
+-- upload on its repo's default branch with no PR. Their numbers stay the
+-- last upload's until the commit is uploaded again.
 --
 -- updated_at stays: it is when the commit was last uploaded (the
 -- dashboard's staleness), and nothing was. Running it again moves nothing.
@@ -15,7 +12,7 @@ UPDATE commit_reports cr
 SET branch = r.default_branch, pr_id = ''
 FROM repos r
 WHERE r.id = cr.repo_id
-  AND NOT (cr.branch = r.default_branch AND cr.pr_id = '')
+  AND (cr.branch, cr.pr_id) <> (r.default_branch, '')
   AND EXISTS (
       SELECT 1 FROM uploads u
       WHERE u.repo_id = cr.repo_id AND u.commit_sha = cr.commit_sha

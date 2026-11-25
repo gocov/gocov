@@ -255,10 +255,9 @@ func TestMergedGateSelfHeals(t *testing.T) {
 	}
 }
 
-// A commit built on the default branch stays there when another branch
-// uploads it too — a feature branch cut from it, then that branch's PR —
-// so the badge, the dashboard row and the trend keep it. The PR build's
-// own forge surfaces still speak for the PR.
+// A commit built on the default branch keeps its badge, dashboard row and
+// trend point when other branches upload it too (core.Pipeline.Recompute),
+// while the PR build's comment still goes to the PR.
 func TestMergedReportStaysOnDefaultBranch(t *testing.T) {
 	f := newFixture(t, map[string]string{})
 	for _, fields := range []map[string]string{
@@ -271,10 +270,7 @@ func TestMergedReportStaysOnDefaultBranch(t *testing.T) {
 		}
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/badge/bitbucket/acme/widgets.svg", nil)
-	rec := httptest.NewRecorder()
-	f.srv.ServeHTTP(rec, req)
-	if svg := rec.Body.String(); !strings.Contains(svg, ">80.0%<") {
+	if svg := get(f, "/badge/bitbucket/acme/widgets.svg").Body.String(); !strings.Contains(svg, ">80.0%<") {
 		t.Errorf("badge = %s, want c1's 80.0%%", svg)
 	}
 	dash := decodeJSON[dashboardDTO](t, get(f, "/api/ui/dashboard"))
@@ -288,5 +284,42 @@ func TestMergedReportStaysOnDefaultBranch(t *testing.T) {
 
 	if len(f.forge.CommentCalls) != 1 || f.forge.CommentCalls[0].PRID != "7" {
 		t.Errorf("PR comments = %+v, want one, on PR 7", f.forge.CommentCalls)
+	}
+}
+
+// The merged page a PR build's surfaces link to states the PR's figures —
+// its diff coverage and the gate failure it causes — even when its commit
+// is one the default branch keeps, whose repo page states neither.
+func TestMergedPageOfAPRBuildOfADefaultBranchCommit(t *testing.T) {
+	f := newFixture(t, map[string]string{})
+	f.repo.Gate = store.Gate{MinDiffCoverage: new(float64(90))}
+	if err := f.store.UpdateRepo(t.Context(), f.repo); err != nil {
+		t.Fatal(err)
+	}
+	f.forge.DiffText = testPRDiff
+	up := func(branch, pr, part, profile string) uploadResponse {
+		t.Helper()
+		var res uploadResponse
+		fields := map[string]string{"commit": "c1", "branch": branch, "pr_id": pr, "part": part}
+		if err := json.Unmarshal(doUpload(t, f, "secret-token", fields, profile).Body.Bytes(), &res); err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	up("main", "", "backend", testProfile)
+	up("main", "", "frontend", frontendPart)
+	up("feat", "7", "backend", testProfile)
+	pr := up("feat", "7", "frontend", frontendPart)
+	if !strings.HasPrefix(pr.Gate, "failed: diff coverage") {
+		t.Fatalf("PR build gate = %q, want a diff coverage failure", pr.Gate)
+	}
+
+	page := decodeJSON[uploadPageDTO](t, get(f, fmt.Sprintf("/api/ui/uploads/%d?parts=merged", pr.ID)))
+	if page.Diff == nil || page.Verdict.State != "fail" {
+		t.Errorf("PR build's merged page = diff %v, gate %q; want the PR's diff and its failure", page.Diff, page.Verdict.State)
+	}
+	repo := decodeJSON[repoPageDTO](t, get(f, "/api/ui/repos/bitbucket/acme/widgets"))
+	if repo.Summary == nil || repo.Summary.Verdict.State != "pass" || repo.Summary.Commit.PRID != "" {
+		t.Errorf("main's repo page = %+v, want c1 as main's own passing build", repo.Summary)
 	}
 }

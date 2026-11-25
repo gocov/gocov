@@ -40,8 +40,9 @@ plots them and its latest one is the branch's current coverage. They are still n
 compared against a build of its own.
 
 A commit the default branch has built stays in its history when the same commit is uploaded again from elsewhere — a
-branch cut from it, the other side of a fast-forward merge, a PR whose head it is. The newest upload's figures become
-the commit's, but the badge, the dashboard and the trend keep it as a build of `main`.
+branch cut from it, the other side of a fast-forward merge, a PR whose head it is. The newest upload's coverage becomes
+the commit's, but the badge, the dashboard and the trend keep it as a build of `main`, and a PR build's diff coverage —
+with any gate failure it causes — stays on the PR.
 
 The gate verdict's explanation follows the gate, not the delta: on a feature branch it reports the drop against the
 default branch, so the two can point different ways — the delta down against the branch's last build, the verdict

@@ -1101,6 +1101,15 @@ func (c *commitReportTx) LatestPassedCommitReport(ctx context.Context, repoID in
 	return c.s.latestPassedCommitReport(ctx, c.tx, repoID, branch, beforeID, excludeCommit)
 }
 
+func (c *commitReportTx) CommitBuiltOn(ctx context.Context, repoID int64, commitSHA, branch string) (bool, error) {
+	var built bool
+	err := c.tx.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM uploads
+		 WHERE repo_id = $1 AND commit_sha = $2 AND branch = $3 AND pr_id = '')`,
+		repoID, commitSHA, branch).Scan(&built)
+	return built, err
+}
+
 func (c *commitReportTx) UpsertCommitReport(ctx context.Context, cr *store.CommitReport) error {
 	return c.s.upsertCommitReport(ctx, c.tx, cr)
 }
@@ -1135,20 +1144,14 @@ func (s *Store) upsertCommitReport(ctx context.Context, q querier, cr *store.Com
 		return err
 	}
 	// The first-seen created_at survives the conflict update; only the
-	// derived fields and updated_at move. A report on the repo's default
-	// branch from a build of the branch itself (no PR) keeps its branch
-	// and PR too, whatever branch uploads the commit next
-	// (store.Store.UpsertCommitReport). The SET expressions all read the
-	// row as it was, so the two CASEs agree.
+	// derived fields and updated_at move.
 	return q.QueryRow(ctx, `
-		INSERT INTO commit_reports AS cur (repo_id, commit_sha, branch, pr_id, total_pct,
+		INSERT INTO commit_reports (repo_id, commit_sha, branch, pr_id, total_pct,
 			covered_stmts, total_stmts, gate_failed, gate_base_pct, gate, diff_coverage, part_count, upload_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		ON CONFLICT (repo_id, commit_sha) DO UPDATE SET
-			branch = CASE WHEN cur.pr_id = '' AND cur.branch = (SELECT default_branch FROM repos WHERE id = cur.repo_id)
-				THEN cur.branch ELSE EXCLUDED.branch END,
-			pr_id = CASE WHEN cur.pr_id = '' AND cur.branch = (SELECT default_branch FROM repos WHERE id = cur.repo_id)
-				THEN cur.pr_id ELSE EXCLUDED.pr_id END,
+			branch = EXCLUDED.branch,
+			pr_id = EXCLUDED.pr_id,
 			total_pct = EXCLUDED.total_pct,
 			covered_stmts = EXCLUDED.covered_stmts,
 			total_stmts = EXCLUDED.total_stmts,
@@ -1159,10 +1162,10 @@ func (s *Store) upsertCommitReport(ctx context.Context, q querier, cr *store.Com
 			part_count = EXCLUDED.part_count,
 			upload_id = EXCLUDED.upload_id,
 			updated_at = now()
-		RETURNING id, branch, pr_id, created_at, updated_at`,
+		RETURNING id, created_at, updated_at`,
 		cr.RepoID, cr.CommitSHA, cr.Branch, cr.PRID, cr.TotalPct,
 		cr.CoveredStmts, cr.TotalStmts, cr.GateFailed, cr.GateBasePct, gate, diffCov, cr.PartCount, cr.UploadID,
-	).Scan(&cr.ID, &cr.Branch, &cr.PRID, &cr.CreatedAt, &cr.UpdatedAt)
+	).Scan(&cr.ID, &cr.CreatedAt, &cr.UpdatedAt)
 }
 
 func (s *Store) CommitReport(ctx context.Context, repoID int64, commitSHA string) (*store.CommitReport, error) {
