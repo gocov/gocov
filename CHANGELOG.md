@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.36.0](https://github.com/gocov/gocov/compare/v0.35.0...v0.36.0) (2026-11-25)
+
+
+### Features
+
+* read a PR's view of a commit through the report API ([#292](https://github.com/gocov/gocov/issues/292)) ([29d8a84](https://github.com/gocov/gocov/commit/29d8a8422baa45642a159b9b730dad5c0a343051))
+
+
+### Bug Fixes
+
+* keep a default-branch commit on the default branch when another branch uploads it ([#290](https://github.com/gocov/gocov/issues/290)) ([9e3f87c](https://github.com/gocov/gocov/commit/9e3f87c4c95737ae81e0e3017f9cbea7ba39c2f5))
+
 ## [0.35.0](https://github.com/gocov/gocov/compare/v0.34.0...v0.35.0) (2026-11-24)
 
 
