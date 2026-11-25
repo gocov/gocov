@@ -292,11 +292,10 @@ func TestMergePartsLonePartIsItsOwnMerge(t *testing.T) {
 	}
 }
 
-// A commit the default branch built stays its report when other branches
-// upload it — a branch cut from it, then a PR whose head it is — in the
-// default branch's history, recording neither the PR nor the PR's diff
-// coverage or the gate failure that diff causes. The merged view the
-// forge gets is still the PR build's own.
+// A commit the default branch built stays in its history when other
+// branches upload it — a branch cut from it, then a PR whose head it is —
+// without the PR's diff coverage or the gate failure it causes, linking
+// main's own build. The merged view the forge gets is the PR build's own.
 func TestRecomputeKeepsADefaultBranchCommitThere(t *testing.T) {
 	p, st, repo := newPipeline(t, store.Gate{MinDiffCoverage: pct(80)})
 	ctx := t.Context()
@@ -332,8 +331,8 @@ func TestRecomputeKeepsADefaultBranchCommitThere(t *testing.T) {
 	if cr.Branch != "main" || cr.PRID != "" || cr.DiffCoverage != nil || cr.GateFailed {
 		t.Errorf("c1 report = %s#%s diff %v failed %v, want main# with no diff, passing", cr.Branch, cr.PRID, cr.DiffCoverage, cr.GateFailed)
 	}
-	if cr.TotalPct != 90 || cr.UploadID != pr.ID {
-		t.Errorf("c1 report = %.1f%% from upload %d, want the PR build's 90%% from %d", cr.TotalPct, cr.UploadID, pr.ID)
+	if cr.TotalPct != 90 || cr.UploadID != mainBuild.ID {
+		t.Errorf("c1 report = %.1f%% linking upload %d, want the PR build's 90%% linking main's build %d", cr.TotalPct, cr.UploadID, mainBuild.ID)
 	}
 	if merged.Upload.Branch != "feat" || merged.Upload.PRID != "7" || merged.Upload.DiffCoverage == nil || !merged.Verdict.Failed() {
 		t.Errorf("merged view = %s#%s diff %v failed %v, want the PR's own: feat#7, its diff, failing",

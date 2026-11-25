@@ -194,21 +194,24 @@ func TestDefaultBranchReportsMoveBack(t *testing.T) {
 	if err := st.CreateRepo(ctx, repo); err != nil {
 		t.Fatal(err)
 	}
-	upload := func(commit, branch, pr string) {
+	var last int64
+	upload := func(commit, branch, pr string) int64 {
 		t.Helper()
 		u := &store.Upload{RepoID: repo.ID, CommitSHA: commit, Branch: branch, PRID: pr, Format: "go", TotalPct: 50, CoveredStmts: 1, TotalStmts: 2}
 		if err := st.CreateUpload(ctx, u, nil); err != nil {
 			t.Fatal(err)
 		}
+		last = u.ID
+		return u.ID
 	}
 	// Each report sits where its last upload left it under the old rule.
 	report := func(commit, branch, pr string) {
 		t.Helper()
-		if err := st.UpsertCommitReport(ctx, &store.CommitReport{RepoID: repo.ID, CommitSHA: commit, Branch: branch, PRID: pr, PartCount: 1}); err != nil {
+		if err := st.UpsertCommitReport(ctx, &store.CommitReport{RepoID: repo.ID, CommitSHA: commit, Branch: branch, PRID: pr, PartCount: 1, UploadID: last}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	upload("b1ccbb0c2d", "development", "") // the commit that went missing
+	devBuild := upload("b1ccbb0c2d", "development", "") // the commit that went missing
 	upload("b1ccbb0c2d", "KLRS-15887", "")
 	report("b1ccbb0c2d", "KLRS-15887", "")
 	upload("pr-head", "development", "")
@@ -248,8 +251,9 @@ func TestDefaultBranchReportsMoveBack(t *testing.T) {
 		if got := cr.Branch + "#" + cr.PRID; got != want {
 			t.Errorf("%s sits on %s, want %s", commit, got, want)
 		}
-		if commit == "b1ccbb0c2d" && !cr.UpdatedAt.Equal(before) {
-			t.Errorf("%s updated_at moved %v → %v; nothing was uploaded", commit, before, cr.UpdatedAt)
+		if commit == "b1ccbb0c2d" && (!cr.UpdatedAt.Equal(before) || cr.UploadID != devBuild) {
+			t.Errorf("%s updated_at %v → %v, upload %d; want it unmoved (nothing was uploaded), linking development's build %d",
+				commit, before, cr.UpdatedAt, cr.UploadID, devBuild)
 		}
 	}
 }

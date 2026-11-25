@@ -36,7 +36,7 @@ func Run(t *testing.T, newStore func(*testing.T) store.Store) {
 	t.Run("RegisterWorkspace", func(t *testing.T) { registerWorkspace(t, newStore) })
 	t.Run("TokenlessClaims", func(t *testing.T) { tokenlessClaims(t, newStore) })
 	t.Run("CommitReportsExcludePRBuilds", func(t *testing.T) { commitReportsExcludePRBuilds(t, newStore) })
-	t.Run("CommitBuiltOn", func(t *testing.T) { commitBuiltOn(t, newStore) })
+	t.Run("BranchBuild", func(t *testing.T) { branchBuild(t, newStore) })
 	t.Run("GateBasePctRoundTrip", func(t *testing.T) { gateBasePctRoundTrip(t, newStore) })
 	t.Run("PartFilesReadsEveryPartAtOnce", func(t *testing.T) { partFilesReadsEveryPartAtOnce(t, newStore) })
 	t.Run("UploadFileReadsOneFile", func(t *testing.T) { uploadFileReadsOneFile(t, newStore) })
@@ -1196,19 +1196,21 @@ func commitReportsExcludePRBuilds(t *testing.T, newStore func(*testing.T) store.
 	}
 }
 
-// CommitBuiltOn answers whether a branch built a commit itself: an upload
+// BranchBuild finds a branch's own build of a commit: its newest upload
 // of the commit on that branch, PR builds — a fork's "main" among them —
 // not counting. The recompute reads it to keep a default-branch commit on
 // its branch (core.Pipeline.Recompute).
-func commitBuiltOn(t *testing.T, newStore func(*testing.T) store.Store) {
+func branchBuild(t *testing.T, newStore func(*testing.T) store.Store) {
 	st := newStore(t)
 	ctx := t.Context()
 	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
 	if err := st.CreateRepo(ctx, repo); err != nil {
 		t.Fatal(err)
 	}
+	ids := map[string]int64{}
 	for _, u := range []*store.Upload{
-		{CommitSHA: "c1", Branch: "main"},
+		{CommitSHA: "c1", Branch: "main", Part: "backend"},
+		{CommitSHA: "c1", Branch: "main", Part: "frontend"},
 		{CommitSHA: "c1", Branch: "feat", PRID: "7"},
 		{CommitSHA: "f1", Branch: "feat", PRID: "7"},
 		{CommitSHA: "k1", Branch: "main", PRID: "3"},
@@ -1217,21 +1219,22 @@ func commitBuiltOn(t *testing.T, newStore func(*testing.T) store.Store) {
 		if err := st.CreateUpload(ctx, u, nil); err != nil {
 			t.Fatal(err)
 		}
+		ids[u.CommitSHA+"@"+u.Branch+"#"+u.PRID] = u.ID
 	}
 	for _, tc := range []struct {
 		commit, branch string
-		want           bool
+		want           int64
 	}{
-		{"c1", "main", true},
-		{"c1", "feat", false}, // only its PR built it there
-		{"f1", "main", false},
-		{"k1", "main", false}, // a PR build under main's name
-		{"zz", "main", false},
+		{"c1", "main", ids["c1@main#"]}, // the newer of main's two
+		{"c1", "feat", 0},               // only its PR built it there
+		{"f1", "main", 0},
+		{"k1", "main", 0}, // a PR build under main's name
+		{"zz", "main", 0},
 	} {
 		err := st.WithCommitReportTx(ctx, repo.ID, tc.commit, func(ctx context.Context, tx store.CommitTx) error {
-			got, err := tx.CommitBuiltOn(ctx, repo.ID, tc.commit, tc.branch)
+			got, err := tx.BranchBuild(ctx, repo.ID, tc.commit, tc.branch)
 			if err == nil && got != tc.want {
-				t.Errorf("CommitBuiltOn(%s, %s) = %v, want %v", tc.commit, tc.branch, got, tc.want)
+				t.Errorf("BranchBuild(%s, %s) = %d, want %d", tc.commit, tc.branch, got, tc.want)
 			}
 			return err
 		})

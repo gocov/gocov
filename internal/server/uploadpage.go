@@ -68,11 +68,12 @@ func (s *Server) buildUploadPage(w http.ResponseWriter, r *http.Request) (*uploa
 	}
 	if r.FormValue("parts") == "merged" {
 		cr, err := s.store.CommitReport(r.Context(), repo.ID, u.CommitSHA)
-		if err == nil && cr.PartCount > 1 {
-			cr, err = core.MergedReportFor(r.Context(), s.store, repo, cr, u)
-		}
 		switch {
 		case err == nil && cr.PartCount > 1:
+			if cr, err = core.MergedReportFor(r.Context(), s.store, repo, cr, u); err != nil {
+				s.internalError(w, "loading commit parts", err)
+				return nil, false
+			}
 			shown = pageReport{"This commit", cr.TotalPct, cr.CoveredStmts, cr.TotalStmts, cr.DiffCoverage, cr.GateFailed, cr.Gate, cr.GateBasePct}
 			loadFiles = func(ctx context.Context) (*filesViewDTO, *baseRefDTO, error) {
 				base := core.CommitBaseline(ctx, s.store, repo, cr)

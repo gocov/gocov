@@ -328,8 +328,10 @@ type CommitReport struct {
 	DiffCoverage *diffcov.Result
 	// PartCount is how many parts (distinct upload parts) fed the report.
 	PartCount int
-	// UploadID is the latest upload that fed this report; the trend links a
-	// point to its upload detail page through it.
+	// UploadID is the latest upload that fed this report — for a commit
+	// the default branch keeps, that branch's own latest build of it
+	// (core.Pipeline.Recompute); the trend links a point to its upload
+	// detail page through it.
 	UploadID int64
 	// CreatedAt is the commit's first upload; UpdatedAt moves with every
 	// upload merged into the report, so it is the commit's last upload.
@@ -605,9 +607,10 @@ type CommitTx interface {
 	// merge keys blocks by path and position, so it needs none.
 	PartFiles(ctx context.Context, uploadIDs []int64) ([]*UploadFile, error)
 	LatestPassedCommitReport(ctx context.Context, repoID int64, branch string, beforeID int64, excludeCommit string) (*CommitReport, error)
-	// CommitBuiltOn reports whether the commit has an upload on branch
-	// that is not a PR build — whether branch built it itself.
-	CommitBuiltOn(ctx context.Context, repoID int64, commitSHA, branch string) (bool, error)
+	// BranchBuild returns the id of the commit's newest upload on branch
+	// that is not a PR build — branch's own build of it — or 0 when branch
+	// never built it.
+	BranchBuild(ctx context.Context, repoID int64, commitSHA, branch string) (int64, error)
 	UpsertCommitReport(ctx context.Context, cr *CommitReport) error
 }
 

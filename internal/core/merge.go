@@ -116,18 +116,19 @@ func (p *Pipeline) Recompute(ctx context.Context, repo *store.Repo, u *store.Upl
 		// a fast-forward, a PR whose head it is — or it would drop out of the
 		// default branch's trend, dashboard row, badge and baselines. The
 		// later upload brings its numbers, but a PR's diff coverage is that
-		// PR's alone: the report keeps none, and the verdict it records is
-		// the one without it. The delta above and the forge surfaces speak
-		// for this upload — its branch, its PR, its diff — so they keep u's,
-		// and so does the page they link to (MergedReportFor).
+		// PR's alone: the report keeps none, records the verdict without it,
+		// and links to the branch's own build, so the pages it opens agree.
+		// The delta above and the forge surfaces speak for this upload — its
+		// branch, its PR, its diff — so they keep u's, and so does the page
+		// they link to (MergedReportFor).
 		if !defaultBuild(repo, u.Branch, u.PRID) {
-			built, err := tx.CommitBuiltOn(ctx, repo.ID, u.CommitSHA, repo.DefaultBranch)
+			build, err := tx.BranchBuild(ctx, repo.ID, u.CommitSHA, repo.DefaultBranch)
 			if err != nil {
 				return fmt.Errorf("checking the default branch's builds: %w", err)
 			}
-			if built {
-				cr.Branch, cr.PRID, cr.DiffCoverage = repo.DefaultBranch, "", nil
-				cr.GateFailed = EvaluateGate(repo.Gate, totalPct, dropBase, nil).Failed()
+			if build != 0 {
+				cr.Branch, cr.PRID, cr.UploadID = repo.DefaultBranch, "", build
+				setDiff(repo, cr, nil)
 			}
 		}
 		if err := tx.UpsertCommitReport(ctx, cr); err != nil {
@@ -179,19 +180,23 @@ func partsDiff(parts []*store.Upload) (*diffcov.Result, []string) {
 	return diffcov.Merge(diffs...)
 }
 
+// setDiff sets a report's diff coverage and the gate verdict it gives,
+// judged by the gate and drop baseline the report was judged with.
+func setDiff(repo *store.Repo, cr *store.CommitReport, diff *diffcov.Result) {
+	cr.DiffCoverage = diff
+	cr.GateFailed = EvaluateGate(store.JudgedGate(cr.Gate, repo.Gate), cr.TotalPct, cr.GateBasePct, diff).Failed()
+}
+
 // latestParts is the one read MergedReportFor needs.
 type latestParts interface {
 	LatestUploadsPerPart(ctx context.Context, repoID int64, commitSHA string) ([]*store.Upload, error)
 }
 
 // MergedReportFor is a commit's merged report as upload u's build states
-// it — the page its forge surfaces link to. That is the stored report
-// itself, unless the default branch keeps the commit and u is a build of
-// another branch or a PR (Recompute): the stored report then holds no
-// diff coverage and judges the gate without one, so u's adds back the
-// diff coverage of the commit's parts and the verdict that diff gives.
-// It stays the default branch's report otherwise, measured against the
-// same baseline (CommitBaseline) as the views the repo page links to.
+// it — the page its forge surfaces link to: the stored report, with the
+// diff coverage of the commit's parts and its verdict added back when the
+// default branch keeps the commit and u is another branch's or a PR's
+// build (Recompute). It keeps the stored branch, and so its baseline.
 func MergedReportFor(ctx context.Context, reports latestParts, repo *store.Repo, cr *store.CommitReport, u *store.Upload) (*store.CommitReport, error) {
 	if !defaultBuild(repo, cr.Branch, cr.PRID) || defaultBuild(repo, u.Branch, u.PRID) {
 		return cr, nil
@@ -201,8 +206,8 @@ func MergedReportFor(ctx context.Context, reports latestParts, repo *store.Repo,
 		return nil, fmt.Errorf("loading commit parts: %w", err)
 	}
 	view := *cr
-	view.DiffCoverage, _ = partsDiff(parts)
-	view.GateFailed = EvaluateGate(store.JudgedGate(cr.Gate, repo.Gate), cr.TotalPct, cr.GateBasePct, view.DiffCoverage).Failed()
+	diff, _ := partsDiff(parts)
+	setDiff(repo, &view, diff)
 	return &view, nil
 }
 
