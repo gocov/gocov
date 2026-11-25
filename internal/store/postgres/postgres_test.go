@@ -181,6 +181,83 @@ func TestCommitReportBackfill(t *testing.T) {
 	}
 }
 
+// Migration 0030 moves back the reports that left the default branch
+// before the recompute kept them there; commits it never built stay put.
+func TestDefaultBranchReportsMoveBack(t *testing.T) {
+	pool := testpg.Pool(t)
+	st := postgres.New(pool)
+	ctx := t.Context()
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "tok", DefaultBranch: "development"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	var last int64
+	upload := func(commit, branch, pr string) int64 {
+		t.Helper()
+		u := &store.Upload{RepoID: repo.ID, CommitSHA: commit, Branch: branch, PRID: pr, Format: "go", TotalPct: 50, CoveredStmts: 1, TotalStmts: 2}
+		if err := st.CreateUpload(ctx, u, nil); err != nil {
+			t.Fatal(err)
+		}
+		last = u.ID
+		return u.ID
+	}
+	// Each report sits where its last upload left it under the old rule.
+	report := func(commit, branch, pr string) {
+		t.Helper()
+		if err := st.UpsertCommitReport(ctx, &store.CommitReport{RepoID: repo.ID, CommitSHA: commit, Branch: branch, PRID: pr, PartCount: 1, UploadID: last}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	devBuild := upload("b1ccbb0c2d", "development", "") // the commit that went missing
+	upload("b1ccbb0c2d", "KLRS-15887", "")
+	report("b1ccbb0c2d", "KLRS-15887", "")
+	upload("pr-head", "development", "")
+	upload("pr-head", "release", "4")
+	report("pr-head", "release", "4")
+	upload("feature", "feat", "")
+	upload("feature", "feat", "7")
+	report("feature", "feat", "7")
+	upload("fork", "development", "3") // a fork's development, through a PR
+	upload("fork", "fork-feat", "")
+	report("fork", "fork-feat", "")
+
+	var before time.Time
+	if err := pool.QueryRow(ctx, `SELECT updated_at FROM commit_reports WHERE commit_sha = 'b1ccbb0c2d'`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	sql, err := os.ReadFile("migrations/0030_default_branch_reports_stay.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 { // again, to show a re-run moves nothing
+		if _, err := pool.Exec(ctx, string(sql)); err != nil {
+			t.Fatalf("migration: %v", err)
+		}
+	}
+
+	for commit, want := range map[string]string{
+		"b1ccbb0c2d": "development#",
+		"pr-head":    "development#",
+		"feature":    "feat#7",
+		"fork":       "fork-feat#",
+	} {
+		cr, err := st.CommitReport(ctx, repo.ID, commit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := cr.Branch + "#" + cr.PRID; got != want {
+			t.Errorf("%s sits on %s, want %s", commit, got, want)
+		}
+		if commit == "b1ccbb0c2d" && (!cr.UpdatedAt.Equal(before) || cr.UploadID != devBuild) {
+			t.Errorf("%s updated_at %v → %v, upload %d; want it unmoved (nothing was uploaded), linking development's build %d",
+				commit, before, cr.UpdatedAt, cr.UploadID, devBuild)
+		}
+	}
+}
+
 func TestWithGrantLock(t *testing.T) {
 	st := newTestStore(t)
 	box, err := secretbox.New(testSecretKey)

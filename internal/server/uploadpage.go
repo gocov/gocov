@@ -45,7 +45,9 @@ func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
 // the files of every part merged the way the repo page's files card merges
 // them, against the commit's baseline (core.CommitBaseline). The Upload
 // card still describes the upload the page is named for. A commit of one
-// part, or without a merged report yet, reads as the upload alone.
+// part, or without a merged report yet, reads as the upload alone. A PR
+// build of a commit the default branch keeps reads the merged report as
+// its own build stated it (core.MergedReportFor).
 func (s *Server) buildUploadPage(w http.ResponseWriter, r *http.Request) (*uploadPageDTO, bool) {
 	u, repo, ok := s.reportUpload(w, r)
 	if !ok {
@@ -68,6 +70,10 @@ func (s *Server) buildUploadPage(w http.ResponseWriter, r *http.Request) (*uploa
 		cr, err := s.store.CommitReport(r.Context(), repo.ID, u.CommitSHA)
 		switch {
 		case err == nil && cr.PartCount > 1:
+			if cr, err = core.MergedReportFor(r.Context(), s.store, repo, cr, u); err != nil {
+				s.internalError(w, "loading commit parts", err)
+				return nil, false
+			}
 			shown = pageReport{"This commit", cr.TotalPct, cr.CoveredStmts, cr.TotalStmts, cr.DiffCoverage, cr.GateFailed, cr.Gate, cr.GateBasePct}
 			loadFiles = func(ctx context.Context) (*filesViewDTO, *baseRefDTO, error) {
 				base := core.CommitBaseline(ctx, s.store, repo, cr)

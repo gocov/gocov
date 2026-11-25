@@ -1101,6 +1101,15 @@ func (c *commitReportTx) LatestPassedCommitReport(ctx context.Context, repoID in
 	return c.s.latestPassedCommitReport(ctx, c.tx, repoID, branch, beforeID, excludeCommit)
 }
 
+func (c *commitReportTx) BranchBuild(ctx context.Context, repoID int64, commitSHA, branch string) (int64, error) {
+	var id int64
+	err := c.tx.QueryRow(ctx,
+		`SELECT COALESCE(MAX(id), 0) FROM uploads
+		 WHERE repo_id = $1 AND commit_sha = $2 AND branch = $3 AND pr_id = ''`,
+		repoID, commitSHA, branch).Scan(&id)
+	return id, err
+}
+
 func (c *commitReportTx) UpsertCommitReport(ctx context.Context, cr *store.CommitReport) error {
 	return c.s.upsertCommitReport(ctx, c.tx, cr)
 }

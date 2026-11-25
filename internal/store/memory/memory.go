@@ -789,6 +789,18 @@ func (s *Store) WithGrantLock(ctx context.Context, workspaceID int64, fn func(co
 	return fn(ctx, s)
 }
 
+func (s *Store) BranchBuild(_ context.Context, repoID int64, commitSHA, branch string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var id int64
+	for _, u := range s.uploads {
+		if u.RepoID == repoID && u.CommitSHA == commitSHA && u.Branch == branch && u.PRID == "" {
+			id = max(id, u.ID)
+		}
+	}
+	return id, nil
+}
+
 func (s *Store) UpsertCommitReport(_ context.Context, cr *store.CommitReport) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

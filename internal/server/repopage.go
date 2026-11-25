@@ -161,7 +161,9 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 // the way the recompute merged the totals (core.MergeParts), against the
 // baseline commit's parts merged the same way. A commit uploaded in parts
 // (backend, frontend) lists every part's files, not only the last part in.
-// It also returns the latest upload, one of the parts it read.
+// It also returns the commit's latest upload, the newest of the parts it
+// read — not always the report's own (UploadID), which for a commit the
+// default branch keeps is that branch's build (core.Pipeline.Recompute).
 func (s *Server) loadCommitFilesView(ctx context.Context, repo *store.Repo, latest, base *store.CommitReport) (*filesViewDTO, *store.Upload, error) {
 	var (
 		wg        sync.WaitGroup
@@ -188,7 +190,13 @@ func (s *Server) loadCommitFilesView(ctx context.Context, repo *store.Repo, late
 	}
 	view := buildFilesView(latest.DiffCoverage, uploads, files, baseFiles)
 	view.Merged = true
-	return view, uploads[latest.UploadID], nil
+	var last *store.Upload
+	for _, u := range uploads {
+		if last == nil || u.ID > last.ID {
+			last = u
+		}
+	}
+	return view, last, nil
 }
 
 // commitFiles reads a commit's merged files: the latest upload of each of
