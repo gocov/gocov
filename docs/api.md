@@ -89,10 +89,11 @@ Anything else gets `404`, the same `404` as for a repo that does not exist, and 
 another repo. A credential that is not one at all (an unknown token, or an OIDC token that does not verify) gets
 `401` or `403` with the reason, as an upload would.
 
-| query    | meaning                                                                                           |
-|----------|---------------------------------------------------------------------------------------------------|
-| `commit` | the commit SHA, as it was uploaded                                                                |
-| `branch` | without `commit`: the newest report on this branch. Without either: the repo's default branch     |
+| query    | meaning                                                                                                                               |
+|----------|---------------------------------------------------------------------------------------------------------------------------------------|
+| `commit` | the commit SHA, as it was uploaded                                                                                                    |
+| `branch` | without `commit`: the newest report on this branch. Without either: the repo's default branch                                         |
+| `pr_id`  | with `commit`: a pull request id, to read the commit as that PR's build saw it (see below); one that did not build it changes nothing |
 
 ```json
 {
@@ -121,6 +122,11 @@ another repo. A credential that is not one at all (an unknown token, or an OIDC 
 - `diff` is the [diff coverage](pull-requests.md) of a pull-request commit, `null` otherwise. `uncovered` lists
   only the changed files with changed lines no test ran, as the human `lines` and as inclusive `[start, end]`
   `spans`; `unmatched_files` are changed source files the coverage data does not mention, in a language it measures.
+- `branch` and `pr_id` name the build the answer speaks for, and `report_url` is that build's page. A commit the
+  default branch has built stays that branch's when a PR builds it too, so by its SHA alone it reads as the
+  default branch's build, with no `diff` and the gate judged without one. With `pr_id` it reads as the PR's build,
+  as its pull-request comment did: the PR's branch and diff, and the verdict that diff gives. `base` and `delta`
+  stay the commit's own either way.
 - `404` also answers a commit with no report yet, or a branch with none.
 
 Fields are only ever added: a client should ignore the ones it does not know.
@@ -131,12 +137,13 @@ Fields are only ever added: a client should ignore the ones it does not know.
 clients that are given a URL rather than a command to run. [Coding agents](coding-agents.md#as-a-connector-by-url)
 shows how to add it. It offers one tool, `get_report`:
 
-| argument | meaning                                                                              |
-|----------|--------------------------------------------------------------------------------------|
-| `forge`  | required: `github`, `gitlab` or `bitbucket`                                          |
-| `repo`   | required: the repo slug, `workspace/repo`                                            |
-| `commit` | the commit SHA. Without it, the newest report on `branch`                            |
-| `branch` | the branch to read the newest report on; the repo's default branch when left out     |
+| argument | meaning                                                                                                   |
+|----------|-----------------------------------------------------------------------------------------------------------|
+| `forge`  | required: `github`, `gitlab` or `bitbucket`                                                               |
+| `repo`   | required: the repo slug, `workspace/repo`                                                                 |
+| `commit` | the commit SHA. Without it, the newest report on `branch`                                                 |
+| `branch` | the branch to read the newest report on; the repo's default branch when left out                          |
+| `pr_id`  | with `commit`: a pull request id, to read the commit as that PR's build saw it, as `pr_id` above          |
 | `format` | `text` (default), the lines [`gocov report`](cli.md#reading-a-report) prints, or `json`, the answer above |
 
 On an instance without sign-in it answers for every repo, to anyone. With sign-in, its client signs in first, as

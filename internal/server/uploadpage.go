@@ -41,7 +41,7 @@ func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
 //
 // ?parts=merged shows the upload's commit with every part merged instead —
 // the numbers the forge surfaces state for a commit uploaded in parts, and
-// what they link to (core's reportURL): the commit's merged report, and
+// what they link to (core's ReportURL): the commit's merged report, and
 // the files of every part merged the way the repo page's files card merges
 // them, against the commit's baseline (core.CommitBaseline). The Upload
 // card still describes the upload the page is named for. A commit of one

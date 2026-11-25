@@ -187,7 +187,7 @@ func setDiff(repo *store.Repo, cr *store.CommitReport, diff *diffcov.Result) {
 	cr.GateFailed = EvaluateGate(store.JudgedGate(cr.Gate, repo.Gate), cr.TotalPct, cr.GateBasePct, diff).Failed()
 }
 
-// latestParts is the one read MergedReportFor needs.
+// latestParts is the one read MergedReportFor and MergedReportForPR need.
 type latestParts interface {
 	LatestUploadsPerPart(ctx context.Context, repoID int64, commitSHA string) ([]*store.Upload, error)
 }
@@ -198,17 +198,57 @@ type latestParts interface {
 // default branch keeps the commit and u is another branch's or a PR's
 // build (Recompute). It keeps the stored branch, and so its baseline.
 func MergedReportFor(ctx context.Context, reports latestParts, repo *store.Repo, cr *store.CommitReport, u *store.Upload) (*store.CommitReport, error) {
-	if !defaultBuild(repo, cr.Branch, cr.PRID) || defaultBuild(repo, u.Branch, u.PRID) {
+	if !withholdsDiff(repo, cr, u) {
 		return cr, nil
 	}
 	parts, err := reports.LatestUploadsPerPart(ctx, repo.ID, cr.CommitSHA)
 	if err != nil {
 		return nil, fmt.Errorf("loading commit parts: %w", err)
 	}
+	return withPartsDiff(repo, cr, parts), nil
+}
+
+// MergedReportForPR is MergedReportFor for a reader that names a pull
+// request rather than one of its uploads, as the read API does: the
+// commit's merged report as PR prID's build states it, and that build —
+// the PR's newest upload among the commit's parts, which names the PR's
+// branch and the page its surfaces link to. A PR none of whose uploads is
+// among the parts, because it never built the commit or later builds
+// replaced every part it uploaded, gets the stored report and no build.
+func MergedReportForPR(ctx context.Context, reports latestParts, repo *store.Repo, cr *store.CommitReport, prID string) (*store.CommitReport, *store.Upload, error) {
+	if prID == "" {
+		return cr, nil, nil
+	}
+	parts, err := reports.LatestUploadsPerPart(ctx, repo.ID, cr.CommitSHA)
+	if err != nil {
+		return nil, nil, fmt.Errorf("loading commit parts: %w", err)
+	}
+	var build *store.Upload
+	for _, p := range parts {
+		if p.PRID == prID && (build == nil || p.ID > build.ID) {
+			build = p
+		}
+	}
+	if build == nil || !withholdsDiff(repo, cr, build) {
+		return cr, build, nil
+	}
+	return withPartsDiff(repo, cr, parts), build, nil
+}
+
+// withholdsDiff reports whether cr is stored without the diff coverage u's
+// build gave it: the default branch keeps the commit, and u is another
+// branch's or a PR's build of it (Recompute).
+func withholdsDiff(repo *store.Repo, cr *store.CommitReport, u *store.Upload) bool {
+	return defaultBuild(repo, cr.Branch, cr.PRID) && !defaultBuild(repo, u.Branch, u.PRID)
+}
+
+// withPartsDiff is cr with the diff coverage of the commit's parts put
+// back, and the verdict it gives.
+func withPartsDiff(repo *store.Repo, cr *store.CommitReport, parts []*store.Upload) *store.CommitReport {
 	view := *cr
 	diff, _ := partsDiff(parts)
 	setDiff(repo, &view, diff)
-	return &view, nil
+	return &view
 }
 
 // partFiles is the one read a merge of several parts needs; both the

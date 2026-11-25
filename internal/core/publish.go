@@ -348,12 +348,12 @@ func (p *Pipeline) prCommentBody(u *store.Upload, link string, deltaPct *float64
 	return sb.String()
 }
 
-// reportURL is the page every forge surface links to for the merged
+// ReportURL is the page every forge surface links to for the merged
 // report u carries: the triggering upload's page, and for a commit
 // uploaded in more than one part that page with every part merged
 // (?parts=merged) — the numbers the surfaces state, where the upload
-// alone would show only its own part.
-func (p *Pipeline) reportURL(u *store.Upload, parts int) string {
+// alone would show only its own part. The read API links the same page.
+func (p *Pipeline) ReportURL(u *store.Upload, parts int) string {
 	url := fmt.Sprintf("%s/uploads/%d", strings.TrimSuffix(p.BaseURL, "/"), u.ID)
 	if parts > 1 {
 		url += "?parts=merged"
@@ -472,7 +472,7 @@ func (p *Pipeline) pushRound(ctx context.Context, fg forge.Forge, repo *store.Re
 		res = everySurface(Queued, merged.PRID != "")
 	default:
 		pushCtx, cancel := context.WithTimeout(ctx, statusPushTimeout)
-		res = p.pushSurfaces(pushCtx, fg, repo, merged, p.reportURL(merged, len(rc.Parts)), rc.Delta, rc.Verdict)
+		res = p.pushSurfaces(pushCtx, fg, repo, merged, p.ReportURL(merged, len(rc.Parts)), rc.Delta, rc.Verdict)
 		cancel()
 		// The build status gates merges; only it holds back the version.
 		// Insights and the PR comment are best effort.

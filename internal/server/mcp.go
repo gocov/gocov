@@ -32,6 +32,7 @@ var getReportSchema = map[string]any{
 		"repo":   map[string]any{"type": "string", "description": "repo slug, workspace/repo, e.g. gocov/gocov"},
 		"commit": map[string]any{"type": "string", "description": "commit SHA; without it, the newest report on branch"},
 		"branch": map[string]any{"type": "string", "description": "the branch to read the newest report on (default: the repo's default branch)"},
+		"pr_id":  map[string]any{"type": "string", "description": "with commit: a pull request id, to read the commit as that pull request's build saw it, with its diff coverage and gate verdict"},
 		"format": map[string]any{"type": "string", "enum": []string{"text", "json"}, "description": "text (default) or the read API's JSON"},
 	},
 	"required": []string{"forge", "repo"},
@@ -42,6 +43,7 @@ type getReportArgs struct {
 	Repo   string `json:"repo"`
 	Commit string `json:"commit"`
 	Branch string `json:"branch"`
+	PRID   string `json:"pr_id"`
 	Format string `json:"format"`
 }
 
@@ -51,8 +53,9 @@ func (s *Server) newMCPServer(version string) *mcp.Server {
 		Title: "Coverage report",
 		Description: "Read a commit's coverage report from gocov: total coverage, the change against its base, " +
 			"and for a pull request the changed lines no test ran. Name the repo by forge and slug, and a commit " +
-			"or a branch; with neither it reads the newest report on the default branch. It reads the repos of " +
-			"the signed-in user's workspaces and public repos.",
+			"or a branch; with neither it reads the newest report on the default branch. With a commit, pr_id reads " +
+			"it as that pull request's build saw it. It reads the repos of the signed-in user's workspaces and " +
+			"public repos.",
 		InputSchema: getReportSchema,
 		Call:        s.mcpGetReport,
 	}}}
@@ -105,7 +108,7 @@ func (s *Server) mcpGetReport(ctx context.Context, raw json.RawMessage) (string,
 			return "", hidden
 		}
 	}
-	rep, err := s.loadReport(ctx, repo, a.Commit, a.Branch)
+	rep, err := s.loadReport(ctx, repo, a.Commit, a.Branch, a.PRID)
 	var none noReportError
 	if errors.As(err, &none) {
 		return "", fmt.Errorf("%s/%s: %s; the commit's CI must upload its coverage first", a.Forge, a.Repo, none)

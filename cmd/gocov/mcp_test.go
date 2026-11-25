@@ -60,6 +60,14 @@ func TestMCPGetReport(t *testing.T) {
 	if req.URL.Query().Get("branch") != "main" {
 		t.Errorf("last request %s, want ?branch=main", req.URL)
 	}
+
+	// A PR named reads the commit as that PR's build saw it.
+	mcpSession(t, srv.URL,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_report","arguments":{"forge":"github","repo":"acme/widgets","commit":"7aa8f0162ab5c0ffee","pr_id":"247"}}}`,
+	)
+	if q := req.URL.Query(); q.Get("commit") != "7aa8f0162ab5c0ffee" || q.Get("pr_id") != "247" {
+		t.Errorf("request %s, want the commit as PR 247 saw it", req.URL)
+	}
 }
 
 // A report that cannot be read is the tool's error, which the agent reads,

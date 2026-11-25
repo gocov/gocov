@@ -30,6 +30,7 @@ var getReportSchema = map[string]any{
 		"repo":   map[string]any{"type": "string", "description": "repo slug, workspace/repo (default: detected)"},
 		"commit": map[string]any{"type": "string", "description": "commit SHA (default: the checked-out commit)"},
 		"branch": map[string]any{"type": "string", "description": "read the newest report on this branch instead of one commit"},
+		"pr_id":  map[string]any{"type": "string", "description": "a pull request id, to read the commit as that pull request's build saw it, with its diff coverage and gate verdict (default: detected in a pull request's CI)"},
 		"format": map[string]any{"type": "string", "enum": []string{"text", "json"}, "description": "text (default) or the read API's JSON"},
 	},
 }
@@ -39,6 +40,7 @@ type getReportArgs struct {
 	Repo   string `json:"repo"`
 	Commit string `json:"commit"`
 	Branch string `json:"branch"`
+	PRID   string `json:"pr_id"`
 	Format string `json:"format"`
 }
 
@@ -64,7 +66,7 @@ func runMCP(args []string, stdin io.Reader, stdout io.Writer, env envFunc, git g
 			}
 		}
 		body, err := fetchReport(reportQuery{
-			server: *server, forge: a.Forge, repo: a.Repo, commit: a.Commit, branch: a.Branch, token: *token,
+			server: *server, forge: a.Forge, repo: a.Repo, commit: a.Commit, branch: a.Branch, pr: a.PRID, token: *token,
 		}, env, git, doer)
 		if err != nil || a.Format == "json" {
 			return string(body), err

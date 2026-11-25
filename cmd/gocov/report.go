@@ -35,6 +35,7 @@ func runReport(args []string, stdout io.Writer, env envFunc, git gitFunc, doer h
 	fs.StringVar(&q.repo, "repo", "", "repo slug workspace/repo (default: auto-detect)")
 	fs.StringVar(&q.commit, "commit", "", "commit SHA (default: auto-detect; ignored with -branch)")
 	fs.StringVar(&q.branch, "branch", "", "report the newest commit on this branch instead of one commit")
+	fs.StringVar(&q.pr, "pr", "", "pull request id: read the commit as that pull request's build saw it (default: auto-detect; ignored with -branch)")
 	fs.StringVar(&q.token, "token", cfg.Token, "upload token, for a private repo (or $GOCOV_TOKEN)")
 	asJSON := fs.Bool("json", false, "print the server's JSON answer as is")
 	if err := fs.Parse(args); err != nil {
@@ -62,13 +63,13 @@ func runReport(args []string, stdout io.Writer, env envFunc, git gitFunc, doer h
 // reportQuery names the report to read: empty fields are detected, and an
 // empty token is looked for the way an upload looks for one.
 type reportQuery struct {
-	server, forge, repo, commit, branch, token string
+	server, forge, repo, commit, branch, pr, token string
 }
 
 // fetchReport reads one report from the read API and returns its JSON
 // body, or an error that says why there is none.
 func fetchReport(q reportQuery, env envFunc, git gitFunc, doer httpDoer) ([]byte, error) {
-	build := buildInfo{Repo: q.repo, Commit: q.commit}
+	build := buildInfo{Repo: q.repo, Commit: q.commit, PRID: q.pr}
 	if q.repo == "" || (q.commit == "" && q.branch == "") {
 		build.fill(detectBuild(env, git, readGitHubEvent(env, os.ReadFile)))
 	}
@@ -85,6 +86,12 @@ func fetchReport(q reportQuery, env envFunc, git gitFunc, doer httpDoer) ([]byte
 		v.Set("branch", q.branch)
 	} else if build.Commit != "" {
 		v.Set("commit", build.Commit)
+		// In a PR's CI, the commit as the PR's build saw it: its diff and
+		// verdict, even when the default branch built the commit too. A
+		// PR that did not build it reads the commit as stored.
+		if build.PRID != "" {
+			v.Set("pr_id", build.PRID)
+		}
 	} else {
 		return nil, errors.New("commit not detected: set -commit, or -branch for a branch's newest report")
 	}
