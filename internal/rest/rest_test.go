@@ -187,6 +187,7 @@ func TestEscapePathKeepsSlashes(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"a/b/c.go", "a/b/c.go"},
 		{"dir name/file#1?.go", "dir%20name/file%231%3F.go"},
+		{"/dir name//", "/dir%20name//"},
 		{"", ""},
 	}
 	for _, tt := range tests {
@@ -217,7 +218,7 @@ func TestEachPage(t *testing.T) {
 
 	walk := func(start string, maxPages int) ([]int, bool, error) {
 		var got []int
-		truncated, err := EachPage(t.Context(), c, start, maxPages, func(page []int) { got = append(got, page...) })
+		truncated, err := c.EachPage(t.Context(), start, maxPages, func(page []int) { got = append(got, page...) })
 		return got, truncated, err
 	}
 	if got, truncated, err := walk("/items", 5); err != nil || truncated || !slices.Equal(got, []int{0, 1, 2, 3, 4, 5}) {
@@ -252,7 +253,7 @@ func TestEachValuesPage(t *testing.T) {
 
 	walk := func(maxPages int, stopAt int) ([]int, bool, error) {
 		var got []int
-		truncated, err := EachValuesPage(t.Context(), c, "/items", maxPages, func(values []int) bool {
+		truncated, err := c.EachValuesPage(t.Context(), "/items", maxPages, func(values []int) bool {
 			got = append(got, values...)
 			return !slices.Contains(values, stopAt)
 		})

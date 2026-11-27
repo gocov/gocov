@@ -8,6 +8,7 @@ package rest
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -216,7 +217,7 @@ func (c *Client) GetPage(ctx context.Context, url string, out any) (next string,
 // a []T and handing it to fn, for at most maxPages pages. truncated
 // reports that the listing went on past the cap — the caller decides
 // whether an unseen tail matters.
-func EachPage[T any](ctx context.Context, c *Client, url string, maxPages int, fn func(page []T)) (truncated bool, err error) {
+func (c *Client) EachPage[T any](ctx context.Context, url string, maxPages int, fn func(page []T)) (truncated bool, err error) {
 	for next := url; next != ""; maxPages-- {
 		if maxPages == 0 {
 			return true, nil
@@ -234,7 +235,7 @@ func EachPage[T any](ctx context.Context, c *Client, url string, maxPages int, f
 // Bitbucket's do — {"values": [...], "next": "<absolute url>"} — rather
 // than in a Link header. fn returning false stops the walk early, as a
 // search does at its first hit.
-func EachValuesPage[T any](ctx context.Context, c *Client, url string, maxPages int, fn func(values []T) (more bool)) (truncated bool, err error) {
+func (c *Client) EachValuesPage[T any](ctx context.Context, url string, maxPages int, fn func(values []T) (more bool)) (truncated bool, err error) {
 	for next := url; next != ""; maxPages-- {
 		if maxPages == 0 {
 			return true, nil
@@ -316,10 +317,7 @@ func (c *Client) send(req *http.Request, url string) (*http.Response, error) {
 	if c.Authorize != nil {
 		c.Authorize(req)
 	}
-	client := c.HTTPClient
-	if client == nil {
-		client = http.DefaultClient
-	}
+	client := cmp.Or(c.HTTPClient, http.DefaultClient)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", c.Name, err)
@@ -352,11 +350,11 @@ func (c *Client) decode(resp *http.Response, url string, out any) error {
 // "?" or "#" in a filename would otherwise cut the request short.
 func EscapePath(path string) string {
 	var b strings.Builder
-	for i, segment := range strings.Split(path, "/") {
-		if i > 0 {
-			b.WriteByte('/')
-		}
+	sep := ""
+	for segment := range strings.SplitSeq(path, "/") {
+		b.WriteString(sep)
 		b.WriteString(neturl.PathEscape(segment))
+		sep = "/"
 	}
 	return b.String()
 }

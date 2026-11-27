@@ -5,6 +5,7 @@
 package server
 
 import (
+	"cmp"
 	"net/http"
 	"time"
 )
@@ -52,8 +53,5 @@ func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 // status is the code the handler wrote, 200 when it wrote nothing (the
 // server sends 200 for an empty response).
 func (w *statusWriter) status() int {
-	if w.code == 0 {
-		return http.StatusOK
-	}
-	return w.code
+	return cmp.Or(w.code, http.StatusOK)
 }

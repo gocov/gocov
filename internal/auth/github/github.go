@@ -94,11 +94,8 @@ func (p *Provider) Identity(ctx context.Context, code, redirectURI string) (*aut
 	// renamed and released to others.
 	id := &auth.Identity{
 		ForgeUUID:   strconv.FormatInt(user.ID, 10),
-		DisplayName: user.Name,
+		DisplayName: cmp.Or(user.Name, user.Login),
 		Email:       user.Email,
-	}
-	if id.DisplayName == "" {
-		id.DisplayName = user.Login
 	}
 	if id.Email == "" {
 		id.Email, err = p.primaryEmail(ctx, token)
@@ -168,7 +165,7 @@ func (p *Provider) orgs(ctx context.Context, token string) (all, admin []string,
 			Login string `json:"login"`
 		} `json:"organization"`
 	}
-	_, err = rest.EachPage(ctx, p.api(token), "/user/memberships/orgs?state=active&per_page=100", maxOrgPages,
+	_, err = p.api(token).EachPage(ctx, "/user/memberships/orgs?state=active&per_page=100", maxOrgPages,
 		func(page []membership) {
 			for _, m := range page {
 				if m.Organization.Login == "" {

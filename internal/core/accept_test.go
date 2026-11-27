@@ -26,7 +26,7 @@ func prof(path string, covered, total int) *profile.Profile {
 }
 
 func TestAcceptStoresMergesAndReports(t *testing.T) {
-	p, st, repo := newPipeline(t, store.Gate{MinCoverage: pct(70)})
+	p, st, repo := newPipeline(t, store.Gate{MinCoverage: new(70.0)})
 	blobs := blobmem.New()
 	p.Blobs = blobs
 	ctx := t.Context()

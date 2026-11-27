@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"cmp"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -57,10 +58,7 @@ func (CloverParser) Parse(r io.Reader) (*Profile, error) {
 	for _, f := range all {
 		// Istanbul puts the full path in a path attribute and only the
 		// basename in name; PHPUnit uses name alone.
-		name := f.Path
-		if name == "" {
-			name = f.Name
-		}
+		name := cmp.Or(f.Path, f.Name)
 		if name == "" {
 			return nil, errors.New("clover: file without a name")
 		}

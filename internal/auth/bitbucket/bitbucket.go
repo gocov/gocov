@@ -151,7 +151,7 @@ func (p *Provider) workspaces(ctx context.Context, token string) (all, admin []s
 			Slug string `json:"slug"`
 		} `json:"workspace"`
 	}
-	_, err = rest.EachValuesPage(ctx, p.api(token), "/user/workspaces?"+url.Values{"pagelen": {"100"}}.Encode(), maxWorkspacePages,
+	_, err = p.api(token).EachValuesPage(ctx, "/user/workspaces?"+url.Values{"pagelen": {"100"}}.Encode(), maxWorkspacePages,
 		func(values []access) bool {
 			for _, v := range values {
 				if v.Workspace.Slug == "" {

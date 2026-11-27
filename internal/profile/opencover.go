@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"cmp"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -87,10 +88,7 @@ func (OpenCoverParser) Parse(r io.Reader) (*Profile, error) {
 					if sp.SL == openCoverHiddenLine || sp.EL == openCoverHiddenLine {
 						continue
 					}
-					uid := sp.FileID
-					if uid == "" {
-						uid = meth.FileRef.UID
-					}
+					uid := cmp.Or(sp.FileID, meth.FileRef.UID)
 					path, ok := local[uid]
 					if !ok {
 						continue

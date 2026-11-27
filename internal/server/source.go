@@ -326,12 +326,12 @@ func (s *Server) validateSource(content []byte) ([]byte, string) {
 // has a positive count — the same rule diff coverage uses.
 func renderSourceLines(source []byte, blocks []profile.Block) []sourceLineDTO {
 	text := strings.TrimSuffix(string(source), "\n")
-	rawLines := strings.Split(text, "\n")
-	counts := lineCounts(blocks, len(rawLines))
+	lineCount := strings.Count(text, "\n") + 1
+	counts := lineCounts(blocks, lineCount)
 
-	lines := make([]sourceLineDTO, 0, len(rawLines))
-	for i, raw := range rawLines {
-		no := i + 1
+	lines := make([]sourceLineDTO, 0, lineCount)
+	for raw := range strings.SplitSeq(text, "\n") {
+		no := len(lines) + 1
 		line := sourceLineDTO{No: no, Text: strings.TrimSuffix(raw, "\r")}
 		if n, executable := counts[no]; executable {
 			line.Hits = new(n)

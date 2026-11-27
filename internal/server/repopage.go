@@ -334,9 +334,7 @@ func (s *Server) handleAPIRepoUploads(w http.ResponseWriter, r *http.Request) {
 	}
 	branch := r.FormValue("branch")
 	page, _ := strconv.Atoi(r.FormValue("page"))
-	if page < 0 {
-		page = 0
-	}
+	page = max(page, 0)
 
 	// Fetch the page and one row beyond it, so "Older" knows whether to
 	// render.

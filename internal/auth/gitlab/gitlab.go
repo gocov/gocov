@@ -95,11 +95,8 @@ func (p *Provider) Identity(ctx context.Context, code, redirectURI string) (*aut
 	// renamed and released to others (symmetric with the GitHub decision).
 	id := &auth.Identity{
 		ForgeUUID:   strconv.FormatInt(user.ID, 10),
-		DisplayName: user.Name,
+		DisplayName: cmp.Or(user.Name, user.Username),
 		Email:       user.Email,
-	}
-	if id.DisplayName == "" {
-		id.DisplayName = user.Username
 	}
 	groups, err := p.groups(ctx, token, accessLevelMember)
 	if err != nil {
@@ -153,7 +150,7 @@ func (p *Provider) groups(ctx context.Context, token string, minAccess int) ([]s
 		FullPath string `json:"full_path"`
 	}
 	var out []string
-	_, err := rest.EachPage(ctx, p.api(token), "/groups?min_access_level="+strconv.Itoa(minAccess)+"&per_page=100", maxGroupPages,
+	_, err := p.api(token).EachPage(ctx, "/groups?min_access_level="+strconv.Itoa(minAccess)+"&per_page=100", maxGroupPages,
 		func(page []group) {
 			for _, g := range page {
 				if g.FullPath != "" {

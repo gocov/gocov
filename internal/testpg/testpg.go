@@ -29,7 +29,7 @@ func Pool(t *testing.T) *pgxpool.Pool {
 	if dsn == "" {
 		t.Skipf("%s not set; skipping Postgres integration test", EnvVar)
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 
 	admin, err := pgxpool.New(ctx, dsn)
 	if err != nil {

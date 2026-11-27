@@ -105,7 +105,7 @@ func (c *Client) FindPRComment(ctx context.Context, repoSlug, prID, prefix strin
 		System bool   `json:"system"`
 	}
 	found := ""
-	truncated, err := rest.EachPage(ctx, c.api(), next, maxNotePages, func(notes []note) {
+	truncated, err := c.api().EachPage(ctx, next, maxNotePages, func(notes []note) {
 		for _, n := range notes {
 			if !n.System && strings.HasPrefix(n.Body, prefix) {
 				found = strconv.FormatInt(n.ID, 10)

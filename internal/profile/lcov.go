@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -46,17 +47,18 @@ func (LCOVParser) Parse(r io.Reader) (*Profile, error) {
 				return nil, fmt.Errorf("line %d: DA record outside an SF block", lineNo)
 			}
 			// DA:<line>,<count>[,<checksum>]
-			fields := strings.Split(l[3:], ",")
-			if len(fields) < 2 {
+			line, rest, ok := strings.Cut(l[3:], ",")
+			if !ok {
 				return nil, fmt.Errorf("line %d: malformed DA record %q", lineNo, l)
 			}
-			ln, err := strconv.Atoi(strings.TrimSpace(fields[0]))
+			hits, _, _ := strings.Cut(rest, ",")
+			ln, err := strconv.Atoi(strings.TrimSpace(line))
 			if err != nil || ln <= 0 || ln > maxLineNumber {
-				return nil, fmt.Errorf("line %d: malformed DA line number %q", lineNo, fields[0])
+				return nil, fmt.Errorf("line %d: malformed DA line number %q", lineNo, line)
 			}
-			count, err := strconv.Atoi(strings.TrimSpace(fields[1]))
+			count, err := strconv.Atoi(strings.TrimSpace(hits))
 			if err != nil || count < 0 {
-				return nil, fmt.Errorf("line %d: malformed DA hit count %q", lineNo, fields[1])
+				return nil, fmt.Errorf("line %d: malformed DA hit count %q", lineNo, hits)
 			}
 			cur[ln] += count
 		case l == "end_of_record":
@@ -103,10 +105,7 @@ func fromLineHits(format string, files map[string]map[int]int) (*Profile, error)
 // up inside a block, or diff coverage would treat non-executable lines as
 // executable. Shared by the line-oriented parsers (lcov, jacoco).
 func blocksFromLineHits(lines map[int]int) []Block {
-	nums := make([]int, 0, len(lines))
-	for ln := range lines {
-		nums = append(nums, ln)
-	}
+	nums := slices.AppendSeq(make([]int, 0, len(lines)), maps.Keys(lines))
 	slices.Sort(nums)
 
 	var blocks []Block

@@ -8,8 +8,6 @@ import (
 	"github.com/gocov/gocov/internal/store"
 )
 
-func pct(v float64) *float64 { return new(v) }
-
 func TestEvaluateGate(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -25,54 +23,54 @@ func TestEvaluateGate(t *testing.T) {
 		},
 		{
 			name: "total above the minimum",
-			gate: store.Gate{MinCoverage: pct(80)}, totalPct: 81,
+			gate: store.Gate{MinCoverage: new(80.0)}, totalPct: 81,
 		},
 		{
 			name: "total below the minimum",
-			gate: store.Gate{MinCoverage: pct(80)}, totalPct: 79.5,
+			gate: store.Gate{MinCoverage: new(80.0)}, totalPct: 79.5,
 			want: []string{"below the minimum"},
 		},
 		{
 			// 57 of 100 statements is 56.999999999999993 in float64, and
 			// a gate set to exactly that must not fail on the arithmetic.
 			name: "exactly at the threshold passes",
-			gate: store.Gate{MinCoverage: pct(57)}, totalPct: 56.999999999999993,
+			gate: store.Gate{MinCoverage: new(57.0)}, totalPct: 56.999999999999993,
 		},
 		{
 			name: "drop within tolerance",
-			gate: store.Gate{MaxCoverageDrop: pct(1)}, totalPct: 79, dropBase: pct(79.5),
+			gate: store.Gate{MaxCoverageDrop: new(1.0)}, totalPct: 79, dropBase: new(79.5),
 		},
 		{
 			name: "drop beyond tolerance",
-			gate: store.Gate{MaxCoverageDrop: pct(1)}, totalPct: 79, dropBase: pct(81),
+			gate: store.Gate{MaxCoverageDrop: new(1.0)}, totalPct: 79, dropBase: new(81.0),
 			want: []string{"coverage dropped"},
 		},
 		{
 			// No baseline to compare against: the rule cannot fail an
 			// upload it knows nothing about.
 			name: "drop rule fails open without a baseline",
-			gate: store.Gate{MaxCoverageDrop: pct(1)}, totalPct: 10, dropBase: nil,
+			gate: store.Gate{MaxCoverageDrop: new(1.0)}, totalPct: 10, dropBase: nil,
 		},
 		{
 			name: "diff coverage below the minimum",
-			gate: store.Gate{MinDiffCoverage: pct(90)}, totalPct: 99,
+			gate: store.Gate{MinDiffCoverage: new(90.0)}, totalPct: 99,
 			diff: &diffcov.Result{TotalLines: 10, CoveredLines: 5},
 			want: []string{"diff coverage"},
 		},
 		{
 			name: "diff rule fails open with no diff",
-			gate: store.Gate{MinDiffCoverage: pct(90)}, totalPct: 10, diff: nil,
+			gate: store.Gate{MinDiffCoverage: new(90.0)}, totalPct: 10, diff: nil,
 		},
 		{
 			// A PR that touches no covered lines has nothing to measure.
 			name: "diff rule fails open on an empty diff",
-			gate: store.Gate{MinDiffCoverage: pct(90)}, totalPct: 10,
+			gate: store.Gate{MinDiffCoverage: new(90.0)}, totalPct: 10,
 			diff: &diffcov.Result{TotalLines: 0},
 		},
 		{
 			name:     "every rule can fail at once",
-			gate:     store.Gate{MinCoverage: pct(90), MaxCoverageDrop: pct(1), MinDiffCoverage: pct(90)},
-			totalPct: 50, dropBase: pct(55),
+			gate:     store.Gate{MinCoverage: new(90.0), MaxCoverageDrop: new(1.0), MinDiffCoverage: new(90.0)},
+			totalPct: 50, dropBase: new(55.0),
 			diff: &diffcov.Result{TotalLines: 10, CoveredLines: 1},
 			want: []string{"below the minimum", "coverage dropped", "diff coverage"},
 		},
@@ -110,10 +108,10 @@ func TestMinCoverageFailed(t *testing.T) {
 		totalPct float64
 		want     bool
 	}{
-		{name: "no minimum configured", gate: store.Gate{MaxCoverageDrop: pct(1)}, totalPct: 0},
-		{name: "above the minimum", gate: store.Gate{MinCoverage: pct(80)}, totalPct: 81},
-		{name: "exactly at the threshold", gate: store.Gate{MinCoverage: pct(57)}, totalPct: 56.999999999999993},
-		{name: "below the minimum", gate: store.Gate{MinCoverage: pct(80)}, totalPct: 79.9, want: true},
+		{name: "no minimum configured", gate: store.Gate{MaxCoverageDrop: new(1.0)}, totalPct: 0},
+		{name: "above the minimum", gate: store.Gate{MinCoverage: new(80.0)}, totalPct: 81},
+		{name: "exactly at the threshold", gate: store.Gate{MinCoverage: new(57.0)}, totalPct: 56.999999999999993},
+		{name: "below the minimum", gate: store.Gate{MinCoverage: new(80.0)}, totalPct: 79.9, want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := MinCoverageFailed(tc.gate, tc.totalPct); got != tc.want {
@@ -144,63 +142,63 @@ func TestGateReason(t *testing.T) {
 		},
 		{
 			name: "total above the minimum",
-			gate: store.Gate{MinCoverage: pct(80)}, totalPct: 85,
+			gate: store.Gate{MinCoverage: new(80.0)}, totalPct: 85,
 			want: "Total coverage is above the minimum of 80%.",
 		},
 		{
 			name: "total below the minimum",
-			gate: store.Gate{MinCoverage: pct(80)}, totalPct: 70,
+			gate: store.Gate{MinCoverage: new(80.0)}, totalPct: 70,
 			want: "Total coverage is below the minimum of 80%.",
 		},
 		{
 			name: "total exactly at the threshold reads as above",
-			gate: store.Gate{MinCoverage: pct(57)}, totalPct: 56.999999999999993,
+			gate: store.Gate{MinCoverage: new(57.0)}, totalPct: 56.999999999999993,
 			want: "Total coverage is above the minimum of 57%.",
 		},
 		{
 			name: "coverage rose against the default branch",
-			gate: store.Gate{MaxCoverageDrop: pct(1)}, totalPct: 81, dropBase: pct(80),
+			gate: store.Gate{MaxCoverageDrop: new(1.0)}, totalPct: 81, dropBase: new(80.0),
 			want: "Coverage held or rose against the default branch.",
 		},
 		{
 			name: "drop under the allowance",
-			gate: store.Gate{MaxCoverageDrop: pct(1)}, totalPct: 79.5, dropBase: pct(80),
+			gate: store.Gate{MaxCoverageDrop: new(1.0)}, totalPct: 79.5, dropBase: new(80.0),
 			want: "The drop against the default branch is 0.5% — under the 1% allowed.",
 		},
 		{
 			name: "drop over the allowance",
-			gate: store.Gate{MaxCoverageDrop: pct(1)}, totalPct: 77, dropBase: pct(80),
+			gate: store.Gate{MaxCoverageDrop: new(1.0)}, totalPct: 77, dropBase: new(80.0),
 			want: "The drop against the default branch is 3% — over the 1% allowed.",
 		},
 		{
 			// Without a recorded baseline the gate skipped the drop rule, so
 			// the narration must not invent a clause for it.
 			name: "drop rule without a baseline falls back to the total",
-			gate: store.Gate{MaxCoverageDrop: pct(1)}, totalPct: 77,
+			gate: store.Gate{MaxCoverageDrop: new(1.0)}, totalPct: 77,
 			want: "This upload records 77.0% total coverage.",
 		},
 		{
 			name: "diff coverage meets the minimum",
-			gate: store.Gate{MinDiffCoverage: pct(80)}, totalPct: 50,
+			gate: store.Gate{MinDiffCoverage: new(80.0)}, totalPct: 50,
 			diff: &diffcov.Result{TotalLines: 10, CoveredLines: 9},
 			want: "Diff coverage meets the 80% minimum.",
 		},
 		{
 			name: "diff coverage below the minimum",
-			gate: store.Gate{MinDiffCoverage: pct(80)}, totalPct: 50,
+			gate: store.Gate{MinDiffCoverage: new(80.0)}, totalPct: 50,
 			diff: &diffcov.Result{TotalLines: 10, CoveredLines: 5},
 			want: "Diff coverage is below the 80% minimum.",
 		},
 		{
 			name: "empty diff leaves the diff rule out",
-			gate: store.Gate{MinDiffCoverage: pct(80)}, totalPct: 50,
+			gate: store.Gate{MinDiffCoverage: new(80.0)}, totalPct: 50,
 			diff: &diffcov.Result{TotalLines: 0},
 			want: "This upload records 50.0% total coverage.",
 		},
 		{
 			name:     "every rule joins into one sentence",
-			gate:     store.Gate{MinCoverage: pct(60), MaxCoverageDrop: pct(1), MinDiffCoverage: pct(90)},
-			totalPct: 55, dropBase: pct(58),
+			gate:     store.Gate{MinCoverage: new(60.0), MaxCoverageDrop: new(1.0), MinDiffCoverage: new(90.0)},
+			totalPct: 55, dropBase: new(58.0),
 			diff: &diffcov.Result{TotalLines: 4, CoveredLines: 1},
 			want: "Total coverage is below the minimum of 60%, and the drop against the default branch is 3% — over the 1% allowed, and diff coverage is below the 90% minimum.",
 		},

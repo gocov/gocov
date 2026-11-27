@@ -107,7 +107,7 @@ func TestRecomputeMergesEveryPart(t *testing.T) {
 func TestRecomputeEvaluatesTheGateOnTheMergedTotal(t *testing.T) {
 	// The point of merging: a part that fails on its own passes once the
 	// rest of the commit is in, so a gate must never fire on one part.
-	p, st, repo := newPipeline(t, store.Gate{MinCoverage: pct(70)})
+	p, st, repo := newPipeline(t, store.Gate{MinCoverage: new(70.0)})
 	ctx := t.Context()
 
 	back := addPart(t, st, repo, "c1", "backend", 5, 10) // 50% alone
@@ -191,7 +191,7 @@ func TestRecomputeReadsPartFilesOnlyToMerge(t *testing.T) {
 // still missing some of its parts is measured against the baseline's same
 // parts only.
 func TestRecomputeComparesTheSameParts(t *testing.T) {
-	p, st, repo := newPipeline(t, store.Gate{MaxCoverageDrop: pct(1)})
+	p, st, repo := newPipeline(t, store.Gate{MaxCoverageDrop: new(1.0)})
 	ctx := t.Context()
 	recompute := func(u *store.Upload) *Merged {
 		t.Helper()
@@ -297,7 +297,7 @@ func TestMergePartsLonePartIsItsOwnMerge(t *testing.T) {
 // without the PR's diff coverage or the gate failure it causes, linking
 // main's own build. The merged view the forge gets is the PR build's own.
 func TestRecomputeKeepsADefaultBranchCommitThere(t *testing.T) {
-	p, st, repo := newPipeline(t, store.Gate{MinDiffCoverage: pct(80)})
+	p, st, repo := newPipeline(t, store.Gate{MinDiffCoverage: new(80.0)})
 	ctx := t.Context()
 	recompute := func(u *store.Upload) *Merged {
 		t.Helper()

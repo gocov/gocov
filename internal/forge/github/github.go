@@ -102,7 +102,7 @@ func (c *Client) FindPRComment(ctx context.Context, repoSlug, prID, prefix strin
 		Body string `json:"body"`
 	}
 	found := ""
-	_, err := rest.EachPage(ctx, c.api(), next, maxCommentPages, func(comments []comment) {
+	_, err := c.api().EachPage(ctx, next, maxCommentPages, func(comments []comment) {
 		for _, cm := range comments {
 			if strings.HasPrefix(cm.Body, prefix) {
 				found = strconv.FormatInt(cm.ID, 10)
@@ -308,17 +308,11 @@ func reportValue(d forge.ReportData) string {
 func checkRunAnnotations(anns []forge.Annotation) []map[string]any {
 	items := make([]map[string]any, 0, len(anns))
 	for _, a := range anns {
-		start, end := a.Line, a.EndLine
-		if start == 0 {
-			start = 1
-		}
-		if end < start {
-			end = start
-		}
+		start := cmp.Or(a.Line, 1)
 		items = append(items, map[string]any{
 			"path":             a.Path,
 			"start_line":       start,
-			"end_line":         end,
+			"end_line":         max(start, a.EndLine),
 			"annotation_level": "warning",
 			"message":          a.Summary,
 		})
