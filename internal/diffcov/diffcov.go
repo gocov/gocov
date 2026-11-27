@@ -147,9 +147,7 @@ func hunkCount(s string) int {
 func targetPath(l string) string {
 	p := strings.TrimPrefix(l, "+++ ")
 	// git may append "\t<timestamp>" after the path
-	if i := strings.IndexByte(p, '\t'); i >= 0 {
-		p = p[:i]
-	}
+	p, _, _ = strings.Cut(p, "\t")
 	p = strings.TrimSpace(p)
 	// With core.quotePath (the default), git C-quotes paths containing
 	// non-ASCII or special bytes: +++ "b/caf\303\251.go". Go's quoted
@@ -400,12 +398,12 @@ func (idx *profileIndex) match(diffPath, pathPrefix string) *FileBlocks {
 // longest first: "a/b/c.go" yields "b/c.go", then "c.go".
 func dirSuffixes(p string) iter.Seq[string] {
 	return func(yield func(string) bool) {
-		for i := strings.IndexByte(p, '/'); i >= 0; {
-			p = p[i+1:]
-			if !yield(p) {
+		var ok bool
+		for {
+			_, p, ok = strings.Cut(p, "/")
+			if !ok || !yield(p) {
 				return
 			}
-			i = strings.IndexByte(p, '/')
 		}
 	}
 }

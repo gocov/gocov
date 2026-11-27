@@ -3,6 +3,7 @@
 package memory
 
 import (
+	"bytes"
 	"context"
 	"sync"
 
@@ -23,9 +24,7 @@ func New() *Store {
 func (s *Store) Put(_ context.Context, key string, data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cp := make([]byte, len(data))
-	copy(cp, data)
-	s.blobs[key] = cp
+	s.blobs[key] = append([]byte{}, data...)
 	return nil
 }
 
@@ -36,9 +35,7 @@ func (s *Store) Get(_ context.Context, key string) ([]byte, error) {
 	if !ok {
 		return nil, blobstore.ErrNotFound
 	}
-	cp := make([]byte, len(data))
-	copy(cp, data)
-	return cp, nil
+	return bytes.Clone(data), nil
 }
 
 func (s *Store) Delete(_ context.Context, key string) error {

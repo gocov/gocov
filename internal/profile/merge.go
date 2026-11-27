@@ -2,6 +2,7 @@ package profile
 
 import (
 	"cmp"
+	"maps"
 	"slices"
 )
 
@@ -39,9 +40,7 @@ func Merge(profiles ...*Profile) *Profile {
 					// Identical positions describe the same statements, so
 					// NumStmts should already match; keep the larger to stay
 					// safe against a malformed input rather than trust it.
-					if b.NumStmts > ex.NumStmts {
-						ex.NumStmts = b.NumStmts
-					}
+					ex.NumStmts = max(ex.NumStmts, b.NumStmts)
 					blocks[k] = ex
 				} else {
 					blocks[k] = b
@@ -51,17 +50,9 @@ func Merge(profiles ...*Profile) *Profile {
 	}
 
 	out := &Profile{}
-	paths := make([]string, 0, len(byFile))
-	for path := range byFile {
-		paths = append(paths, path)
-	}
-	slices.Sort(paths)
-	for _, path := range paths {
+	for _, path := range slices.Sorted(maps.Keys(byFile)) {
 		blocks := byFile[path]
-		merged := make([]Block, 0, len(blocks))
-		for _, b := range blocks {
-			merged = append(merged, b)
-		}
+		merged := slices.AppendSeq(make([]Block, 0, len(blocks)), maps.Values(blocks))
 		slices.SortFunc(merged, comparePos)
 		out.Files = append(out.Files, File{Path: path, Blocks: merged})
 	}

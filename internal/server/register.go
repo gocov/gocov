@@ -63,10 +63,8 @@ func (s *Server) registerRows(r *http.Request, u *store.User) ([]registerRow, er
 		member[ws.Prefix] = true
 	}
 
-	prefixes := append([]string(nil), u.ForgeWorkspaces...)
-	slices.Sort(prefixes)
-	rows := make([]registerRow, 0, len(prefixes))
-	for _, prefix := range prefixes {
+	rows := make([]registerRow, 0, len(u.ForgeWorkspaces))
+	for _, prefix := range slices.Sorted(slices.Values(u.ForgeWorkspaces)) {
 		row := registerRow{Prefix: prefix, State: "available"}
 		_, err := s.store.WorkspaceByPrefix(r.Context(), u.Forge, prefix)
 		switch {

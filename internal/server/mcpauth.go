@@ -23,11 +23,13 @@
 package server
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -171,10 +173,7 @@ func (c mcpClient) id() string {
 
 // displayName is what the consent page calls the client.
 func (c mcpClient) displayName() string {
-	if c.Name != "" {
-		return c.Name
-	}
-	return "An MCP client"
+	return cmp.Or(c.Name, "An MCP client")
 }
 
 // parseMCPClient reads a client id back into its registration, refusing
@@ -354,9 +353,7 @@ func (s *Server) authRedirect(req *mcpAuthRequest, params url.Values) string {
 		return req.redirectURI
 	}
 	q := u.Query()
-	for k, v := range params {
-		q[k] = v
-	}
+	maps.Copy(q, params)
 	if req.state != "" {
 		q.Set("state", req.state)
 	}
@@ -492,11 +489,8 @@ func (s *Server) handleMCPToken(w http.ResponseWriter, r *http.Request) {
 	}
 	// The code is spent either way: a mismatch below may be an attacker
 	// holding a stolen one, and the client starts over.
-	clientID := r.PostForm.Get("client_id")
+	clientID := cmp.Or(r.PostForm.Get("client_id"), c.ClientID)
 	redirectURI := r.PostForm.Get("redirect_uri")
-	if clientID == "" {
-		clientID = c.ClientID
-	}
 	if clientID != c.ClientID || (redirectURI != "" && redirectURI != c.RedirectURI) || !pkceMatches(verifier, c.CodeChallenge) {
 		s.oauthError(w, http.StatusBadRequest, "invalid_grant", "the code was issued to another client, redirect URI or verifier")
 		return

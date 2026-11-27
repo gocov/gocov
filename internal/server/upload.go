@@ -9,6 +9,7 @@ package server
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"io"
@@ -363,7 +364,7 @@ func (s *Server) readUploadRequest(w http.ResponseWriter, r *http.Request, authe
 		repo:        repo,
 		repoCreated: repoCreated,
 		commit:      r.FormValue("commit"),
-		branch:      r.FormValue("branch"),
+		branch:      cmp.Or(r.FormValue("branch"), repo.DefaultBranch),
 		prID:        r.FormValue("pr_id"),
 		pathPrefix:  strings.TrimSuffix(r.FormValue("path_prefix"), "/"),
 	}
@@ -374,9 +375,6 @@ func (s *Server) readUploadRequest(w http.ResponseWriter, r *http.Request, authe
 	if !commitRe.MatchString(req.commit) {
 		httpError(w, http.StatusBadRequest, "invalid commit %q: want up to 64 alphanumeric, dot, dash or underscore characters", req.commit)
 		return nil, false
-	}
-	if req.branch == "" {
-		req.branch = repo.DefaultBranch
 	}
 
 	// Omitting the part keeps the historical single-upload behaviour:

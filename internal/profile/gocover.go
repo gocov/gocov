@@ -71,10 +71,7 @@ func (GoParser) Parse(r io.Reader) (*Profile, error) {
 			f.Blocks = append(f.Blocks, *b)
 		}
 		slices.SortFunc(f.Blocks, func(a, b Block) int {
-			if c := cmp.Compare(a.StartLine, b.StartLine); c != 0 {
-				return c
-			}
-			return cmp.Compare(a.StartCol, b.StartCol)
+			return cmp.Or(cmp.Compare(a.StartLine, b.StartLine), cmp.Compare(a.StartCol, b.StartCol))
 		})
 		p.Files = append(p.Files, f)
 	}

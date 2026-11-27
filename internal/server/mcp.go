@@ -109,8 +109,7 @@ func (s *Server) mcpGetReport(ctx context.Context, raw json.RawMessage) (string,
 		}
 	}
 	rep, err := s.loadReport(ctx, repo, a.Commit, a.Branch, a.PRID)
-	var none noReportError
-	if errors.As(err, &none) {
+	if none, ok := errors.AsType[noReportError](err); ok {
 		return "", fmt.Errorf("%s/%s: %s; the commit's CI must upload its coverage first", a.Forge, a.Repo, none)
 	}
 	if err != nil {

@@ -60,8 +60,7 @@ func (s *Server) handleReportAPI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dto, err := s.loadReport(r.Context(), repo, r.FormValue("commit"), r.FormValue("branch"), r.FormValue("pr_id"))
-	var none noReportError
-	if errors.As(err, &none) {
+	if none, ok := errors.AsType[noReportError](err); ok {
 		httpError(w, http.StatusNotFound, "%s", none)
 		return
 	}

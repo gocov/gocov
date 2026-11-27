@@ -1,7 +1,7 @@
 package diffcov
 
 import (
-	"cmp"
+	"maps"
 	"slices"
 )
 
@@ -29,29 +29,22 @@ func Merge(results ...*Result) (*Result, []string) {
 
 	// Group each changed file's per-part coverage by its repo-relative path.
 	byPath := make(map[string][]FileCoverage)
-	var order []string
 	for _, r := range present {
 		for _, f := range r.Files {
-			if _, seen := byPath[f.Path]; !seen {
-				order = append(order, f.Path)
-			}
 			byPath[f.Path] = append(byPath[f.Path], f)
 		}
 	}
 
 	out := &Result{}
 	var conflicts []string
-	for _, path := range order {
+	for _, path := range slices.Sorted(maps.Keys(byPath)) {
 		fc, conflicted := mergeFile(path, byPath[path])
 		out.Files = append(out.Files, fc)
+		out.CoveredLines += fc.CoveredLines
+		out.TotalLines += fc.TotalLines
 		if conflicted {
 			conflicts = append(conflicts, path)
 		}
-	}
-	slices.SortFunc(out.Files, func(a, b FileCoverage) int { return cmp.Compare(a.Path, b.Path) })
-	for i := range out.Files {
-		out.CoveredLines += out.Files[i].CoveredLines
-		out.TotalLines += out.Files[i].TotalLines
 	}
 
 	// A changed file is unmatched only when no part had coverage data for
@@ -60,14 +53,12 @@ func Merge(results ...*Result) (*Result, []string) {
 	seenUnmatched := make(map[string]bool)
 	for _, r := range present {
 		for _, p := range r.UnmatchedFiles {
-			if !seenUnmatched[p] && byPath[p] == nil {
+			if byPath[p] == nil {
 				seenUnmatched[p] = true
-				out.UnmatchedFiles = append(out.UnmatchedFiles, p)
 			}
 		}
 	}
-	slices.Sort(out.UnmatchedFiles)
-	slices.Sort(conflicts)
+	out.UnmatchedFiles = slices.Sorted(maps.Keys(seenUnmatched))
 	return out, conflicts
 }
 
@@ -96,9 +87,7 @@ func mergeFile(path string, parts []FileCoverage) (FileCoverage, bool) {
 		if f.TotalLines != total {
 			agree = false
 		}
-		if f.TotalLines > total {
-			total = f.TotalLines
-		}
+		total = max(total, f.TotalLines)
 	}
 
 	uncoveredCount := make(map[int]int)
@@ -120,9 +109,7 @@ func mergeFile(path string, parts []FileCoverage) (FileCoverage, bool) {
 	// largest part's total (each part only saw its own changed lines), which
 	// would make CoveredLines negative. The distinct uncovered lines are all
 	// changed lines, so the total is at least that many.
-	if int64(len(uncovered)) > total {
-		total = int64(len(uncovered))
-	}
+	total = max(total, int64(len(uncovered)))
 	return FileCoverage{
 		Path:           path,
 		TotalLines:     total,

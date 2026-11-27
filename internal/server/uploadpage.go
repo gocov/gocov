@@ -277,14 +277,14 @@ func buildFilesView(diff *diffcov.Result, uploads map[int64]*store.Upload, files
 	rows := make([]sortedRow, 0, len(files))
 	for _, f := range files {
 		missed := diffcov.MissedSpans(f.Blocks)
-		row := sortedRow{fileRowDTO: fileRowDTO{
+		row := sortedRow{
 			UploadID:     f.UploadID,
 			Path:         f.Path,
 			Coverage:     f.Pct,
 			CoveredStmts: f.CoveredStmts,
 			TotalStmts:   f.TotalStmts,
 			Uncovered:    formatRanges(missed),
-		}}
+		}
 		if hasBase {
 			if bf, ok := baseFiles[f.Path]; ok {
 				row.Before = new(bf.Pct)

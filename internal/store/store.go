@@ -202,8 +202,8 @@ type UploadMeta struct {
 	CommitMessage string `json:"commit_message,omitempty"` // first line of the commit message
 	CommitAuthor  string `json:"commit_author,omitempty"`  // commit author display name
 	ProfileName   string `json:"profile_name,omitempty"`   // original uploaded filename
-	ProfileBytes  int64  `json:"profile_bytes,omitempty"`  // raw profile size
-	ProcessMillis int64  `json:"process_millis,omitempty"` // server processing time
+	ProfileBytes  int64  `json:"profile_bytes,omitzero"`   // raw profile size
+	ProcessMillis int64  `json:"process_millis,omitzero"`  // server processing time
 	// Tokenless marks an upload authenticated by workflow-run
 	// verification instead of a bearer token (a fork PR's CI). Set by
 	// the server only, never from a request field: the UI renders it as

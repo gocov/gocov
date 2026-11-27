@@ -11,7 +11,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -175,10 +177,7 @@ func New(cfg Config) *Server {
 		// A token's aud must equal this server's public URL, so a token
 		// minted for another instance cannot be replayed here. Without a
 		// BaseURL there is no audience to bind to, so OIDC uploads stay off.
-		exactIssuers := []string{gitHubActionsIssuer}
-		for iss := range gitlabIssuers {
-			exactIssuers = append(exactIssuers, iss)
-		}
+		exactIssuers := slices.AppendSeq([]string{gitHubActionsIssuer}, maps.Keys(gitlabIssuers))
 		oidcVerifier = oidc.New(oidc.Config{
 			Audience:      cfg.BaseURL,
 			Issuers:       exactIssuers,

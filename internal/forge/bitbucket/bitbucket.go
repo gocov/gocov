@@ -133,7 +133,7 @@ func (c *Client) FindPRComment(ctx context.Context, repoSlug, prID, prefix strin
 	listing := fmt.Sprintf("%s/repositories/%s/pullrequests/%s/comments?pagelen=100&sort=-created_on",
 		c.BaseURL, repoSlug, url.PathEscape(prID))
 	found := ""
-	_, err = rest.EachValuesPage(ctx, c.api(), listing, maxCommentPages, func(comments []comment) bool {
+	_, err = c.api().EachValuesPage(ctx, listing, maxCommentPages, func(comments []comment) bool {
 		for _, v := range comments {
 			if v.Deleted || v.Inline != nil || v.Parent != nil || !self.is(v.User) {
 				continue
