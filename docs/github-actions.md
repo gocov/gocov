@@ -57,13 +57,15 @@ The pasted-token setup above keeps working unchanged; OIDC is simply the recomme
 
 ## Options
 
-| input    | meaning                                                                                      |
-|----------|----------------------------------------------------------------------------------------------|
-| `files`  | coverage file(s) to upload — comma-separated, globs allowed                                  |
-| `token`  | the workspace upload token                                                                   |
-| `part`   | names one slice of a matrix or multi-job build — see [Parts](parts.md)                       |
-| `ignore` | glob patterns for files to leave out, comma-separated or one per line — see [Ignoring files](ignoring-files.md) |
-| `server` | only when self-hosting: your instance's URL. On the hosted service the server is implicit    |
+| input           | meaning                                                                                      |
+|-----------------|----------------------------------------------------------------------------------------------|
+| `files`         | coverage file(s) to upload — comma-separated, globs allowed                                  |
+| `token`         | the workspace upload token                                                                   |
+| `part`          | names one slice of a matrix or multi-job build — see [Parts](parts.md)                       |
+| `ignore`        | glob patterns for files to leave out, comma-separated or one per line — see [Ignoring files](ignoring-files.md) |
+| `server`        | only when self-hosting: your instance's URL. On the hosted service the server is implicit    |
+| `fail-on-error` | `true` (the default) fails the job when installing the CLI or uploading fails; `false` only warns. A [fork PR's tokenless upload](#fork-pull-requests) never fails the job |
+| `version`       | the gocov CLI release to download; the default is the one that action release was tested against |
 
 ## Fork pull requests
 

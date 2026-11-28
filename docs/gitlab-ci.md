@@ -34,14 +34,7 @@ The component adds one job, `gocov-upload`, after the jobs named in `needs`. It 
 for the runner's architecture, verifies its sha256 against the release's `checksums.txt`, and uploads every file
 matching `files` (comma-separated, globs allowed) — no toolchain to install. Project path, commit, branch and MR iid
 are auto-detected, including the real head SHA on merged-results pipelines. The `workflow` rules run the pipeline on
-merge requests and the default branch without duplicates.
-
-The inputs, in full: `files`, `needs`, `stage`, `job-name` (include the component once per [part](parts.md), each with
-its own name and `part`), `server` (when self-hosting), `part`, `ignore` ([patterns](ignoring-files.md) on top of the
-repo's own), `allow-failure`, `version` (the CLI release; the default is the one that component release was tested
-against) and `image`. They are documented in the
-[component's README](https://gitlab.com/gocov/gocov), which is also where the CI/CD Catalog lists it. `@1` follows
-the newest 1.x release; `@1.0.0` pins one.
+merge requests and the default branch without duplicates. Every input is listed under [Options](#options).
 
 Note that gitlab.com's free tier requires a verified account (credit card) before shared runners pick up jobs.
 
@@ -74,6 +67,24 @@ coverage:
 
 On a self-managed GitLab, the OIDC tokens are issued under your instance's own URL; the gocov operator has to
 trust that issuer before its uploads are accepted — see [self-hosting](self-hosting.md).
+
+## Options
+
+| input           | meaning                                                                                      |
+|-----------------|----------------------------------------------------------------------------------------------|
+| `files`         | coverage file(s) to upload — comma-separated, globs allowed                                  |
+| `needs`         | required: the job(s) whose artifacts hold the coverage files; the upload runs after them     |
+| `stage`         | the stage the upload job runs in                                                             |
+| `job-name`      | the upload job's name. Include the component once per [part](parts.md), each with its own name and `part` |
+| `server`        | only when self-hosting: your instance's URL. On the hosted service the server is implicit    |
+| `part`          | names one slice of a build split across jobs — see [Parts](parts.md)                         |
+| `ignore`        | glob patterns for files to leave out, comma-separated, on top of the repo's own — see [Ignoring files](ignoring-files.md) |
+| `allow-failure` | `true` lets the pipeline pass when the upload fails                                          |
+| `version`       | the gocov CLI release to download; the default is the one that component release was tested against |
+| `image`         | the image the upload job runs in                                                             |
+
+The [component's README](https://gitlab.com/gocov/gocov) gives each input's default, and is where the CI/CD Catalog
+lists it. `@1` follows the newest 1.x release; `@1.0.0` pins one.
 
 ## Without the component
 
