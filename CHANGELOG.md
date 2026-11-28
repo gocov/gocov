@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.37.0](https://github.com/gocov/gocov/compare/v0.36.0...v0.37.0) (2026-11-28)
+
+
+### Features
+
+* carry a part forward to commits that did not upload it ([#296](https://github.com/gocov/gocov/issues/296)) ([05536a9](https://github.com/gocov/gocov/commit/05536a93f70337183857779323e43bfbe8a3f05f))
+
 ## [0.36.0](https://github.com/gocov/gocov/compare/v0.35.0...v0.36.0) (2026-11-25)
 
 
