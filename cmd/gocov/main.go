@@ -42,11 +42,36 @@ var version = "dev"
 // their own instance via -server or $GOCOV_SERVER.
 var defaultServer = hosted.DefaultServer
 
+// exitGateFailed is the exit status of an upload that landed and whose
+// commit then failed its coverage gate, under -fail-on-gate. Not 1: that
+// is every other error, and a CI wrapper has to tell the two apart. Not 2:
+// the flag package exits with that on a bad upload flag, as the Go runtime
+// does on a panic. docs/cli.md gives the number to pipelines to branch on,
+// so it does not change.
+const exitGateFailed = 3
+
+// errGateFailed marks the error run returns for the exitGateFailed case;
+// the server's verdict, "failed: <reasons>", follows it in the message.
+var errGateFailed = errors.New("coverage gate")
+
 func main() {
-	if err := run(os.Args[1:]); err != nil {
+	err := run(os.Args[1:])
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "gocov:", err)
-		os.Exit(1)
 	}
+	os.Exit(exitStatus(err))
+}
+
+// exitStatus is the process's exit status for what run returned: 0 for no
+// error, exitGateFailed for a failed gate, 1 for everything else.
+func exitStatus(err error) int {
+	if err == nil {
+		return 0
+	}
+	if errors.Is(err, errGateFailed) {
+		return exitGateFailed
+	}
+	return 1
 }
 
 func run(args []string) error {
@@ -83,7 +108,7 @@ func run(args []string) error {
 	part := fs.String("part", cfg.Part, "name this slice of the commit's coverage (e.g. backend, frontend) when uploading from separate CI jobs (or $GOCOV_PART)")
 	ignorePats := patternList{patterns: ignore.Parse(cfg.Ignore)}
 	fs.Var(&ignorePats, "ignore", "leave files matching this pattern out of the report, e.g. 'cmd/preview/**' or '*_mock.go'; repeatable or comma-separated (or $GOCOV_IGNORE)")
-	failOnGate := fs.Bool("fail-on-gate", false, "exit with a non-zero code when the server reports a failed coverage gate")
+	failOnGate := fs.Bool("fail-on-gate", false, fmt.Sprintf("exit with status %d when the server reports a failed coverage gate (an upload that fails exits 1)", exitGateFailed))
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -202,7 +227,7 @@ func run(args []string) error {
 
 	printResult(os.Stdout, resp)
 	if *failOnGate && strings.HasPrefix(resp.Gate, "failed") {
-		return fmt.Errorf("coverage gate %s", resp.Gate)
+		return fmt.Errorf("%w %s", errGateFailed, resp.Gate)
 	}
 	return nil
 }

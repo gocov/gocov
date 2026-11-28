@@ -32,7 +32,8 @@ held to, and an upload made while no gate was set reads "No gate" rather than "P
   policies that reference the `gocov` commit status.
 
 All three require the workspace to be [connected to its forge](connecting.md). Even without one, the uploader CLI can
-turn a failed gate into a failed pipeline step with [`-fail-on-gate`](cli.md).
+turn a failed gate into a failed pipeline step with [`-fail-on-gate`](cli.md#output-and-exit-code): the upload then
+exits with status `3`, apart from the `1` of an upload that did not land.
 
 Note that when a commit's coverage arrives in several
 [parts](parts.md), the gate is evaluated against the merged report as parts arrive, so it can fail transiently until the
