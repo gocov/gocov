@@ -20,7 +20,8 @@ import (
 )
 
 // Recompute rebuilds the merged report for the upload's commit
-// from the latest upload of every part, persists it, and returns the merged
+// from the latest upload of every part — and the parts the repo carries
+// forward that the commit did not upload (carryForward) — persists it, and returns the merged
 // view that drives the response and the forge side effects. It is
 // self-healing: because every upload recomputes the whole commit, a partial
 // early state (only the backend part in, say) is corrected in place as the
@@ -36,8 +37,21 @@ type Merged struct {
 	Verdict  Verdict
 	Warnings []string // surfaced to the uploader, e.g. conservative diff merges
 	// Parts names, sorted, every part the merged report was built from —
-	// the parts received so far, since gocov never waits for a fixed set.
+	// the parts received so far, since gocov never waits for a fixed set,
+	// and those carried forward from earlier commits.
 	Parts []string
+	// Carried are the parts among Parts taken from earlier commits
+	// (carryForward), sorted by name; nil when none was.
+	Carried []CarriedPart
+}
+
+// uploadIDs is the ids of the given uploads, nil for none.
+func uploadIDs(ups []*store.Upload) []int64 {
+	var ids []int64
+	for _, u := range ups {
+		ids = append(ids, u.ID)
+	}
+	return ids
 }
 
 // recomputeTimeout bounds a single recompute so a saturated connection pool
@@ -54,10 +68,38 @@ func (p *Pipeline) Recompute(ctx context.Context, repo *store.Repo, u *store.Upl
 	// clobber a newer recompute and drop a part.
 	var result *Merged
 	err := p.Store.WithCommitReportTx(ctx, repo.ID, u.CommitSHA, func(ctx context.Context, tx store.CommitTx) error {
-		parts, err := tx.LatestUploadsPerPart(ctx, repo.ID, u.CommitSHA)
+		own, err := tx.LatestUploadsPerPart(ctx, repo.ID, u.CommitSHA)
 		if err != nil {
 			return fmt.Errorf("loading commit parts: %w", err)
 		}
+
+		// A commit the default branch built itself (no PR) stays that
+		// branch's, whatever branch or PR uploads it next — one cut from it,
+		// a fast-forward, a PR whose head it is — or it would drop out of the
+		// default branch's trend, dashboard row, badge and baselines. The
+		// later upload brings its numbers, but a PR's diff coverage is that
+		// PR's alone: the report keeps none, records the verdict without it,
+		// and links to the branch's own build, so the pages it opens agree.
+		// The delta and the forge surfaces speak for this upload — its
+		// branch, its PR, its diff — so they keep u's, and so does the page
+		// they link to (MergedReportFor).
+		var keptBuild int64
+		if !defaultBuild(repo, u.Branch, u.PRID) {
+			if keptBuild, err = tx.BranchBuild(ctx, repo.ID, u.CommitSHA, repo.DefaultBranch); err != nil {
+				return fmt.Errorf("checking the default branch's builds: %w", err)
+			}
+		}
+		reportBranch, reportPR, reportUpload := u.Branch, u.PRID, u.ID
+		if keptBuild != 0 {
+			reportBranch, reportPR, reportUpload = repo.DefaultBranch, "", keptBuild
+		}
+		// The parts the commit did not upload come from the history of the
+		// branch its report stays on.
+		carried, err := carryForward(ctx, tx, repo, u.CommitSHA, reportBranch, own)
+		if err != nil {
+			return err
+		}
+		parts := slices.Concat(own, carried)
 
 		names := make([]string, 0, len(parts))
 		for _, p := range parts {
@@ -68,7 +110,9 @@ func (p *Pipeline) Recompute(ctx context.Context, repo *store.Repo, u *store.Upl
 			return err
 		}
 		totalPct := profile.Percent(covered, total)
-		mergedDiff, diffConflicts := partsDiff(parts)
+		// A carried part's diff coverage was measured against another
+		// commit's diff, so only the commit's own parts give its diff.
+		mergedDiff, diffConflicts := partsDiff(own)
 		var warnings []string
 		if len(diffConflicts) > 0 {
 			warnings = append(warnings, fmt.Sprintf(
@@ -97,39 +141,23 @@ func (p *Pipeline) Recompute(ctx context.Context, repo *store.Repo, u *store.Upl
 		gate := EvaluateGate(repo.Gate, totalPct, dropBase, mergedDiff)
 
 		cr := &store.CommitReport{
-			RepoID:       repo.ID,
-			CommitSHA:    u.CommitSHA,
-			Branch:       u.Branch,
-			PRID:         u.PRID,
-			TotalPct:     totalPct,
-			CoveredStmts: covered,
-			TotalStmts:   total,
-			GateFailed:   gate.Failed(),
-			GateBasePct:  dropBase,
-			Gate:         new(repo.Gate),
-			DiffCoverage: mergedDiff,
-			PartCount:    len(parts),
-			UploadID:     u.ID,
+			RepoID:           repo.ID,
+			CommitSHA:        u.CommitSHA,
+			Branch:           reportBranch,
+			PRID:             reportPR,
+			TotalPct:         totalPct,
+			CoveredStmts:     covered,
+			TotalStmts:       total,
+			GateFailed:       gate.Failed(),
+			GateBasePct:      dropBase,
+			Gate:             new(repo.Gate),
+			DiffCoverage:     mergedDiff,
+			PartCount:        len(parts),
+			UploadID:         reportUpload,
+			CarriedUploadIDs: uploadIDs(carried),
 		}
-		// A commit the default branch built itself (no PR) stays that
-		// branch's, whatever branch or PR uploads it next — one cut from it,
-		// a fast-forward, a PR whose head it is — or it would drop out of the
-		// default branch's trend, dashboard row, badge and baselines. The
-		// later upload brings its numbers, but a PR's diff coverage is that
-		// PR's alone: the report keeps none, records the verdict without it,
-		// and links to the branch's own build, so the pages it opens agree.
-		// The delta above and the forge surfaces speak for this upload — its
-		// branch, its PR, its diff — so they keep u's, and so does the page
-		// they link to (MergedReportFor).
-		if !defaultBuild(repo, u.Branch, u.PRID) {
-			build, err := tx.BranchBuild(ctx, repo.ID, u.CommitSHA, repo.DefaultBranch)
-			if err != nil {
-				return fmt.Errorf("checking the default branch's builds: %w", err)
-			}
-			if build != 0 {
-				cr.Branch, cr.PRID, cr.UploadID = repo.DefaultBranch, "", build
-				setDiff(repo, cr, nil)
-			}
+		if keptBuild != 0 {
+			setDiff(repo, cr, nil)
 		}
 		if err := tx.UpsertCommitReport(ctx, cr); err != nil {
 			return fmt.Errorf("saving merged report: %w", err)
@@ -153,6 +181,7 @@ func (p *Pipeline) Recompute(ctx context.Context, repo *store.Repo, u *store.Upl
 			Verdict:  gate,
 			Warnings: warnings,
 			Parts:    names,
+			Carried:  CarriedParts(u.CommitSHA, parts),
 		}
 		return nil
 	})
@@ -266,11 +295,7 @@ func mergedCoverage(ctx context.Context, tx partFiles, parts []*store.Upload) (c
 	if len(parts) == 1 {
 		return parts[0].CoveredStmts, parts[0].TotalStmts, nil
 	}
-	ids := make([]int64, len(parts))
-	for i, p := range parts {
-		ids[i] = p.ID
-	}
-	files, err := tx.PartFiles(ctx, ids)
+	files, err := tx.PartFiles(ctx, uploadIDs(parts))
 	if err != nil {
 		return 0, 0, fmt.Errorf("loading part files: %w", err)
 	}

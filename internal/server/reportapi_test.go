@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -117,6 +118,32 @@ func TestReportAPIBranchAndBaseline(t *testing.T) {
 // one its comment gave: the PR's diff, the failure that diff causes, the
 // PR's branch and the page the comment links to. Naming a PR that did not
 // build the commit, or no commit, changes nothing.
+// A carried part is in the numbers but not in `parts`, which counts what
+// arrived, so a client polling for its parts never stops on a stand-in.
+func TestReportAPINamesCarriedParts(t *testing.T) {
+	f := newFixture(t, map[string]string{})
+	f.repo.CarryforwardParts = []string{"backend"}
+	if err := f.store.UpdateRepo(t.Context(), f.repo); err != nil {
+		t.Fatal(err)
+	}
+	uploadPart(t, f, "c1", "main", "", "backend", backendPart)
+	uploadPart(t, f, "c1", "main", "", "frontend", frontendPart)
+	uploadPart(t, f, "c2", "main", "", "frontend", frontendPart)
+
+	rec := get(f, "/api/v1/reports/bitbucket/acme/widgets?commit=c2")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	got := decodeJSON[readapi.Report](t, rec)
+	want := []readapi.Carried{{Part: "backend", Commit: "c1"}}
+	if got.Parts != 1 || !slices.Equal(got.Carried, want) || got.Coverage != 80 {
+		t.Errorf("c2 = %d parts, carried %+v, %.1f%%; want 1, %+v, 80%%", got.Parts, got.Carried, got.Coverage, want)
+	}
+	if c1 := decodeJSON[readapi.Report](t, get(f, "/api/v1/reports/bitbucket/acme/widgets?commit=c1")); c1.Parts != 2 || c1.Carried == nil || len(c1.Carried) != 0 {
+		t.Errorf("c1 = %d parts, carried %#v; want 2 and an empty list", c1.Parts, c1.Carried)
+	}
+}
+
 func TestReportAPIReadsAPRsView(t *testing.T) {
 	f := newFixture(t, map[string]string{})
 	f.repo.Gate = store.Gate{MinDiffCoverage: new(float64(90))}

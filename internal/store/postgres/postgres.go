@@ -137,12 +137,12 @@ func (s *Store) CreateRepo(ctx context.Context, r *store.Repo) error {
 	return s.pool.QueryRow(ctx, `
 		INSERT INTO repos (forge, slug, token, default_branch,
 			min_coverage, min_diff_coverage, max_coverage_drop,
-			visibility, public_reports_disabled, ignore_paths)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			visibility, public_reports_disabled, ignore_paths, carryforward_parts)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		RETURNING id, created_at`,
 		r.Forge, r.Slug, r.Token, r.DefaultBranch,
 		r.Gate.MinCoverage, r.Gate.MinDiffCoverage, r.Gate.MaxCoverageDrop,
-		r.Visibility, r.PublicReportsDisabled, textArray(r.IgnorePaths),
+		r.Visibility, r.PublicReportsDisabled, nonNull(r.IgnorePaths), nonNull(r.CarryforwardParts),
 	).Scan(&r.ID, &r.CreatedAt)
 }
 
@@ -156,11 +156,11 @@ func (s *Store) UpdateRepo(ctx context.Context, r *store.Repo) error {
 		UPDATE repos SET forge = $2, slug = $3, token = $4,
 			default_branch = $5,
 			min_coverage = $6, min_diff_coverage = $7, max_coverage_drop = $8,
-			public_reports_disabled = $9, ignore_paths = $10
+			public_reports_disabled = $9, ignore_paths = $10, carryforward_parts = $11
 		WHERE id = $1`,
 		r.ID, r.Forge, r.Slug, r.Token, r.DefaultBranch,
 		r.Gate.MinCoverage, r.Gate.MinDiffCoverage, r.Gate.MaxCoverageDrop,
-		r.PublicReportsDisabled, textArray(r.IgnorePaths)))
+		r.PublicReportsDisabled, nonNull(r.IgnorePaths), nonNull(r.CarryforwardParts)))
 }
 
 func (s *Store) PublicRepoRefs(ctx context.Context, limit int) ([]store.RepoRef, error) {
@@ -203,13 +203,13 @@ func (s *Store) SetRepoVisibility(ctx context.Context, repoID int64, visibility 
 
 const repoCols = `id, forge, slug, token, default_branch,
 	min_coverage, min_diff_coverage, max_coverage_drop,
-	visibility, public_reports_disabled, visibility_checked_at, ignore_paths, created_at`
+	visibility, public_reports_disabled, visibility_checked_at, ignore_paths, carryforward_parts, created_at`
 
-// textArray is a nil-safe text[] parameter: a nil slice would bind as
+// nonNull is a nil-safe array parameter: a nil slice would bind as
 // NULL and trip the column's NOT NULL constraint.
-func textArray(s []string) []string {
+func nonNull[E any](s []E) []E {
 	if s == nil {
-		return []string{}
+		return []E{}
 	}
 	return s
 }
@@ -306,12 +306,15 @@ func (s *Store) scanRepo(row rowScanner) (*store.Repo, error) {
 	var checkedAt *time.Time // NULL = the forge has never answered
 	err := row.Scan(&r.ID, &r.Forge, &r.Slug, &r.Token, &r.DefaultBranch,
 		&r.Gate.MinCoverage, &r.Gate.MinDiffCoverage, &r.Gate.MaxCoverageDrop,
-		&r.Visibility, &r.PublicReportsDisabled, &checkedAt, &r.IgnorePaths, &r.CreatedAt)
+		&r.Visibility, &r.PublicReportsDisabled, &checkedAt, &r.IgnorePaths, &r.CarryforwardParts, &r.CreatedAt)
 	if checkedAt != nil {
 		r.VisibilityCheckedAt = *checkedAt
 	}
 	if len(r.IgnorePaths) == 0 {
 		r.IgnorePaths = nil // an empty array reads back as the zero value
+	}
+	if len(r.CarryforwardParts) == 0 {
+		r.CarryforwardParts = nil
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
@@ -1065,6 +1068,71 @@ func (s *Store) latestUploadsPerPart(ctx context.Context, q querier, repoID int6
 	return collect(rows, s.scanUpload)
 }
 
+// ReportUploads returns the commit's latest upload of each part and the
+// uploads its report carries forward, in one round trip. A carried upload
+// whose part the commit has since uploaded itself is left out, so a read
+// between that upload and its recompute never counts the part twice.
+func (s *Store) ReportUploads(ctx context.Context, repoID int64, commitSHA string) ([]*store.Upload, error) {
+	return s.reportUploads(ctx, s.pool, repoID, commitSHA)
+}
+
+func (s *Store) reportUploads(ctx context.Context, q querier, repoID int64, commitSHA string) ([]*store.Upload, error) {
+	rows, err := q.Query(ctx,
+		`WITH own AS (
+			SELECT DISTINCT ON (part) `+uploadCols+` FROM uploads
+			WHERE repo_id = $1 AND commit_sha = $2
+			ORDER BY part, id DESC
+		 )
+		 SELECT `+uploadCols+` FROM own
+		 UNION ALL
+		 SELECT `+uploadCols+` FROM uploads
+		 WHERE repo_id = $1
+		   AND id IN (SELECT unnest(carried_upload_ids) FROM commit_reports WHERE repo_id = $1 AND commit_sha = $2)
+		   AND part NOT IN (SELECT part FROM own)
+		 ORDER BY id`,
+		repoID, commitSHA)
+	if err != nil {
+		return nil, err
+	}
+	return collect(rows, s.scanUpload)
+}
+
+// CarrySources finds every part in one statement: the newest depth
+// reports on the branch before the commit's (commit_reports_repo_branch_idx),
+// each one's own uploads and carried ones of the parts asked for, and per
+// part the first by report — newest first, its own upload before a carried
+// one, its latest own upload first.
+func (s *Store) CarrySources(ctx context.Context, repoID int64, branch, commitSHA string, parts []string, depth int) ([]*store.Upload, error) {
+	return s.carrySources(ctx, s.pool, repoID, branch, commitSHA, parts, depth)
+}
+
+func (s *Store) carrySources(ctx context.Context, q querier, repoID int64, branch, commitSHA string, parts []string, depth int) ([]*store.Upload, error) {
+	rows, err := q.Query(ctx,
+		`WITH recent AS (
+			SELECT id, commit_sha, carried_upload_ids FROM commit_reports
+			WHERE repo_id = $1 AND branch = $2 AND commit_sha <> $3
+			  AND id < COALESCE((SELECT id FROM commit_reports WHERE repo_id = $1 AND commit_sha = $3), 9223372036854775807)
+			  AND (pr_id = '' OR $2 <> (SELECT default_branch FROM repos WHERE id = $1))
+			ORDER BY id DESC LIMIT $5
+		 ), found AS (
+			SELECT DISTINCT ON (u.part) u.id FROM recent r
+			CROSS JOIN LATERAL (
+				SELECT id, part, false AS carried FROM uploads
+				WHERE repo_id = $1 AND commit_sha = r.commit_sha AND part = ANY($4)
+				UNION ALL
+				SELECT id, part, true FROM uploads
+				WHERE repo_id = $1 AND id = ANY(r.carried_upload_ids) AND part = ANY($4)
+			) u
+			ORDER BY u.part, r.id DESC, u.carried, u.id DESC
+		 )
+		 SELECT `+uploadCols+` FROM uploads WHERE id IN (SELECT id FROM found)`,
+		repoID, branch, commitSHA, parts, depth)
+	if err != nil {
+		return nil, err
+	}
+	return collect(rows, s.scanUpload)
+}
+
 // WithCommitReportTx runs fn inside a transaction that holds a
 // transaction-scoped Postgres advisory lock keyed by the commit, so the
 // recompute of one commit's merged report serializes across all server
@@ -1093,12 +1161,20 @@ func (c *commitReportTx) LatestUploadsPerPart(ctx context.Context, repoID int64,
 	return c.s.latestUploadsPerPart(ctx, c.tx, repoID, commitSHA)
 }
 
+func (c *commitReportTx) ReportUploads(ctx context.Context, repoID int64, commitSHA string) ([]*store.Upload, error) {
+	return c.s.reportUploads(ctx, c.tx, repoID, commitSHA)
+}
+
 func (c *commitReportTx) PartFiles(ctx context.Context, uploadIDs []int64) ([]*store.UploadFile, error) {
 	return partFiles(ctx, c.tx, uploadIDs)
 }
 
 func (c *commitReportTx) LatestPassedCommitReport(ctx context.Context, repoID int64, branch string, beforeID int64, excludeCommit string) (*store.CommitReport, error) {
 	return c.s.latestPassedCommitReport(ctx, c.tx, repoID, branch, beforeID, excludeCommit)
+}
+
+func (c *commitReportTx) CarrySources(ctx context.Context, repoID int64, branch, commitSHA string, parts []string, depth int) ([]*store.Upload, error) {
+	return c.s.carrySources(ctx, c.tx, repoID, branch, commitSHA, parts, depth)
 }
 
 func (c *commitReportTx) BranchBuild(ctx context.Context, repoID int64, commitSHA, branch string) (int64, error) {
@@ -1125,7 +1201,8 @@ func advisoryKey(namespace string, id int64, name string) int64 {
 }
 
 const commitReportCols = `id, repo_id, commit_sha, branch, pr_id, total_pct,
-	covered_stmts, total_stmts, gate_failed, gate_base_pct, gate, diff_coverage, part_count, upload_id, created_at, updated_at`
+	covered_stmts, total_stmts, gate_failed, gate_base_pct, gate, diff_coverage, part_count, upload_id,
+	carried_upload_ids, created_at, updated_at`
 
 func (s *Store) UpsertCommitReport(ctx context.Context, cr *store.CommitReport) error {
 	return s.upsertCommitReport(ctx, s.pool, cr)
@@ -1147,8 +1224,9 @@ func (s *Store) upsertCommitReport(ctx context.Context, q querier, cr *store.Com
 	// derived fields and updated_at move.
 	return q.QueryRow(ctx, `
 		INSERT INTO commit_reports (repo_id, commit_sha, branch, pr_id, total_pct,
-			covered_stmts, total_stmts, gate_failed, gate_base_pct, gate, diff_coverage, part_count, upload_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			covered_stmts, total_stmts, gate_failed, gate_base_pct, gate, diff_coverage, part_count, upload_id,
+			carried_upload_ids)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		ON CONFLICT (repo_id, commit_sha) DO UPDATE SET
 			branch = EXCLUDED.branch,
 			pr_id = EXCLUDED.pr_id,
@@ -1161,10 +1239,12 @@ func (s *Store) upsertCommitReport(ctx context.Context, q querier, cr *store.Com
 			diff_coverage = EXCLUDED.diff_coverage,
 			part_count = EXCLUDED.part_count,
 			upload_id = EXCLUDED.upload_id,
+			carried_upload_ids = EXCLUDED.carried_upload_ids,
 			updated_at = now()
 		RETURNING id, created_at, updated_at`,
 		cr.RepoID, cr.CommitSHA, cr.Branch, cr.PRID, cr.TotalPct,
 		cr.CoveredStmts, cr.TotalStmts, cr.GateFailed, cr.GateBasePct, gate, diffCov, cr.PartCount, cr.UploadID,
+		nonNull(cr.CarriedUploadIDs),
 	).Scan(&cr.ID, &cr.CreatedAt, &cr.UpdatedAt)
 }
 
@@ -1318,7 +1398,8 @@ func (s *Store) scanCommitReport(row rowScanner) (*store.CommitReport, error) {
 	var diffCov, gate []byte
 	var uploadID *int64
 	err := row.Scan(&cr.ID, &cr.RepoID, &cr.CommitSHA, &cr.Branch, &cr.PRID, &cr.TotalPct,
-		&cr.CoveredStmts, &cr.TotalStmts, &cr.GateFailed, &cr.GateBasePct, &gate, &diffCov, &cr.PartCount, &uploadID, &cr.CreatedAt, &cr.UpdatedAt)
+		&cr.CoveredStmts, &cr.TotalStmts, &cr.GateFailed, &cr.GateBasePct, &gate, &diffCov, &cr.PartCount, &uploadID,
+		&cr.CarriedUploadIDs, &cr.CreatedAt, &cr.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -1327,6 +1408,9 @@ func (s *Store) scanCommitReport(row rowScanner) (*store.CommitReport, error) {
 	}
 	if uploadID != nil {
 		cr.UploadID = *uploadID
+	}
+	if len(cr.CarriedUploadIDs) == 0 {
+		cr.CarriedUploadIDs = nil // an empty array reads back as the zero value
 	}
 	if len(diffCov) > 0 {
 		if err := json.Unmarshal(diffCov, &cr.DiffCoverage); err != nil {

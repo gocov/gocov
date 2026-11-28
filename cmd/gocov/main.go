@@ -31,6 +31,7 @@ import (
 	"github.com/gocov/gocov/internal/hosted"
 	"github.com/gocov/gocov/internal/ignore"
 	"github.com/gocov/gocov/internal/profile"
+	"github.com/gocov/gocov/internal/readapi"
 )
 
 // version is stamped by the release build via -ldflags "-X main.version=...".
@@ -230,6 +231,15 @@ func printResult(w io.Writer, resp *uploadResponse) {
 			noun = "part"
 		}
 		fmt.Fprintf(w, "merged from %d %s so far: %s\n", len(resp.Parts), noun, strings.Join(resp.Parts, ", "))
+	}
+	// A carried part is an earlier commit's measurement standing in for a
+	// job this commit did not run; name where each came from.
+	if len(resp.Carried) > 0 {
+		from := make([]string, len(resp.Carried))
+		for i, c := range resp.Carried {
+			from[i] = c.Part + " from " + readapi.Short(c.Commit)
+		}
+		fmt.Fprintf(w, "carried forward: %s\n", strings.Join(from, ", "))
 	}
 	for _, warning := range resp.Warnings {
 		fmt.Fprintf(w, "warning: %s\n", warning)

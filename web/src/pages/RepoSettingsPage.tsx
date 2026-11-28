@@ -10,7 +10,7 @@ import { errorMessage } from "@/lib/api/client";
 import { repoSettingsPath, repoSettingsQuery } from "@/lib/api/queries";
 import type { RepoSettings } from "@/lib/api/types";
 import { useSettingsDoc } from "@/lib/sectionSave";
-import { ignorePatterns, patternLabel, repoInput } from "@/lib/settings";
+import { carriedLabel, carriedParts, ignorePatterns, patternLabel, repoInput } from "@/lib/settings";
 import { usePageTitle } from "@/lib/title";
 import { routes } from "@/lib/urls";
 
@@ -46,6 +46,7 @@ function RepoSettingsView({ forge, slug, settings }: { forge: string; slug: stri
     { id: "general", label: "General", group: "Repository" },
     { id: "gates", label: "Coverage gates", group: "Repository" },
     { id: "ignore", label: "Ignored files", group: "Repository" },
+    { id: "carryforward", label: "Carried parts", group: "Repository" },
     ...(settings.show_public_reports ? [{ id: "public-reports", label: "Public reports", group: "Repository" }] : []),
     { id: "uploads", label: "Uploads", group: "Repository" },
     { id: "badge", label: "Badge", group: "Repository" },
@@ -164,6 +165,52 @@ function RepoSettingsView({ forge, slug, settings }: { forge: string; slug: stri
               "ignore",
               "Applies to uploads received from now on. Past reports keep their numbers.",
               "Owners set the ignore patterns.",
+            )}
+          </Card.Footer>
+        </Card>
+      </SettingsLayout.Section>
+
+      <SettingsLayout.Section id="carryforward">
+        <Card>
+          <Card.Header
+            title="Carried parts"
+            actions={
+              <Chip tone={carriedParts(form.carryforward_parts).length === 0 ? "neutral" : "accent"}>
+                {carriedLabel(form.carryforward_parts)}
+              </Chip>
+            }
+          />
+          <Card.Body>
+            <div className="stack">
+              <p>
+                When a commit does not upload one of these parts — its CI job only runs when its paths change — the
+                commit takes that part from the branch’s previous report instead of dropping it, so the total, the
+                gate and the trend still cover every part. Diff coverage stays the commit’s own, and the pull
+                request comment and the upload page name each part that was carried and the commit it came from.
+              </p>
+              <FormField
+                label="Parts to carry forward"
+                help="One part name per line, as the upload step names it. Remove a part here when its job is gone, or it keeps its last numbers."
+              >
+                {(field) => (
+                  <Textarea
+                    {...field}
+                    mono
+                    spellCheck={false}
+                    placeholder={"backend\ne2e"}
+                    value={form.carryforward_parts}
+                    disabled={!owner}
+                    onChange={(e) => update({ carryforward_parts: e.target.value })}
+                  />
+                )}
+              </FormField>
+            </div>
+          </Card.Body>
+          <Card.Footer>
+            {saveFooter(
+              "carryforward",
+              "Applies to uploads received from now on. Past reports keep their numbers.",
+              "Owners choose the carried parts.",
             )}
           </Card.Footer>
         </Card>

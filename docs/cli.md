@@ -161,6 +161,16 @@ merged from 1 part so far: web
 When the last part lands, its step prints the complete figure (`merged from 2 parts so far: go, web`). Uploads without
 a `-part` print the single `uploaded:` line above.
 
+A part the repository [carries forward](parts.md#carrying-a-part-forward) and this commit did not upload counts among
+the merged parts, and a further line names the commit each one came from:
+
+```
+uploaded part: web
+commit coverage: 81.7% (49/60 statements)
+merged from 2 parts so far: e2e, web
+carried forward: e2e from c4a7e2e
+```
+
 When the server built the commit's merged report with a caveat — two [parts](parts.md) that disagree on a PR's
 changed lines, whose diff coverage is then merged as a safe lower bound — a `warning:` line under the totals says so.
 A warning never fails the step.

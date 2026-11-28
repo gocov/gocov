@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/gocov/gocov/internal/core"
@@ -104,10 +105,12 @@ type repoSettingsHeadDTO struct {
 	DefaultBranch string  `json:"default_branch"`
 	Gate          gateDTO `json:"gate"`
 	// IgnorePaths is one pattern per line, as the textarea holds them.
-	IgnorePaths   string `json:"ignore_paths"`
-	PublicReports bool   `json:"public_reports"`
-	BadgeURL      string `json:"badge_url"`
-	BadgeMarkdown string `json:"badge_markdown"`
+	IgnorePaths string `json:"ignore_paths"`
+	// CarryforwardParts is one part name per line, the same way.
+	CarryforwardParts string `json:"carryforward_parts"`
+	PublicReports     bool   `json:"public_reports"`
+	BadgeURL          string `json:"badge_url"`
+	BadgeMarkdown     string `json:"badge_markdown"`
 }
 
 type workspaceRefDTO struct {
@@ -117,22 +120,53 @@ type workspaceRefDTO struct {
 
 // repoSettingsInput is what the app posts to the save endpoint.
 type repoSettingsInput struct {
-	DefaultBranch string  `json:"default_branch"`
-	Gate          gateDTO `json:"gate"`
-	IgnorePaths   string  `json:"ignore_paths"`
-	PublicReports bool    `json:"public_reports"`
+	DefaultBranch     string  `json:"default_branch"`
+	Gate              gateDTO `json:"gate"`
+	IgnorePaths       string  `json:"ignore_paths"`
+	CarryforwardParts string  `json:"carryforward_parts"`
+	PublicReports     bool    `json:"public_reports"`
+}
+
+// parseCarryforwardParts reads the carried parts as the textarea holds
+// them — split as the ignore box is (ignore.Parse: one per line, commas
+// also separating, as Coveralls lists them; `#` comments dropped) — into
+// the names uploads are stored under (core.NormalizePart), each once, in
+// the order given. A name the upload path would refuse is an error, and
+// so is a list longer than maxCarriedParts.
+// maxCarriedParts bounds the carried list to half of maxPartsPerCommit:
+// the upload cap counts carried names too (mergeReach), so a full list
+// would leave a commit no room for parts of its own.
+const maxCarriedParts = maxPartsPerCommit / 2
+
+func parseCarryforwardParts(raw string) ([]string, error) {
+	var parts []string
+	for _, field := range ignore.Parse(raw) {
+		part, err := core.NormalizePart(field)
+		if err != nil {
+			return nil, err
+		}
+		if slices.Contains(parts, part) {
+			continue
+		}
+		if len(parts) == maxCarriedParts {
+			return nil, fmt.Errorf("at most %d parts can be carried, so a commit's own parts keep room under its limit of %d", maxCarriedParts, maxPartsPerCommit)
+		}
+		parts = append(parts, part)
+	}
+	return parts, nil
 }
 
 func (s *Server) newRepoSettingsDTO(repo *store.Repo, ws *store.Workspace, owner bool) repoSettingsDTO {
 	dto := repoSettingsDTO{
 		Repo: repoSettingsHeadDTO{
-			repoRefDTO:    newRepoRefDTO(repo),
-			DefaultBranch: repo.DefaultBranch,
-			Gate:          newGateDTO(repo.Gate),
-			IgnorePaths:   strings.Join(repo.IgnorePaths, "\n"),
-			PublicReports: !repo.PublicReportsDisabled,
-			BadgeURL:      badgeURL(repo),
-			BadgeMarkdown: s.badgeMarkdown(repo),
+			repoRefDTO:        newRepoRefDTO(repo),
+			DefaultBranch:     repo.DefaultBranch,
+			Gate:              newGateDTO(repo.Gate),
+			IgnorePaths:       strings.Join(repo.IgnorePaths, "\n"),
+			CarryforwardParts: strings.Join(repo.CarryforwardParts, "\n"),
+			PublicReports:     !repo.PublicReportsDisabled,
+			BadgeURL:          badgeURL(repo),
+			BadgeMarkdown:     s.badgeMarkdown(repo),
 		},
 		Workspace:         workspaceRefDTO{Forge: ws.Forge, Prefix: ws.Prefix},
 		Owner:             owner,
@@ -179,9 +213,15 @@ func (s *Server) handleAPIRepoSettingsSave(w http.ResponseWriter, r *http.Reques
 		invalid(w, "Ignored files not saved: "+err.Error()+".")
 		return
 	}
+	carried, err := parseCarryforwardParts(in.CarryforwardParts)
+	if err != nil {
+		invalid(w, "Carried parts not saved: "+err.Error()+".")
+		return
+	}
 	repo.DefaultBranch = branch
 	repo.Gate = gate
 	repo.IgnorePaths = ignorePaths
+	repo.CarryforwardParts = carried
 	// The switch may only move where it is meaningful; a private repo's
 	// save must not flip the stored value.
 	if s.publicReportsSwitch(repo) {

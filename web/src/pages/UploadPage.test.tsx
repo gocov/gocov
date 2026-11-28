@@ -74,6 +74,7 @@ const upload = (over: Partial<UploadPageData> = {}): UploadPageData => ({
     parts: 3,
     process_ms: 412,
     ignored_files: 0,
+    carried: [],
   },
   download_url: "/uploads/412/profile",
   ...over,
@@ -178,6 +179,23 @@ test("the merged view says so, links back, and keeps its base merged too", async
     "/uploads/410?parts=merged",
   );
   expect(screen.getByText(/every part merged\./)).toBeInTheDocument();
+});
+
+test("the parts note names the parts carried from earlier commits", async () => {
+  mockApi({
+    "GET /uploads/412": upload({
+      files: { ...upload().files, merged: true },
+      provenance: {
+        ...upload().provenance,
+        parts: 2,
+        carried: [{ part: "api", commit: "1111bbbb2222cccc", upload_id: 398 }],
+      },
+    }),
+  });
+  renderPage(<UploadPage />, { route: "uploads/:id", path: "/uploads/412?parts=merged" });
+
+  expect(await screen.findByText(/Every part of this commit merged, 2 in all\. Carried forward:/)).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "1111bbbb2222" })).toHaveAttribute("href", "/uploads/398");
 });
 
 test("a single-part upload has no parts note", async () => {

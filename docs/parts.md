@@ -38,7 +38,34 @@ do not queue on each other: one upload updates the forge, and the others report 
 once. That update then goes round again with every part received meanwhile, so the forge always ends on the newest
 merged report. A future
 `expected_parts` setting will let a repo hold status until every part is in; until then the self-healing behaviour above
-is the model.
+is the model, and parts you [carry forward](#carrying-a-part-forward) never read low while they are in flight.
 
-A part that does not run at all is the other half of this: it is not carried forward from the previous commit, so the
-merged total drops until it lands. See [Why coverage changed](coverage-changed.md).
+A part that does not run at all is the other half of this: unless the repository carries it forward, the merged total
+drops until it lands. See [Why coverage changed](coverage-changed.md).
+
+## Carrying a part forward
+
+Some pipelines run a job only when its paths change — the e2e suite when the web app changes, the backend tests when
+the backend does. A commit that skipped the job uploads no part for it, and its merged report would leave those
+statements out: the total drops, the trend zigzags and the gate can fail although no code lost coverage. List such parts
+under **Carried parts** in the repository's settings, one name per line as the upload step names it, and a commit that
+did not upload one of them takes it from the history before it instead.
+
+- **Where it comes from.** The newest earlier report on the commit's branch that has the part — uploaded there, or
+  carried there in turn, so the figure is always the upload that last measured it — and, for a branch's first builds,
+  the default branch. Earlier means seen by gocov before this commit was, so re-running CI on an old commit never takes
+  a part from a newer one.
+- **What it counts in.** The total, the delta, the gate, the trend, the badge and the files list, whose rows for the
+  carried part link to the upload that measured it.
+- **What it doesn't.** Diff coverage comes from the commit's own parts only: a carried part was measured on other code,
+  so it says nothing about this pull request's changed lines. A changed file only the carried part covers is listed as
+  a changed file without coverage data.
+- **Where it shows.** The upload step's log adds a `carried forward: e2e from 1a2b3c4` line, and the pull request
+  comment and the upload page name each carried part and the commit it came from.
+- **While its job is still running.** A carried part also fills in for one that is still uploading: until the commit's
+  own upload of it lands, the previous one stands in, then the commit's replaces it. The interim total does not drop for
+  that part — but the gate can pass on the earlier figure and then fail once the new one lands.
+- **When a job goes away,** remove its part from the list, or its last numbers keep being carried. For a job that
+  failed rather than skipped, fix the job: carrying its part forward would hide the failure.
+
+The setting applies to uploads received from then on; reports already stored keep their numbers.

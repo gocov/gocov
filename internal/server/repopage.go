@@ -157,7 +157,8 @@ func (s *Server) buildRepoPage(w http.ResponseWriter, r *http.Request) (*repoPag
 }
 
 // loadCommitFilesView builds the repo page's files card from the latest
-// commit's merged report: the files of every part's latest upload, merged
+// commit's merged report: the files of every part's latest upload (and of
+// the parts it carried forward), merged
 // the way the recompute merged the totals (core.MergeParts), against the
 // baseline commit's parts merged the same way. A commit uploaded in parts
 // (backend, frontend) lists every part's files, not only the last part in.
@@ -190,19 +191,22 @@ func (s *Server) loadCommitFilesView(ctx context.Context, repo *store.Repo, late
 	}
 	view := buildFilesView(latest.DiffCoverage, uploads, files, baseFiles)
 	view.Merged = true
+	// The commit's own: a part it carried forward is another commit's
+	// upload, and can even be newer than the commit's.
 	var last *store.Upload
 	for _, u := range uploads {
-		if last == nil || u.ID > last.ID {
+		if u.CommitSHA == latest.CommitSHA && (last == nil || u.ID > last.ID) {
 			last = u
 		}
 	}
 	return view, last, nil
 }
 
-// commitFiles reads a commit's merged files: the latest upload of each of
-// its parts, keyed by id, and their files merged (core.MergeParts).
+// commitFiles reads a commit's merged files: the uploads its report is
+// built from (the latest of each of its parts, and those it carried
+// forward), keyed by id, and their files merged (core.MergeParts).
 func (s *Server) commitFiles(ctx context.Context, repoID int64, commitSHA string) (map[int64]*store.Upload, []*store.UploadFile, error) {
-	parts, err := s.store.LatestUploadsPerPart(ctx, repoID, commitSHA)
+	parts, err := s.store.ReportUploads(ctx, repoID, commitSHA)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -224,7 +228,7 @@ func (s *Server) commitFiles(ctx context.Context, repoID int64, commitSHA string
 // file of parts that may carry thousands. store.ErrNotFound when no part
 // reports the path.
 func (s *Server) commitFile(ctx context.Context, repoID int64, commitSHA, path string) (*store.UploadFile, error) {
-	parts, err := s.store.LatestUploadsPerPart(ctx, repoID, commitSHA)
+	parts, err := s.store.ReportUploads(ctx, repoID, commitSHA)
 	if err != nil {
 		return nil, err
 	}

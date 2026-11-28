@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -288,6 +289,44 @@ func TestMergedReportStaysOnDefaultBranch(t *testing.T) {
 	page := decodeJSON[uploadPageDTO](t, get(f, fmt.Sprintf("/api/ui/uploads/%d?parts=merged", pr.ID)))
 	if page.Diff == nil || page.Verdict.State != "fail" {
 		t.Errorf("PR build's merged page = diff %v, gate %q; want the PR's diff and its failure", page.Diff, page.Verdict.State)
+	}
+}
+
+// A part the repo carries forward and a commit did not upload is the
+// previous commit's: in the response, which names where it came from, and
+// on the merged page, whose files link to the upload that measured it.
+func TestMergedReportCarriesAPartForward(t *testing.T) {
+	f := newFixture(t, nil)
+	f.repo.CarryforwardParts = []string{"backend"}
+	if err := f.store.UpdateRepo(t.Context(), f.repo); err != nil {
+		t.Fatal(err)
+	}
+	back := uploadPart(t, f, "c1", "main", "", "backend", backendPart)
+	uploadPart(t, f, "c1", "main", "", "frontend", frontendPart)
+
+	front := uploadPart(t, f, "c2", "main", "", "frontend", frontendPart)
+	if front.TotalPct != 80 || strings.Join(front.Parts, ",") != "backend,frontend" {
+		t.Errorf("c2 = %.1f%% over %v, want 80%% over backend,frontend", front.TotalPct, front.Parts)
+	}
+	want := []carriedPartDTO{{Part: "backend", Commit: "c1", UploadID: back.ID}}
+	if !slices.Equal(front.Carried, want) {
+		t.Errorf("carried = %+v, want %+v", front.Carried, want)
+	}
+
+	page := decodeJSON[uploadPageDTO](t, get(f, fmt.Sprintf("/api/ui/uploads/%d?parts=merged", front.ID)))
+	if page.Verdict.Coverage != 80 || len(page.Files.Files) != 2 {
+		t.Errorf("merged page = %.1f%% over %d files, want 80%% over both parts'", page.Verdict.Coverage, len(page.Files.Files))
+	}
+	for _, file := range page.Files.Files {
+		if file.Path == "back.go" && file.UploadID != back.ID {
+			t.Errorf("back.go links upload %d, want c1's %d", file.UploadID, back.ID)
+		}
+	}
+	if p := page.Provenance; p.Parts != 2 || !slices.Equal(p.Carried, want) {
+		t.Errorf("provenance = %d parts, carried %+v; want 2, %+v", p.Parts, p.Carried, want)
+	}
+	if own := decodeJSON[uploadPageDTO](t, get(f, fmt.Sprintf("/api/ui/uploads/%d", back.ID))); len(own.Provenance.Carried) != 0 {
+		t.Errorf("c1's own upload names carried parts: %+v", own.Provenance.Carried)
 	}
 }
 

@@ -33,6 +33,10 @@ func TestPrint(t *testing.T) {
 			"changed files without coverage data: gen/a.go, gen/b.go\nreport: https://g/u/2\n"},
 		{"no branch at all", Report{Repo: Repo{"github", "a/b"}, Commit: "abc", ReportURL: "u"},
 			"github/a/b @ abc\ncoverage: 0.0%\nreport: u\n"},
+		{"a part carried from an earlier commit", Report{
+			Repo: Repo{"github", "a/b"}, Commit: "d9b3f6a1", Branch: "main", Parts: 1, Coverage: 81.7,
+			Carried: []Carried{{Part: "e2e", Commit: "c4a7e2e0b1d2"}}, ReportURL: "u",
+		}, "github/a/b @ d9b3f6a (main)\ncoverage: 81.7%\ncarried forward: e2e from c4a7e2e\nreport: u\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer

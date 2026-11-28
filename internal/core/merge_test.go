@@ -38,18 +38,25 @@ func addPart(t *testing.T, st *storemem.Store, repo *store.Repo, commit, part st
 // addBranchPart is addPart for a build of another branch or a PR.
 func addBranchPart(t *testing.T, st *storemem.Store, repo *store.Repo, commit, branch, prID, part string, covered, total int64) *store.Upload {
 	t.Helper()
-	u := &store.Upload{
+	return storePart(t, st, &store.Upload{
 		RepoID: repo.ID, CommitSHA: commit, Branch: branch, PRID: prID, Format: "go",
-		TotalPct: profile.Percent(covered, total), CoveredStmts: covered, TotalStmts: total, Part: part,
-	}
+		CoveredStmts: covered, TotalStmts: total, Part: part,
+	})
+}
+
+// storePart stores u with a single file of its covered/total statements,
+// named for its part.
+func storePart(t *testing.T, st *storemem.Store, u *store.Upload) *store.Upload {
+	t.Helper()
+	u.TotalPct = profile.Percent(u.CoveredStmts, u.TotalStmts)
 	// Coverage is recomputed from the blocks, so the file needs a covered
 	// block and an uncovered one rather than a single summarised block.
 	f := &store.UploadFile{
-		Path: part + ".go", Pct: profile.Percent(covered, total),
-		CoveredStmts: covered, TotalStmts: total,
+		Path: u.Part + ".go", Pct: u.TotalPct,
+		CoveredStmts: u.CoveredStmts, TotalStmts: u.TotalStmts,
 		Blocks: []profile.Block{
-			{StartLine: 1, EndLine: 2, NumStmts: int(covered), Count: 1},
-			{StartLine: 3, EndLine: 4, NumStmts: int(total - covered), Count: 0},
+			{StartLine: 1, EndLine: 2, NumStmts: int(u.CoveredStmts), Count: 1},
+			{StartLine: 3, EndLine: 4, NumStmts: int(u.TotalStmts - u.CoveredStmts), Count: 0},
 		},
 	}
 	if err := st.CreateUpload(t.Context(), u, []*store.UploadFile{f}); err != nil {

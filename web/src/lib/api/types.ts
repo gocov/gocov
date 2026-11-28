@@ -283,6 +283,15 @@ export interface Provenance {
   /** Server processing time; 0 when not recorded. */
   process_ms: number;
   ignored_files: number;
+  /** The parts among `parts` the commit took from earlier commits; empty when none. */
+  carried: CarriedPart[];
+}
+
+/** A part a commit's merged report took from an earlier commit, and the upload that measured it. */
+export interface CarriedPart {
+  part: string;
+  commit: string;
+  upload_id: number;
 }
 
 // ---- GET /api/ui/uploads/{id}/files/{path...} -------------------------------
@@ -365,6 +374,8 @@ export interface RepoSettings {
     gate: Gate;
     /** One pattern per line. */
     ignore_paths: string;
+    /** One part name per line. */
+    carryforward_parts: string;
     public_reports: boolean;
     badge_url: string;
     badge_markdown: string;
@@ -380,6 +391,7 @@ export interface RepoSettingsInput {
   default_branch: string;
   gate: Gate;
   ignore_paths: string;
+  carryforward_parts: string;
   public_reports: boolean;
 }
 

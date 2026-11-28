@@ -53,12 +53,21 @@ type uploadResponse struct {
 	// totals were merged from so far; an older server sends neither.
 	Part  string   `json:"part"`
 	Parts []string `json:"parts"`
+	// Carried are the parts among Parts the commit did not upload, taken
+	// from earlier commits; an older server sends none.
+	Carried []carriedPart `json:"carried"`
 
 	DiffPct          *float64 `json:"diff_pct"`
 	DiffCoveredLines *int64   `json:"diff_covered_lines"`
 	DiffTotalLines   *int64   `json:"diff_total_lines"`
 	DiffStatus       string   `json:"diff_status"`
 	PRComment        string   `json:"pr_comment"`
+}
+
+// carriedPart is a part the commit's report took from an earlier commit.
+type carriedPart struct {
+	Part   string `json:"part"`
+	Commit string `json:"commit"`
 }
 
 // serverError is a non-2xx answer from the server, kept as a type so

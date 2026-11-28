@@ -148,13 +148,26 @@ func (s *Server) loadReport(ctx context.Context, repo *store.Repo, commit, branc
 		Branch:            build.Branch,
 		PRID:              build.PRID,
 		UpdatedAt:         shown.UpdatedAt,
-		Parts:             shown.PartCount,
+		Parts:             shown.PartCount - len(shown.CarriedUploadIDs),
+		Carried:           []readapi.Carried{},
 		Coverage:          shown.TotalPct,
 		CoveredStatements: shown.CoveredStmts,
 		TotalStatements:   shown.TotalStmts,
 		GateFailed:        shown.GateFailed,
 		Diff:              newReportAPIDiffDTO(shown.DiffCoverage),
 		ReportURL:         s.pipeline.ReportURL(build, shown.PartCount),
+	}
+	// A carried part stands in for one still uploading, so `parts` counts
+	// only the arrivals and the carried ones are named apart: a client
+	// polling for its parts does not stop on a stand-in.
+	if len(shown.CarriedUploadIDs) > 0 {
+		ups, err := s.store.ReportUploads(ctx, repo.ID, shown.CommitSHA)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range core.CarriedParts(shown.CommitSHA, ups) {
+			rep.Carried = append(rep.Carried, readapi.Carried{Part: c.Part, Commit: c.CommitSHA})
+		}
 	}
 	if base := core.CommitBaseline(ctx, s.store, repo, shown); base != nil {
 		rep.Base = &readapi.Base{Commit: base.CommitSHA, Coverage: base.TotalPct}

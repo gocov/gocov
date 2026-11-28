@@ -1,5 +1,7 @@
 import type { Gate, RepoSettings, WorkspaceSettings } from "./api/types";
 import {
+  carriedLabel,
+  carriedParts,
   gateActive,
   gateLabel,
   ignorePatterns,
@@ -25,6 +27,13 @@ test("gateLabel says how many, or that there are none", () => {
   expect(gateLabel(gate())).toBe("None active");
   expect(gateLabel(gate({ min_coverage: 80 }))).toBe("1 active");
   expect(gateLabel(gate({ min_coverage: 80, min_diff_coverage: 70 }))).toBe("2 active");
+});
+
+test("carriedParts reads part names the way the server stores them", () => {
+  expect(carriedParts(" API \n\nweb, e2e\napi\n")).toEqual(["api", "web", "e2e"]);
+  expect(carriedLabel("")).toBe("None");
+  expect(carriedLabel("api")).toBe("1 part");
+  expect(carriedLabel("api\nAPI\nweb")).toBe("2 parts");
 });
 
 test("ignorePatterns drops blanks and comments, splits on lines and commas", () => {
@@ -67,6 +76,7 @@ const repo: RepoSettings = {
     default_branch: "main",
     gate: gate({ min_diff_coverage: 70 }),
     ignore_paths: "vendor/**",
+    carryforward_parts: "api",
     public_reports: true,
     badge_url: "/badge/github/acme/api",
     badge_markdown: "![coverage](/badge/github/acme/api)",
@@ -83,6 +93,7 @@ test("repoInput covers every saved field", () => {
     default_branch: "main",
     gate: gate({ min_diff_coverage: 70 }),
     ignore_paths: "vendor/**",
+    carryforward_parts: "api",
     public_reports: true,
   });
 });

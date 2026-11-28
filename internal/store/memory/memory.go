@@ -123,6 +123,7 @@ func (s *Store) CreateRepo(_ context.Context, r *store.Repo) error {
 func copyRepo(r *store.Repo) *store.Repo {
 	cp := new(*r)
 	cp.IgnorePaths = slices.Clone(r.IgnorePaths)
+	cp.CarryforwardParts = slices.Clone(r.CarryforwardParts)
 	return cp
 }
 
@@ -753,6 +754,85 @@ func (s *Store) PartFiles(_ context.Context, uploadIDs []int64) ([]*store.Upload
 func (s *Store) LatestUploadsPerPart(_ context.Context, repoID int64, commitSHA string) ([]*store.Upload, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.latestUploadsPerPartLocked(repoID, commitSHA), nil
+}
+
+// ReportUploads mirrors postgres: the commit's own latest upload of each
+// part, then the carried ones whose part it has not uploaded itself.
+func (s *Store) ReportUploads(_ context.Context, repoID int64, commitSHA string) ([]*store.Upload, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	own := s.latestUploadsPerPartLocked(repoID, commitSHA)
+	out := slices.Concat(own, s.carriedLocked(repoID, commitSHA, own))
+	slices.SortFunc(out, func(a, b *store.Upload) int { return cmp.Compare(a.ID, b.ID) })
+	return out, nil
+}
+
+// carriedLocked is the uploads commitSHA's report carries forward whose
+// part is not among own, its own latest uploads. Callers hold s.mu.
+func (s *Store) carriedLocked(repoID int64, commitSHA string, own []*store.Upload) []*store.Upload {
+	cr := s.commitReportLocked(repoID, commitSHA)
+	if cr == nil {
+		return nil
+	}
+	var out []*store.Upload
+	for _, id := range cr.CarriedUploadIDs {
+		if u, ok := s.uploads[id]; ok && u.RepoID == repoID && !slices.ContainsFunc(own, func(o *store.Upload) bool { return o.Part == u.Part }) {
+			out = append(out, copyUpload(u))
+		}
+	}
+	return out
+}
+
+// isDefaultBranchLocked reports whether branch is the repo's default one,
+// whose history — mirroring postgres — has no PR builds. Callers hold s.mu.
+func (s *Store) isDefaultBranchLocked(repoID int64, branch string) bool {
+	repo, ok := s.repos[repoID]
+	return ok && branch == repo.DefaultBranch
+}
+
+// CarrySources mirrors postgres: the newest depth reports on branch first
+// seen before commitSHA's, and per part the first that has it, its own
+// latest upload before a carried one.
+func (s *Store) CarrySources(_ context.Context, repoID int64, branch, commitSHA string, parts []string, depth int) ([]*store.Upload, error) {
+	if depth <= 0 {
+		return nil, nil // as postgres's LIMIT 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var beforeID int64
+	if cr := s.commitReportLocked(repoID, commitSHA); cr != nil {
+		beforeID = cr.ID
+	}
+	defaultBranch := s.isDefaultBranchLocked(repoID, branch)
+	var recent []*store.CommitReport
+	for _, cr := range s.reports {
+		if cr.RepoID == repoID && cr.Branch == branch && cr.CommitSHA != commitSHA &&
+			(beforeID == 0 || cr.ID < beforeID) && !(defaultBranch && cr.PRID != "") {
+			recent = append(recent, cr)
+		}
+	}
+	slices.SortFunc(recent, func(a, b *store.CommitReport) int { return cmp.Compare(b.ID, a.ID) })
+
+	missing := slices.Clone(parts)
+	var out []*store.Upload
+	for _, cr := range atMost(recent, depth) {
+		own := s.latestUploadsPerPartLocked(repoID, cr.CommitSHA)
+		candidates := slices.Concat(own, s.carriedLocked(repoID, cr.CommitSHA, own))
+		missing = slices.DeleteFunc(missing, func(name string) bool {
+			i := slices.IndexFunc(candidates, func(u *store.Upload) bool { return u.Part == name })
+			if i >= 0 {
+				out = append(out, candidates[i])
+			}
+			return i >= 0
+		})
+	}
+	return out, nil
+}
+
+// latestUploadsPerPartLocked is LatestUploadsPerPart for callers holding
+// s.mu.
+func (s *Store) latestUploadsPerPartLocked(repoID int64, commitSHA string) []*store.Upload {
 	latest := map[string]*store.Upload{}
 	for _, u := range s.uploads {
 		if u.RepoID != repoID || u.CommitSHA != commitSHA {
@@ -767,7 +847,7 @@ func (s *Store) LatestUploadsPerPart(_ context.Context, repoID int64, commitSHA 
 		out = append(out, copyUpload(u))
 	}
 	slices.SortFunc(out, func(a, b *store.Upload) int { return cmp.Compare(a.ID, b.ID) })
-	return out, nil
+	return out
 }
 
 func (s *Store) WithCommitReportTx(ctx context.Context, repoID int64, commitSHA string, fn func(context.Context, store.CommitTx) error) error {
@@ -929,11 +1009,7 @@ func (s *Store) CommitParts(_ context.Context, repoID int64, commitSHA string) (
 func (s *Store) ListBranchCommitReports(_ context.Context, repoID int64, branch string, limit int) ([]*store.CommitReport, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Mirror postgres: the default branch's history has no PR builds.
-	defaultBranch := false
-	if repo, ok := s.repos[repoID]; ok {
-		defaultBranch = branch == repo.DefaultBranch
-	}
+	defaultBranch := s.isDefaultBranchLocked(repoID, branch)
 	var out []*store.CommitReport
 	for _, cr := range s.reports {
 		if cr.RepoID == repoID && cr.Branch == branch && !(defaultBranch && cr.PRID != "") {
@@ -1005,6 +1081,10 @@ func copyCommitReport(cr *store.CommitReport) *store.CommitReport {
 		cp.GateBasePct = new(*cr.GateBasePct)
 	}
 	cp.Gate = copyGate(cr.Gate)
+	cp.CarriedUploadIDs = nil // an empty list reads back as the zero value, as on postgres
+	if len(cr.CarriedUploadIDs) > 0 {
+		cp.CarriedUploadIDs = slices.Clone(cr.CarriedUploadIDs)
+	}
 	return cp
 }
 
