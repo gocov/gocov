@@ -1,8 +1,9 @@
 # Languages & formats
 
 Upload whatever your test tool already writes — the format is detected from the file's content, no flag needed. The
-snippets below show the plain CLI; in CI, the same file goes in the `files:` of the
-[GitHub Action](github-actions.md) or the [Bitbucket pipe](bitbucket-pipelines.md).
+snippets below show the plain CLI; in CI, the same file goes in the `files` of the
+[GitHub Action](github-actions.md) or the [GitLab component](gitlab-ci.md), or the `FILES` of the
+[Bitbucket pipe](bitbucket-pipelines.md).
 
 | Format          | Written by                                          |
 |-----------------|-----------------------------------------------------|

@@ -46,6 +46,18 @@ no setup: its first OIDC upload registers it, exactly as a token upload would. O
 publishing still goes through that connection. A pasted `GOCOV_TOKEN` always takes precedence, so existing setups are
 untouched, and a rejected OIDC upload logs the reason and exits 0 rather than failing the build.
 
+## Options
+
+| variable        | meaning                                                                                      |
+|-----------------|----------------------------------------------------------------------------------------------|
+| `FILES`         | required: coverage file(s) to upload — comma-separated, globs allowed                        |
+| `TOKEN`         | the workspace upload token; leave it out when the step [uploads via OIDC](#uploading-without-a-token) |
+| `PART`          | names one slice of a build split across parallel steps — see [Parts](parts.md)               |
+| `IGNORE`        | glob patterns for files to leave out, comma-separated — see [Ignoring files](ignoring-files.md) |
+| `SERVER`        | only when self-hosting: your instance's URL. On the hosted service the server is implicit    |
+| `FAIL_ON_ERROR` | `true` (the default) fails the step when an upload fails; `false` only logs a warning        |
+| `DEBUG`         | `true` prints every command the pipe runs; `false` by default                                |
+
 ## Without Docker
 
 On runners without Docker (the pipe needs it), run the CLI directly instead:

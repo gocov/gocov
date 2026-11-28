@@ -8,8 +8,10 @@ Some files belong in the repository but not in the coverage number: generated co
 
 - **Repository settings → Ignored files** — one pattern per line. This is the usual place: it applies to every
   upload for the repo, whichever CI job sends it, and it is visible to the whole team.
-- **The upload itself** — the CLI's [`-ignore`](cli.md) flag (or `$GOCOV_IGNORE`), the `ignore` input of the
-  [GitHub Action](github-actions.md#options), and the `ignore` part of the [raw API](api.md). Handy when one job
+- **The upload itself** — the CLI's [`-ignore`](cli.md#flags) flag (or `$GOCOV_IGNORE`), the `ignore` input of the
+  [GitHub Action](github-actions.md#options) and of the [GitLab component](gitlab-ci.md#options), the `IGNORE`
+  variable of the [Bitbucket pipe](bitbucket-pipelines.md#options), and the `ignore` part of the
+  [raw API](api.md#upload). Handy when one job
   needs an extra exclusion, or when you want the patterns versioned next to the CI config. Upload patterns are
   applied on top of the repo's, never instead of them.
 
