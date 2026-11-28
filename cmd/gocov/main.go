@@ -43,21 +43,16 @@ var version = "dev"
 var defaultServer = hosted.DefaultServer
 
 // exitGateFailed is the exit status of an upload that landed and whose
-// commit the server then judged to fail its coverage gate, under
-// -fail-on-gate. It is not 1 because that is every other error, and a CI
-// wrapper has to tell the two apart: a failed gate is a verdict on the
-// change, an upload that broke is coverage plumbing, and a pipeline may
-// want to tolerate the second without waving the first through. It is not
-// 2 because the flag package exits with that on a bad upload flag, as the
-// Go runtime does on a panic. docs/cli.md gives the number to pipelines to
-// branch on, so it does not change.
+// commit then failed its coverage gate, under -fail-on-gate. Not 1: that
+// is every other error, and a CI wrapper has to tell the two apart. Not 2:
+// the flag package exits with that on a bad upload flag, as the Go runtime
+// does on a panic. docs/cli.md gives the number to pipelines to branch on,
+// so it does not change.
 const exitGateFailed = 3
 
-// gateFailedError is what run returns for the exitGateFailed case. verdict
-// is the server's own: "failed: <reasons>".
-type gateFailedError struct{ verdict string }
-
-func (e *gateFailedError) Error() string { return "coverage gate " + e.verdict }
+// errGateFailed marks the error run returns for the exitGateFailed case;
+// the server's verdict, "failed: <reasons>", follows it in the message.
+var errGateFailed = errors.New("coverage gate")
 
 func main() {
 	err := run(os.Args[1:])
@@ -73,7 +68,7 @@ func exitStatus(err error) int {
 	if err == nil {
 		return 0
 	}
-	if _, ok := errors.AsType[*gateFailedError](err); ok {
+	if errors.Is(err, errGateFailed) {
 		return exitGateFailed
 	}
 	return 1
@@ -232,7 +227,7 @@ func run(args []string) error {
 
 	printResult(os.Stdout, resp)
 	if *failOnGate && strings.HasPrefix(resp.Gate, "failed") {
-		return &gateFailedError{verdict: resp.Gate}
+		return fmt.Errorf("%w %s", errGateFailed, resp.Gate)
 	}
 	return nil
 }

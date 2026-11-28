@@ -180,16 +180,15 @@ A warning never fails the step.
 | exit code | meaning                                                                                                        |
 |-----------|----------------------------------------------------------------------------------------------------------------|
 | `0`       | the upload landed — or it was refused or failed while uploading [without a token](#uploading-without-a-token), which never fails the build |
-| `1`       | the upload did not land: the server could not be reached or refused it, the token was rejected, the file is not coverage the CLI can read |
-| `2`       | a flag the CLI does not know                                                                                   |
+| `1`       | any other error, and the upload did not land: the server could not be reached or refused it, the token was rejected, the file is not coverage the CLI can read, the command line is incomplete |
+| `2`       | a flag the CLI does not know or cannot read                                                                    |
 | `3`       | only with `-fail-on-gate`: the upload landed and the commit failed its [coverage gate](coverage-gate.md)       |
 
 Without `-fail-on-gate` a failed gate is only reported — `gate: failed: …` in the output — and the exit code stays `0`.
 With it, the CLI also prints `gocov: coverage gate failed: …` to standard error and exits `3`, which is how a pipeline
 step turns the gate into a hard failure even without [forge-side merge blocking](coverage-gate.md).
 
-The gate has a code of its own so a pipeline can tell it from an upload that broke. A step that should never fail over
-coverage plumbing, but must stop on the gate, lets `1` pass and keeps `3`:
+A step that should never fail over coverage plumbing, but must stop on the gate, lets `1` pass and keeps `3`:
 
 ```sh
 status=0

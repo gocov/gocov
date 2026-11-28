@@ -196,8 +196,15 @@ func newCaptureServer(t *testing.T) (*httptest.Server, *captured) {
 // returns its path.
 func writeProfile(t *testing.T) string {
 	t.Helper()
+	return writeProfileOf(t, "mode: set\nexample.com/m/a.go:1.1,2.2 4 1\n")
+}
+
+// writeProfileOf puts content in a scratch directory as a coverage file
+// and returns its path.
+func writeProfileOf(t *testing.T, content string) string {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "coverage.out")
-	if err := os.WriteFile(path, []byte("mode: set\nexample.com/m/a.go:1.1,2.2 4 1\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return path
