@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.0](https://github.com/gocov/gocov/compare/v0.37.0...v0.38.0) (2026-11-28)
+
+
+### Features
+
+* **cli:** exit 3, not 1, when -fail-on-gate meets a failed gate ([#299](https://github.com/gocov/gocov/issues/299)) ([1a36d07](https://github.com/gocov/gocov/commit/1a36d077dbc8a3ef21d946f918c1e537ba18fc08))
+
 ## [0.37.0](https://github.com/gocov/gocov/compare/v0.36.0...v0.37.0) (2026-11-28)
 
 
