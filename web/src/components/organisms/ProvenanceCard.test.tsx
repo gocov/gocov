@@ -15,6 +15,7 @@ const provenance = (over: Partial<Provenance> = {}): Provenance => ({
   parts: 3,
   process_ms: 412,
   ignored_files: 2,
+  carried: [],
   ...over,
 });
 
@@ -53,6 +54,7 @@ test("rows with nothing to say, and a profile that cannot be downloaded, are lef
         part: "",
         parts: 1,
         ignored_files: 0,
+        carried: [],
       })}
       downloadUrl={null}
     />,

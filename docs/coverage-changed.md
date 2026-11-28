@@ -61,17 +61,22 @@ file and the source view marks those lines as newly uncovered.
 
 When a commit's coverage arrives in [parts](parts.md), the merged report is rebuilt from the latest upload of **every
 part that exists**. A job that did not run this time contributes nothing, and its statements simply are not in the
-merged report; the total drops even though no code changed. There is no carry-forward of a previous run's part.
+merged report; the total drops even though no code changed — unless the repository
+[carries that part forward](parts.md#carrying-a-part-forward), when the commit takes it from the previous report on its
+branch instead.
 
 This is the most common unexplained drop in a matrix build: a skipped job, a cancelled shard, a job that failed before
-its upload step. Check the upload page for the commit — it names the part it carried and how many parts the report was
-merged from.
+its upload step. Check the upload page for the commit — it names the upload's part, how many parts the report was
+merged from, and which of them were carried from an earlier commit. A job that skips by design (a path filter) is what
+carrying forward is for; a job that failed needs fixing, and carrying its part would hide that.
 
 ## A part is still in flight
 
 Every upload recomputes the whole commit, so between jobs the merged report is genuinely incomplete: the total reads
 low and the gate can fail, then correct itself when the last part lands. The report heals; a reviewer who looked during
-the window did not see a bug. Sequence the gate check after all coverage jobs rather than racing them.
+the window did not see a bug. Sequence the gate check after all coverage jobs rather than racing them. Parts the
+repository carries forward are the exception: the previous report's stands in until the commit's own lands, so they do
+not pull the interim total down.
 
 ## Diff coverage is empty while total coverage looks fine
 

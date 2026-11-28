@@ -258,11 +258,11 @@ const PRCommentMarker = "**gocov**"
 // pushPRComment posts or updates the coverage summary comment on the pull
 // request. Returns "" for non-PR uploads so the field is omitted from the
 // response.
-func (p *Pipeline) pushPRComment(ctx context.Context, fg forge.Forge, repo *store.Repo, u *store.Upload, link string, deltaPct *float64, gate Verdict) string {
+func (p *Pipeline) pushPRComment(ctx context.Context, fg forge.Forge, repo *store.Repo, u *store.Upload, link string, deltaPct *float64, gate Verdict, carried []CarriedPart) string {
 	if u.PRID == "" {
 		return ""
 	}
-	body := p.prCommentBody(u, link, deltaPct, gate)
+	body := p.prCommentBody(u, link, deltaPct, gate, carried)
 
 	// Best effort update-in-place: any failure falls back to posting a
 	// fresh comment, which is never worse than the old behavior.
@@ -288,7 +288,7 @@ func (p *Pipeline) pushPRComment(ctx context.Context, fg forge.Forge, repo *stor
 // prCommentMaxFiles caps the uncovered-lines table in PR comments.
 const prCommentMaxFiles = 20
 
-func (p *Pipeline) prCommentBody(u *store.Upload, link string, deltaPct *float64, gate Verdict) string {
+func (p *Pipeline) prCommentBody(u *store.Upload, link string, deltaPct *float64, gate Verdict, carried []CarriedPart) string {
 	var sb strings.Builder
 	short := ShortSHA(u.CommitSHA)
 	fmt.Fprintf(&sb, "**gocov** report for `%s`\n\n", short)
@@ -297,6 +297,15 @@ func (p *Pipeline) prCommentBody(u *store.Upload, link string, deltaPct *float64
 		fmt.Fprintf(&sb, " (%+.1f%%)", *deltaPct)
 	}
 	sb.WriteString("\n")
+	// The total counts parts this commit did not run; say which, so a
+	// reviewer knows part of the figure is an earlier commit's.
+	if len(carried) > 0 {
+		from := make([]string, len(carried))
+		for i, c := range carried {
+			from[i] = fmt.Sprintf("`%s` from `%s`", c.Part, ShortSHA(c.CommitSHA))
+		}
+		fmt.Fprintf(&sb, "- Carried forward: %s\n", strings.Join(from, ", "))
+	}
 	if gate.Configured {
 		if gate.Failed() {
 			fmt.Fprintf(&sb, "- Gate: ❌ %s\n", strings.Join(gate.Failures, "; "))
@@ -472,7 +481,7 @@ func (p *Pipeline) pushRound(ctx context.Context, fg forge.Forge, repo *store.Re
 		res = everySurface(Queued, merged.PRID != "")
 	default:
 		pushCtx, cancel := context.WithTimeout(ctx, statusPushTimeout)
-		res = p.pushSurfaces(pushCtx, fg, repo, merged, p.ReportURL(merged, len(rc.Parts)), rc.Delta, rc.Verdict)
+		res = p.pushSurfaces(pushCtx, fg, repo, merged, p.ReportURL(merged, len(rc.Parts)), rc.Delta, rc.Verdict, rc.Carried)
 		cancel()
 		// The build status gates merges; only it holds back the version.
 		// Insights and the PR comment are best effort.
@@ -514,7 +523,7 @@ func (p *Pipeline) latestMerged(ctx context.Context, repo *store.Repo, commitSHA
 // each writes only its own result field, so they run concurrently: the
 // push, which holds the commit's push lease, takes as long as the slowest
 // surface rather than the sum of all three.
-func (p *Pipeline) pushSurfaces(ctx context.Context, fg forge.Forge, repo *store.Repo, u *store.Upload, link string, deltaPct *float64, gate Verdict) PushResult {
+func (p *Pipeline) pushSurfaces(ctx context.Context, fg forge.Forge, repo *store.Repo, u *store.Upload, link string, deltaPct *float64, gate Verdict, carried []CarriedPart) PushResult {
 	res := PushResult{timings: pushTimings{ran: true}}
 	var wg sync.WaitGroup
 	t := &res.timings
@@ -528,7 +537,7 @@ func (p *Pipeline) pushSurfaces(ctx context.Context, fg forge.Forge, repo *store
 	})
 	wg.Go(func() {
 		defer timeInto(&t.comment)()
-		res.PRComment = p.pushPRComment(ctx, fg, repo, u, link, deltaPct, gate)
+		res.PRComment = p.pushPRComment(ctx, fg, repo, u, link, deltaPct, gate, carried)
 	})
 	wg.Wait()
 	return res

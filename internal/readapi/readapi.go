@@ -21,8 +21,12 @@ type Report struct {
 	PRID   string `json:"pr_id,omitempty"`
 	// UpdatedAt is the commit's latest upload: the report changes until
 	// every part has arrived.
-	UpdatedAt         time.Time `json:"updated_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	// Parts counts the parts the commit uploaded itself — the ones that
+	// have arrived; Carried names those the report took from earlier
+	// commits instead (never null), which the numbers include too.
 	Parts             int       `json:"parts"`
+	Carried           []Carried `json:"carried"`
 	Coverage          float64   `json:"coverage"`
 	CoveredStatements int64     `json:"covered_statements"`
 	TotalStatements   int64     `json:"total_statements"`
@@ -39,6 +43,13 @@ type Report struct {
 type Repo struct {
 	Forge string `json:"forge"`
 	Slug  string `json:"slug"`
+}
+
+// Carried is a part the report took from an earlier commit, which did
+// upload it.
+type Carried struct {
+	Part   string `json:"part"`
+	Commit string `json:"commit"`
 }
 
 type Base struct {
@@ -87,6 +98,13 @@ func Print(w io.Writer, r *Report) {
 		cov += ", gate failed"
 	}
 	fmt.Fprintln(w, cov)
+	if len(r.Carried) > 0 {
+		from := make([]string, len(r.Carried))
+		for i, c := range r.Carried {
+			from[i] = c.Part + " from " + Short(c.Commit)
+		}
+		fmt.Fprintf(w, "carried forward: %s\n", strings.Join(from, ", "))
+	}
 
 	if d := r.Diff; d != nil {
 		if d.TotalLines == 0 {

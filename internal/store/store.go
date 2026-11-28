@@ -65,7 +65,8 @@ type Workspace struct {
 	Gate Gate
 	// ReportRetentionDays is how long coverage uploads are kept before
 	// pruning; 0 keeps them forever. Recorded from the settings UI; the
-	// job that prunes on it lands separately.
+	// job that prunes on it lands separately, and must keep every upload a
+	// newer commit report carries forward (CommitReport.CarriedUploadIDs).
 	ReportRetentionDays int
 	// GitHubInstallationID links the workspace to a GitHub App
 	// installation (One-Click Connect); 0 when not connected. When
@@ -138,7 +139,12 @@ type Repo struct {
 	// totals, diff coverage, gate and merge are computed. Validated on
 	// save; the upload path may add its own on top.
 	IgnorePaths []string
-	CreatedAt   time.Time
+	// CarryforwardParts names the parts (normalized, as core.NormalizePart
+	// leaves them) a commit that did not upload them takes from the
+	// branch's earlier reports, so a CI that runs some jobs only when their
+	// paths change keeps a whole merged report (core.Pipeline.Recompute).
+	CarryforwardParts []string
+	CreatedAt         time.Time
 }
 
 // ReportsPublic reports whether the repo's report pages may be served to
@@ -326,8 +332,14 @@ type CommitReport struct {
 	Gate *Gate
 	// DiffCoverage is the merged diff coverage for PR commits; nil otherwise.
 	DiffCoverage *diffcov.Result
-	// PartCount is how many parts (distinct upload parts) fed the report.
+	// PartCount is how many parts (distinct upload parts) fed the report,
+	// those carried forward included.
 	PartCount int
+	// CarriedUploadIDs are the uploads of earlier commits the report took
+	// the parts it did not receive from (Repo.CarryforwardParts) — one per
+	// carried part, each the upload that actually measured it. Empty when
+	// nothing was carried.
+	CarriedUploadIDs []int64
 	// UploadID is the latest upload that fed this report — for a commit
 	// the default branch keeps, that branch's own latest build of it
 	// (core.Pipeline.Recompute); the trend links a point to its upload
@@ -507,6 +519,11 @@ type Store interface {
 	// part of a commit — the set the merged report is computed from. A
 	// re-uploaded part supersedes its earlier uploads here.
 	LatestUploadsPerPart(ctx context.Context, repoID int64, commitSHA string) ([]*Upload, error)
+	// ReportUploads returns every upload a commit's merged report is built
+	// from: LatestUploadsPerPart, and the uploads of earlier commits its
+	// report carries forward (CommitReport.CarriedUploadIDs) — told apart
+	// by their CommitSHA, which is not commitSHA. Ordered by id.
+	ReportUploads(ctx context.Context, repoID int64, commitSHA string) ([]*Upload, error)
 	// WithCommitReportTx serializes the recompute of one commit's merged
 	// report against concurrent uploads of the same commit and runs fn's
 	// reads and upsert as one atomic, locked unit — so a slow recompute can
@@ -529,6 +546,16 @@ type Store interface {
 	// baseline is always the branch's own history, never a PR that happens
 	// to carry the branch's name.
 	LatestPassedCommitReport(ctx context.Context, repoID int64, branch string, beforeID int64, excludeCommit string) (*CommitReport, error)
+	// CarrySources returns, for each of parts, the upload that last
+	// measured it in branch's history before commitSHA — the history a
+	// commit's carried-forward parts come from. The history is the newest
+	// depth merged reports on branch first seen before commitSHA's (every
+	// report when it has none yet), whatever their verdict; as in
+	// ListBranchCommitReports, PR-build reports count on any branch but the
+	// repo's default one. Each part comes from the newest of them that has
+	// it: its own latest upload of the part, else the one it carried
+	// forward. A part none has is absent; the order is unspecified.
+	CarrySources(ctx context.Context, repoID int64, branch, commitSHA string, parts []string, depth int) ([]*Upload, error)
 	// ListBranchCommitReports returns merged reports on a branch newest
 	// first; limit <= 0 means all. Feeds the coverage trend. On the repo's
 	// default branch PR-build reports are left out — a PR can only reach
@@ -602,11 +629,13 @@ const (
 // connection.
 type CommitTx interface {
 	LatestUploadsPerPart(ctx context.Context, repoID int64, commitSHA string) ([]*Upload, error)
+	ReportUploads(ctx context.Context, repoID int64, commitSHA string) ([]*Upload, error)
 	// PartFiles reads the files of every given upload in one go — the
 	// parts a multi-part recompute merges. The order is unspecified: the
 	// merge keys blocks by path and position, so it needs none.
 	PartFiles(ctx context.Context, uploadIDs []int64) ([]*UploadFile, error)
 	LatestPassedCommitReport(ctx context.Context, repoID int64, branch string, beforeID int64, excludeCommit string) (*CommitReport, error)
+	CarrySources(ctx context.Context, repoID int64, branch, commitSHA string, parts []string, depth int) ([]*Upload, error)
 	// BranchBuild returns the id of the commit's newest upload on branch
 	// that is not a PR build — branch's own build of it — or 0 when branch
 	// never built it.

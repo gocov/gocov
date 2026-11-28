@@ -211,6 +211,28 @@ func TestUploadPartsCap(t *testing.T) {
 	}
 }
 
+// The parts a repo carries forward count against the cap — the merge may
+// take any of them — but uploading one of them adds nothing to it.
+func TestUploadPartsCapCountsCarriedParts(t *testing.T) {
+	f := newFixture(t, nil)
+	f.repo.CarryforwardParts = []string{"carried-a", "carried-b"}
+	if err := f.store.UpdateRepo(t.Context(), f.repo); err != nil {
+		t.Fatal(err)
+	}
+	for i := range maxPartsPerCommit - 2 {
+		rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "part": fmt.Sprintf("p%d", i)}, testProfile)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("part %d: status %d, body %s", i, rec.Code, rec.Body)
+		}
+	}
+	if rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "part": "overflow"}, testProfile); rec.Code != http.StatusBadRequest {
+		t.Errorf("own and carried parts at the cap: a new part = %d, want 400", rec.Code)
+	}
+	if rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "part": "carried-a"}, testProfile); rec.Code != http.StatusCreated {
+		t.Errorf("a carried part uploaded at the cap = %d, want 201: it replaces its stand-in", rec.Code)
+	}
+}
+
 func TestUploadAuth(t *testing.T) {
 	f := newFixture(t, nil)
 	tests := []struct {

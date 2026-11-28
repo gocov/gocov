@@ -81,7 +81,7 @@ CLI or action inputs. The table maps each `codecov.yml` key to where it went.
 | `informational: true` | Leave the corresponding gate field empty. The number is still reported; it just cannot fail the status. |
 | `threshold` on `patch` | — (diff coverage has a minimum, not a drop tolerance). |
 | `if_ci_failed`, `only_pulls`, `branches`, `paths` on a status | — . The gate applies to every upload; the diff rule only has something to measure on PR uploads. |
-| `flags`, `flag_management` | [Parts](parts.md): `part: <name>` on each upload. Parts merge as they arrive; there is no carryforward, so a commit's report is the parts it received. |
+| `flags`, `flag_management` | [Parts](parts.md): `part: <name>` on each upload. Parts merge as they arrive. Flags with `carryforward: true` go in repository settings → **Carried parts**, one name per line — [carrying a part forward](parts.md#carrying-a-part-forward). |
 | `ignore` | Repository settings → **Ignored files**, or the `ignore` input on the upload — [ignoring files](ignoring-files.md). Same `.gitignore`-style globs. |
 | `fixes` | The CLI's `-path-prefix`; Go modules are detected from `go.mod`. See [Why coverage changed](coverage-changed.md). |
 | `comment.layout`, `comment.behavior` | The [PR comment](pull-requests.md) has one layout — total, delta, diff coverage, the uncovered changed lines — and always updates in place. |
@@ -121,14 +121,15 @@ Finally: delete `codecov.yml`, the `CODECOV_TOKEN` secret, and uninstall the Cod
 | `format` | — | Detected from the file's content. |
 | `flag-name` | `part` | |
 | `parallel: true`, `parallel-finished: true` | — | Parts merge as they arrive; there is no finish job. |
-| `carryforward` | — | No carryforward: a commit's report is the parts it received. |
+| `carryforward` | Repository settings → **Carried parts** | The same list of part names, set once on the repository rather than on the finish job — [carrying a part forward](parts.md#carrying-a-part-forward). |
 | `base-path` | — | Report paths have to match the repository's; see [Why coverage changed](coverage-changed.md). |
 | `fail-on-error` (default `true`) | `fail-on-error` (default `true`) | Same. |
 | `allow-empty` | — | An empty report is an error. |
 | `compare-ref` | — | A PR is compared against its base through the forge's diff; the default branch against the previous upload. |
 | `coveralls-endpoint` | `server` | Only when self-hosting gocov. |
 
-A matrix with a finish job collapses to the matrix alone:
+A matrix with a finish job collapses to the matrix alone, and its `carryforward` list moves to the repository's
+**Carried parts** setting (`ubuntu` and `macos` here):
 
 ```yaml
 # before
@@ -191,7 +192,6 @@ instead; owners reveal it in workspace settings, under *Uploads*.
 
 - **History import.** gocov starts at the first upload. The delta on the first PR compares with the first
   default-branch upload it has, so let the default branch upload once before you judge the numbers.
-- **Carryforward.** A commit's merged report is the parts that were uploaded for it.
 - **Per-status branch, path and flag filters.** One gate per repository, evaluated on the whole report.
 - **A configuration file.** Gate, ignore patterns and connections are settings on the workspace and repository
   pages, visible to the whole team; per-upload choices are inputs on the upload step.

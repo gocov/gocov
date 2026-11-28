@@ -126,6 +126,13 @@ func TestPrintResultNamesTheParts(t *testing.T) {
 			"uploaded part: default\n" +
 				"commit coverage: 50.0% (1/2 statements)\n" +
 				"merged from 2 parts so far: default, e2e\n"},
+		{"parts carried from earlier commits",
+			uploadResponse{TotalPct: 70, CoveredStmts: 7, TotalStmts: 10, Part: "web", Parts: []string{"api", "e2e", "web"},
+				Carried: []carriedPart{{Part: "api", Commit: "0123456789abcdef"}, {Part: "e2e", Commit: "fedcba"}}},
+			"uploaded part: web\n" +
+				"commit coverage: 70.0% (7/10 statements)\n" +
+				"merged from 3 parts so far: api, e2e, web\n" +
+				"carried forward: api from 0123456, e2e from fedcba\n"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

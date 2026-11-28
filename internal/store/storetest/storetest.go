@@ -37,6 +37,8 @@ func Run(t *testing.T, newStore func(*testing.T) store.Store) {
 	t.Run("TokenlessClaims", func(t *testing.T) { tokenlessClaims(t, newStore) })
 	t.Run("CommitReportsExcludePRBuilds", func(t *testing.T) { commitReportsExcludePRBuilds(t, newStore) })
 	t.Run("BranchBuild", func(t *testing.T) { branchBuild(t, newStore) })
+	t.Run("ReportUploadsCarried", func(t *testing.T) { reportUploadsCarried(t, newStore) })
+	t.Run("CarrySources", func(t *testing.T) { carrySources(t, newStore) })
 	t.Run("GateBasePctRoundTrip", func(t *testing.T) { gateBasePctRoundTrip(t, newStore) })
 	t.Run("PartFilesReadsEveryPartAtOnce", func(t *testing.T) { partFilesReadsEveryPartAtOnce(t, newStore) })
 	t.Run("UploadFileReadsOneFile", func(t *testing.T) { uploadFileReadsOneFile(t, newStore) })
@@ -165,12 +167,35 @@ func repoLifecycle(t *testing.T, newStore func(*testing.T) store.Store) {
 	if got, _ = st.RepoByID(ctx, repo.ID); got.IgnorePaths != nil {
 		t.Errorf("ignore paths not cleared: %q", got.IgnorePaths)
 	}
-	withIgnore := &store.Repo{Forge: "bitbucket", Slug: "acme/ignored", Token: "tok-3", DefaultBranch: "main", IgnorePaths: []string{"gen/**"}}
+	// Carryforward parts round-trip the same way.
+	if got.CarryforwardParts != nil {
+		t.Errorf("fresh repo carries parts: %q", got.CarryforwardParts)
+	}
+	repo.CarryforwardParts = []string{"api", "web"}
+	if err := st.UpdateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.RepoByID(ctx, repo.ID); !slices.Equal(got.CarryforwardParts, repo.CarryforwardParts) {
+		t.Errorf("carryforward parts round trip: %q", got.CarryforwardParts)
+	}
+	repo.CarryforwardParts = nil
+	if err := st.UpdateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.RepoByID(ctx, repo.ID); got.CarryforwardParts != nil {
+		t.Errorf("carryforward parts not cleared: %q", got.CarryforwardParts)
+	}
+	withIgnore := &store.Repo{Forge: "bitbucket", Slug: "acme/ignored", Token: "tok-3", DefaultBranch: "main",
+		IgnorePaths: []string{"gen/**"}, CarryforwardParts: []string{"e2e"}}
 	if err := st.CreateRepo(ctx, withIgnore); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ = st.RepoByID(ctx, withIgnore.ID); !slices.Equal(got.IgnorePaths, []string{"gen/**"}) {
+	got, _ = st.RepoByID(ctx, withIgnore.ID)
+	if !slices.Equal(got.IgnorePaths, []string{"gen/**"}) {
 		t.Errorf("ignore paths not stored at create: %q", got.IgnorePaths)
+	}
+	if !slices.Equal(got.CarryforwardParts, []string{"e2e"}) {
+		t.Errorf("carryforward parts not stored at create: %q", got.CarryforwardParts)
 	}
 	if _, err := st.RepoByToken(ctx, "tok-1"); !errors.Is(err, store.ErrNotFound) {
 		t.Error("old token still resolves after rotation")
@@ -1237,6 +1262,170 @@ func branchBuild(t *testing.T, newStore func(*testing.T) store.Store) {
 				t.Errorf("BranchBuild(%s, %s) = %d, want %d", tc.commit, tc.branch, got, tc.want)
 			}
 			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// ReportUploads is the commit's own latest upload of each part plus the
+// uploads of earlier commits its report carries forward — read from the
+// store and through the commit's transaction alike — and a carried part
+// the commit then uploads itself is its own, never counted twice.
+func reportUploadsCarried(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+	repo := &store.Repo{Forge: "github", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	up := func(commit, part string) *store.Upload {
+		t.Helper()
+		u := &store.Upload{RepoID: repo.ID, CommitSHA: commit, Branch: "main", Format: "go", Part: part}
+		if err := st.CreateUpload(ctx, u, nil); err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+	api1, web1 := up("c1", "api"), up("c1", "web")
+	web2 := up("c2", "web")
+	ids := func(ups []*store.Upload) []int64 {
+		out := make([]int64, len(ups))
+		for i, u := range ups {
+			out[i] = u.ID
+		}
+		return out
+	}
+	read := func(commit string, want ...int64) {
+		t.Helper()
+		got, err := st.ReportUploads(ctx, repo.ID, commit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(ids(got), want) {
+			t.Errorf("ReportUploads(%s) = %v, want %v", commit, ids(got), want)
+		}
+		err = st.WithCommitReportTx(ctx, repo.ID, commit, func(ctx context.Context, tx store.CommitTx) error {
+			got, err := tx.ReportUploads(ctx, repo.ID, commit)
+			if err == nil && !slices.Equal(ids(got), want) {
+				t.Errorf("tx ReportUploads(%s) = %v, want %v", commit, ids(got), want)
+			}
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// No report yet: the commit's own parts.
+	read("c2", web2.ID)
+	read("c1", api1.ID, web1.ID)
+
+	cr := &store.CommitReport{RepoID: repo.ID, CommitSHA: "c2", Branch: "main", PartCount: 2, CarriedUploadIDs: []int64{api1.ID}}
+	if err := st.UpsertCommitReport(ctx, cr); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.CommitReport(ctx, repo.ID, "c2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.CarriedUploadIDs, []int64{api1.ID}) {
+		t.Errorf("carried uploads round trip: %v", got.CarriedUploadIDs)
+	}
+	read("c2", api1.ID, web2.ID)
+
+	// c2's own api upload supersedes the carried one before the recompute
+	// rewrites the report.
+	api2 := up("c2", "api")
+	read("c2", web2.ID, api2.ID)
+
+	cr.CarriedUploadIDs = nil
+	if err := st.UpsertCommitReport(ctx, cr); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = st.CommitReport(ctx, repo.ID, "c2"); err != nil || got.CarriedUploadIDs != nil {
+		t.Errorf("carried uploads not cleared: %v, %v", got, err)
+	}
+}
+
+// CarrySources finds each part in the newest reports on a branch first
+// seen before the commit's, whatever their verdict: a report's own latest
+// upload of the part, or the one it carried, its own first. PR-build
+// reports are a feature branch's own history but never the default
+// branch's.
+func carrySources(t *testing.T, newStore func(*testing.T) store.Store) {
+	st := newStore(t)
+	ctx := t.Context()
+	repo := &store.Repo{Forge: "github", Slug: "acme/widgets", Token: "tok", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]int64{}
+	commit := func(sha, branch, prID string, failed bool, carried []string, parts ...string) {
+		t.Helper()
+		for _, part := range parts {
+			u := &store.Upload{RepoID: repo.ID, CommitSHA: sha, Branch: branch, PRID: prID, Format: "go", Part: part}
+			if err := st.CreateUpload(ctx, u, nil); err != nil {
+				t.Fatal(err)
+			}
+			ids[sha+"/"+part] = u.ID // a part uploaded twice keeps its latest
+		}
+		cr := &store.CommitReport{RepoID: repo.ID, CommitSHA: sha, Branch: branch, PRID: prID, GateFailed: failed}
+		for _, c := range carried {
+			cr.CarriedUploadIDs = append(cr.CarriedUploadIDs, ids[c])
+		}
+		if err := st.UpsertCommitReport(ctx, cr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commit("m1", "main", "", false, nil, "api", "web")
+	commit("m2", "main", "", true, []string{"m1/api"}, "web")
+	commit("m3", "main", "", false, nil, "api", "api")
+	commit("fork", "main", "9", false, nil, "api", "web", "e2e")
+	commit("f1", "feat", "7", false, nil, "e2e")
+	commit("f2", "feat", "", false, nil, "web")
+	commit("both", "dual", "", false, []string{"m1/api"}, "api")
+
+	for _, tc := range []struct {
+		name, branch, commit string
+		parts                []string
+		depth                int
+		want                 []string
+	}{
+		{"newest report with each part, never the fork's", "main", "new", []string{"api", "web", "e2e"}, 10, []string{"m3/api", "m2/web"}},
+		{"depth bounds the walk", "main", "new", []string{"api", "web"}, 1, []string{"m3/api"}},
+		{"only what came before the commit's report; carried and failing count", "main", "m3", []string{"api", "web"}, 10, []string{"m1/api", "m2/web"}},
+		{"a feature branch's PR builds count", "feat", "new", []string{"e2e", "web"}, 10, []string{"f1/e2e", "f2/web"}},
+		{"the commit itself is not its history", "feat", "f2", []string{"web"}, 10, nil},
+		{"a report's own upload beats the one it carried", "dual", "new", []string{"api"}, 10, []string{"both/api"}},
+		{"a branch with no reports", "other", "new", []string{"api"}, 10, nil},
+	} {
+		var want []int64
+		for _, w := range tc.want {
+			want = append(want, ids[w])
+		}
+		slices.Sort(want)
+		check := func(via string, got []*store.Upload, err error) {
+			t.Helper()
+			if err != nil {
+				t.Fatalf("%s: %s: %v", tc.name, via, err)
+			}
+			var gotIDs []int64
+			for _, u := range got {
+				gotIDs = append(gotIDs, u.ID)
+			}
+			slices.Sort(gotIDs)
+			if !slices.Equal(gotIDs, want) {
+				t.Errorf("%s: %s CarrySources = %v, want %v (%v)", tc.name, via, gotIDs, want, tc.want)
+			}
+		}
+		got, err := st.CarrySources(ctx, repo.ID, tc.branch, tc.commit, tc.parts, tc.depth)
+		check("store", got, err)
+		err = st.WithCommitReportTx(ctx, repo.ID, tc.commit, func(ctx context.Context, tx store.CommitTx) error {
+			got, err := tx.CarrySources(ctx, repo.ID, tc.branch, tc.commit, tc.parts, tc.depth)
+			check("tx", got, err)
+			return nil
 		})
 		if err != nil {
 			t.Fatal(err)

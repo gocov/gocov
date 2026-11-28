@@ -87,6 +87,9 @@ type uploadResponse struct {
 	// sorted, every part the merged totals above were built from so far.
 	Part  string   `json:"part"`
 	Parts []string `json:"parts"`
+	// Carried names the parts among Parts the commit did not upload, taken
+	// from earlier commits (the repo's carried parts). Omitted when none.
+	Carried []carriedPartDTO `json:"carried,omitempty"`
 
 	// PR-only fields, set when pr_id was part of the upload.
 	DiffPct          *float64 `json:"diff_pct,omitempty"`
@@ -94,6 +97,37 @@ type uploadResponse struct {
 	DiffTotalLines   *int64   `json:"diff_total_lines,omitempty"`
 	DiffStatus       string   `json:"diff_status,omitempty"` // "computed", "skipped: ..." or "error: ..."
 	PRComment        string   `json:"pr_comment,omitempty"`  // "posted", "updated", "skipped" or "error: ..."
+}
+
+// mergeReach is every part a commit's merged report can be built from:
+// the commit's own (CommitParts) and those the repo carries forward, each
+// once — the set maxPartsPerCommit bounds.
+func mergeReach(own, carried []string) []string {
+	reach := slices.Clone(own)
+	for _, name := range carried {
+		if !slices.Contains(reach, name) {
+			reach = append(reach, name)
+		}
+	}
+	return reach
+}
+
+// carriedPartDTO is a part a commit's merged report took from an earlier
+// commit, and the upload that measured it there.
+type carriedPartDTO struct {
+	Part     string `json:"part"`
+	Commit   string `json:"commit"`
+	UploadID int64  `json:"upload_id"`
+}
+
+// newCarriedPartDTOs is never nil, so a page's list reads [] rather than
+// null; the upload response omits an empty one.
+func newCarriedPartDTOs(carried []core.CarriedPart) []carriedPartDTO {
+	out := make([]carriedPartDTO, 0, len(carried))
+	for _, c := range carried {
+		out = append(out, carriedPartDTO{Part: c.Part, Commit: c.CommitSHA, UploadID: c.UploadID})
+	}
+	return out
 }
 
 // knownCIProviders bounds the ci_provider field to the forges gocov knows,
@@ -266,6 +300,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		Warnings:     res.Merged.Warnings,
 		Part:         res.Upload.Part,
 		Parts:        res.Merged.Parts,
+		Carried:      newCarriedPartDTOs(res.Merged.Carried),
 		BuildStatus:  res.Push.BuildStatus,
 		CodeInsights: res.Push.CodeInsights,
 		PRComment:    res.Push.PRComment,
@@ -391,16 +426,16 @@ func (s *Server) readUploadRequest(w http.ResponseWriter, r *http.Request, authe
 	// Re-uploading an existing part is always allowed — it replaces. The
 	// check runs outside the commit's recompute lock, so new parts arriving
 	// at once at the cap can each pass it and overshoot by a few; the cap
-	// guards against the unbounded case, which that cannot become.
+	// guards against the unbounded case, which that cannot become. The
+	// parts the repo carries forward count too: the merge may take any of
+	// them, and uploading one replaces its carried stand-in rather than
+	// adding to the merge.
 	if parts, err := s.store.CommitParts(r.Context(), repo.ID, req.commit); err != nil {
 		s.internalError(w, "counting commit parts", err)
 		return nil, false
-	} else if len(parts) >= maxPartsPerCommit {
-		isNew := !slices.Contains(parts, req.part)
-		if isNew {
-			httpError(w, http.StatusBadRequest, "commit %s already has %d coverage parts (the maximum); check that the upload's part name is stable across CI jobs", req.commit, len(parts))
-			return nil, false
-		}
+	} else if reach := mergeReach(parts, repo.CarryforwardParts); len(reach) >= maxPartsPerCommit && !slices.Contains(reach, req.part) {
+		httpError(w, http.StatusBadRequest, "commit %s already has %d coverage parts, carried ones included (the maximum); check that the upload's part name is stable across CI jobs", req.commit, len(reach))
+		return nil, false
 	}
 
 	// Ignore patterns ride as repeated `ignore` fields, each holding one

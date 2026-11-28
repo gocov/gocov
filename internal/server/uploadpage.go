@@ -221,6 +221,9 @@ type provenanceDTO struct {
 	Parts        int       `json:"parts"`         // parts merged into the commit's report; 0 when unknown
 	ProcessMs    int64     `json:"process_ms"`    // server processing time; 0 when not recorded
 	IgnoredFiles int       `json:"ignored_files"` // files the ignore patterns dropped
+	// Carried are the parts among Parts the commit's report took from
+	// earlier commits; empty when none.
+	Carried []carriedPartDTO `json:"carried"`
 }
 
 // handleAPIUpload implements GET /api/ui/uploads/{id}.
@@ -393,13 +396,16 @@ func (s *Server) uploadProvenance(ctx context.Context, u *store.Upload) provenan
 		UploaderKind: m.UploaderKind,
 		ProcessMs:    m.ProcessMillis,
 		IgnoredFiles: m.IgnoredFiles,
+		Carried:      []carriedPartDTO{},
 	}
 	if u.Part != "" && u.Part != core.DefaultPart {
 		p.Part = u.Part
 	}
-	// Count the parts that fed the commit for the flags line.
-	if parts, err := s.store.CommitParts(ctx, u.RepoID, u.CommitSHA); err == nil {
+	// Count the parts that fed the commit for the flags line, naming those
+	// it carried forward.
+	if parts, err := s.store.ReportUploads(ctx, u.RepoID, u.CommitSHA); err == nil {
 		p.Parts = len(parts)
+		p.Carried = newCarriedPartDTOs(core.CarriedParts(u.CommitSHA, parts))
 	}
 	return p
 }

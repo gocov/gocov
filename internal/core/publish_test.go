@@ -76,12 +76,12 @@ func TestPRCommentSignatureHostedOnly(t *testing.T) {
 	u := &store.Upload{CommitSHA: "abc123", TotalPct: 80}
 
 	selfHosted := &Pipeline{BaseURL: "https://cov.example.com"}
-	if body := selfHosted.prCommentBody(u, "", nil, Verdict{}); strings.Contains(body, "gocov.dev") {
+	if body := selfHosted.prCommentBody(u, "", nil, Verdict{}, nil); strings.Contains(body, "gocov.dev") {
 		t.Errorf("self-hosted PR comment carries the signature line:\n%s", body)
 	}
 
 	hosted := &Pipeline{BaseURL: "https://cov.example.com", Hosted: true}
-	body := hosted.prCommentBody(u, "", nil, Verdict{})
+	body := hosted.prCommentBody(u, "", nil, Verdict{}, nil)
 	if !strings.Contains(body, "<sub>Coverage by [gocov](https://gocov.dev?ref=pr-comment) — free for public repos</sub>") {
 		t.Errorf("hosted PR comment misses the signature line:\n%s", body)
 	}
@@ -192,7 +192,7 @@ func TestPushSurfacesRunConcurrently(t *testing.T) {
 	defer cancel()
 
 	res := p.pushSurfaces(ctx, fg, &store.Repo{Slug: "acme/api"},
-		&store.Upload{CommitSHA: "abc", PRID: "7", TotalPct: 80}, "", nil, Verdict{})
+		&store.Upload{CommitSHA: "abc", PRID: "7", TotalPct: 80}, "", nil, Verdict{}, nil)
 	if res.BuildStatus != "posted" || res.CodeInsights != "posted" || res.PRComment != "posted" {
 		t.Fatalf("push result = %+v, want every surface posted", res)
 	}
@@ -217,7 +217,7 @@ func TestPRCommentBody(t *testing.T) {
 	}
 	gate := Verdict{Configured: true, Failures: []string{"total coverage 81.24% is below the minimum 90%", "diff coverage 70% is below the minimum 80%"}}
 
-	got := p.prCommentBody(u, "https://cov.example.com/uploads/7", &delta, gate)
+	got := p.prCommentBody(u, "https://cov.example.com/uploads/7", &delta, gate, nil)
 	want := "**gocov** report for `0123456789ab`\n\n" +
 		"- Total coverage: **81.2%** (-1.2%)\n" +
 		"- Gate: ❌ total coverage 81.24% is below the minimum 90%; diff coverage 70% is below the minimum 80%\n" +
@@ -258,7 +258,7 @@ func TestPRCommentBodyGateAndDiffStates(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			body := p.prCommentBody(&store.Upload{CommitSHA: "abc", TotalPct: 80, DiffCoverage: tc.diff}, "", nil, tc.gate)
+			body := p.prCommentBody(&store.Upload{CommitSHA: "abc", TotalPct: 80, DiffCoverage: tc.diff}, "", nil, tc.gate, nil)
 			for _, w := range tc.want {
 				if !strings.Contains(body, w) {
 					t.Errorf("body misses %q:\n%s", w, body)
@@ -285,7 +285,7 @@ func TestPRCommentBodyCapsFileLists(t *testing.T) {
 	body := p.prCommentBody(&store.Upload{
 		CommitSHA: "abc", TotalPct: 0,
 		DiffCoverage: &diffcov.Result{TotalLines: n, Files: files, UnmatchedFiles: unmatched},
-	}, "", nil, Verdict{})
+	}, "", nil, Verdict{}, nil)
 
 	if got := strings.Count(body, "| `f"); got != prCommentMaxFiles {
 		t.Errorf("table rows = %d, want %d", got, prCommentMaxFiles)
@@ -311,7 +311,7 @@ func TestPushPRComment(t *testing.T) {
 
 	t.Run("non-PR upload leaves the field empty", func(t *testing.T) {
 		fg := fake.New()
-		if got := p.pushPRComment(ctx, fg, repo, &store.Upload{CommitSHA: "abc"}, "", nil, Verdict{}); got != "" {
+		if got := p.pushPRComment(ctx, fg, repo, &store.Upload{CommitSHA: "abc"}, "", nil, Verdict{}, nil); got != "" {
 			t.Errorf("result = %q, want empty", got)
 		}
 		if len(fg.CommentCalls)+len(fg.FindCalls) != 0 {
@@ -322,11 +322,11 @@ func TestPushPRComment(t *testing.T) {
 	t.Run("second upload updates the comment in place", func(t *testing.T) {
 		fg := fake.New()
 		u := &store.Upload{CommitSHA: "abc", PRID: "7", TotalPct: 80}
-		if got := p.pushPRComment(ctx, fg, repo, u, "", nil, Verdict{}); got != "posted" {
+		if got := p.pushPRComment(ctx, fg, repo, u, "", nil, Verdict{}, nil); got != "posted" {
 			t.Fatalf("first push = %q, want posted", got)
 		}
 		u.TotalPct = 90
-		if got := p.pushPRComment(ctx, fg, repo, u, "", nil, Verdict{}); got != "updated" {
+		if got := p.pushPRComment(ctx, fg, repo, u, "", nil, Verdict{}, nil); got != "updated" {
 			t.Fatalf("second push = %q, want updated", got)
 		}
 		if len(fg.CommentCalls) != 1 || len(fg.UpdateCalls) != 1 {
@@ -343,9 +343,9 @@ func TestPushPRComment(t *testing.T) {
 	t.Run("failed update falls back to a fresh comment", func(t *testing.T) {
 		fg := fake.New()
 		u := &store.Upload{CommitSHA: "abc", PRID: "7"}
-		p.pushPRComment(ctx, fg, repo, u, "", nil, Verdict{})
+		p.pushPRComment(ctx, fg, repo, u, "", nil, Verdict{}, nil)
 		fg.UpdateErr = errors.New("forge down")
-		if got := p.pushPRComment(ctx, fg, repo, u, "", nil, Verdict{}); got != "posted" {
+		if got := p.pushPRComment(ctx, fg, repo, u, "", nil, Verdict{}, nil); got != "posted" {
 			t.Errorf("result = %q, want posted", got)
 		}
 		if len(fg.CommentCalls) != 2 {
@@ -356,7 +356,7 @@ func TestPushPRComment(t *testing.T) {
 	t.Run("failed lookup still posts", func(t *testing.T) {
 		fg := fake.New()
 		fg.FindErr = errors.New("forge down")
-		if got := p.pushPRComment(ctx, fg, repo, &store.Upload{CommitSHA: "abc", PRID: "7"}, "", nil, Verdict{}); got != "posted" {
+		if got := p.pushPRComment(ctx, fg, repo, &store.Upload{CommitSHA: "abc", PRID: "7"}, "", nil, Verdict{}, nil); got != "posted" {
 			t.Errorf("result = %q, want posted", got)
 		}
 	})
@@ -364,7 +364,7 @@ func TestPushPRComment(t *testing.T) {
 	t.Run("failed post is reported", func(t *testing.T) {
 		fg := fake.New()
 		fg.CommentErr = errors.New("forbidden")
-		if got := p.pushPRComment(ctx, fg, repo, &store.Upload{CommitSHA: "abc", PRID: "7"}, "", nil, Verdict{}); got != "error: forbidden" {
+		if got := p.pushPRComment(ctx, fg, repo, &store.Upload{CommitSHA: "abc", PRID: "7"}, "", nil, Verdict{}, nil); got != "error: forbidden" {
 			t.Errorf("result = %q, want error: forbidden", got)
 		}
 	})

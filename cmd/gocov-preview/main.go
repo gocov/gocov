@@ -248,6 +248,61 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// A branch whose e2e job only runs when its paths change: its first
+	// commit uploads web and e2e, its second only web and carries e2e
+	// forward (the repo's carried parts), so the upload page's parts note
+	// names a carried part. A branch of its own, so main's pages and the
+	// docs screenshots shot from them stay as they are.
+	repo.CarryforwardParts = []string{"e2e"}
+	if err := st.UpdateRepo(ctx, repo); err != nil {
+		log.Fatal(err)
+	}
+	carryAt := srcUpload.CreatedAt.Add(6 * time.Hour)
+	partUpload := func(commit, part string, at time.Time, files []*store.UploadFile) *store.Upload {
+		var covered, total int64
+		for _, f := range files {
+			covered, total = covered+f.CoveredStmts, total+f.TotalStmts
+		}
+		u := &store.Upload{
+			RepoID: repo.ID, CommitSHA: commit, Branch: "web-redesign", PRID: "14", Format: "lcov", Part: part,
+			TotalPct: profile.Percent(covered, total), CoveredStmts: covered, TotalStmts: total, CreatedAt: at,
+			Meta: store.UploadMeta{Uploader: "gocov v0.9.2", UploaderKind: "action", CIProvider: "github", ProfileName: "lcov.info"},
+		}
+		if err := st.CreateUpload(ctx, u, files); err != nil {
+			log.Fatal(err)
+		}
+		return u
+	}
+	webFiles := func(covered int64) []*store.UploadFile {
+		return []*store.UploadFile{{Path: "web/src/pages/Checkout.tsx", Pct: profile.Percent(covered, 40), CoveredStmts: covered, TotalStmts: 40,
+			Blocks: []profile.Block{{StartLine: 1, EndLine: 9, NumStmts: int(covered), Count: 1}, {StartLine: 10, EndLine: 14, NumStmts: int(40 - covered)}}}}
+	}
+	e2eFiles := []*store.UploadFile{{Path: "web/e2e/checkout.spec.ts", Pct: 75, CoveredStmts: 15, TotalStmts: 20,
+		Blocks: []profile.Block{{StartLine: 1, EndLine: 6, NumStmts: 15, Count: 1}, {StartLine: 7, EndLine: 9, NumStmts: 5}}}}
+	firstCommit, nextCommit := "c4a7e2e0b1d20000000000000000000000000000", "d9b3f6a1c2e30000000000000000000000000000"
+	e2e := partUpload(firstCommit, "e2e", carryAt, e2eFiles)
+	firstWeb := partUpload(firstCommit, "web", carryAt.Add(time.Minute), webFiles(30))
+	nextWeb := partUpload(nextCommit, "web", carryAt.Add(2*time.Hour), webFiles(34))
+	// The parts cover disjoint files, so each report's totals are its
+	// parts' sums.
+	for _, r := range []struct {
+		build   *store.Upload
+		carried []*store.Upload
+	}{{build: firstWeb}, {build: nextWeb, carried: []*store.Upload{e2e}}} {
+		cr := &store.CommitReport{
+			RepoID: repo.ID, CommitSHA: r.build.CommitSHA, Branch: "web-redesign", PRID: "14",
+			UploadID: r.build.ID, CoveredStmts: e2e.CoveredStmts + r.build.CoveredStmts, TotalStmts: e2e.TotalStmts + r.build.TotalStmts,
+			PartCount: 2, CreatedAt: r.build.CreatedAt, UpdatedAt: r.build.CreatedAt,
+		}
+		for _, u := range r.carried {
+			cr.CarriedUploadIDs = append(cr.CarriedUploadIDs, u.ID)
+		}
+		cr.TotalPct = profile.Percent(cr.CoveredStmts, cr.TotalStmts)
+		if err := st.UpsertCommitReport(ctx, cr); err != nil {
+			log.Fatal(err)
+		}
+	}
+
 	blobKey := fmt.Sprintf("source/%d/%s/%s", repo.ID, srcUpload.CommitSHA, file.Path)
 	if err := blobs.Put(ctx, blobKey, []byte(chargeSource)); err != nil {
 		log.Fatal(err)

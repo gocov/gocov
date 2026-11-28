@@ -20,6 +20,7 @@ const settings = (over: Partial<RepoSettings> = {}): RepoSettings => ({
     default_branch: "main",
     gate: { min_coverage: null, min_diff_coverage: 70, max_coverage_drop: null },
     ignore_paths: "vendor/**",
+    carryforward_parts: "",
     public_reports: true,
     badge_url: "/badge/github/acme/api",
     badge_markdown: "![coverage](https://app.gocov.dev/badge/github/acme/api)",
@@ -72,6 +73,9 @@ test("every card's Save posts the whole repository document", async () => {
   const patterns = section("ignore").getByRole("textbox", { name: "Ignore patterns" });
   await user.type(patterns, "\n*_mock.go");
   expect(section("ignore").getByText("2 patterns")).toBeInTheDocument();
+  expect(section("carryforward").getByText("None")).toBeInTheDocument();
+  await user.type(section("carryforward").getByRole("textbox", { name: "Parts to carry forward" }), "api\nE2E\napi");
+  expect(section("carryforward").getByText("2 parts")).toBeInTheDocument();
   await user.click(section("public-reports").getByRole("checkbox"));
   expect(section("public-reports").getByText("Off")).toBeInTheDocument();
 
@@ -82,6 +86,7 @@ test("every card's Save posts the whole repository document", async () => {
     default_branch: "develop",
     gate: { min_coverage: null, min_diff_coverage: 70, max_coverage_drop: null },
     ignore_paths: "vendor/**\n*_mock.go",
+    carryforward_parts: "api\nE2E\napi",
     public_reports: false,
   });
 });

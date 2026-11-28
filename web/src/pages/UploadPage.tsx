@@ -14,7 +14,7 @@ import { FilesTable } from "@/components/organisms/FilesTable";
 import { ProvenanceCard } from "@/components/organisms/ProvenanceCard";
 import { VerdictCard } from "@/components/organisms/VerdictCard";
 import { uploadQuery } from "@/lib/api/queries";
-import type { UploadPage as UploadPageData } from "@/lib/api/types";
+import type { CarriedPart, UploadPage as UploadPageData } from "@/lib/api/types";
 import { humanInt, pct, plural, shortSha, timeAgo } from "@/lib/format";
 import { usePageTitle } from "@/lib/title";
 import { routes } from "@/lib/urls";
@@ -122,21 +122,42 @@ export default function UploadPage() {
 /**
  * For a commit uploaded in parts, which of its two views this is — the
  * upload alone, or every part merged (what the PR comment and the build
- * status state) — with the way to the other.
+ * status state) — with the way to the other, and the parts the commit
+ * took from earlier commits.
  */
 function PartsNote({ data }: { data: UploadPageData }) {
-  const { parts } = data.provenance;
+  const { parts, carried } = data.provenance;
   if (parts < 2) return null;
-  return data.files.merged ? (
+  const merged = data.files.merged;
+  return (
     <p className="muted small">
-      Every part of this commit merged, {parts} in all.{" "}
-      <Link to={routes.upload(data.upload.id)}>This upload alone</Link>
+      {merged
+        ? `Every part of this commit merged, ${parts} in all.`
+        : `This upload is one of the ${parts} parts of its commit.`}
+      <CarriedSentence carried={carried} />{" "}
+      <Link to={routes.upload(data.upload.id, !merged)}>{merged ? "This upload alone" : "Every part merged"}</Link>
     </p>
-  ) : (
-    <p className="muted small">
-      This upload is one of the {parts} parts of its commit.{" "}
-      <Link to={routes.upload(data.upload.id, true)}>Every part merged</Link>
-    </p>
+  );
+}
+
+/** " Carried forward: api from 1a2b3c4d5e6f." — each commit linking to the upload that measured the part. */
+function CarriedSentence({ carried }: { carried: CarriedPart[] }) {
+  if (carried.length === 0) return null;
+  return (
+    <>
+      {" "}
+      Carried forward:{" "}
+      {carried.map((c, i) => (
+        <span key={c.part}>
+          {i > 0 && ", "}
+          <Mono>{c.part}</Mono> from{" "}
+          <Link to={routes.upload(c.upload_id)}>
+            <Mono>{shortSha(c.commit)}</Mono>
+          </Link>
+        </span>
+      ))}
+      .
+    </>
   );
 }
 

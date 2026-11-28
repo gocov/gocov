@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -66,6 +67,52 @@ func TestAPIRepoSettingsIgnorePaths(t *testing.T) {
 	wantStatus(t, save(""), "clear", http.StatusOK)
 	if repo, _ = f.store.RepoBySlug(ctx, "bitbucket", "acme/widgets"); repo.IgnorePaths != nil {
 		t.Errorf("patterns not cleared: %q", repo.IgnorePaths)
+	}
+}
+
+func TestAPIRepoSettingsCarryforwardParts(t *testing.T) {
+	f, sess := newWorkspaceFixture(t, true)
+	ctx := t.Context()
+	save := func(parts string) *httptest.ResponseRecorder {
+		t.Helper()
+		return postJSON(t, f, "/api/ui/repo-settings/save/bitbucket/acme/widgets",
+			repoSettingsInput{DefaultBranch: "main", CarryforwardParts: parts}, sess)
+	}
+
+	// Lines and commas both separate; names are stored as uploads are,
+	// each once.
+	rec := save(" API \r\n\r\nweb, e2e\napi\n")
+	wantStatus(t, rec, "save", http.StatusOK)
+	if got := decodeJSON[repoSettingsDTO](t, rec).Repo.CarryforwardParts; got != "api\nweb\ne2e" {
+		t.Errorf("parts read back as %q", got)
+	}
+	repo, err := f.store.RepoBySlug(ctx, "bitbucket", "acme/widgets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"api", "web", "e2e"}; !slices.Equal(repo.CarryforwardParts, want) {
+		t.Errorf("carried parts = %q, want %q", repo.CarryforwardParts, want)
+	}
+
+	// A name no upload could carry is refused and nothing changes.
+	if rec := save("api\nback end"); rec.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(rec.Body.String(), "Carried parts not saved") {
+		t.Errorf("bad part: status = %d, body = %s", rec.Code, rec.Body)
+	}
+	many := make([]string, maxCarriedParts+1)
+	for i := range many {
+		many[i] = fmt.Sprintf("p%d", i)
+	}
+	if rec := save(strings.Join(many, "\n")); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("%d parts: status = %d, want 422", len(many), rec.Code)
+	}
+	if repo, _ = f.store.RepoBySlug(ctx, "bitbucket", "acme/widgets"); len(repo.CarryforwardParts) != 3 {
+		t.Errorf("a refused save changed the parts: %q", repo.CarryforwardParts)
+	}
+
+	wantStatus(t, save(""), "clear", http.StatusOK)
+	if repo, _ = f.store.RepoBySlug(ctx, "bitbucket", "acme/widgets"); repo.CarryforwardParts != nil {
+		t.Errorf("parts not cleared: %q", repo.CarryforwardParts)
 	}
 }
 

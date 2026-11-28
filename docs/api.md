@@ -22,7 +22,8 @@ anything they don't cover.
 Returns `201` with `{id, total_pct, covered_stmts, total_stmts,
 delta_pct, build_status, part, parts}` — the totals and delta are the commit's merged report, `part` is this upload's
 normalized [part](parts.md) name and `parts` lists, sorted, every part the totals were merged from so far — plus
-`ignored_files` when ignore patterns dropped any and `warnings`, a list of
+`carried`, the parts among `parts` taken from earlier commits as `{part, commit, upload_id}`, when the repository
+[carries any forward](parts.md#carrying-a-part-forward), `ignored_files` when ignore patterns dropped any and `warnings`, a list of
 sentences, when the commit's merged report was built with a caveat. Uploads carrying a `pr_id` additionally get
 `diff_pct`, `diff_covered_lines`, `diff_total_lines`, `diff_status` and
 `pr_comment` when the repo's workspace is [connected to its forge](connecting.md).
@@ -100,7 +101,7 @@ another repo. A credential that is not one at all (an unknown token, or an OIDC 
   "repo": {"forge": "github", "slug": "acme/widgets"},
   "commit": "7aa8f0162ab5…", "branch": "feature", "pr_id": "247",
   "updated_at": "2026-10-28T08:11:36Z",
-  "parts": 2,
+  "parts": 2, "carried": [],
   "coverage": 88.04, "covered_statements": 5765, "total_statements": 6550,
   "gate_failed": false,
   "base": {"commit": "c54dc2c0b7d6…", "coverage": 87.65}, "delta": 0.39,
@@ -115,8 +116,11 @@ another repo. A credential that is not one at all (an unknown token, or an OIDC 
 }
 ```
 
-- The numbers are the commit's report with every [part](parts.md) merged; `parts` counts them, and `updated_at` is
-  the latest upload, so poll until the parts you expect have arrived.
+- The numbers are the commit's report with every [part](parts.md) merged; `parts` counts the parts the commit has
+  uploaded, and `updated_at` is the latest upload, so poll until the parts you expect have arrived. `carried` lists,
+  as `{part, commit}`, the parts the repository [carries forward](parts.md#carrying-a-part-forward) that the commit
+  took from an earlier one instead — they count in the numbers but not in `parts`, so a part still uploading is not
+  mistaken for one that arrived.
 - `base` and `delta` compare with the report the commit is measured against, as on the report page; both are `null`
   when there is nothing to compare with.
 - `diff` is the [diff coverage](pull-requests.md) of a pull-request commit, `null` otherwise. `uncovered` lists

@@ -34,6 +34,21 @@ export function patternLabel(text: string): string {
   return n === 0 ? "None" : plural(n, "pattern");
 }
 
+/**
+ * The part names in the carryforward box, the way the server stores them
+ * (parseCarryforwardParts): split as the ignore box is, lowercased, each
+ * once.
+ */
+export function carriedParts(text: string): string[] {
+  return [...new Set(ignorePatterns(text).map((name) => name.toLowerCase()))];
+}
+
+/** The carryforward card's header chip: "2 parts" — or that there are none. */
+export function carriedLabel(text: string): string {
+  const n = carriedParts(text).length;
+  return n === 0 ? "None" : plural(n, "part");
+}
+
 /** The editable half of the workspace document, as the save endpoint takes it. */
 export function workspaceInput(settings: WorkspaceSettings): WorkspaceSettingsInput {
   const ws = settings.workspace;
@@ -47,6 +62,7 @@ export function repoInput(settings: RepoSettings): RepoSettingsInput {
     default_branch: repo.default_branch,
     gate: { ...repo.gate },
     ignore_paths: repo.ignore_paths,
+    carryforward_parts: repo.carryforward_parts,
     public_reports: repo.public_reports,
   };
 }

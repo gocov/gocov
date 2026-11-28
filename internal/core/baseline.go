@@ -22,7 +22,8 @@
 // compare like with like: a report missing any of the commit's parts — one
 // still in flight, or a part that did not run — is passed over, and when
 // the commit has fewer parts than its baseline, the baseline is counted
-// over the commit's parts alone (comparableBase).
+// over the commit's parts alone (comparableBase). A part a report carried
+// forward (carry.go) is one of its parts on either side of a comparison.
 
 package core
 
@@ -41,7 +42,7 @@ import (
 // the merge runs.
 type passedReports interface {
 	LatestPassedCommitReport(ctx context.Context, repoID int64, branch string, beforeID int64, excludeCommit string) (*store.CommitReport, error)
-	LatestUploadsPerPart(ctx context.Context, repoID int64, commitSHA string) ([]*store.Upload, error)
+	ReportUploads(ctx context.Context, repoID int64, commitSHA string) ([]*store.Upload, error)
 	partFiles
 }
 
@@ -51,25 +52,27 @@ type passedReports interface {
 // them, and the comparison is decoration not worth a long walk.
 const baselineSearchDepth = 10
 
-// comparableBase is a baseline report together with its parts' latest
-// uploads, so its total can be counted over a subset of them.
+// comparableBase is a baseline report together with the uploads it was
+// built from (store.ReportUploads: its parts' latest uploads and those it
+// carried forward), so its total can be counted over a subset of them.
 type comparableBase struct {
 	Report *store.CommitReport
 	parts  []*store.Upload
 }
 
 // comparableReport returns the newest gate-passing, non-PR report on
-// branch that carries every one of parts, skipping the commit's own report
-// and, with beforeID > 0, anything not older than that one. A report
-// missing one of them would compare a total over different code.
-// store.ErrNotFound when there is none within baselineSearchDepth.
+// branch that has every one of parts, its own or carried forward,
+// skipping the commit's own report and, with beforeID > 0, anything not
+// older than that one. A report missing one of them would compare a total
+// over different code. store.ErrNotFound when there is none within
+// baselineSearchDepth.
 func comparableReport(ctx context.Context, reports passedReports, repoID int64, branch, commit string, beforeID int64, parts []string) (*comparableBase, error) {
 	for range baselineSearchDepth {
 		cr, err := reports.LatestPassedCommitReport(ctx, repoID, branch, beforeID, commit)
 		if err != nil {
 			return nil, err
 		}
-		ups, err := reports.LatestUploadsPerPart(ctx, repoID, cr.CommitSHA)
+		ups, err := reports.ReportUploads(ctx, repoID, cr.CommitSHA)
 		if err != nil {
 			return nil, err
 		}
@@ -149,7 +152,7 @@ func deltaBase(ctx context.Context, reports passedReports, repo *store.Repo, bra
 // commit arrived. nil when there is none, or the read fails — the
 // comparison is decoration, never worth failing a page over.
 func CommitBaseline(ctx context.Context, reports passedReports, repo *store.Repo, cr *store.CommitReport) *store.CommitReport {
-	ups, err := reports.LatestUploadsPerPart(ctx, repo.ID, cr.CommitSHA)
+	ups, err := reports.ReportUploads(ctx, repo.ID, cr.CommitSHA)
 	if err != nil {
 		return nil
 	}
