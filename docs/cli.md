@@ -34,7 +34,7 @@ variables, falling back to `git`.
 | `-path-prefix` | from `go.mod` for Go, the checkout for OpenCover and xccov | prefix mapping profile paths to repo paths, e.g. the Go module path — see below |
 | `-part`        | `$GOCOV_PART`, else `default`    | names this slice of the commit's coverage when several jobs upload — see [Parts](parts.md)     |
 | `-ignore`      | `$GOCOV_IGNORE`, else none       | leave matching files out of the report, e.g. `cmd/preview/**`; repeatable or comma-separated — see [Ignoring files](ignoring-files.md) |
-| `-fail-on-gate`| off                              | exit non-zero when the server reports a failed [coverage gate](coverage-gate.md)               |
+| `-fail-on-gate`| off                              | exit with status `3` when the server reports a failed [coverage gate](coverage-gate.md) — see [exit code](#output-and-exit-code) |
 
 ## Environment variables
 
@@ -175,7 +175,29 @@ When the server built the commit's merged report with a caveat — two [parts](p
 changed lines, whose diff coverage is then merged as a safe lower bound — a `warning:` line under the totals says so.
 A warning never fails the step.
 
-The exit code is non-zero on any upload error, and — only with `-fail-on-gate` — on a failed gate, which is how a
-pipeline step turns the gate into a hard failure even without [forge-side merge blocking](coverage-gate.md).
+`gocov upload` exits with one of four codes:
+
+| exit code | meaning                                                                                                        |
+|-----------|----------------------------------------------------------------------------------------------------------------|
+| `0`       | the upload landed — or it was refused or failed while uploading [without a token](#uploading-without-a-token), which never fails the build |
+| `1`       | the upload did not land: the server could not be reached or refused it, the token was rejected, the file is not coverage the CLI can read |
+| `2`       | a flag the CLI does not know                                                                                   |
+| `3`       | only with `-fail-on-gate`: the upload landed and the commit failed its [coverage gate](coverage-gate.md)       |
+
+Without `-fail-on-gate` a failed gate is only reported — `gate: failed: …` in the output — and the exit code stays `0`.
+With it, the CLI also prints `gocov: coverage gate failed: …` to standard error and exits `3`, which is how a pipeline
+step turns the gate into a hard failure even without [forge-side merge blocking](coverage-gate.md).
+
+The gate has a code of its own so a pipeline can tell it from an upload that broke. A step that should never fail over
+coverage plumbing, but must stop on the gate, lets `1` pass and keeps `3`:
+
+```sh
+status=0
+gocov upload -fail-on-gate coverage.out || status=$?
+if [ "$status" -eq 3 ]; then exit 3; fi   # the gate failed: stop here
+# otherwise carry on, whether the upload landed or not
+```
+
+`gocov report` and `gocov mcp` use only `0` and `1`.
 
 The raw HTTP endpoint underneath, for anything the CLI doesn't cover, is documented in [API & badge](api.md).
